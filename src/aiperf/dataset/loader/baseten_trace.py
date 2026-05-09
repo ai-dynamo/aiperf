@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from aiperf.common import random_generator as rng
@@ -24,17 +25,24 @@ _METADATA_COLUMNS = {
 
 _REQUIRED_COLUMNS = {
     _METADATA_COLUMNS_TIME,
-    "total_hashes",
     "prompt",
     "input_tokens",
     "output_tokens",
 }
 
 
+def _score_session_groups(
+    session_ids: list[str | int | None],
+) -> tuple[int, int]:
+    counts = Counter(session_id for session_id in session_ids if session_id is not None)
+    repeated_group_sizes = [count for count in counts.values() if count > 1]
+    return (sum(repeated_group_sizes), len(repeated_group_sizes))
+
+
 class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     """Loader for Baseten completion traces exported as Parquet."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._session_sample_ratio = self.user_config.input.trace_session_sample_ratio
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
@@ -51,7 +59,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         try:
             schema = pq.read_schema(filename)
-        except Exception:
+        except (FileNotFoundError, OSError, pa.ArrowException):
             return False
 
         return _REQUIRED_COLUMNS.issubset(schema.names)
@@ -119,7 +127,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         session_entries.sort(key=lambda item: (item[0], item[1]))
         return {session_id: traces for _, session_id, traces in session_entries}
 
-    def _read_metadata_table(self):
+    def _read_metadata_table(self) -> pa.Table:
         schema = pq.read_schema(self.filename)
         metadata_columns = [
             column for column in _METADATA_COLUMNS if column in set(schema.names)
@@ -129,21 +137,19 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _choose_session_key_from_metadata_rows(
         self, rows: list[dict[str, Any]]
     ) -> str | None:
-        provided_ids = [
-            str(row[_METADATA_COLUMNS_SESSION])
-            for row in rows
-            if row.get(_METADATA_COLUMNS_SESSION) is not None
-        ]
-        poor_ids = [
-            str(row[_METADATA_COLUMNS_POOR_MAN_SESSION])
-            for row in rows
-            if row.get(_METADATA_COLUMNS_POOR_MAN_SESSION) is not None
-        ]
+        provided_score = _score_session_groups(
+            [row.get(_METADATA_COLUMNS_SESSION) for row in rows]
+        )
+        poor_score = _score_session_groups(
+            [row.get(_METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows]
+        )
 
-        if provided_ids and len(set(provided_ids)) < len(provided_ids):
+        if provided_score > poor_score and provided_score[0] > 0:
             return _METADATA_COLUMNS_SESSION
-        if poor_ids and len(set(poor_ids)) < len(poor_ids):
+        if poor_score > provided_score and poor_score[0] > 0:
             return _METADATA_COLUMNS_POOR_MAN_SESSION
+        if provided_score == poor_score and provided_score[0] > 0:
+            return _METADATA_COLUMNS_SESSION
         return None
 
     def _sample_session_ids(
@@ -260,24 +266,22 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         return data
 
     def _choose_session_key(self, items: list[BasetenTrace]) -> str:
-        provided_counts = Counter(
-            trace.provided_session_id
-            for trace in items
-            if trace.provided_session_id is not None
+        provided_score = _score_session_groups(
+            [trace.provided_session_id for trace in items]
         )
-        poor_counts = Counter(
-            trace.poor_man_session_id
-            for trace in items
-            if trace.poor_man_session_id is not None
+        poor_score = _score_session_groups(
+            [trace.poor_man_session_id for trace in items]
         )
 
-        if any(count > 1 for count in provided_counts.values()):
+        if provided_score > poor_score and provided_score[0] > 0:
             return _METADATA_COLUMNS_SESSION
-        if any(count > 1 for count in poor_counts.values()):
+        if poor_score > provided_score and poor_score[0] > 0:
             return _METADATA_COLUMNS_POOR_MAN_SESSION
-        if provided_counts:
+        if provided_score == poor_score and provided_score[0] > 0:
             return _METADATA_COLUMNS_SESSION
-        if poor_counts:
+        if any(trace.provided_session_id is not None for trace in items):
+            return _METADATA_COLUMNS_SESSION
+        if any(trace.poor_man_session_id is not None for trace in items):
             return _METADATA_COLUMNS_POOR_MAN_SESSION
         return "generated"
 
