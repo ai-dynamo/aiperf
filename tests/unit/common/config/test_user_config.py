@@ -595,6 +595,19 @@ class TestOTelStreamingConfig:
         with pytest.raises(ValueError, match="Invalid --otel-url value"):
             make_config(otel_url=invalid_otel_url)
 
+    def test_grpc_scheme_error_names_http_https(self):
+        """Rejecting grpc:// must tell the user http/https are the supported schemes.
+
+        Regression for the manual-verify checklist item B4 where users reach for
+        grpc://collector:4317 (the OTLP/gRPC default port) and need to know AIPerf
+        ships only the OTLP/HTTP exporter.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"[Oo]nly http and https schemes are supported.*'grpc'",
+        ):
+            make_config(otel_url="grpc://collector:4317")
+
     @pytest.mark.parametrize(
         "stream_value,metrics_enabled,timing_enabled",
         [

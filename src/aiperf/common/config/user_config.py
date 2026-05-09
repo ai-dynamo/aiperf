@@ -85,7 +85,9 @@ def _normalize_otel_metrics_url(url: str) -> str:
         )
     if parsed.scheme.lower() not in ("http", "https"):
         raise ValueError(
-            f"Invalid --otel-url value: {url!r}. Expected host[:port] or a full URL."
+            f"Invalid --otel-url value: {url!r}. "
+            f"Only http and https schemes are supported (got {parsed.scheme!r}). "
+            "OTLP/gRPC is not supported; use the OTLP/HTTP exporter endpoint."
         )
 
     path = parsed.path.rstrip("/")
