@@ -748,3 +748,36 @@ class TestOTelMetricsResultsProcessor:
         assert processor.coerce_metric_values("test", True) == []
         assert processor.coerce_metric_values("test", {"key": "value"}) == []
         assert processor.coerce_metric_values("test", None) == []
+
+    def test_build_resource_attributes_populates_model_name(
+        self, service_config: ServiceConfig, user_config_otel: UserConfig
+    ) -> None:
+        """Happy path: model_names[0] populates aiperf.model.name."""
+        processor = OTelMetricsResultsProcessor(
+            service_id="test-service",
+            user_config=user_config_otel,
+            service_config=service_config,
+        )
+        attrs = processor._build_resource_attributes()
+        assert attrs["aiperf.model.name"] == "test-model"
+
+    def test_build_resource_attributes_empty_model_names_does_not_raise(
+        self, service_config: ServiceConfig, user_config_otel: UserConfig
+    ) -> None:
+        """Regression: empty model_names must skip aiperf.model.name instead of
+        raising IndexError. EndpointConfig.model_names has no min_length=1, so
+        a programmatic caller can construct an empty list — the OTel resource
+        attributes builder must not crash the fanout in that case.
+        """
+        processor = OTelMetricsResultsProcessor(
+            service_id="test-service",
+            user_config=user_config_otel,
+            service_config=service_config,
+        )
+        # Mutate after construction to bypass any Field validator.
+        user_config_otel.endpoint.model_names = []
+        attrs = processor._build_resource_attributes()
+        assert "aiperf.model.name" not in attrs
+        # Other required resource attrs should still be present.
+        assert attrs["service.name"] == "aiperf"
+        assert attrs["aiperf.endpoint.type"] == str(user_config_otel.endpoint.type)

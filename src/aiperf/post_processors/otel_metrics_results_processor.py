@@ -425,7 +425,14 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         if self.user_config.benchmark_id is not None:
             attributes["aiperf.benchmark.id"] = self.user_config.benchmark_id
         attributes["aiperf.endpoint.type"] = str(self.user_config.endpoint.type)
-        attributes["aiperf.model.name"] = self.user_config.endpoint.model_names[0]
+        # Guard against empty model_names. EndpointConfig declares it Field(...),
+        # so the CLI path always populates at least one, but the field has no
+        # min_length=1 so a programmatic caller could construct an empty list
+        # and an unguarded [0] would crash the fanout. Matches the guard
+        # pattern in genai_semconv.py.
+        model_names = self.user_config.endpoint.model_names
+        if model_names:
+            attributes["aiperf.model.name"] = model_names[0]
         attributes.update(self.user_config.otel_custom_resource_attributes)
         return attributes
 
