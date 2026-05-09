@@ -1018,6 +1018,36 @@ class TestRedactCliCommandUrlFlags:
     """
 
     @pytest.mark.parametrize(
+        "cmd, secrets, must_keep",
+        [
+            param(
+                "aiperf profile --url http://u1:s1@h1/v1 http://u2:s2@h2/v1",
+                ["u1:s1", "u2:s2"],
+                ["--url", "@h1/v1", "@h2/v1"],
+                id="multi-url-consume-multiple-unquoted",
+            ),
+            param(
+                "aiperf profile --url 'http://a:x@h1' 'http://b:y@h2' 'http://c:z@h3'",
+                ["a:x", "b:y", "c:z"],
+                ["@h1", "@h2", "@h3"],
+                id="multi-url-consume-multiple-quoted",
+            ),
+        ],
+    )  # fmt: skip
+    def test_multi_url_consume_multiple_redacts_all(
+        self, cmd: str, secrets: list[str], must_keep: list[str]
+    ):
+        """Regression: --url / -u accept multiple values via consume_multiple=True.
+        The first value is caught by _URL_FLAG_PATTERN; later values are caught
+        by the stray-URL safety net. All userinfo must be stripped.
+        """
+        result = redact_cli_command(cmd)
+        for secret in secrets:
+            assert secret not in result, f"Secret {secret!r} leaked in: {result}"
+        for keep in must_keep:
+            assert keep in result, f"Value {keep!r} over-redacted in: {result}"
+
+    @pytest.mark.parametrize(
         "cmd, secret, must_keep",
         [
             param(
@@ -1072,6 +1102,10 @@ class TestRedactCliCommandUrlFlags:
             param(
                 "aiperf plot --paths /tmp/run@latest --output /out",
                 id="at-in-unrelated-arg",
+            ),
+            param(
+                "aiperf profile --url http://localhost:8000 --model foo@bar",
+                id="stray-safety-net-does-not-touch-non-url-arg",
             ),
         ],
     )  # fmt: skip

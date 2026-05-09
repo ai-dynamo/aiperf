@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.config import OutputConfig, ServiceConfig
 from aiperf.common.exceptions import DataExporterDisabled
@@ -162,6 +163,25 @@ class TestNormalizeUri:
     def test_scheme_and_host_are_case_insensitive(self) -> None:
         n = MLflowDataExporter._normalize_uri
         assert n("HTTP://Host.Com:5000/path") == n("http://host.com:5000/path")
+
+    @pytest.mark.parametrize(
+        "upper,lower",
+        [
+            param("FILE:///tmp/mlruns", "file:///tmp/mlruns", id="file-scheme"),
+            param(
+                "SQLITE:///tmp/mlflow.db",
+                "sqlite:///tmp/mlflow.db",
+                id="sqlite-scheme",
+            ),
+        ],
+    )  # fmt: skip
+    def test_scheme_case_insensitive_when_netloc_empty(self, upper: str, lower: str):
+        """Regression: scheme must still be lowercased for URIs with empty
+        netloc (file:///, sqlite:///). RFC 3986 §3.1 says scheme is case-
+        insensitive; the early-return guard previously skipped lowercasing.
+        """
+        n = MLflowDataExporter._normalize_uri
+        assert n(upper) == n(lower)
 
     def test_trailing_slash_stripped(self) -> None:
         n = MLflowDataExporter._normalize_uri

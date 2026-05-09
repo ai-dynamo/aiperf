@@ -32,9 +32,15 @@ def normalize_mlflow_uri(uri: str | None) -> str:
         return ""
     stripped = uri.strip()
     parsed = urlparse(stripped)
-    if not parsed.scheme or not parsed.netloc:
-        return stripped.rstrip("/")
     scheme = parsed.scheme.lower()
+    if not scheme:
+        return stripped.rstrip("/")
+    if not parsed.netloc:
+        # ``file:///path`` and ``sqlite:///path`` have empty netloc but a
+        # case-sensitive path. Still normalize the scheme so callers that
+        # pass ``FILE:///tmp/mlruns`` vs ``file:///tmp/mlruns`` compare equal.
+        _, _, rest = stripped.partition(":")
+        return f"{scheme}:{rest}".rstrip("/")
     host = (parsed.hostname or "").lower()
     if parsed.port is not None:
         host = f"{host}:{parsed.port}"
