@@ -73,6 +73,17 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `trtllm:request_queue_time_seconds` | histogram | Queue wait (`stats.p99_estimate`) |
 | `trtllm:request_success` | counter | Completed requests (`stats.rate`) |
 
+> [!IMPORTANT]
+> **TRT-LLM server-side setup is required.** Unlike vLLM and SGLang, `trtllm-serve` does not expose Prometheus exposition format at `/metrics` by default — the default `/metrics` returns an iteration-stats JSON array (`application/json`), which is not parseable as Prometheus. Two consequences:
+>
+> 1. **Enable Prometheus on the server.** Pass `return_perf_metrics: true` in your `extra_llm_api_options.yaml`. This mounts the proper Prometheus exposition at `/prometheus/metrics` (a non-standard path).
+> 2. **AIPerf auto-detects and falls back.** When AIPerf hits `/metrics` and gets `application/json`, it automatically probes `<base>/prometheus/metrics` once. If the alt path serves Prometheus, AIPerf swaps the URL and continues — no manual override needed. If the alt path also fails (e.g. `return_perf_metrics` was not set), the collector auto-disables for the remainder of the run with a single warning.
+>
+> Example `extra_llm_api_options.yaml` snippet:
+> ```yaml
+> return_perf_metrics: true
+> ```
+
 </Accordion>
 
 ## Quick Start
@@ -92,7 +103,7 @@ aiperf profile \
 AIPerf automatically:
 1. Discovers the `/metrics` endpoint on your inference server (base URL + `/metrics`)
 2. Tests endpoint reachability before profiling starts
-3. Captures baseline metrics before warmup period begins (reference point for deltas)
+3. Captures baseline metrics before warmup period begins (reference point for deltas) — also where AIPerf first parses the response and validates it as Prometheus exposition format; see [Compatibility & auto-disable](#compatibility--auto-disable) for what happens when an endpoint returns non-Prometheus content
 4. Collects metrics at configurable intervals during warmup and profiling
 5. Performs final scrape after profiling completes (captures end state)
 6. Exports selected formats (default: JSON + CSV):
@@ -153,6 +164,27 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
 | **JSON/CSV** (default) | Summary statistics, CI/CD thresholds | Small |
 | **Parquet** | SQL queries, pandas/DuckDB analytics | Compressed |
 | **JSONL** | Debugging, raw Prometheus snapshots | 10-100x larger |
+
+## Compatibility & auto-disable
+
+AIPerf scrapes `/metrics` at ~3 Hz and parses the response as Prometheus exposition format. When a server speaks something else at that path (most commonly TRT-LLM, which serves an iteration-stats JSON array), AIPerf does not retry-and-spam — it detects the mismatch on the first scrape and disables collection for that endpoint with a single log line. This avoids the failure mode where parse errors at the scrape interval inflate run time by 10×+.
+
+**Detection.** A response is treated as non-Prometheus when either:
+- the HTTP `Content-Type` is `application/json` (the response body is never read in this case — the rejection is cheaper than parsing); or
+- the body fails to parse as Prometheus exposition format (`prometheus_client.parser.text_string_to_metric_families` raises `ValueError` — e.g. a server returns `text/plain` with garbage, or a JSON body without a content-type).
+
+**TRT-LLM `/prometheus/metrics` fallback.** Before disabling, AIPerf probes `<base>/prometheus/metrics` exactly once — TRT-LLM mounts the proper Prometheus path there when launched with `return_perf_metrics: true` (see the TRT-LLM entry in the [Quick Reference table](#quick-reference) above). If the probe succeeds, the collector swaps its URL there and the run continues with the alt endpoint. The probe is only attempted when the configured URL ends with exactly `/metrics`; URLs ending with anything else (e.g. `/prometheus/metrics`, `/v1/metrics`, `/api/metrics`) are left untouched.
+
+**On auto-disable.** A single `WARNING` is emitted naming the endpoint and the suppression flag. Subsequent scrape cycles short-circuit, the collector emits no further log noise, and the rest of the benchmark proceeds normally — other configured endpoints (DCGM telemetry, additional `--server-metrics` URLs) are unaffected.
+
+```text
+WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
+         endpoint 'http://127.0.0.1:60000/metrics' returned non-Prometheus
+         content-type 'application/json'; expected text/plain (Prometheus
+         exposition format). To suppress this warning, pass --no-server-metrics.
+```
+
+**To suppress the warning entirely**, pass `--no-server-metrics` — collection is skipped, no probe is attempted, no warning is logged.
 
 ## Configuration
 
@@ -499,6 +531,7 @@ AIPerf automatically infers units from metric names and descriptions using stand
 | OOM crashes | `vllm:kv_cache_usage_perc` approaching 1.0 | Reduce `max_model_len` or increase `gpu_memory_utilization` |
 | Low throughput | `vllm:num_requests_running` vs `vllm:num_requests_waiting` | Low both = client bottleneck; high waiting = server bottleneck |
 | Endpoint unreachable | `curl http://localhost:8000/metrics` | Check server running, network, firewall; use explicit `--server-metrics` URL |
+| `WARNING ... non-Prometheus content-type 'application/json'` | `curl -i <base>/metrics` shows `Content-Type: application/json` | Server isn't serving Prometheus at `/metrics`. For TRT-LLM, set `return_perf_metrics: true` in `extra_llm_api_options.yaml` so AIPerf's auto-probe finds `/prometheus/metrics`. To silence the warning entirely, pass `--no-server-metrics`. See [Compatibility & auto-disable](#compatibility--auto-disable). |
 
 ---
 

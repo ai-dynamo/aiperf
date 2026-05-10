@@ -75,3 +75,29 @@ class TestMetricRegistry:
             # Put it back to the original values
             InterTokenLatencyMetric.required_metrics = itl_original_required_metrics
             RequestThroughputMetric.required_metrics = rtt_original_required_metrics
+
+    def test_get_class_or_none_returns_class_for_known_tag(self):
+        """get_class_or_none returns the metric class for a registered tag."""
+        cls = MetricRegistry.get_class_or_none(RequestCountMetric.tag)
+        assert cls is RequestCountMetric
+
+    def test_get_class_or_none_returns_none_for_unknown_tag(self):
+        """get_class_or_none returns None — no exception — for an unknown tag.
+
+        This is the contract the JSON exporter relies on: tags from other
+        registries (e.g. GPU telemetry) must not raise here.
+        """
+        assert MetricRegistry.get_class_or_none("definitely_not_a_real_metric") is None
+        assert MetricRegistry.get_class_or_none("gpu_power_usage") is None
+
+    def test_get_class_or_none_matches_get_class_for_known_tags(self):
+        """For registered tags, both lookups return the same class."""
+        for tag in (
+            RequestCountMetric.tag,
+            RequestThroughputMetric.tag,
+            BenchmarkDurationMetric.tag,
+            InterTokenLatencyMetric.tag,
+        ):
+            assert MetricRegistry.get_class_or_none(tag) is MetricRegistry.get_class(
+                tag
+            )

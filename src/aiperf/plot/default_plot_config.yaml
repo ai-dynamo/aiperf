@@ -27,6 +27,7 @@ visualization:
     - pareto_curve_throughput_per_gpu_vs_latency
     - pareto_curve_throughput_per_gpu_vs_interactivity
     - ttft_vs_throughput
+    - latency_throughput_uncertainty
 
   # =============================================================================
   # SINGLE-RUN ANALYSIS: Default plots for analyzing one run over time
@@ -96,6 +97,20 @@ visualization:
       labels: [concurrency]
       groups: [model]
       title: "TTFT vs Throughput"
+
+    latency_throughput_uncertainty:
+      type: latency_throughput_uncertainty
+      description: "Latency vs throughput with joint uncertainty ellipses"
+      x:
+        metric: request_latency
+        stat: avg
+      y:
+        metric: output_token_throughput_per_gpu
+        stat: avg
+      labels: [concurrency]
+      groups: [model]
+      ci_level: 0.95
+      title: "Latency vs Throughput (Joint Uncertainty)"
 
   # =============================================================================
   # SINGLE-RUN PRESETS (time-series over duration of profiling run)

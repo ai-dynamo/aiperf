@@ -127,7 +127,7 @@ ZMQProxyType = plugins.create_enum(PluginType.ZMQ_PROXY, "ZMQProxyType", module=
 
 PlotTypeStr: TypeAlias = str
 PlotType = plugins.create_enum(PluginType.PLOT, "PlotType", module=__name__)
-"""Dynamic enum for plot. Example: PlotType.AREA, PlotType.REQUEST_TIMELINE, PlotType.TIMESLICE"""
+"""Dynamic enum for plot. Example: PlotType.AREA, PlotType.PERCENTILE_BANDS, PlotType.TIMESLICE"""
 
 GPUTelemetryCollectorTypeStr: TypeAlias = str
 GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECTOR, "GPUTelemetryCollectorType", module=__name__)

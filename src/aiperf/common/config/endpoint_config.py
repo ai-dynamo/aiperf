@@ -4,6 +4,7 @@
 from typing import Annotated, Literal
 
 from pydantic import (
+    AfterValidator,
     BeforeValidator,
     Field,
     SerializationInfo,
@@ -16,7 +17,10 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import EndpointDefaults
-from aiperf.common.config.config_validators import parse_str_or_list
+from aiperf.common.config.config_validators import (
+    normalize_http_urls,
+    parse_str_or_list,
+)
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
@@ -37,8 +41,6 @@ class EndpointConfig(BaseConfig):
     """
     A configuration class for defining endpoint related settings.
     """
-
-    _CLI_GROUP = Groups.ENDPOINT
 
     @model_validator(mode="after")
     def validate_streaming(self) -> Self:
@@ -93,7 +95,7 @@ class EndpointConfig(BaseConfig):
                 "--model",  # GenAI-Perf
                 "-m",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ]
 
@@ -108,7 +110,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.MODEL_SELECTION_STRATEGY
 
@@ -124,7 +126,7 @@ class EndpointConfig(BaseConfig):
                 "--custom-endpoint",
                 "--endpoint",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.CUSTOM_ENDPOINT
 
@@ -139,7 +141,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--endpoint-type",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.TYPE
 
@@ -154,7 +156,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--streaming",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.STREAMING
 
@@ -163,17 +165,23 @@ class EndpointConfig(BaseConfig):
         Field(
             description="Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing "
             "across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). "
-            "The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).",
+            "The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). "
+            "URLs that do not include a scheme (no `://`) have `http://` prepended automatically.",
             min_length=1,
+            # Run the validator chain on the default too — without this, a
+            # bare `--wait-for-model-timeout 30` (no `--url`) would send the
+            # un-normalized default to aiohttp and reproduce the original bug.
+            validate_default=True,
         ),
         BeforeValidator(parse_str_or_list),
+        AfterValidator(normalize_http_urls),
         CLIParameter(
             name=(
                 "--url",  # GenAI-Perf
                 "-u",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = [EndpointDefaults.URL]
 
@@ -185,7 +193,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--url-strategy",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.URL_STRATEGY
 
@@ -203,7 +211,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-timeout-seconds"),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.TIMEOUT
 
@@ -216,7 +224,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--api-key"),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.API_KEY
 
@@ -234,7 +242,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-timeout",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_TIMEOUT
 
@@ -247,7 +255,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-interval",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_INTERVAL
 
@@ -265,7 +273,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-mode",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_MODE
 
@@ -278,7 +286,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = None
 
@@ -290,7 +298,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--use-legacy-max-tokens",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_LEGACY_MAX_TOKENS
 
@@ -309,7 +317,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--use-server-token-count",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
@@ -326,7 +334,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--connection-reuse-strategy",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.CONNECTION_REUSE_STRATEGY
 
@@ -341,7 +349,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--download-video-content",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.DOWNLOAD_VIDEO_CONTENT
 
@@ -356,7 +364,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-content-type",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.REQUEST_CONTENT_TYPE
 

@@ -180,3 +180,118 @@ def test_with_mock_plugin():
 ```
 
 **Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset.
+
+## Console Exporter Pattern
+
+Console exporters subclass `ConsoleMetricsExporter` and configure rendering via class attributes — no method overrides required for the common case. The base class handles filtering, grouping, table construction, and printing; subclasses just declare what to show and when to run.
+
+```python
+# src/aiperf/exporters/internal_metrics_console_exporter.py — gated single-table
+class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
+    """Console exporter for INTERNAL framework metrics, gated on dev mode."""
+
+    title = "[yellow]NVIDIA AIPerf | Internal Metrics[/yellow]"
+    require_flags = MetricFlags.INTERNAL    # records must have this flag
+    exclude_flags = MetricFlags.ERROR_ONLY  # records with this flag are hidden
+    console_groups = None                   # single combined table; ignore groups
+
+    def _check_enabled(self, exporter_config: ExporterConfig) -> None:
+        if not (Environment.DEV.MODE and Environment.DEV.SHOW_INTERNAL_METRICS):
+            raise ConsoleExporterDisabled("Internal metrics are not enabled, ...")
+```
+
+| Class attribute  | Type                                     | Purpose                                                                                  |
+|------------------|------------------------------------------|------------------------------------------------------------------------------------------|
+| `title`          | `str | None`                             | Static title; `None` derives from endpoint metadata.                                     |
+| `require_flags`  | `MetricFlags`                            | Records must have ALL of these. Default `MetricFlags.NONE` (no requirement).             |
+| `exclude_flags`  | `MetricFlags`                            | Records with ANY of these are hidden. Default `ERROR_ONLY | INTERNAL | EXPERIMENTAL`.    |
+| `console_groups` | `tuple[MetricConsoleGroup, ...] | None`  | Groups to include, in render order. `None` disables group filtering (single table).      |
+| `split_by_group` | `bool`                                   | `True` → one table per non-empty group. `False` → single combined table.                 |
+
+Override `_check_enabled(self, exporter_config)` to raise `ConsoleExporterDisabled` when the exporter shouldn’t run (env var, user-config flag, dev mode). The base class no-ops (always-enabled). The flag-driven sibling exporters (`ConsoleInternalMetricsExporter`, `ConsoleExperimentalMetricsExporter`, `HttpTraceConsoleExporter`) follow this pattern verbatim — copy one of them as a starting point.
+
+## Uncertainty Plot Pattern
+
+The latency-throughput uncertainty plot uses a one-data-contract, three-renderers architecture.
+
+### Data Contract
+
+```python
+from aiperf.plot.models.uncertainty import BenchmarkPoint, LatencyThroughputUncertaintyData
+
+point = BenchmarkPoint(
+    x_mean=10.0, y_mean=100.0,
+    x_ci_low=8.0, x_ci_high=12.0,
+    y_ci_low=90.0, y_ci_high=110.0,
+    cov_xy=5.0,  # enables rotated ellipses; None for axis-aligned
+    label="concurrency=4",
+)
+data = LatencyThroughputUncertaintyData(
+    points=[point],
+    confidence_level=0.95,
+    title="Latency vs Throughput",
+    x_label="Latency (ms)",
+    y_label="Throughput (tok/s)",
+)
+```
+
+### Multi-Series Data Contract
+
+```python
+from aiperf.plot.models.uncertainty import (
+    BenchmarkPoint, LatencyThroughputUncertaintyData, UncertaintySeries,
+)
+
+# One series per experiment variant (e.g., request_count=20 vs 50).
+# When `series` is non-empty it overrides `points`; see get_series().
+data = LatencyThroughputUncertaintyData(
+    series=[
+        UncertaintySeries(name="request_count=20", points=[
+            BenchmarkPoint(x_mean=5.0, y_mean=50.0, x_ci_low=4.0, x_ci_high=6.0,
+                           y_ci_low=45.0, y_ci_high=55.0, label="c=2", n_runs=10),
+            BenchmarkPoint(x_mean=15.0, y_mean=120.0, x_ci_low=13.0, x_ci_high=17.0,
+                           y_ci_low=110.0, y_ci_high=130.0, label="c=10", n_runs=8),
+        ]),
+        UncertaintySeries(name="request_count=50", points=[
+            BenchmarkPoint(x_mean=6.0, y_mean=48.0, x_ci_low=4.5, x_ci_high=7.5,
+                           y_ci_low=42.0, y_ci_high=54.0, label="c=2", n_runs=10),
+            BenchmarkPoint(x_mean=18.0, y_mean=110.0, x_ci_low=15.0, x_ci_high=21.0,
+                           y_ci_low=100.0, y_ci_high=120.0, label="c=10", n_runs=10),
+        ]),
+    ],
+    confidence_level=0.95,
+    title="Latency vs Throughput by Request Count",
+    x_label="Latency (ms)",
+    y_label="Throughput (tok/s)",
+)
+```
+
+### Plotly Renderer (interactive + Kaleido PNG)
+
+```python
+from aiperf.plot.core.plot_generator import PlotGenerator
+
+pg = PlotGenerator()
+fig = pg.create_uncertainty_plot(data)
+fig.write_image("output.png")  # Kaleido export
+```
+
+### Matplotlib Renderer (code-gen reports)
+
+```python
+from aiperf.plot.exporters import export_uncertainty_matplotlib
+from pathlib import Path
+
+export_uncertainty_matplotlib(data, Path("output.png"))
+```
+
+### Ellipse Geometry Utility
+
+```python
+from aiperf.plot.geometry import compute_ellipse_vertices, compute_axis_aligned_ellipse_vertices
+import numpy as np
+
+cov = np.array([[4.0, 1.0], [1.0, 9.0]])
+vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=0.95)
+# Returns list of (x, y) tuples forming a closed polygon
+```

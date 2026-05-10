@@ -9,6 +9,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -64,11 +65,14 @@ class TestMetricResultsProcessor:
     async def test_process_result_record_metric_list_values(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test processing record metric with list values extends the array."""
+        """List-valued record metrics use the t-digest aggregator (not MetricArray).
+
+        T-digest preserves count/sum/min/max exactly; percentiles are
+        approximate but irrelevant to this test (3 samples).
+        """
         processor = MetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        # Process list of values
         message = create_metric_records_message(
             x_request_id="test-1",
             results=[{"test_record": [10.0, 20.0, 30.0]}],
@@ -76,8 +80,17 @@ class TestMetricResultsProcessor:
         await processor.process_result(message.to_data())
 
         assert "test_record" in processor._results
-        assert isinstance(processor._results["test_record"], MetricArray)
-        assert list(processor._results["test_record"].data) == [10.0, 20.0, 30.0]
+        assert isinstance(
+            processor._results["test_record"], TDigestListMetricAggregator
+        )
+        # Stat-shape check (count/sum/min/max are bit-exact via side-channel).
+        result = processor._results["test_record"].to_result(
+            tag="test_record", header="Test Record", unit="ms"
+        )
+        assert result.count == 3
+        assert result.sum == pytest.approx(60.0)
+        assert result.min == pytest.approx(10.0)
+        assert result.max == pytest.approx(30.0)
 
     @pytest.mark.asyncio
     async def test_process_result_aggregate_metric(

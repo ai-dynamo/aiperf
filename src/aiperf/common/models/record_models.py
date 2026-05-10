@@ -67,11 +67,28 @@ class MetricResult(JsonMetricResult):
         return to_display_unit(self, MetricRegistry)
 
     def to_json_result(self) -> JsonMetricResult:
-        """Convert the metric result to a JsonMetricResult."""
-        result = JsonMetricResult(unit=self.unit)
-        for stat in [
-            s for s in STAT_KEYS if s != "sum"
-        ]:  # sum is not included in the JsonMetricResult
+        """Convert the metric result to a JsonMetricResult.
+
+        `count` is omitted for non-RECORD metrics (derived/aggregate scalars),
+        where it would trivially be 1 and risks being misread as the request
+        count. Tags from other registries (e.g. GPU telemetry) are not in
+        MetricRegistry; those keep `count` as-is. Future MetricType members
+        also keep `count` by default — opt them in here explicitly.
+        """
+        from aiperf.common.enums import MetricType
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        metric_class = MetricRegistry.get_class_or_none(self.tag)
+        is_scalar = metric_class is not None and metric_class.type in {
+            MetricType.AGGREGATE,
+            MetricType.DERIVED,
+        }
+
+        result = JsonMetricResult(
+            unit=self.unit,
+            count=None if is_scalar else self.count,
+        )
+        for stat in STAT_KEYS:
             setattr(result, stat, getattr(self, stat, None))
         return result
 
@@ -835,6 +852,34 @@ class VideoResponseData(BaseResponseData):
     """Error details if job failed."""
 
 
+def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
+    """Return the last response chunk's usage that has any data, walking
+    the list backwards.
+
+    Streaming chunks fall into two real-world patterns: (a) `usage = None`
+    until a single final chunk carries the full usage, or (b) cumulative
+    running totals where the last chunk holds the final values. Both
+    collapse to "find the last non-empty Usage." A vendor never changes
+    shape mid-stream and never explicitly nulls a field it had previously
+    set, so a per-field walkback into earlier chunks would only matter
+    for synthetic adversarial cases that don't occur in practice.
+
+    Returns None if no chunk had any usage data. An empty Usage (`{}`) is
+    falsy and treated the same as no usage.
+
+    Used by:
+    - `ParsedResponseRecord.final_usage` (cached at the record level so
+      every metric reading the merged usage walks at most once per record)
+    - `InferenceResultParser._compute_server_token_counts` (called before
+      the record is constructed; reads input/reasoning/completion token
+      counts off the same Usage to keep them mutually consistent)
+    """
+    for response in reversed(responses):
+        if response.usage:
+            return response.usage
+    return None
+
+
 @dataclass(slots=True)
 class ParsedResponse:
     """Parsed response from a inference client."""
@@ -910,6 +955,17 @@ class ParsedResponseRecord:
 
     token_counts: TokenCounts | None = None
     """The token counts for the response. None if the token counts could not be calculated."""
+
+    @cached_property
+    def final_usage(self) -> Usage | None:
+        """API-reported usage from the last streaming response chunk that had any.
+
+        Thin wrapper around `find_last_non_empty_usage`. Cached, so the walk
+        happens at most once per record regardless of how many metrics consult
+        it. See the helper's docstring for the rationale behind "last
+        non-empty chunk wins" instead of a per-key merge.
+        """
+        return find_last_non_empty_usage(self.responses)
 
     @cached_property
     def start_perf_ns(self) -> int:

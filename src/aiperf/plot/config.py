@@ -472,6 +472,8 @@ class PlotConfig:
             spec_kwargs["supplementary_col"] = preset["supplementary_col"]
         if "autoscale" in preset:
             spec_kwargs["autoscale"] = preset["autoscale"]
+        if "ci_level" in preset:
+            spec_kwargs["ci_level"] = preset["ci_level"]
 
         if "use_slice_duration" in preset:
             spec_kwargs["use_slice_duration"] = preset["use_slice_duration"]
