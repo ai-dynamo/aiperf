@@ -69,23 +69,13 @@ class TestCompletionsEndpoint:
         }
         assert payload == expected_payload
 
-    def test_format_payload_uses_latest_turn_for_multi_turn_sessions(
-        self, model_endpoint
-    ):
+    def test_format_payload_forwards_request_body_on_single_turn(self, model_endpoint):
         endpoint = CompletionsEndpoint(model_endpoint)
         request_info = create_request_info(
             model_endpoint=model_endpoint,
-            turns=[
-                create_request_info(
-                    model_endpoint=model_endpoint, texts=["first"]
-                ).turns[0],
-                create_request_info(
-                    model_endpoint=model_endpoint,
-                    texts=["second"],
-                    max_tokens=33,
-                    request_body={"hash_ids": [1, 2], "block_size": 64},
-                ).turns[0],
-            ],
+            texts=["second"],
+            max_tokens=33,
+            request_body={"hash_ids": [1, 2], "block_size": 64},
         )
 
         payload = endpoint.format_payload(request_info)
@@ -94,6 +84,25 @@ class TestCompletionsEndpoint:
         assert payload["max_tokens"] == 33
         assert payload["hash_ids"] == [1, 2]
         assert payload["block_size"] == 64
+
+    def test_format_payload_request_body_overrides_endpoint_extra(self, model_endpoint):
+        endpoint = CompletionsEndpoint(model_endpoint)
+        model_endpoint.endpoint.extra = [
+            ("hash_ids", [9, 9]),
+            ("block_size", 128),
+            ("temperature", 0.7),
+        ]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            texts=["second"],
+            request_body={"hash_ids": [1, 2], "block_size": 64},
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["hash_ids"] == [1, 2]
+        assert payload["block_size"] == 64
+        assert payload["temperature"] == 0.7
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",

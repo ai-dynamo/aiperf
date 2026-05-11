@@ -49,11 +49,11 @@ class CompletionsEndpoint(BaseEndpoint):
         if turn.max_tokens:
             payload["max_tokens"] = turn.max_tokens
 
-        if turn.request_body:
-            payload.update(turn.request_body)
-
         if extra:
             payload.update(extra)
+
+        if turn.request_body:
+            payload.update(turn.request_body)
 
         if (
             model_endpoint.endpoint.streaming
