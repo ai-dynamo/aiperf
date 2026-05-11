@@ -74,11 +74,10 @@ class InferenceResultParser(CommunicationMixin):
             )
             return
 
-        tokenizer_config = self.user_config.tokenizer
-        self.info(
-            f"Configuring tokenizers for inference result parser (resolve_alias: {tokenizer_config.should_resolve_alias})"
-        )
+        self.info("Configuring tokenizers for inference result parser")
         begin = time.perf_counter()
+        tokenizer_config = self.user_config.tokenizer
+
         async with self.tokenizer_lock:
             self.tokenizers = {}
             for model in self.model_endpoint.models.models:

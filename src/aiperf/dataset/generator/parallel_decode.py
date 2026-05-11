@@ -36,10 +36,7 @@ def _init_worker(
     starts. It loads the tokenizer so subsequent decode calls don't need to reload it.
 
     Args:
-        tokenizer_name: Pre-resolved model name or local path. Must not be an
-            unresolved alias — callers (e.g. BaseTraceLoader) are expected to
-            resolve aliases before passing this value, because
-            ``resolve_alias=False`` is used to avoid network calls in workers.
+        tokenizer_name: Name or path of the pretrained tokenizer to load.
         trust_remote_code: Whether to trust remote code when loading.
         revision: The specific model version to use.
     """
@@ -96,8 +93,7 @@ def parallel_decode(
 
     Args:
         token_sequences: List of token ID lists to decode.
-        tokenizer_name: Pre-resolved model name or local path (alias resolution
-            is skipped; callers must resolve aliases beforehand).
+        tokenizer_name: Name or path of the pretrained tokenizer to use in workers.
         max_workers: Number of worker processes. Defaults to min(cpu_count, 8).
         chunksize: Number of items per worker batch for map().
         trust_remote_code: Whether to trust remote code when loading.
@@ -117,7 +113,6 @@ def parallel_decode(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
             revision=revision,
-            resolve_alias=False,
         )
         return [tokenizer.decode(tokens) for tokens in token_sequences]
 
