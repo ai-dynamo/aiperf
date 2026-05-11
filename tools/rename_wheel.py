@@ -51,7 +51,7 @@ def patch_source_version_calls(
     dist_info: Path,
     old_name: str,
     new_name: str,
-) -> dict:
+) -> dict[str, int]:
     """Rewrite `version("old-name")` -> `version("new-name")` in wheel .py files.
 
     The wheel typically contains source files that call
