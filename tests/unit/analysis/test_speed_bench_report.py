@@ -42,7 +42,7 @@ def _profile(dataset: str | None = None, model: str | None = "test-model") -> di
         endpoint["model_names"] = [model]
     input_block: dict = {}
     if dataset is not None:
-        input_block["public_dataset"] = dataset
+        input_block["custom_dataset_type"] = dataset
     return {"input_config": {"endpoint": endpoint, "input": input_block}}
 
 
@@ -73,7 +73,7 @@ class TestExtractCategory:
         assert extract_category(_profile(dataset="sharegpt")) is None
 
     def test_extract_category_non_string_dataset_returns_none(self):
-        profile = {"input_config": {"input": {"public_dataset": 42}}}
+        profile = {"input_config": {"input": {"custom_dataset_type": 42}}}
         assert extract_category(profile) is None
 
     def test_extract_category_missing_input_config_returns_none(self):
@@ -251,7 +251,10 @@ class TestLoadJson:
         run = _write_run_dir(tmp_path, "run", _profile(dataset="speed_bench_coding"))
         loaded = load_profile(run)
         assert loaded is not None
-        assert loaded["input_config"]["input"]["public_dataset"] == "speed_bench_coding"
+        assert (
+            loaded["input_config"]["input"]["custom_dataset_type"]
+            == "speed_bench_coding"
+        )
 
     def test_load_profile_missing_file_returns_none(self, tmp_path: Path):
         empty = tmp_path / "empty"
