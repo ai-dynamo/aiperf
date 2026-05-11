@@ -57,6 +57,37 @@ def _create_basic_handler(level: str | int) -> logging.StreamHandler:
     return handler
 
 
+def setup_subprocess_logging(log_level: int | str) -> None:
+    """Configure logging in a short-lived spawned subprocess to match the
+    parent's rich console format.
+
+    Intended for one-shot helper processes (tokenizer preload, parallel decode
+    workers) that inherit stdout/stderr from the parent but don't participate
+    in the SystemController log queue. For child services that ship logs back
+    to the controller, use ``setup_child_process_logging`` instead.
+    """
+    root = logging.getLogger()
+    root.setLevel(log_level)
+    # Clear any handlers installed by library imports or a prior basicConfig.
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+    handler: logging.Handler
+    if is_tty():
+        handler = CustomRichHandler(
+            rich_tracebacks=True,
+            show_path=False,
+            console=Console(),
+            show_time=False,
+            show_level=False,
+            tracebacks_show_locals=False,
+        )
+    else:
+        handler = _create_basic_handler(log_level)
+    handler.setLevel(log_level)
+    root.addHandler(handler)
+
+
 def get_global_log_queue() -> multiprocessing.Queue:
     """Get the global log queue. Will create a new queue if it doesn't exist.
 

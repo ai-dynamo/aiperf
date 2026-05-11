@@ -370,21 +370,17 @@ def _preload_subprocess_main(
     """Spawn-safe subprocess entry point for tokenizer preload.
 
     Imports HF libraries fresh inside this process so the parent stays clean.
-    Progress logs go to stderr (inherited from the parent); success/failure is
-    reported via `result_queue`.
+    Progress logs go to stdout (inherited from the parent) using the same rich
+    format as the parent; success/failure is reported via ``result_queue``.
     """
-    import logging
     import os
     import platform
     import traceback
 
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s | %(levelname)-7s | %(message)s",
-    )
-
     from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.common.logging import setup_subprocess_logging
 
+    setup_subprocess_logging(log_level)
     logger = AIPerfLogger(__name__)
 
     logger.debug(

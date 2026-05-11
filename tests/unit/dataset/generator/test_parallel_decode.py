@@ -327,6 +327,8 @@ class TestParallelDecodeTokenizerArgs:
         self, mock_executor_class
     ):
         """Test executor path forwards trust_remote_code and revision via initargs."""
+        import logging
+
         mock_executor = MagicMock()
         mock_executor.__enter__ = MagicMock(return_value=mock_executor)
         mock_executor.__exit__ = MagicMock(return_value=False)
@@ -341,4 +343,7 @@ class TestParallelDecodeTokenizerArgs:
         )
 
         call_kwargs = mock_executor_class.call_args.kwargs
-        assert call_kwargs["initargs"] == ("kimi-vl", True, "v1.2")
+        # The 4th initarg is the parent's effective root log level, propagated
+        # so worker DEBUG output surfaces under --verbose.
+        assert call_kwargs["initargs"][:3] == ("kimi-vl", True, "v1.2")
+        assert call_kwargs["initargs"][3] == logging.getLogger().getEffectiveLevel()
