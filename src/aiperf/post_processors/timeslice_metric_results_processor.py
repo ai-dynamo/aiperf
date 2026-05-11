@@ -6,7 +6,7 @@ from typing import Any
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
-from aiperf.common.models import MetricResult
+from aiperf.common.models import MetricRecordMetadata, MetricResult
 from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
@@ -52,32 +52,31 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
         return int(request_start_ns / self._slice_duration_ns)
 
     async def get_instances_map(
-        self, request_start_ns: int | None = None
+        self, record_metadata: MetricRecordMetadata | None = None
     ) -> dict[MetricTagT, BaseMetric]:
-        """Get the appropriate instances map based on mode."""
-        """Get the results dict for the appropriate timeslice based on request timestamp."""
-        if request_start_ns is None:
+        """Get the timeslice instances map for the given record's timestamp."""
+        if record_metadata is None:
             raise ValueError(
-                "TimesliceMetricResultsProcessor::get_instances_map must be passed a request_start_ns"
+                "TimesliceMetricResultsProcessor::get_instances_map must be passed a record_metadata"
             )
 
-        timeslice_index = await self.get_timeslice_index(request_start_ns)
-
-        # Return (or create) the timeslice instances dict for this timeslice
+        timeslice_index = await self.get_timeslice_index(
+            record_metadata.request_start_ns
+        )
         return self._timeslice_instances_maps[timeslice_index]
 
     async def get_results(
-        self, request_start_ns: int | None = None
+        self, record_metadata: MetricRecordMetadata | None = None
     ) -> MetricResultsDict:
-        """Get the results dict for the appropriate timeslice based on request timestamp."""
-        if request_start_ns is None:
+        """Get the timeslice results dict for the given record's timestamp."""
+        if record_metadata is None:
             raise ValueError(
-                "TimesliceMetricResultsProcessor::get_results must be passed a request_start_ns"
+                "TimesliceMetricResultsProcessor::get_results must be passed a record_metadata"
             )
 
-        timeslice_index = await self.get_timeslice_index(request_start_ns)
-
-        # Return (or create) the timeslice results dict for this timeslice
+        timeslice_index = await self.get_timeslice_index(
+            record_metadata.request_start_ns
+        )
         return self._timeslice_results[timeslice_index]
 
     async def update_derived_metrics(self) -> None:

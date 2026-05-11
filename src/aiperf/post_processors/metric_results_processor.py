@@ -13,7 +13,7 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages.inference_messages import MetricRecordsData
-from aiperf.common.models import MetricResult
+from aiperf.common.models import MetricRecordMetadata, MetricResult
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
@@ -76,9 +76,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             self.trace(f"Processing incoming metrics: {record_data.metrics}")
 
         # Get the appropriate results dict and instances map once to avoid multiple calls
-        request_start_ns = record_data.metadata.request_start_ns
-        instances_map = await self.get_instances_map(request_start_ns)
-        results_dict = await self.get_results(request_start_ns)
+        instances_map = await self.get_instances_map(record_data.metadata)
+        results_dict = await self.get_results(record_data.metadata)
 
         for tag, value in record_data.metrics.items():
             try:
@@ -118,22 +117,26 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             self.trace(f"Results after processing incoming metrics: {results_dict}")
 
     async def get_instances_map(
-        self, request_start_ns: int | None = None
+        self, record_metadata: MetricRecordMetadata | None = None
     ) -> dict[MetricTagT, BaseMetric]:
         """Get the appropriate instances map based on mode.
 
-        In non-timeslice mode, returns the single shared instances map.
-        Subclasses can override to provide timeslice-specific behavior.
+        Base implementation ignores `record_metadata` and returns the single
+        shared instances map. Subclasses that group metrics by some key
+        (e.g., timeslice index, archetype name) extract that key from the
+        record metadata and dispatch accordingly.
         """
         return self._instances_map
 
     async def get_results(
-        self, request_start_ns: int | None = None
+        self, record_metadata: MetricRecordMetadata | None = None
     ) -> MetricResultsDict:
         """Get the appropriate results dictionary based on mode.
 
-        In non-timeslice mode, returns the single shared results dict.
-        Subclasses can override to provide timeslice-specific behavior.
+        Base implementation ignores `record_metadata` and returns the single
+        shared results dict. Subclasses that group metrics by some key
+        (e.g., timeslice index, archetype name) extract that key from the
+        record metadata and dispatch accordingly.
         """
         return self._results
 
