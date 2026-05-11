@@ -944,6 +944,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         # Partition child plans by parent trace_id.
         children_by_trace: dict[str, list[_WekaChildPayload]] = defaultdict(list)
+        # Per-subagent stream SIDs (parent process owns stream packing; the
+        # worker just echoes the SIDs back when building the SPAWN branch).
+        sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
             requests_dicts: list[_WekaNormalRequestPayload] = [
                 {
@@ -954,7 +957,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                 }
-                for creq in cp.entry.requests
+                for creq in cp.stream_requests
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
@@ -966,6 +969,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "system_tokens": cp.entry.system_tokens,
                     "requests": requests_dicts,
                 }
+            )
+            sids_by_subagent[(cp.parent_trace_id, cp.subagent_index)].append(
+                cp.session_id
             )
 
         tasks: list[_WekaTraceTask] = []
@@ -986,17 +992,22 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 for outer_idx, req in plan.normals
             ]
-            subagents_dicts: list[tuple[int, _WekaSubagentMarkerPayload]] = [
-                (
-                    outer_idx,
-                    {
-                        "agent_id": sa.agent_id,
-                        "tool_tokens": sa.tool_tokens,
-                        "system_tokens": sa.system_tokens,
-                    },
+            subagents_dicts: list[tuple[int, _WekaSubagentMarkerPayload]] = []
+            for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
+                subagents_dicts.append(
+                    (
+                        outer_idx,
+                        {
+                            "agent_id": sa.agent_id,
+                            "tool_tokens": sa.tool_tokens,
+                            "system_tokens": sa.system_tokens,
+                            "child_session_ids": sids_by_subagent.get(
+                                (plan.trace_id, sa_index), []
+                            ),
+                            "sa_end_seconds": _sa_end_seconds(sa),
+                        },
+                    )
                 )
-                for outer_idx, sa in plan.subagents
-            ]
             tasks.append(
                 _WekaTraceTask(
                     trace_id=plan.trace_id,

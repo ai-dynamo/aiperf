@@ -267,3 +267,123 @@ def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
     )
     child = next(c for c in convs if c.session_id == "t_seq::sa:a1")
     assert len(child.turns) == 2
+
+
+def _install_inproc_pool(monkeypatch, loader):
+    """Replace multiprocessing Pool with synchronous in-process stub.
+
+    Mirrors ``tests/component_integration/test_agentic_replay_e2e.py``'s
+    ``_install_inproc_pool``. Lets unit tests drive ``_reconstruct_parallel``
+    end-to-end without spawning real worker processes (which would re-import
+    a real tokenizer the MagicMock fixtures don't carry).
+    """
+    from aiperf.dataset.loader import weka_parallel_convert as wpc
+
+    pg = loader.prompt_generator
+
+    class _InProcPool:
+        def __init__(self, num_workers, init_fn, init_args) -> None:
+            init_fn(init_args[0])
+
+        def imap(self, fn, items, chunksize=1):
+            return [fn(it) for it in items]
+
+        def close(self) -> None:
+            return None
+
+        def join(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+    class _FakeCtx:
+        Pool = _InProcPool
+
+    monkeypatch.setattr(wpc, "get_loader_mp_context", lambda **kw: _FakeCtx())
+    monkeypatch.setattr(wpc.Tokenizer, "from_pretrained", lambda *a, **kw: pg.tokenizer)
+
+
+def _force_parallel(monkeypatch, loader):
+    """Force ``convert_to_conversations`` onto the parallel reconstruction path."""
+    from aiperf.common.environment import Environment
+    from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
+
+    # Conftest pins WORKERS=1 (forces serial); override for these tests.
+    monkeypatch.setattr(Environment.DATASET, "WEKA_PARALLEL_WORKERS", 2)
+    monkeypatch.setattr(Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
+    # Parallel path reads pg._hash_id_corpus_rng.seed and ships it to workers;
+    # a MagicMock's auto-attr is not a real int. Replace with a real RNG.
+    loader.prompt_generator._hash_id_corpus_rng = HashIdRandomGenerator(
+        12345, _internal=True
+    )
+    loader.prompt_generator._bpe_stable_terminator_tokens = []
+    _install_inproc_pool(monkeypatch, loader)
+
+
+def test_async_branch_detected_under_parallel_reconstruction(tmp_path, monkeypatch):
+    """Same async-detection under the multiprocessing path."""
+    data = _build_trace(
+        "t_par_async",
+        [
+            _normal(t=0.0),
+            _subagent("a1", t=1.0, duration_ms=100_000, inner=[(0.0, 100.0)]),
+            _normal(t=2.0),
+        ],
+    )
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    _force_parallel(monkeypatch, loader)
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    parent = next(c for c in convs if c.session_id == "t_par_async")
+    branch = parent.branches[0]
+    assert branch.is_background is True
+    for turn in parent.turns:
+        for prereq in turn.prerequisites:
+            assert not (
+                prereq.kind == PrerequisiteKind.SPAWN_JOIN
+                and prereq.branch_id == branch.branch_id
+            ), "background branch should not have a SPAWN_JOIN prerequisite"
+
+
+def test_parallel_inner_split_under_parallel_reconstruction(tmp_path, monkeypatch):
+    """Two overlapping inner requests become two sibling child Conversations
+    under the parallel reconstruction path."""
+    data = _build_trace(
+        "t_par_split",
+        [
+            _normal(t=0.0),
+            _subagent(
+                "a1",
+                t=1.0,
+                duration_ms=100_000,
+                inner=[(0.0, 100.0), (0.1, 100.0)],
+            ),
+            _normal(t=200.0),
+        ],
+    )
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    _force_parallel(monkeypatch, loader)
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    parent = next(c for c in convs if c.session_id == "t_par_split")
+    branch = parent.branches[0]
+    assert set(branch.child_conversation_ids) == {
+        "t_par_split::sa:a1:s0",
+        "t_par_split::sa:a1:s1",
+    }
+    children = {
+        c.session_id: c for c in convs if c.session_id.startswith("t_par_split::sa")
+    }
+    assert set(children.keys()) == {
+        "t_par_split::sa:a1:s0",
+        "t_par_split::sa:a1:s1",
+    }
+    for sid in children:
+        assert len(children[sid].turns) == 1
