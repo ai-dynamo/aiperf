@@ -185,6 +185,14 @@ Timing manager configuration. Controls timing-related settings for credit phase 
 | `AIPERF_TIMING_CANCEL_DRAIN_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for waiting for cancelled credits to drain after phase timeout |
 | `AIPERF_TIMING_RATE_RAMP_UPDATE_INTERVAL` | `0.1` | ≥ 0.01, ≤ 10.0 | Update interval in seconds for continuous rate ramping (default 0.1s = 100ms) |
 
+## TOKENIZER
+
+Tokenizer loading configuration.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_TOKENIZER_LOAD_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 3600.0 | Timeout in seconds for loading a tokenizer in a subprocess. Applies to HuggingFace downloads and tiktoken CDN fetches. Set AIPERF_TOKENIZER_LOAD_TIMEOUT to increase for slow networks. |
+
 ## UI
 
 User interface and dashboard configuration. Controls refresh rates, update thresholds, and notification behavior for the various UI modes (dashboard, tqdm, etc.).

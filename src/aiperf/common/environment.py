@@ -20,6 +20,7 @@ Structure:
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
     Environment.TIMING.*         - Timing manager settings
+    Environment.TOKENIZER.*      - Tokenizer loading settings
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
@@ -730,6 +731,21 @@ class _ServiceSettings(BaseSettings):
         return self
 
 
+class _TokenizerSettings(BaseSettings):
+    """Tokenizer loading configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_TOKENIZER_")
+
+    LOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Timeout in seconds for loading a tokenizer in a subprocess. "
+        "Applies to HuggingFace downloads and tiktoken CDN fetches. "
+        "Set AIPERF_TOKENIZER_LOAD_TIMEOUT to increase for slow networks.",
+    )
+
+
 class _UISettings(BaseSettings):
     """User interface and dashboard configuration.
 
@@ -1031,6 +1047,10 @@ class _Environment(BaseSettings):
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,
         description="Timing manager settings",
+    )
+    TOKENIZER: _TokenizerSettings = Field(
+        default_factory=_TokenizerSettings,
+        description="Tokenizer loading settings",
     )
     UI: _UISettings = Field(
         default_factory=_UISettings,

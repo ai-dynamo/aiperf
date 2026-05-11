@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from unittest.mock import patch
+import queue
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -11,6 +12,7 @@ from aiperf.common.tokenizer import (
     BUILTIN_TOKENIZER_NAME,
     TIKTOKEN_ENCODING_NAMES,
     Tokenizer,
+    load_tokenizer_guarded,
 )
 
 
@@ -163,3 +165,163 @@ class TestIsFakeModelName:
         from aiperf.common.tokenizer_fake_names import is_fake_model_name
 
         assert is_fake_model_name(name) is False
+
+
+class TestLoadTokenizerGuarded:
+    """Tests for the subprocess-based load_tokenizer_guarded function.
+
+    mp.Queue is patched with queue.Queue throughout — mp.Queue pickles items
+    via a background thread even in-process, making MagicMock unpicklable.
+    queue.Queue avoids serialization entirely.
+    """
+
+    def _make_process_factory(self, result: tuple):
+        """Return a fake mp.Process factory that puts *result* into the queue on start()."""
+
+        def _factory(*posargs, target=None, args=(), kwargs=None, daemon=False, **kw):
+            result_q = args[0]
+            proc = MagicMock()
+            proc.is_alive.return_value = False
+            proc.start.side_effect = lambda: result_q.put(result)
+            return proc
+
+        return _factory
+
+    def test_returns_tokenizer_on_success(self) -> None:
+        fake_tokenizer = MagicMock(spec=Tokenizer)
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch(
+                "aiperf.common.tokenizer.mp.Process",
+                side_effect=self._make_process_factory(("ok", fake_tokenizer)),
+            ),
+        ):
+            result = load_tokenizer_guarded("builtin")
+
+        assert result is fake_tokenizer
+
+    def test_raises_timeout_when_subprocess_hangs(self) -> None:
+        proc = MagicMock()
+        proc.is_alive.return_value = True
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch("aiperf.common.tokenizer.mp.Process", return_value=proc),
+            patch(
+                "aiperf.common.tokenizer.Environment",
+                TOKENIZER=MagicMock(LOAD_TIMEOUT=0.05),
+            ),
+            pytest.raises(TimeoutError, match="AIPERF_TOKENIZER_LOAD_TIMEOUT"),
+        ):
+            load_tokenizer_guarded("builtin")
+
+        proc.kill.assert_called()
+
+    def test_reraises_exception_from_subprocess(self) -> None:
+        original_error = ValueError("bad tokenizer")
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch(
+                "aiperf.common.tokenizer.mp.Process",
+                side_effect=self._make_process_factory(("error", original_error)),
+            ),
+            pytest.raises(ValueError, match="bad tokenizer"),
+        ):
+            load_tokenizer_guarded("builtin")
+
+    def test_clears_daemon_flag_for_daemon_process_and_restores(self) -> None:
+        fake_tokenizer = MagicMock(spec=Tokenizer)
+        mock_current = MagicMock()
+        mock_current.daemon = True
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch(
+                "aiperf.common.tokenizer.mp.Process",
+                side_effect=self._make_process_factory(("ok", fake_tokenizer)),
+            ),
+            patch(
+                "aiperf.common.tokenizer.mp.current_process", return_value=mock_current
+            ),
+            patch("aiperf.common.tokenizer._set_daemon") as mock_set_daemon,
+        ):
+            load_tokenizer_guarded("builtin")
+
+        assert mock_set_daemon.call_args_list == [call(False), call(True)]
+
+    def test_no_daemon_toggle_for_non_daemon_process(self) -> None:
+        fake_tokenizer = MagicMock(spec=Tokenizer)
+        mock_current = MagicMock()
+        mock_current.daemon = False
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch(
+                "aiperf.common.tokenizer.mp.Process",
+                side_effect=self._make_process_factory(("ok", fake_tokenizer)),
+            ),
+            patch(
+                "aiperf.common.tokenizer.mp.current_process", return_value=mock_current
+            ),
+            patch("aiperf.common.tokenizer._set_daemon") as mock_set_daemon,
+        ):
+            load_tokenizer_guarded("builtin")
+
+        mock_set_daemon.assert_not_called()
+
+    def test_restores_daemon_flag_after_timeout(self) -> None:
+        proc = MagicMock()
+        proc.is_alive.return_value = True
+        mock_current = MagicMock()
+        mock_current.daemon = True
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch("aiperf.common.tokenizer.mp.Process", return_value=proc),
+            patch(
+                "aiperf.common.tokenizer.mp.current_process", return_value=mock_current
+            ),
+            patch(
+                "aiperf.common.tokenizer.Environment",
+                TOKENIZER=MagicMock(LOAD_TIMEOUT=0.05),
+            ),
+            patch("aiperf.common.tokenizer._set_daemon") as mock_set_daemon,
+            pytest.raises(TimeoutError),
+        ):
+            load_tokenizer_guarded("builtin")
+
+        assert mock_set_daemon.call_args_list == [call(False), call(True)]
+
+    def test_joins_subprocess_on_success(self) -> None:
+        fake_tokenizer = MagicMock(spec=Tokenizer)
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch(
+                "aiperf.common.tokenizer.mp.Process",
+                side_effect=self._make_process_factory(("ok", fake_tokenizer)),
+            ),
+        ) as (_, mock_proc_cls):
+            load_tokenizer_guarded("builtin")
+
+        proc = mock_proc_cls.return_value
+        proc.join.assert_called()
+
+    def test_kills_zombie_process_after_timeout(self) -> None:
+        proc = MagicMock()
+        proc.is_alive.return_value = True
+
+        with (
+            patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
+            patch("aiperf.common.tokenizer.mp.Process", return_value=proc),
+            patch(
+                "aiperf.common.tokenizer.Environment",
+                TOKENIZER=MagicMock(LOAD_TIMEOUT=0.05),
+            ),
+            pytest.raises(TimeoutError),
+        ):
+            load_tokenizer_guarded("builtin")
+
+        proc.kill.assert_called()

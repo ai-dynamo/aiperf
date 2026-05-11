@@ -80,14 +80,14 @@ class TestPreloadTokenizers:
     async def test_prewarms_builtin_tiktoken(self) -> None:
         # Pre-warming ensures macOS child processes (spawned fresh) find the
         # tiktoken encoding file on disk and make zero network calls.
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+        with patch("aiperf.common.tokenizer.load_tokenizer_guarded") as mock_load:
             await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
         mock_load.assert_called_once_with(BUILTIN_TOKENIZER_NAME, resolve_alias=False)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("encoding_name", sorted(TIKTOKEN_ENCODING_NAMES))
     async def test_prewarms_tiktoken_encoding_names(self, encoding_name: str) -> None:
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+        with patch("aiperf.common.tokenizer.load_tokenizer_guarded") as mock_load:
             await preload_tokenizers({"model": encoding_name})
         mock_load.assert_called_once_with(encoding_name, resolve_alias=False)
 
@@ -95,8 +95,9 @@ class TestPreloadTokenizers:
     async def test_tiktoken_prewarm_failure_logs_warning_continues(
         self, mock_logger: MagicMock
     ) -> None:
-        with patch.object(
-            Tokenizer, "from_pretrained", side_effect=RuntimeError("CDN blocked")
+        with patch(
+            "aiperf.common.tokenizer.load_tokenizer_guarded",
+            side_effect=RuntimeError("CDN blocked"),
         ):
             await preload_tokenizers(
                 {"model": BUILTIN_TOKENIZER_NAME}, logger=mock_logger
@@ -120,7 +121,7 @@ class TestPreloadTokenizers:
 
     @pytest.mark.asyncio
     async def test_enables_offline_mode_after_tiktoken_prewarm(self) -> None:
-        with patch.object(Tokenizer, "from_pretrained"):
+        with patch("aiperf.common.tokenizer.load_tokenizer_guarded"):
             await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
         assert os.environ.get("HF_HUB_OFFLINE") == "1"
         assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
@@ -130,8 +131,9 @@ class TestPreloadTokenizers:
         self,
     ) -> None:
         # tiktoken failure should not block HF offline mode — they are independent.
-        with patch.object(
-            Tokenizer, "from_pretrained", side_effect=RuntimeError("CDN blocked")
+        with patch(
+            "aiperf.common.tokenizer.load_tokenizer_guarded",
+            side_effect=RuntimeError("CDN blocked"),
         ):
             await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
         assert os.environ.get("HF_HUB_OFFLINE") == "1"
@@ -178,7 +180,7 @@ class TestPreloadTokenizers:
         resolved = {"model": "meta-llama/Llama-2-7b-hf"}
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
+            patch("aiperf.common.tokenizer.load_tokenizer_guarded") as mock_load,
         ):
             await preload_tokenizers(
                 resolved,
@@ -197,8 +199,9 @@ class TestPreloadTokenizers:
         resolved = {"model": "meta-llama/Llama-2-7b-hf"}
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(
-                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
+            patch(
+                "aiperf.common.tokenizer.load_tokenizer_guarded",
+                side_effect=RuntimeError("network error"),
             ),
         ):
             await preload_tokenizers(resolved, logger=mock_logger)  # must not raise
@@ -214,7 +217,7 @@ class TestPreloadTokenizers:
         }
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
+            patch("aiperf.common.tokenizer.load_tokenizer_guarded") as mock_load,
         ):
             await preload_tokenizers(resolved)
         assert mock_load.call_count == 2
@@ -224,7 +227,7 @@ class TestPreloadTokenizers:
         resolved = {"model": "meta-llama/Llama-2-7b-hf"}
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained"),
+            patch("aiperf.common.tokenizer.load_tokenizer_guarded"),
         ):
             await preload_tokenizers(resolved)
         assert os.environ.get("HF_HUB_OFFLINE") == "1"
@@ -247,8 +250,9 @@ class TestPreloadTokenizers:
         resolved = {"model": "meta-llama/Llama-2-7b-hf"}
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(
-                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
+            patch(
+                "aiperf.common.tokenizer.load_tokenizer_guarded",
+                side_effect=RuntimeError("network error"),
             ),
         ):
             await preload_tokenizers(resolved)

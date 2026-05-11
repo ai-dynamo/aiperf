@@ -7,7 +7,9 @@ import contextlib
 import inspect
 import io
 import logging
+import multiprocessing as mp
 import os
+import queue
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -557,52 +559,68 @@ class Tokenizer:
         return self._tokenizer.__str__()
 
 
-# Timeout (seconds) applied to tiktoken CDN downloads.
-_TIKTOKEN_CDN_TIMEOUT_S: float = 30.0
-
-
-def _patch_tiktoken_cdn_timeout() -> None:
-    """Patch tiktoken.load.read_file to pass an explicit timeout to requests.get.
-
-    tiktoken calls ``requests.get(url)`` with no timeout argument. urllib3
-    converts this to ``Timeout(connect=None, read=None)`` and then calls
-    ``sock.settimeout(None)``, which puts the socket into blocking mode and
-    overrides any ``socket.setdefaulttimeout()`` value. The only reliable fix
-    is to intercept tiktoken's download function and inject a timeout.
-
-    The patch is idempotent and applied once per process on first use.
-    """
+def _set_daemon(daemon: bool) -> None:
+    """Set the daemon flag on the current process."""
     try:
-        import tiktoken.load as _tl
-    except ImportError:
-        return
+        mp.current_process().daemon = daemon
+    except AssertionError:
+        mp.current_process()._config["daemon"] = daemon
 
-    if getattr(_tl, "_aiperf_timeout_patched", False):
-        return
 
-    import requests as _requests
-
-    _original_read_file = _tl.read_file
-
-    def _read_file_with_timeout(blobpath: str) -> bytes:
-        if blobpath.startswith(("http://", "https://")):
-            resp = _requests.get(blobpath, timeout=_TIKTOKEN_CDN_TIMEOUT_S)
-            resp.raise_for_status()
-            return resp.content
-        return _original_read_file(blobpath)
-
-    _tl.read_file = _read_file_with_timeout
-    _tl._aiperf_timeout_patched = True
+def _tokenizer_subprocess_worker(
+    result_q: "mp.Queue[tuple[str, object]]",
+    name: str,
+    **kwargs: object,
+) -> None:
+    try:
+        result_q.put(("ok", Tokenizer.from_pretrained(name, **kwargs)))
+    except Exception as exc:  # noqa: BLE001 — must catch all errors to relay them to parent
+        result_q.put(("error", exc))
 
 
 def load_tokenizer_guarded(name: str, **kwargs: object) -> "Tokenizer":
-    """Call ``Tokenizer.from_pretrained`` with a tiktoken CDN timeout applied.
+    """Load a tokenizer in a subprocess with a hard timeout.
 
-    tiktoken's ``read_file()`` uses ``requests.get()`` with no timeout.
-    urllib3 then calls ``sock.settimeout(None)``, overriding any
-    ``socket.setdefaulttimeout()`` and causing the thread to block forever
-    when the CDN is reachable but unresponsive. This function patches
-    ``tiktoken.load.read_file`` to pass an explicit ``timeout=`` before loading.
+    Runs ``Tokenizer.from_pretrained`` in a child process and kills it if it
+    does not respond within ``AIPERF_TOKENIZER_LOAD_TIMEOUT`` seconds (default
+    30). This prevents indefinite hangs when the tiktoken CDN or HuggingFace
+    Hub is reachable but unresponsive.
+
+    AIPerf services run as daemon processes; the daemon flag is temporarily
+    cleared so Python's multiprocessing allows spawning a child.
     """
-    _patch_tiktoken_cdn_timeout()
-    return Tokenizer.from_pretrained(name, **kwargs)
+    from aiperf.common.environment import Environment
+
+    timeout = Environment.TOKENIZER.LOAD_TIMEOUT
+    result_q: mp.Queue = mp.Queue()
+    was_daemon = mp.current_process().daemon
+    try:
+        if was_daemon:
+            _set_daemon(False)
+        p = mp.Process(
+            target=_tokenizer_subprocess_worker,
+            args=(result_q, name),
+            kwargs=kwargs,
+            daemon=False,
+        )
+        p.start()
+    finally:
+        if was_daemon:
+            _set_daemon(True)
+    try:
+        try:
+            status, payload = result_q.get(timeout=timeout)
+        except queue.Empty:
+            p.kill()
+            raise TimeoutError(
+                f"Tokenizer '{name}' did not load within {timeout}s "
+                "(set AIPERF_TOKENIZER_LOAD_TIMEOUT to adjust)"
+            ) from None
+        if status == "error":
+            raise payload  # type: ignore[misc]
+        return payload  # type: ignore[return-value]
+    finally:
+        p.join(timeout=2.0)
+        if p.is_alive():
+            p.kill()
+            p.join()
