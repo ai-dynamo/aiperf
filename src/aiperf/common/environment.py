@@ -582,7 +582,7 @@ class _SearchPlannerSettings(BaseSettings):
         "width. Each value must be strictly positive — zero/negative request "
         "counts surface as iteration-time failures otherwise. Override via "
         "JSON, e.g. "
-        "AIPERF_SEARCH_PLANNER_SLA_PRECISION_REQUESTS='{\"tight\": 20000}'.",
+        "``AIPERF_SEARCH_PLANNER_SLA_PRECISION_REQUESTS='{\"tight\": 20000}'``.",
     )
 
 

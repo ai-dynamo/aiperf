@@ -49,7 +49,7 @@ The exact set of PNGs depends on the data captured (single-run vs. multi-run, GP
 
 ## When auto-plot is on by default
 
-The resolution rule (implemented in [`resolve_auto_plot`](../../src/aiperf/config/flags/_converter_optionals.py)):
+The resolution rule (implemented in [`resolve_auto_plot`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/flags/_converter_optionals.py)):
 
 | User passed `--auto-plot` / `--no-auto-plot`? | Active search recipe `auto_plot_default`? | Result |
 |---|---|---|
@@ -132,7 +132,7 @@ benchmark:
 plot: ./plots/baseline.yaml   # auto_plot flips on; this envelope wins over ~/.aiperf/plot_config.yaml
 ```
 
-See [`src/aiperf/config/plot.py`](../../src/aiperf/config/plot.py) for the envelope schema and the allowed inline-vs-path forms.
+See [`src/aiperf/config/plot.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/plot.py) for the envelope schema and the allowed inline-vs-path forms.
 
 ## Disabling auto-plot
 

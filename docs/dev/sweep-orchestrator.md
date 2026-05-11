@@ -238,7 +238,7 @@ flowchart TD
     class rep,ind data
 ```
 
-REPEATED interleaves trials across variations so transient effects (warm caches, thermal drift) hit every variation similarly — better for cross-variation comparison. INDEPENDENT runs one variation to completion before moving on — required for convergence-based adaptive trials, since a strategy needs to observe all of one cell's results in sequence. Cooldowns and per-cell strategy reuse follow from the nesting; see [`MultiRunOrchestrator`](../../src/aiperf/orchestrator/orchestrator.py).
+REPEATED interleaves trials across variations so transient effects (warm caches, thermal drift) hit every variation similarly — better for cross-variation comparison. INDEPENDENT runs one variation to completion before moving on — required for convergence-based adaptive trials, since a strategy needs to observe all of one cell's results in sequence. Cooldowns and per-cell strategy reuse follow from the nesting; see [`MultiRunOrchestrator`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/orchestrator/orchestrator.py).
 
 ### Artifact directory layout reference
 
@@ -440,7 +440,7 @@ stage 5 produces** and **what decides each next cell** changes:
 | Multi-run        | 1                                                         | `MultiRunConfig.num_runs` (1–10)      | M                 |
 | Grid sweep       | cartesian product of `sweep.parameters`                   | `MultiRunConfig.num_runs` (default 1) | N × M             |
 | Scenarios sweep  | `len(runs[])`                                             | `MultiRunConfig.num_runs` (default 1) | N × M             |
-| Adaptive search  | grows by 1 every `planner.ask()`; capped by `max_iterations` | `MultiRunConfig.num_runs` (default 1) | <= max_iter × M    |
+| Adaptive search  | grows by 1 every `planner.ask()`; capped by `max_iterations` | `MultiRunConfig.num_runs` (default 1) | ≤ max_iter × M    |
 
 Each cell is one `BenchmarkRun` -> one `RunResult`. The next section unpacks
 the N / M dimensions in detail.
