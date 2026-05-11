@@ -421,6 +421,117 @@ class TestServerMetricsTimeSeriesTimestamps:
         assert ts._update_intervals_ns == [_NS, _NS]
 
 
+def _hist_family(
+    buckets: dict[str, float] | None = None,
+    sum_: float = 3.0,
+    count: float = 10.0,
+) -> MetricFamily:
+    """Create a single-sample histogram MetricFamily."""
+    return MetricFamily(
+        type=PrometheusMetricType.HISTOGRAM,
+        description="Test histogram",
+        samples=[
+            MetricSample(
+                buckets=buckets or {"0.5": 5.0, "+Inf": 10.0},
+                sum=sum_,
+                count=count,
+            )
+        ],
+    )
+
+
+class TestServerMetricsTimeSeriesTypeChange:
+    """Regression tests for issue #911 / AIP-898.
+
+    When a Prometheus server reclassifies a metric between scrapes
+    (e.g. histogram -> gauge, or two TYPE declarations for the same name
+    collide in a single scrape), ServerMetricsTimeSeries.append_snapshot
+    used to feed a value-typed sample into a HistogramTimeSeries (or vice
+    versa) and crash records_manager with
+    ``ValueError('Buckets are required for histogram time series')``.
+
+    The storage layer must instead preserve the existing time series, skip
+    the offending sample, and warn once per metric name.
+    """
+
+    def test_histogram_to_gauge_preserves_existing_histogram_series(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ts = ServerMetricsTimeSeries()
+
+        ts.append_snapshot(make_record(_NS, {"foo": _hist_family()}))
+
+        with caplog.at_level("WARNING"):
+            ts.append_snapshot(make_record(2 * _NS, {"foo": make_gauge_family(42.0)}))
+
+        key = ServerMetricKey("foo", ())
+        assert key in ts.metrics
+        assert ts.metrics[key].metric_type == PrometheusMetricType.HISTOGRAM
+        assert isinstance(ts.metrics[key].data, HistogramTimeSeries)
+        assert len(ts.metrics[key].data) == 1
+        assert any("changed type" in r.message for r in caplog.records)
+
+    def test_gauge_to_histogram_preserves_existing_scalar_series(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ts = ServerMetricsTimeSeries()
+
+        ts.append_snapshot(make_record(_NS, {"foo": make_gauge_family(42.0)}))
+
+        with caplog.at_level("WARNING"):
+            ts.append_snapshot(make_record(2 * _NS, {"foo": _hist_family()}))
+
+        key = ServerMetricKey("foo", ())
+        assert key in ts.metrics
+        assert ts.metrics[key].metric_type == PrometheusMetricType.GAUGE
+        assert isinstance(ts.metrics[key].data, ScalarTimeSeries)
+        assert len(ts.metrics[key].data) == 1
+        assert any("changed type" in r.message for r in caplog.records)
+
+    def test_type_mismatch_warning_emitted_once_per_metric(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Repeated mismatched scrapes must not spam the log every interval."""
+        ts = ServerMetricsTimeSeries()
+
+        ts.append_snapshot(make_record(_NS, {"foo": _hist_family()}))
+
+        with caplog.at_level("WARNING"):
+            for i in range(2, 5):
+                ts.append_snapshot(
+                    make_record(i * _NS, {"foo": make_gauge_family(float(i))})
+                )
+
+        mismatch_warnings = [r for r in caplog.records if "changed type" in r.message]
+        assert len(mismatch_warnings) == 1
+
+    def test_type_mismatch_does_not_block_other_metrics_in_same_record(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A type-changed metric must not abort processing for sibling metrics
+        in the same record — this is the actual user-visible regression.
+        """
+        ts = ServerMetricsTimeSeries()
+
+        ts.append_snapshot(make_record(_NS, {"foo": _hist_family()}))
+
+        with caplog.at_level("WARNING"):
+            ts.append_snapshot(
+                make_record(
+                    2 * _NS,
+                    {
+                        "foo": make_gauge_family(42.0),
+                        "bar": make_gauge_family(7.0),
+                    },
+                )
+            )
+
+        bar_key = ServerMetricKey("bar", ())
+        assert bar_key in ts.metrics
+        assert ts.metrics[bar_key].metric_type == PrometheusMetricType.GAUGE
+        assert len(ts.metrics[bar_key].data) == 1
+
+
 # =============================================================================
 # ServerMetricKey Tests
 # =============================================================================
