@@ -74,7 +74,13 @@ class AudioConfig(BaseConfig):
         ),
     ]
 
-    length: AudioLengthConfig = AudioLengthConfig()
+    length: Annotated[
+        AudioLengthConfig,
+        Field(
+            default_factory=AudioLengthConfig,
+            description="Duration distribution for synthetic audio samples (mean and stddev in seconds).",
+        ),
+    ]
 
     format: Annotated[
         AudioFormat,

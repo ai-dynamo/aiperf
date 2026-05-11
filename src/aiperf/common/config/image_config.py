@@ -98,8 +98,20 @@ class ImageConfig(BaseConfig):
     A configuration class for defining image related settings.
     """
 
-    width: ImageWidthConfig = ImageWidthConfig()
-    height: ImageHeightConfig = ImageHeightConfig()
+    width: Annotated[
+        ImageWidthConfig,
+        Field(
+            default_factory=ImageWidthConfig,
+            description="Width distribution in pixels for synthetic images (mean and stddev).",
+        ),
+    ]
+    height: Annotated[
+        ImageHeightConfig,
+        Field(
+            default_factory=ImageHeightConfig,
+            description="Height distribution in pixels for synthetic images (mean and stddev).",
+        ),
+    ]
     batch_size: Annotated[
         int,
         Field(
