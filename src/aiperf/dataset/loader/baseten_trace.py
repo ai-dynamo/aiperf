@@ -61,6 +61,7 @@ _REQUIRED_COLUMNS = {
     "input_tokens",
     "output_tokens",
 }
+_SESSION_KEY_PROBE_ROWS = 10_000
 
 
 def _score_session_groups(
@@ -199,8 +200,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if metadata_table.num_rows == 0:
             return None, None, None
 
+        probe_size = min(_SESSION_KEY_PROBE_ROWS, metadata_table.num_rows)
+        probe_rows = metadata_table.slice(offset=0, length=probe_size).to_pylist()
+        session_key = self._choose_session_key_from_metadata_rows(probe_rows)
         metadata_rows = metadata_table.to_pylist()
-        session_key = self._choose_session_key_from_metadata_rows(metadata_rows)
 
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
