@@ -499,6 +499,54 @@ jobs:
           validate_wheel "${ORIG}"    .venv-check-orig
           validate_wheel "${NIGHTLY}" .venv-check-nightly
 
+      # Deeper validation than the smoke check above: install the renamed
+      # nightly wheel into a fresh venv and run the unit test suite against
+      # it. Catches wheel-only failure modes the source-tree `unit-tests`
+      # job cannot see — missing Requires-Dist, a module that did not ship
+      # in the wheel, or shipped code that accidentally imports from a
+      # dev-only test helper.
+      #
+      # Hard-fail intentional: a failure here fails build-container, which
+      # blocks the staging jobs (create-multiarch-manifest-ecr,
+      # stage-nightly-{wheel,container}, trigger-gitlab-security-scan) via
+      # their `needs:` chain. The existing `unit-tests` job stays
+      # advisory; this gate sits inside the publish path.
+      - name: Run unit tests against installed nightly wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          NIGHTLY=$(find dist/ -maxdepth 1 -name "aiperf_nightly-*.whl" -type f | head -1)
+          if [ -z "${NIGHTLY}" ]; then
+            echo "::error::No aiperf_nightly wheel found in dist/"
+            exit 1
+          fi
+
+          # Fresh venv — separate from .venv-check-{orig,nightly} above so
+          # the install/uninstall state of one cannot bleed into the other.
+          uv venv .venv-wheel-tests
+          uv pip install --python .venv-wheel-tests/bin/python "${NIGHTLY}"
+          # Test deps the wheel does not carry (not in Requires-Dist).
+          # looptime is required by the auto-fixture in tests/conftest.py that
+          # makes asyncio.sleep run instantly. trustme is used by transport
+          # tests for TLS certificate fixtures.
+          uv pip install --python .venv-wheel-tests/bin/python \
+            'pytest>=7.0.0' pytest-asyncio 'pytest-xdist>=3.8.0' \
+            'hypothesis>=6.0.0' 'looptime>=0.5' 'trustme>=1.0.0'
+          # tests/unit/conftest.py loads tests.harness, which in turn imports
+          # the `aiperf_mock_server` package. The package is dev-only and
+          # not in the wheel; install it editable from the in-tree source.
+          uv pip install --python .venv-wheel-tests/bin/python \
+            -e tests/aiperf_mock_server
+
+          # Run from the repo root. tests/ is on disk; the installed aiperf
+          # package is on sys.path via the venv; src/ is NOT on sys.path,
+          # so `import aiperf` resolves to the installed wheel rather than
+          # the source tree.
+          .venv-wheel-tests/bin/pytest tests/unit \
+            -n auto \
+            -m 'not performance and not stress' \
+            --tb=short
+
       - name: Upload wheels to S3 (amd64 only)
         if: matrix.arch == 'amd64'
         env:

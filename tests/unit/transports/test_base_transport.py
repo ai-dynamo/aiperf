@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-import importlib.metadata as importlib_metadata
-
 import pytest
 
+from aiperf import __version__ as aiperf_version
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -19,7 +18,7 @@ from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport
 
-AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
+AIPERF_USER_AGENT = f"aiperf/{aiperf_version}"
 
 
 def _ensure_scheme(url: str) -> str:
