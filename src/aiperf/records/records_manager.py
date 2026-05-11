@@ -368,7 +368,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     raise
 
     async def _flush_metric_results_processors(self, force: bool = False) -> None:
-        """Flush any results processors that provide explicit flush support."""
+        """Flush any results processors that provide explicit flush support.
+
+        Mirrors the best-effort contract from ``_send_results_to_results_processors``:
+        flush failures on processors marked ``is_best_effort=True`` (e.g. OTel
+        streaming) are logged and swallowed; non-best-effort processors re-raise
+        so data-pipeline bugs surface. Today every ``FlushableResultsProcessorProtocol``
+        implementer is best-effort telemetry, but the explicit check keeps the
+        contract consistent with the per-record path if a future flushable
+        processor (e.g. a Parquet writer) is added.
+        """
         flushable_processors = [
             results_processor
             for results_processor in self._metric_results_processors
@@ -385,19 +394,26 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=True,
         )
         for processor, result in zip(flushable_processors, results, strict=True):
-            if isinstance(result, BaseException):
-                self.exception(
-                    f"Failed to flush metric results processor "
-                    f"{processor.__class__.__name__}: {result!r}"
-                )
+            if not isinstance(result, BaseException):
+                continue
+            self.exception(
+                f"Failed to flush metric results processor "
+                f"{processor.__class__.__name__}: {result!r}"
+            )
+            if not getattr(processor, IS_BEST_EFFORT_ATTR, False):
+                raise result
 
     async def _send_timing_to_results_processors(
         self, phase_stats: CreditPhaseStats
     ) -> None:
         """Send timing snapshots to timing-capable results processors.
 
-        All timing processors are best-effort telemetry (OTel streamer only);
-        failures are logged but never re-raised.
+        Mirrors the best-effort contract from ``_send_results_to_results_processors``:
+        failures on processors marked ``is_best_effort=True`` are logged and
+        swallowed; non-best-effort failures re-raise. All timing processors
+        today are OTel streaming telemetry (best-effort), but the explicit
+        check keeps the behaviour predictable if a non-telemetry timing
+        processor is added later.
         """
         if not self._timing_results_processors:
             return
@@ -412,11 +428,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for results_processor, result in zip(
             self._timing_results_processors, results, strict=True
         ):
-            if isinstance(result, BaseException):
-                self.exception(
-                    "Failed to process timing snapshot in "
-                    f"{results_processor.__class__.__name__}: {result!r}"
-                )
+            if not isinstance(result, BaseException):
+                continue
+            self.exception(
+                "Failed to process timing snapshot in "
+                f"{results_processor.__class__.__name__}: {result!r}"
+            )
+            if not getattr(results_processor, IS_BEST_EFFORT_ATTR, False):
+                raise result
 
     async def _send_telemetry_to_results_processors(
         self, telemetry_records: list[TelemetryRecord]

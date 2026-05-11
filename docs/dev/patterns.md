@@ -313,11 +313,32 @@ OTelResultData = MetricRecordsData | CreditPhaseStats
 
 @runtime_checkable
 class OTelResultsStrategyProtocol(Protocol):
-    """Protocol for OTel result processing strategies."""
+    """Public extension point for new streamed OTel result domains.
 
-    def supports(self, record_data: OTelResultData) -> bool: ...
+    A strategy owns exactly one ``OTelResultData`` variant and emits its
+    telemetry via ``OTelStrategyContextProtocol``. Strategies MUST NOT touch
+    OTel instruments, the fanout queue, or the MLflow client directly — the
+    context owns instrument lifecycle and cross-strategy state so fanout
+    stays consistent across strategies.
+    """
 
-    async def process(self, record_data: OTelResultData) -> None: ...
+    def supports(self, record_data: OTelResultData) -> bool:
+        """Return True iff ``record_data`` is the variant this strategy consumes.
+
+        Implementations use ``isinstance`` against a single concrete type —
+        strategies are mutually exclusive by record type.
+        """
+        ...
+
+    async def process(self, record_data: OTelResultData) -> None:
+        """Emit telemetry for ``record_data`` without blocking the hot path.
+
+        Instrument access goes through the context's ``get_or_create_*``
+        factories, which enqueue fanout events rather than touching the OTel
+        SDK inline. Raising is permitted; the processor is best-effort, so
+        the records manager logs and swallows the failure.
+        """
+        ...
 ```
 
 Concrete strategies accept a context object at construction time and implement

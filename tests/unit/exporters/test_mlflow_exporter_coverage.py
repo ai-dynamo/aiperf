@@ -152,6 +152,48 @@ class TestResolveLiveStreamingRunId:
         )
         assert result == "abc123"
 
+    def test_successful_reuse_with_redacted_on_disk_credential_in_memory(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: on-disk URI is redacted, in-memory URI carries credentials.
+
+        mlflow_export.json is uploaded as a run artifact, so _write_export_metadata
+        redacts userinfo from the tracking URI before persisting. The reuse check
+        must redact the in-memory URI too, otherwise same-backend reuse breaks
+        for credentialed backends like postgresql://user:secret@db/mlflow.
+        """
+        config = _make_config(
+            tmp_path, tracking_uri="postgresql://user:secret@db:5432/mlflow"
+        )
+        exporter = MLflowDataExporter(exporter_config=config)
+        result = exporter._resolve_live_streaming_run_id(
+            {
+                "live_streaming": True,
+                "run_id": "abc123",
+                "tracking_uri": "postgresql://<redacted>@db:5432/mlflow",
+                "benchmark_id": "test-bench-123",
+            }
+        )
+        assert result == "abc123"
+
+    def test_tracking_uri_mismatch_still_rejected_after_redaction(
+        self, tmp_path: Path
+    ) -> None:
+        """Redaction must not collapse different hosts into a match."""
+        config = _make_config(
+            tmp_path, tracking_uri="postgresql://user:secret@db1:5432/mlflow"
+        )
+        exporter = MLflowDataExporter(exporter_config=config)
+        result = exporter._resolve_live_streaming_run_id(
+            {
+                "live_streaming": True,
+                "run_id": "abc123",
+                "tracking_uri": "postgresql://<redacted>@db2:5432/mlflow",
+                "benchmark_id": "test-bench-123",
+            }
+        )
+        assert result is None
+
 
 class TestNormalizeUri:
     """Regression: normalize_mlflow_uri must not collapse case-distinct paths."""

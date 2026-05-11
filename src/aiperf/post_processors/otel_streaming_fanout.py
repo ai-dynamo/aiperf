@@ -100,11 +100,16 @@ def _write_live_mlflow_metadata(
     benchmark_id: str | None,
     parent_run_id: str | None,
 ) -> None:
+    from aiperf.common.redact import redact_url
     from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
 
     metadata_file.parent.mkdir(parents=True, exist_ok=True)
+    # mlflow_export.json is uploaded as a run artifact by the deferred
+    # MLflowDataExporter, so strip userinfo (user:secret@) from the tracking
+    # URI before persisting it. The exporter's reuse check redacts both sides
+    # at compare time, so same-backend reuse still works.
     payload: MLflowExportMetadata = {
-        "tracking_uri": tracking_uri,
+        "tracking_uri": redact_url(tracking_uri),
         "experiment": experiment,
         "run_id": run_id,
         "run_name": run_name,

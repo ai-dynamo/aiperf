@@ -398,22 +398,47 @@ class TestRecordsManagerTimingDispatch:
         manager.exception.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_timing_to_results_processors_logs_processor_failures(
+    async def test_send_timing_to_results_processors_swallows_best_effort_failures(
         self,
     ) -> None:
+        """Best-effort timing processors (OTel streaming) log but do not re-raise."""
         manager = RecordsManager.__new__(RecordsManager)
         ok_processor = MagicMock()
         ok_processor.process_result = AsyncMock(return_value=None)
+        ok_processor.is_best_effort = True
         failing_processor = MagicMock()
         failing_processor.process_result = AsyncMock(
             side_effect=RuntimeError("timing failure")
         )
+        failing_processor.is_best_effort = True
         manager._timing_results_processors = [ok_processor, failing_processor]
         manager.exception = MagicMock()
 
         await manager._send_timing_to_results_processors(_create_credit_phase_stats())
 
         ok_processor.process_result.assert_awaited_once()
+        failing_processor.process_result.assert_awaited_once()
+        manager.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_timing_to_results_processors_reraises_non_best_effort_failures(
+        self,
+    ) -> None:
+        """Non-best-effort timing processors re-raise so bugs surface."""
+        manager = RecordsManager.__new__(RecordsManager)
+        failing_processor = MagicMock()
+        failing_processor.process_result = AsyncMock(
+            side_effect=RuntimeError("strict timing failure")
+        )
+        failing_processor.is_best_effort = False
+        manager._timing_results_processors = [failing_processor]
+        manager.exception = MagicMock()
+
+        with pytest.raises(RuntimeError, match="strict timing failure"):
+            await manager._send_timing_to_results_processors(
+                _create_credit_phase_stats()
+            )
+
         failing_processor.process_result.assert_awaited_once()
         manager.exception.assert_called_once()
 
@@ -511,7 +536,10 @@ class TestRecordsManagerProcessorDispatch:
         manager.exception.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_flush_metric_results_processors_logs_flush_failures(self) -> None:
+    async def test_flush_metric_results_processors_swallows_best_effort_failures(
+        self,
+    ) -> None:
+        """Best-effort flushable processors (telemetry) log but do not re-raise."""
         manager = RecordsManager.__new__(RecordsManager)
         manager.exception = MagicMock()
         manager.debug = MagicMock()
@@ -519,16 +547,54 @@ class TestRecordsManagerProcessorDispatch:
         class FakeFlushProtocol:
             pass
 
-        class FakeFlushable(FakeFlushProtocol):
-            def __init__(self) -> None:
-                self.flush = AsyncMock(side_effect=RuntimeError("flush failed"))
+        class FakeBestEffortFlushable(FakeFlushProtocol):
+            is_best_effort: bool = True
 
-        flushable = FakeFlushable()
+            def __init__(self) -> None:
+                self.flush = AsyncMock(side_effect=RuntimeError("otel flush failed"))
+
+        flushable = FakeBestEffortFlushable()
         manager._metric_results_processors = [flushable]
 
         with patch(
             "aiperf.records.records_manager.FlushableResultsProcessorProtocol",
             FakeFlushProtocol,
+        ):
+            # Should NOT raise — best-effort contract.
+            await manager._flush_metric_results_processors(force=True)
+
+        flushable.flush.assert_awaited_once_with(force=True)
+        manager.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_flush_metric_results_processors_reraises_non_best_effort_failures(
+        self,
+    ) -> None:
+        """Non-best-effort flushable processors re-raise to surface data-pipeline bugs."""
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.exception = MagicMock()
+        manager.debug = MagicMock()
+
+        class FakeFlushProtocol:
+            pass
+
+        class FakeStrictFlushable(FakeFlushProtocol):
+            is_best_effort: bool = False
+
+            def __init__(self) -> None:
+                self.flush = AsyncMock(
+                    side_effect=RuntimeError("pipeline flush failed")
+                )
+
+        flushable = FakeStrictFlushable()
+        manager._metric_results_processors = [flushable]
+
+        with (
+            patch(
+                "aiperf.records.records_manager.FlushableResultsProcessorProtocol",
+                FakeFlushProtocol,
+            ),
+            pytest.raises(RuntimeError, match="pipeline flush failed"),
         ):
             await manager._flush_metric_results_processors(force=True)
 

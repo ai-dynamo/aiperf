@@ -8,6 +8,7 @@ from typing import cast
 import orjson
 
 from aiperf.common.config import MLflowDefaults
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
 from aiperf.plot.constants import PLOT_LOG_FILE, PlotMode, PlotTheme
@@ -55,6 +56,20 @@ def _resolve_mlflow_upload_target(
             "MLflow tracking URI is required for --mlflow-upload. "
             "Provide --mlflow-tracking-uri or ensure "
             f"{metadata_file} contains 'tracking_uri'."
+        )
+    # The on-disk tracking URI is persisted with userinfo redacted (see
+    # MLflowDataExporter._write_export_metadata), so a credentialed backend
+    # like postgresql://user:secret@db/mlflow round-trips as
+    # postgresql://<redacted>@db/mlflow — not a usable connection string.
+    # Only fall back to the on-disk value when the user did not pass
+    # --mlflow-tracking-uri explicitly, and raise early if the fallback is
+    # unusable so the user isn't blocked on a surprising MLflow client error.
+    if tracking_uri is None and REDACTED_VALUE in str(resolved_tracking_uri):
+        raise ValueError(
+            "MLflow tracking URI in "
+            f"{metadata_file} has redacted credentials "
+            f"({resolved_tracking_uri!r}) and cannot be used directly. "
+            "Pass --mlflow-tracking-uri with the original credentialed URI."
         )
     if not resolved_run_id:
         raise ValueError(

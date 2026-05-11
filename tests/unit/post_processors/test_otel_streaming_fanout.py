@@ -384,3 +384,42 @@ def test_run_fanout_invalid_payload_logs_warning_and_continues(
 
     assert "Invalid histogram fanout payload received" in caplog.text
     assert otel_state["shutdown_calls"] == 1
+
+
+def test_run_fanout_redacts_tracking_uri_userinfo_in_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression: mlflow_export.json is uploaded as a run artifact by the
+    deferred exporter, so credentials in --mlflow-tracking-uri must not be
+    written verbatim to the on-disk metadata file."""
+    mlflow_state: dict[str, Any] = {"log_batch_calls": []}
+    _install_fake_mlflow_modules(monkeypatch, mlflow_state)
+
+    queue = _SequenceQueue([{"type": "shutdown", "payload": {}}])
+    config = OTelStreamingFanoutConfig(
+        endpoint_url=None,
+        request_timeout_seconds=5.0,
+        export_interval_millis=100,
+        export_timeout_millis=1000,
+        max_batch_records=500,
+        resource_attributes={"service.name": "aiperf"},
+        mlflow_tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
+        mlflow_experiment="aiperf-tests",
+        mlflow_run_name="live-test",
+        mlflow_tags={},
+        mlflow_parent_run_id=None,
+        benchmark_id="bench-1",
+        metadata_file=tmp_path / "mlflow_export.json",
+    )
+
+    run_otel_streaming_fanout(queue, config)
+
+    metadata_path = tmp_path / "mlflow_export.json"
+    metadata = orjson.loads(metadata_path.read_bytes())
+    assert metadata["tracking_uri"] == "postgresql://<redacted>@db:5432/mlflow"
+    raw = metadata_path.read_text(encoding="utf-8")
+    assert "dbuser" not in raw
+    assert "s3cret" not in raw
+    # The fanout still configures mlflow with the real URI so it can authenticate.
+    assert mlflow_state["tracking_uri"] == "postgresql://dbuser:s3cret@db:5432/mlflow"

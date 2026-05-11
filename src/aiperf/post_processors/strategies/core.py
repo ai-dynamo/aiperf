@@ -31,11 +31,37 @@ class CounterInstrument(Protocol):
 
 @runtime_checkable
 class OTelResultsStrategyProtocol(Protocol):
-    """Protocol for OTel result processing strategies."""
+    """Public extension point for new streamed OTel result domains.
 
-    def supports(self, record_data: OTelResultData) -> bool: ...
+    A strategy owns exactly one ``OTelResultData`` variant and emits its
+    telemetry via ``OTelStrategyContextProtocol``. Strategies MUST NOT touch
+    OTel instruments, the fanout queue, or the MLflow client directly — the
+    context owns instrument lifecycle and cross-strategy state (e.g. cumulative
+    counter/gauge snapshots) so fanout stays consistent across strategies.
+    """
 
-    async def process(self, record_data: OTelResultData) -> None: ...
+    def supports(self, record_data: OTelResultData) -> bool:
+        """Return True iff ``record_data`` is the variant this strategy consumes.
+
+        Implementations use ``isinstance`` against a single concrete type —
+        strategies are mutually exclusive by record type, so a given record
+        dispatches to exactly one strategy. The dispatcher in
+        ``OTelMetricsResultsProcessor`` iterates strategies in registration
+        order and calls ``process`` on the first match.
+        """
+        ...
+
+    async def process(self, record_data: OTelResultData) -> None:
+        """Emit telemetry for ``record_data`` without blocking the hot path.
+
+        Must be cheap — the caller is on the benchmark's record-processing
+        dispatch path. Instrument access goes through the context's
+        ``get_or_create_*`` factories (which enqueue fanout events rather than
+        constructing OTel SDK instruments inline). Raising is permitted;
+        ``OTelMetricsResultsProcessor.is_best_effort = True`` means the
+        records manager logs and swallows the failure.
+        """
+        ...
 
 
 @runtime_checkable

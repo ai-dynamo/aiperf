@@ -14,6 +14,7 @@ from aiperf.common.config import MLflowDefaults
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.optional_dependencies import mlflow_dependency_message
+from aiperf.common.redact import redact_cli_command, redact_url
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.mlflow_metadata import (
     MLflowExportMetadata,
@@ -96,9 +97,8 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         except ValueError:
             relative_parent = Path(".")
 
-        base = (
-            "plots" if artifact_file.suffix.lower() in cls._PLOT_SUFFIXES else "exports"
-        )
+        is_plot = artifact_file.suffix.lower() in cls._PLOT_SUFFIXES
+        base = "plots" if is_plot else "exports"
         parts = list(relative_parent.parts)
         if parts and parts[0] == base:
             parts = parts[1:]
@@ -184,10 +184,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 mlflow_dependency_message("MLflow export is enabled")
             ) from exc
 
-        assert self._tracking_uri is not None, (
-            "_export_sync invariant: __init__ guarantees mlflow_tracking_uri is set"
-        )
-
+        assert self._tracking_uri is not None  # invariant: __init__ guards None
         mlflow.set_tracking_uri(self._tracking_uri)
         mlflow.set_experiment(self._experiment_name)
         client = MlflowClient()
@@ -352,8 +349,6 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         return payload
 
     def _build_param_payload(self) -> dict[str, str]:
-        from aiperf.common.redact import redact_cli_command, redact_url
-
         params: dict[str, str] = {
             "endpoint.type": str(self._user_config.endpoint.type),
             "endpoint.models": ",".join(self._user_config.endpoint.model_names),
@@ -370,14 +365,11 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             params["loadgen.concurrency"] = str(self._user_config.loadgen.concurrency)
         if self._user_config.loadgen.request_rate is not None:
             params["loadgen.request_rate"] = str(self._user_config.loadgen.request_rate)
-        if self._user_config.loadgen.request_count is not None:
-            params["loadgen.request_count"] = str(
-                self._user_config.loadgen.request_count
-            )
-        if self._user_config.loadgen.benchmark_duration is not None:
-            params["loadgen.benchmark_duration"] = str(
-                self._user_config.loadgen.benchmark_duration
-            )
+        loadgen = self._user_config.loadgen
+        if loadgen.request_count is not None:
+            params["loadgen.request_count"] = str(loadgen.request_count)
+        if loadgen.benchmark_duration is not None:
+            params["loadgen.benchmark_duration"] = str(loadgen.benchmark_duration)
         if self._user_config.cli_command:
             params["aiperf.cli_command"] = redact_cli_command(
                 self._user_config.cli_command
@@ -423,16 +415,13 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         try:
             metadata = orjson.loads(self._metadata_file.read_bytes())
         except orjson.JSONDecodeError:
-            self.warning(
-                f"Ignoring malformed MLflow metadata file: {self._metadata_file}"
-            )
+            self.warning(f"Ignoring malformed MLflow metadata: {self._metadata_file}")
             return {}
-        # Runtime guard: mlflow_export.json is on disk and may be hand-edited
-        # or corrupted. The TypedDict only asserts shape to the type checker.
+        # Runtime guard: mlflow_export.json may be hand-edited or corrupted.
         if not isinstance(metadata, dict):
             self.warning(
-                "Ignoring unexpected MLflow metadata payload type in "
-                f"{self._metadata_file}: {type(metadata).__name__}"
+                f"Ignoring unexpected MLflow metadata in {self._metadata_file}: "
+                f"{type(metadata).__name__}"
             )
             return {}
         return cast(MLflowExportMetadata, metadata)
@@ -446,11 +435,18 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         metadata_run_id = metadata.get("run_id")
         metadata_tracking_uri = metadata.get("tracking_uri")
         metadata_benchmark_id = metadata.get("benchmark_id")
+        # Redact both sides so same-backend reuse still matches after userinfo
+        # has been stripped from the on-disk URI (see _write_export_metadata).
+        disk_uri = (
+            redact_url(metadata_tracking_uri)
+            if isinstance(metadata_tracking_uri, str)
+            else None
+        )
+        memory_uri = redact_url(self._tracking_uri) if self._tracking_uri else None
         if (
             not isinstance(metadata_run_id, str)
             or not metadata_run_id
-            or normalize_mlflow_uri(metadata_tracking_uri)
-            != normalize_mlflow_uri(self._tracking_uri)
+            or normalize_mlflow_uri(disk_uri) != normalize_mlflow_uri(memory_uri)
         ):
             return None
 
@@ -476,8 +472,12 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         parent_run_id: str | None = None,
     ) -> None:
         self._artifact_directory.mkdir(parents=True, exist_ok=True)
+        # mlflow_export.json is uploaded as a run artifact; redact userinfo so
+        # credentials never round-trip. Reuse still works because
+        # _resolve_live_streaming_run_id redacts both sides before comparing.
+        assert self._tracking_uri is not None  # invariant: _export_sync guards None
         metadata: MLflowExportMetadata = {
-            "tracking_uri": self._tracking_uri,
+            "tracking_uri": redact_url(self._tracking_uri),
             "experiment": self._experiment_name,
             "run_id": run_id,
             "run_name": run_name,

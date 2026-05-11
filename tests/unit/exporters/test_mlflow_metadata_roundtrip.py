@@ -359,3 +359,101 @@ class TestMLflowMetadataByteEqualityRoundtrip:
 
         metadata = orjson.loads(disk_bytes)
         assert metadata["uploaded_artifacts"] == ["mlflow_export.json"]
+
+
+class TestMLflowTrackingUriRedactedInMetadata:
+    """Verify tracking URI userinfo is redacted before persistence + upload."""
+
+    def test_credentialed_tracking_uri_redacted_in_on_disk_metadata(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+    ) -> None:
+        """Regression: mlflow_export.json is a run artifact, so credentials in
+        --mlflow-tracking-uri must never be written verbatim (they would then
+        round-trip through the uploaded artifact)."""
+        _write_artifact(tmp_path / "profile_export_aiperf.json")
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                type=EndpointType.CHAT,
+                model_names=["test-model"],
+                urls=["http://localhost:8000"],
+            ),
+            output=OutputConfig(artifact_directory=tmp_path),
+            mlflow_tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
+            mlflow_experiment="redaction-test",
+        )
+
+        state = _install_fake_mlflow_with_parent_tracking()
+        exporter_config = ExporterConfig(
+            results=sample_results,
+            user_config=user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+        exporter = MLflowDataExporter(exporter_config)
+        exporter._export_sync()
+
+        metadata_path = tmp_path / "mlflow_export.json"
+        final_metadata = orjson.loads(metadata_path.read_bytes())
+        assert final_metadata["tracking_uri"] == (
+            "postgresql://<redacted>@db:5432/mlflow"
+        )
+        assert "s3cret" not in metadata_path.read_text(encoding="utf-8")
+        assert "dbuser" not in metadata_path.read_text(encoding="utf-8")
+
+        # MLflow client calls still receive the real URI (needs to authenticate).
+        metadata_bytes = metadata_path.read_bytes()
+        uploaded = state["artifacts_uploaded"][str(metadata_path)]
+        assert uploaded == metadata_bytes  # byte-equality preserved
+
+    def test_reuse_check_accepts_redacted_on_disk_with_credentialed_in_memory(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+    ) -> None:
+        """Reuse still works: live metadata stores redacted URI, in-memory URI has creds."""
+        benchmark_id = "bench-redact-001"
+        live_metadata = {
+            "tracking_uri": "postgresql://<redacted>@db:5432/mlflow",
+            "experiment": "redaction-test",
+            "run_id": "live-run-redacted",
+            "run_name": "live-run",
+            "benchmark_id": benchmark_id,
+            "live_streaming": True,
+        }
+        (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(live_metadata))
+        _write_artifact(tmp_path / "profile_export_aiperf.json")
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                type=EndpointType.CHAT,
+                model_names=["test-model"],
+                urls=["http://localhost:8000"],
+            ),
+            output=OutputConfig(artifact_directory=tmp_path),
+            mlflow_tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
+            mlflow_experiment="redaction-test",
+            benchmark_id=benchmark_id,
+        )
+
+        state = _install_fake_mlflow_with_parent_tracking()
+        exporter_config = ExporterConfig(
+            results=sample_results,
+            user_config=user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+        exporter = MLflowDataExporter(exporter_config)
+        exporter._export_sync()
+
+        # Reuse path: start_run was invoked with run_id from live metadata.
+        start_call = state["start_run_calls"][0]
+        assert start_call.get("run_id") == "live-run-redacted"
+
+        final_metadata = orjson.loads((tmp_path / "mlflow_export.json").read_bytes())
+        assert final_metadata["reused_live_run"] is True
+        assert final_metadata["tracking_uri"] == (
+            "postgresql://<redacted>@db:5432/mlflow"
+        )

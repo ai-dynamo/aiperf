@@ -449,6 +449,45 @@ class TestResolveMlflowUploadTarget:
                 run_id=None,
             )
 
+    def test_rejects_redacted_fallback_tracking_uri(self, tmp_path: Path) -> None:
+        """When the on-disk tracking URI has userinfo redacted (e.g. postgresql://
+        <redacted>@db/mlflow), the plot command cannot authenticate with it, so
+        surface a clear error asking the user to pass --mlflow-tracking-uri."""
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text(
+            '{"tracking_uri":"postgresql://<redacted>@db:5432/mlflow","run_id":"run-xyz"}',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="redacted credentials"):
+            _resolve_mlflow_upload_target(
+                input_paths=[run_dir],
+                tracking_uri=None,
+                run_id=None,
+            )
+
+    def test_accepts_explicit_tracking_uri_when_on_disk_redacted(
+        self, tmp_path: Path
+    ) -> None:
+        """User-provided --mlflow-tracking-uri overrides the on-disk redacted value."""
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text(
+            '{"tracking_uri":"postgresql://<redacted>@db:5432/mlflow","run_id":"run-xyz"}',
+            encoding="utf-8",
+        )
+
+        tracking_uri, run_id = _resolve_mlflow_upload_target(
+            input_paths=[run_dir],
+            tracking_uri="postgresql://u:p@db:5432/mlflow",
+            run_id=None,
+        )
+        assert tracking_uri == "postgresql://u:p@db:5432/mlflow"
+        assert run_id == "run-xyz"
+
 
 class TestUploadGeneratedPlotsToMlflow:
     @patch("aiperf.plot.cli_runner.MLflowDataExporter.upload_artifacts_to_run")
