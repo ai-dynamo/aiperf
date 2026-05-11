@@ -110,7 +110,7 @@ def load_server_metrics(run_dir: Path) -> dict | None:
 def extract_category(profile: dict) -> str | None:
     """Extract the SPEED-Bench category from the input config."""
     try:
-        dataset = profile["input_config"]["input"]["public_dataset"]
+        dataset = profile["input_config"]["input"]["custom_dataset_type"]
     except (KeyError, TypeError):
         return None
     if not isinstance(dataset, str) or not dataset.startswith("speed_bench_"):
