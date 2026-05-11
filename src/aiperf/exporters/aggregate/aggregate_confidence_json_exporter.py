@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """JSON exporter for confidence aggregate results."""
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
+
+if TYPE_CHECKING:
+    from aiperf.common.models.export_models import JsonExportData
 
 
 class AggregateConfidenceJsonExporter(AggregateBaseExporter):
@@ -50,7 +53,7 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
             indent=2, exclude_unset=True, exclude_none=True
         )
 
-    def _aggregate_to_export_data(self):
+    def _aggregate_to_export_data(self) -> "JsonExportData":
         """Convert AggregateResult to JsonExportData format.
 
         This is the adapter that bridges aggregate domain to export format.
