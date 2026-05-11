@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Warmup + Profiling (Two-Phase)
+# description: Proper benchmark setup: warmup phase for JIT/cache, then clean profiling.
+# category: Getting Started
+# tags: warmup, two-phase, best-practice
+# difficulty: beginner
+# features: multi-phase, exclude_from_results
+#
+# Two-Phase Benchmark: Warmup + Profiling
+# =======================================
+# Proper benchmark setup with warmup phase to:
+# - Warm up JIT compilation
+# - Populate KV cache
+# - Stabilize connection pools
+#
+# Use case: Production benchmarking with stable measurements
+#
+# Run: aiperf profile --config warmup_profiling.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 5000
+    isl: {mean: 550, stddev: 50}
+    osl: {mean: 150, stddev: 25}
+
+  warmup:
+    type: concurrency
+    requests: 100
+    concurrency: 8
+
+  # Main profiling phase - included in results
+  profiling:
+    type: gamma
+    duration: 300  # 5 minutes
+    rate: 50.0
+    concurrency: 64
+    smoothness: 1.5
+    rateRamp: 30s  # Ramp rate over 30 seconds
+    gracePeriod: 60s
+
+  artifacts:
+    dir: ./artifacts/warmup_profiling
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 60s

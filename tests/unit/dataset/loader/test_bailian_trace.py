@@ -6,16 +6,10 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import (
-    EndpointConfig,
-    InputConfig,
-    InputTokensConfig,
-    PromptConfig,
-    SynthesisConfig,
-    UserConfig,
-)
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
+from tests.unit.conftest import make_run_from_v1
 
 # ============================================================================
 # BailianTrace Model Tests
@@ -118,28 +112,26 @@ class TestBailianTraceDatasetLoader:
 
     @pytest.fixture
     def default_user_config(self):
-        return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        return CLIConfig(model_names=["test-model"])
 
     def _make_user_config(
         self,
         start_offset: int | None = None,
         end_offset: int | None = None,
         file: str | None = None,
-    ) -> UserConfig:
+    ) -> CLIConfig:
         has_offsets = start_offset is not None or end_offset is not None
-        input_config = (
-            InputConfig(
-                file=file,
-                fixed_schedule=True,
-                fixed_schedule_start_offset=start_offset,
-                fixed_schedule_end_offset=end_offset,
-            )
-            if has_offsets
-            else InputConfig()
-        )
-        return UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=input_config,
+        input_kwargs: dict = {}
+        if has_offsets:
+            input_kwargs = {
+                "file": file,
+                "fixed_schedule": True,
+                "fixed_schedule_start_offset": start_offset,
+                "fixed_schedule_end_offset": end_offset,
+            }
+        return CLIConfig(
+            model_names=["test-model"],
+            **input_kwargs,
         )
 
     # ---- basic loading ----
@@ -155,7 +147,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -175,7 +167,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -195,7 +187,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -218,7 +210,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -241,7 +233,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -261,7 +253,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -297,10 +289,10 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = self._make_user_config(start_offset, end_offset, file=filename)
+        cli_config = self._make_user_config(start_offset, end_offset, file=filename)
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -320,10 +312,10 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = self._make_user_config(1000, 3000, file=filename)
+        cli_config = self._make_user_config(1000, 3000, file=filename)
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         loader.load_dataset()
@@ -351,13 +343,14 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(synthesis=SynthesisConfig(max_isl=max_isl)),
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=filename,
+            synthesis_max_isl=max_isl,
         )
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -384,13 +377,14 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(synthesis=SynthesisConfig(max_osl=max_osl)),
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=filename,
+            synthesis_max_osl=max_osl,
         )
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -444,7 +438,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -457,7 +451,7 @@ class TestBailianTraceDatasetLoader:
     def test_convert_empty_data(self, mock_prompt_generator, default_user_config):
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         assert loader.convert_to_conversations({}) == []
@@ -477,7 +471,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -517,7 +511,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -569,7 +563,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -591,20 +585,13 @@ def _make_synthesis_config(
     speedup_ratio: float = 1.0,
     prefix_len_multiplier: float = 1.0,
     max_isl: int | None = None,
-    block_size: int = 16,
-) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            synthesis=SynthesisConfig(
-                speedup_ratio=speedup_ratio,
-                prefix_len_multiplier=prefix_len_multiplier,
-                max_isl=max_isl,
-            ),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(block_size=block_size),
-            ),
-        ),
+) -> CLIConfig:
+    return CLIConfig.model_construct(
+        model_names=["test-model"],
+        input_file="dummy.jsonl",
+        synthesis_speedup_ratio=speedup_ratio,
+        synthesis_prefix_len_multiplier=prefix_len_multiplier,
+        synthesis_max_isl=max_isl,
     )
 
 
@@ -638,11 +625,11 @@ class TestBailianTraceSynthesisIntegration:
                 ),
             ],
         }
-        user_config = _make_synthesis_config(speedup_ratio=2.0)
+        cli_config = _make_synthesis_config(speedup_ratio=2.0)
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         result = loader._apply_synthesis(data)
@@ -671,11 +658,11 @@ class TestBailianTraceSynthesisIntegration:
                 ),
             ],
         }
-        user_config = _make_synthesis_config(speedup_ratio=2.0)
+        cli_config = _make_synthesis_config(speedup_ratio=2.0)
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         result = loader._apply_synthesis(data)
@@ -696,11 +683,11 @@ class TestBailianTraceSynthesisIntegration:
                 ),
             ],
         }
-        user_config = _make_synthesis_config(speedup_ratio=2.0)
+        cli_config = _make_synthesis_config(speedup_ratio=2.0)
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         result = loader._apply_synthesis(data)
@@ -710,10 +697,10 @@ class TestBailianTraceSynthesisIntegration:
                 assert isinstance(trace, BailianTrace)
 
     def test_empty_input(self, mock_prompt_generator):
-        user_config = _make_synthesis_config(speedup_ratio=2.0)
+        cli_config = _make_synthesis_config(speedup_ratio=2.0)
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         assert loader._apply_synthesis({}) == {}
@@ -725,10 +712,10 @@ class TestBailianTraceSynthesisIntegration:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = _make_synthesis_config(speedup_ratio=2.0)
+        cli_config = _make_synthesis_config(speedup_ratio=2.0)
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
+            run=make_run_from_v1(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()

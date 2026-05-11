@@ -108,24 +108,44 @@ def load_server_metrics(run_dir: Path) -> dict | None:
 
 
 def extract_category(profile: dict) -> str | None:
-    """Extract the SPEED-Bench category from the input config."""
+    """Extract the SPEED-Bench category from the input config.
+
+    The exporter writes ``input_config`` as a dump of the v2 ``BenchmarkConfig``,
+    so the public dataset enum lives on ``datasets[].dataset``. Returns the
+    suffix of the first entry whose value starts with ``speed_bench_``.
+    """
     try:
-        dataset = profile["input_config"]["input"]["public_dataset"]
+        datasets = profile["input_config"]["datasets"]
     except (KeyError, TypeError):
         return None
-    if not isinstance(dataset, str) or not dataset.startswith("speed_bench_"):
+    if not isinstance(datasets, list):
         return None
-    return dataset.removeprefix("speed_bench_")
+    for entry in datasets:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("dataset")
+        if isinstance(name, str) and name.startswith("speed_bench_"):
+            return name.removeprefix("speed_bench_")
+    return None
 
 
 def extract_model(profile: dict) -> str:
-    """Extract model name from the input config."""
+    """Extract model name from the input config.
+
+    Reads ``input_config.models.items[0].name`` from the v2 ``BenchmarkConfig``
+    dump. Falls back to ``"unknown"`` when absent or malformed.
+    """
     try:
-        names = profile["input_config"]["endpoint"]["model_names"]
-        if names:
-            return names[0]
+        items = profile["input_config"]["models"]["items"]
     except (KeyError, TypeError):
-        pass
+        return "unknown"
+    if not isinstance(items, list):
+        return "unknown"
+    for entry in items:
+        if isinstance(entry, dict):
+            name = entry.get("name")
+            if isinstance(name, str) and name:
+                return name
     return "unknown"
 
 

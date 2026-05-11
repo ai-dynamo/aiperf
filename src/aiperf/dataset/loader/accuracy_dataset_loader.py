@@ -22,11 +22,15 @@ rejects non-sequential strategies in accuracy mode.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
-from aiperf.common.config import UserConfig
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 # Default max_tokens when a benchmark omits generation_size from metadata.
 # MMLU sets 5 (single-letter answer); long-form benchmarks should set
@@ -41,8 +45,8 @@ class AccuracyDatasetLoader:
     normal file-based or synthetic dataset pipelines.
     """
 
-    def __init__(self, *, user_config: UserConfig) -> None:
-        self.user_config = user_config
+    def __init__(self, *, run: BenchmarkRun) -> None:
+        self.run = run
 
     async def load(self) -> list[Conversation]:
         """Load benchmark problems and convert to Conversations.
@@ -50,9 +54,9 @@ class AccuracyDatasetLoader:
         Raises:
             ValueError: if the benchmark returns 0 problems (e.g. bad --accuracy-tasks).
         """
-        problems = await load_benchmark_problems(self.user_config)
+        problems = await load_benchmark_problems(self.run)
         if not problems:
-            acc_cfg = self.user_config.accuracy
+            acc_cfg = self.run.cfg.accuracy
             raise ValueError(
                 f"Benchmark '{acc_cfg.benchmark}' returned 0 problems "
                 f"(tasks={acc_cfg.tasks}, n_shots={acc_cfg.n_shots}). "
@@ -65,8 +69,12 @@ class AccuracyDatasetLoader:
     def _convert_to_conversations(
         self, problems: list[BenchmarkProblem]
     ) -> list[Conversation]:
-        session_gen = SessionIDGenerator(seed=self.user_config.input.random_seed)
-        system_prompt = self.user_config.accuracy.system_prompt
+        # Per-dataset random_seed (or envelope-level fallback) keeps session IDs
+        # deterministic across re-runs of the same benchmark configuration.
+        dataset = self.run.cfg.get_default_dataset()
+        seed = getattr(dataset, "random_seed", None) or self.run.random_seed
+        session_gen = SessionIDGenerator(seed=seed)
+        system_prompt = self.run.cfg.accuracy.system_prompt
         conversations: list[Conversation] = []
 
         for problem in problems:

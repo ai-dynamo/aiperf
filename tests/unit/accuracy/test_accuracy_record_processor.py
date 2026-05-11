@@ -8,30 +8,28 @@ import pytest
 from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
 from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models.dataset_models import ConversationMetadata, DatasetMetadata
+from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
     DatasetSamplingStrategy,
     EndpointType,
 )
+from tests.unit.conftest import make_run_from_v1
 from tests.unit.post_processors.conftest import create_metric_metadata
 
 
-def _make_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+def _make_user_config() -> CLIConfig:
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
     )
 
 
-def _make_processor(monkeypatch, user_config: UserConfig) -> AccuracyRecordProcessor:
+def _make_processor(monkeypatch, cli_config: CLIConfig) -> AccuracyRecordProcessor:
     mock_grader_cls = MagicMock()
     mock_grader_cls.return_value = MagicMock()
 
@@ -44,11 +42,11 @@ def _make_processor(monkeypatch, user_config: UserConfig) -> AccuracyRecordProce
         lambda *_args, **_kwargs: {"default_grader": "multiple_choice"},
     )
 
-    return AccuracyRecordProcessor(service_id="test", user_config=user_config)
+    return AccuracyRecordProcessor(run=make_run_from_v1(cli_config), service_id="test")
 
 
-def _make_results_processor(user_config: UserConfig) -> AccuracyResultsProcessor:
-    return AccuracyResultsProcessor(user_config=user_config)
+def _make_results_processor(cli_config: CLIConfig) -> AccuracyResultsProcessor:
+    return AccuracyResultsProcessor(run=make_run_from_v1(cli_config))
 
 
 def _make_dataset_metadata(

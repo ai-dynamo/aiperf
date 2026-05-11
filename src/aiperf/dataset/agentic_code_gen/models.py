@@ -11,8 +11,9 @@ from enum import Enum
 import numpy as np
 from pydantic import ConfigDict, Field, model_validator
 
-from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.config.base import BaseConfig
 
 
 class PercentileStats(AIPerfBaseModel):
@@ -445,7 +446,7 @@ class DatasetManifest(AIPerfBaseModel):
 class QualityMetric(AIPerfBaseModel):
     """Observed vs target comparison for one metric with full percentile breakdown."""
 
-    target_mean: float | None = Field(
+    target_mean: FiniteFloat | None = Field(
         default=None, description="Target mean from config"
     )
     target_median: float | None = Field(
@@ -454,7 +455,7 @@ class QualityMetric(AIPerfBaseModel):
     observed: PercentileStats = Field(
         description="Full observed distribution statistics"
     )
-    pct_error_mean: float | None = Field(
+    pct_error_mean: FiniteFloat | None = Field(
         default=None, description="Absolute percentage error on mean"
     )
     pct_error_median: float | None = Field(

@@ -30,7 +30,11 @@ class TestPoissonIntervalGenerator:
 
     @pytest.mark.parametrize("rate", [0.0, -5.0, None])
     def test_init_raises_on_invalid_rate(self, rate):
-        with pytest.raises(ValueError, match="must be set and greater than 0"):
+        # 0/-5 are now rejected at config-construction by gt=0 (Pydantic);
+        # None still falls through to the generator's runtime check.
+        with pytest.raises(
+            ValueError, match="must be set and greater than 0|greater than 0"
+        ):
             PoissonIntervalGenerator(cfg(ArrivalPattern.POISSON, rate=rate))
 
     def test_next_interval_positive(self):
@@ -75,7 +79,9 @@ class TestGammaIntervalGenerator:
         assert gen.smoothness == 2.5
 
     def test_init_raises_on_invalid_rate(self):
-        with pytest.raises(ValueError, match="must be set and greater than 0"):
+        with pytest.raises(
+            ValueError, match="must be set and greater than 0|greater than 0"
+        ):
             GammaIntervalGenerator(cfg(ArrivalPattern.GAMMA, rate=0.0))
 
     def test_next_interval_positive(self):
@@ -122,7 +128,9 @@ class TestConstantIntervalGenerator:
         assert gen.rate == 10.0
 
     def test_init_raises_on_invalid_rate(self):
-        with pytest.raises(ValueError, match="must be set and greater than 0"):
+        with pytest.raises(
+            ValueError, match="must be set and greater than 0|greater than 0"
+        ):
             ConstantIntervalGenerator(cfg(ArrivalPattern.CONSTANT, rate=0.0))
 
     def test_next_interval_fixed(self):

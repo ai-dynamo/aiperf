@@ -26,29 +26,15 @@ By running multiple trials of the same benchmark, you can:
 
 ## UI Behavior in Multi-Run Mode
 
-Multi-run mode automatically uses the `simple` UI by default for the best experience. The dashboard UI is not supported due to terminal control limitations.
-
-### Default UI Selection
-
-When using `--num-profile-runs > 1`, AIPerf automatically sets `--ui simple` unless you explicitly specify a different UI:
-
-```bash
-# These are equivalent - simple UI is auto-selected
-aiperf profile --num-profile-runs 5 ...
-aiperf profile --num-profile-runs 5 --ui simple ...
-```
-
-You'll see an informational message:
-```
-Multi-run mode: UI automatically set to 'simple' (use '--ui none' to disable UI output)
-```
+In multi-run mode, the dashboard UI is rejected at startup; `simple` and `none` are supported. Whichever non-dashboard `--ui` you pass is used as-is — there is no automatic rewrite of the UI type based on `--num-profile-runs`.
 
 ### Supported UI Options
 
-**Simple UI (Default)**
+**Simple UI**
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
+  --ui simple \
   ...
 ```
 Shows progress bars for each run - works well with multi-run mode.
@@ -71,8 +57,7 @@ aiperf profile --num-profile-runs 5 --ui dashboard ...
 ```
 
 ```
-ValueError: Dashboard UI is not supported with multi-run mode (--num-profile-runs > 1)
-due to terminal control limitations. Please use '--ui simple' or '--ui none' instead.
+ValueError: Dashboard UI is not supported with sweep/multi-run mode. Please use '--ui simple' or '--ui none' instead.
 ```
 
 This is a fundamental architectural limitation - Textual requires exclusive terminal control, which isn't possible when the orchestrator coordinates multiple subprocess runs.
@@ -96,11 +81,12 @@ Run the same benchmark 5 times:
 ```bash
 aiperf profile \
   --model llama-3-8b \
-  --endpoint-type openai_chat \
-  --url http://localhost:8000/v1/chat/completions \
+  --endpoint-type chat \
+  --url http://localhost:8000 \
   --num-profile-runs 5 \
   --concurrency 10 \
-  --num-prompts 1000
+  --num-prompts 1000 \
+  --request-count 1000
 ```
 
 ### With Custom Confidence Level
@@ -110,12 +96,13 @@ Use 99% confidence intervals instead of the default 95%:
 ```bash
 aiperf profile \
   --model llama-3-8b \
-  --endpoint-type openai_chat \
-  --url http://localhost:8000/v1/chat/completions \
+  --endpoint-type chat \
+  --url http://localhost:8000 \
   --num-profile-runs 5 \
   --confidence-level 0.99 \
   --concurrency 10 \
-  --num-prompts 1000
+  --num-prompts 1000 \
+  --request-count 1000
 ```
 
 ### With Cooldown Between Runs
@@ -125,12 +112,13 @@ Add a 10-second cooldown between runs to reduce correlation:
 ```bash
 aiperf profile \
   --model llama-3-8b \
-  --endpoint-type openai_chat \
-  --url http://localhost:8000/v1/chat/completions \
+  --endpoint-type chat \
+  --url http://localhost:8000 \
   --num-profile-runs 5 \
   --profile-run-cooldown-seconds 10.0 \
   --concurrency 10 \
-  --num-prompts 1000
+  --num-prompts 1000 \
+  --request-count 1000
 ```
 
 ## Output Structure
@@ -139,16 +127,16 @@ When `--num-profile-runs > 1`, AIPerf creates a hierarchical output structure wi
 
 ```
 artifacts/
-  llama-3-8b-openai-chat-concurrency_10/
+  llama-3-8b-openai-chat-concurrency10/
     profile_runs/
-      trial_0001/
+      run_0001/
         profile_export_aiperf.json
         profile_export_aiperf.csv
         profile_export.jsonl
         inputs.json
-      trial_0002/
+      run_0002/
         ...
-      trial_0005/
+      run_0005/
         ...
     aggregate/
       profile_export_aiperf_aggregate.json
@@ -156,21 +144,42 @@ artifacts/
       profile_export_aiperf_collated.json   # only with adaptive convergence + records/raw export
 ```
 
+### Artifact Directory Layout Reference
+
+The artifact tree branches on three flags: whether a sweep is configured
+(`is_sweep`), whether multiple trials run per cell (`trials > 1`), and
+the sweep iteration order (`REPEATED` vs `INDEPENDENT`).
+
+| sweep | trials | order       | layout                                          |
+|-------|--------|-------------|-------------------------------------------------|
+| no    | 1      | -           | `<base>/`                                       |
+| no    | >1     | -           | `<base>/profile_runs/run_NNNN/`                 |
+| yes   | 1      | -           | `<base>/<dir_name>/`                            |
+| yes   | >1     | REPEATED    | `<base>/profile_runs/trial_NNNN/<dir_name>/`    |
+| yes   | >1     | INDEPENDENT | `<base>/<dir_name>/profile_runs/trial_NNNN/`    |
+| adaptive | any | -      | `<base>/search_iter_NNNN/profile_runs/run_NNNN/` |
+
+`<dir_name>` is the sweep variation `{leaf_param_name}_{value}` form (e.g.
+`concurrency_10`). The example above is the second row (no sweep,
+multi-run), so it does not use `<dir_name>`; its auto-generated base artifact
+directory uses `concurrency10`. Sweep + INDEPENDENT multi-run uses
+`trial_NNNN` for the inner dir.
+
 ### Auto-Generated Directory Name
 
 The directory name is automatically generated based on your benchmark configuration:
 - **Model name**: e.g., `llama-3-8b` (from `--model`)
 - **Service kind and endpoint type**: e.g., `openai-chat` (from `--endpoint-type`)
-- **Stimulus**: e.g., `concurrency_10` (from `--concurrency`) or `request_rate_100` (from `--request-rate`)
+- **Stimulus**: e.g., `concurrency10` (from `--concurrency`) or `request_rate100` (from `--request-rate`)
 
 Examples:
-- `artifacts/gpt-4-openai-chat-concurrency_50/`
-- `artifacts/mistral-7b-openai-completions-request_rate_10/`
-- `artifacts/llama-2-13b-nim-embeddings-concurrency_20/`
+- `artifacts/gpt-4-openai-chat-concurrency50/`
+- `artifacts/mistral-7b-openai-completions-request_rate10/`
+- `artifacts/llama-2-13b-nim-embeddings-concurrency20/`
 
 ### Per-Run Artifacts
 
-Each run's artifacts are stored in separate directories (`trial_0001`, `trial_0002`, etc.) and include:
+Each run's artifacts are stored in separate directories (`run_0001`, `run_0002`, etc. for no-sweep multi-run; `trial_0001`, `trial_0002`, etc. for sweep + multi-run) and include:
 - `profile_export_aiperf.json` - Complete metrics for that run
 - `profile_export_aiperf.csv` - CSV export for that run
 - `profile_export.jsonl` - Per-request records
@@ -209,7 +218,7 @@ For each metric, the aggregate output includes:
     "num_profile_runs": 5,
     "num_successful_runs": 5,
     "confidence_level": 0.95,
-    "run_labels": ["trial_0001", "trial_0002", "trial_0003", "trial_0004", "trial_0005"]
+    "run_labels": ["run_0001", "run_0002", "run_0003", "run_0004", "run_0005"]
   },
   "metrics": {
     "request_throughput_avg": {
@@ -534,7 +543,7 @@ aiperf profile \
 - By default, warmup runs **once** before the first profile run only
 - Subsequent profile runs (2-5) measure steady-state performance without warmup
 - Warmup metrics are automatically excluded from results
-- Use `--profile-run-disable-warmup-after-first false` to run warmup before each run (useful for long cooldown periods)
+- Use `--no-profile-run-disable-warmup-after-first` to run warmup before each run (useful for long cooldown periods)
 
 This default behavior is more efficient and provides more accurate aggregate statistics by measuring steady-state performance.
 
@@ -569,29 +578,42 @@ If some runs fail, AIPerf will:
     "num_profile_runs": 5,
     "num_successful_runs": 4,
     "failed_runs": [
-      {"label": "trial_0003", "error": "Connection timeout"}
+      {"label": "run_0003", "error": "Connection timeout"}
     ]
   }
 }
 ```
 
-### Insufficient Successful Runs
+### Single Successful Run (Degraded Mode)
 
-If fewer than 2 runs succeed, you'll get an error:
+If exactly one run succeeds, AIPerf does **not** raise — instead it enters a degraded single-run mode and emits a warning:
+
 ```
-ValueError: Insufficient successful runs for confidence intervals.
-Got 1 successful run(s), but need at least 2.
-Consider increasing --num-profile-runs or investigating why runs are failing.
+WARNING: ConfidenceAggregation: only 1 successful run (num_successful=1 / total=N);
+reporting point estimates with std=0 and CI collapsed to the mean. Set
+num_profile_runs >= 2 for meaningful confidence intervals.
 ```
 
-**Solution**: Increase `--num-profile-runs` or fix the underlying issue causing failures.
+The aggregate JSON is still produced, with `std=0`, `ci_low == ci_high == mean`, and a `single_run: true` flag in `metadata` so downstream consumers can render an "n=1, no CI" badge instead of mistaking the zero-width interval for a real measurement.
+
+### All Runs Failed
+
+If **zero** runs succeed, AIPerf raises:
+
+```
+ValueError: All runs failed - cannot compute confidence statistics.
+Total runs: N, Failed runs: N. Please check the error messages in the
+logs and ensure your benchmark configuration is correct.
+```
+
+**Solution**: Inspect the per-run logs for the underlying failure, fix the configuration or environment issue, and re-run.
 
 ### Very Long Benchmark Times
 
 If `--num-profile-runs` is large and each run takes a long time:
 
 1. **Reduce run duration**:
-   - Use fewer prompts: `--num-prompts 500` instead of `--num-prompts 5000`
+   - Use fewer requests: `--request-count 500` instead of `--request-count 5000` (keep `--num-prompts` only when you need a larger synthetic dataset pool)
    - Use shorter prompts: `--synthetic-input-tokens-mean 100`
 
 2. **Use cooldown strategically**:
@@ -751,7 +773,7 @@ This complements the standard confidence aggregation — confidence aggregation 
 
 ```
 artifacts/
-  llama-3-8b-openai-chat-concurrency_10/
+  llama-3-8b-openai-chat-concurrency10/
     profile_runs/
       run_0001/
         profile_export_aiperf.json
@@ -812,7 +834,7 @@ Multi-run works with all AIPerf features:
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
-  --gpu-telemetry-url http://localhost:9400/metrics \
+  --gpu-telemetry http://localhost:9400/metrics \
   ...
 ```
 
@@ -820,7 +842,7 @@ aiperf profile \
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
-  --server-metrics-url http://localhost:8000/metrics \
+  --server-metrics http://localhost:8000/metrics \
   ...
 ```
 
@@ -828,7 +850,7 @@ aiperf profile \
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
-  --trace-file my_trace.jsonl \
+  --input-file my_trace.jsonl --custom-dataset-type mooncake_trace \
   ...
 ```
 
@@ -852,20 +874,15 @@ print(f"95% CI: [{throughput['ci_low']:.2f}, {throughput['ci_high']:.2f}]")
 ## Summary
 
 Multi-run confidence reporting helps you:
-- ✅ Quantify measurement variance
-- ✅ Assess repeatability with CV
-- ✅ Compute confidence intervals
-- ✅ Make statistically informed decisions
-- ✅ Debug outliers with per-run artifacts
+- Quantify measurement variance
+- Assess repeatability with CV
+- Compute confidence intervals
+- Make statistically informed decisions
+- Debug outliers with per-run artifacts
 
 **Quick Start:**
 ```bash
 aiperf profile --num-profile-runs 5 [other options]
-```
-
-**With Adaptive Convergence:**
-```bash
-aiperf profile --num-profile-runs 10 --convergence-metric request_latency --convergence-mode ci_width [other options]
 ```
 
 **With Adaptive Convergence:**

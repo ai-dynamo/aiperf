@@ -6,31 +6,38 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
     MetricSample,
     ServerMetricsRecord,
 )
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter
+from tests.unit.conftest import make_run_from_v1
 from tests.unit.post_processors.conftest import aiperf_lifecycle
 
 
 @pytest.fixture
-def user_config_server_metrics_export(tmp_artifact_dir: Path) -> UserConfig:
-    """Create UserConfig for server metrics export testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-        ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-        ),
-        server_metrics_formats=[ServerMetricsFormat.JSONL],  # Explicitly enable JSONL for these tests
-    )  # fmt: skip
+def user_config_server_metrics_export(
+    tmp_artifact_dir: Path,
+    cli_config: CLIConfig,
+) -> BenchmarkRun:
+    """Build a v2 BenchmarkRun configured for JSONL server-metrics export.
+
+    The fixture name is preserved for ergonomic reasons (callers reference
+    ``cfg_run.cfg.artifacts.server_metrics_export_jsonl_file``); the v1 ->
+    v2 conversion happens here.
+    """
+    user_cfg = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        artifact_directory=tmp_artifact_dir,
+        server_metrics_formats=[ServerMetricsFormat.JSONL],
+    )
+    return make_run_from_v1(user_cfg)
 
 
 @pytest.fixture
@@ -60,26 +67,23 @@ class TestServerMetricsJSONLWriterInitialization:
 
     def test_initialization(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test processor initializes with correct file paths."""
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         assert (
             processor.output_file
-            == user_config_server_metrics_export.output.server_metrics_export_jsonl_file
+            == user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         )
 
     @pytest.mark.asyncio
     async def test_files_cleared_on_initialization(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
         tmp_artifact_dir: Path,
     ):
         """Test that output files are cleared on initialization."""
@@ -87,9 +91,8 @@ class TestServerMetricsJSONLWriterInitialization:
         jsonl_file.write_text("old data")
 
         writer = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
         await writer.initialize()
 
@@ -105,15 +108,13 @@ class TestServerMetricsRecordProcessing:
     @pytest.mark.asyncio
     async def test_process_single_record(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
         sample_server_metrics_record_for_export: ServerMetricsRecord,
     ):
         """Test processing single server metrics record."""
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
@@ -121,9 +122,7 @@ class TestServerMetricsRecordProcessing:
                 sample_server_metrics_record_for_export
             )
 
-        output_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        output_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         assert output_file.exists()
 
         lines = output_file.read_text().strip().split("\n")
@@ -138,14 +137,12 @@ class TestServerMetricsRecordProcessing:
     @pytest.mark.asyncio
     async def test_process_multiple_records(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test processing multiple server metrics records with different metrics."""
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
@@ -171,24 +168,20 @@ class TestServerMetricsRecordProcessing:
                 )
                 await processor.process_server_metrics_record(record)
 
-        output_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        output_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         lines = output_file.read_text().strip().split("\n")
         assert len(lines) == 5
 
     @pytest.mark.asyncio
     async def test_record_converted_to_slim_format(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
         sample_server_metrics_record_for_export: ServerMetricsRecord,
     ):
         """Test that records are converted to slim format before writing."""
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
@@ -196,9 +189,7 @@ class TestServerMetricsRecordProcessing:
                 sample_server_metrics_record_for_export
             )
 
-        output_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        output_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         data = orjson.loads(output_file.read_text().strip())
 
         assert "metrics" in data
@@ -207,8 +198,7 @@ class TestServerMetricsRecordProcessing:
     @pytest.mark.asyncio
     async def test_histogram_written_in_slim_format(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test that histogram records are exported correctly in slim format."""
         record = ServerMetricsRecord(
@@ -232,17 +222,14 @@ class TestServerMetricsRecordProcessing:
         )
 
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(record)
 
-        output_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        output_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         data = orjson.loads(output_file.read_text().strip())
 
         # Verify histogram is in slim format
@@ -262,8 +249,7 @@ class TestDuplicateRecordHandling:
     @pytest.mark.asyncio
     async def test_duplicate_records_skipped(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test that duplicate records are not written to JSONL."""
         unique_record = ServerMetricsRecord(
@@ -295,18 +281,15 @@ class TestDuplicateRecordHandling:
         )
 
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(unique_record)
             await processor.process_server_metrics_record(duplicate_record)
 
-        output_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        output_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         lines = output_file.read_text().strip().split("\n")
 
         # Should only have 1 line (duplicate skipped)
@@ -321,14 +304,12 @@ class TestSummarizeMethod:
     @pytest.mark.asyncio
     async def test_summarize_returns_empty_list(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test that summarize returns empty list (export processors don't summarize)."""
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
@@ -343,8 +324,7 @@ class TestInfoMetricsHandling:
     @pytest.mark.asyncio
     async def test_info_metrics_excluded_from_slim_records(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test that metrics ending in _info are excluded from slim JSONL records."""
         record = ServerMetricsRecord(
@@ -386,17 +366,14 @@ class TestInfoMetricsHandling:
         )
 
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(record)
 
-        jsonl_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        jsonl_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         lines = jsonl_file.read_text().strip().split("\n")
 
         # Should have 1 line
@@ -414,8 +391,7 @@ class TestInfoMetricsHandling:
     @pytest.mark.asyncio
     async def test_mixed_info_and_regular_metrics(
         self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
+        user_config_server_metrics_export: BenchmarkRun,
     ):
         """Test handling of multiple _info metrics alongside regular metrics."""
         record = ServerMetricsRecord(
@@ -447,18 +423,15 @@ class TestInfoMetricsHandling:
         )
 
         processor = ServerMetricsJSONLWriter(
+            run=user_config_server_metrics_export,
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
         )
 
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(record)
 
         # Check JSONL file
-        jsonl_file = (
-            user_config_server_metrics_export.output.server_metrics_export_jsonl_file
-        )
+        jsonl_file = user_config_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
         slim_record = orjson.loads(jsonl_file.read_text().strip())
 
         # Only regular metrics in slim record

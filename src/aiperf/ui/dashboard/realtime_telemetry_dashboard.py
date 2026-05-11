@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -11,9 +14,11 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.models.record_models import MetricResult
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
 
@@ -266,9 +271,9 @@ class RealtimeTelemetryDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs):
+    def __init__(self, run: BenchmarkRun, **kwargs):
         super().__init__(**kwargs)
-        self.service_config = service_config
+        self.run = run
         self.all_nodes_view: SingleNodeView | None = None
         self.metrics: list[MetricResult] = []
         self.border_title = "Real-Time GPU Telemetry"

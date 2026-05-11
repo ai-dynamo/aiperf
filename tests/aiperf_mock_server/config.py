@@ -2,15 +2,41 @@
 # SPDX-License-Identifier: Apache-2.0
 """Mock server configuration."""
 
+import importlib
 import json
 import logging
 import os
 from typing import Annotated, Any, Literal
 
-from cyclopts import Parameter
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
+import cyclopts
+
+
+def _load_cyclopts_parameter() -> type:
+    param = getattr(cyclopts, "Parameter", None)
+    if param is not None:
+        return param
+    for module_name in (
+        "parameter",
+        "params",
+        "param",
+        "_parameter",
+        "_params",
+    ):
+        try:
+            module = importlib.import_module(f"cyclopts.{module_name}")
+        except Exception:
+            continue
+        param = getattr(module, "Parameter", None)
+        if param is not None:
+            return param
+    raise ImportError("cyclopts.Parameter is not available in this cyclopts version")
+
+
+from pydantic import Field, model_validator  # noqa: E402
+from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
+from typing_extensions import Self  # noqa: E402
+
+Parameter = _load_cyclopts_parameter()
 
 
 class MockServerConfig(BaseSettings):
@@ -67,6 +93,211 @@ class MockServerConfig(BaseSettings):
         Field(description="Inter-token latency (ms)", ge=0.0),
         Parameter(name="--itl"),
     ] = 5.0
+
+    ttft_per_isl_token_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Per-ISL-token TTFT scaling (ms). Models prefill cost: "
+                "ttft_ms = ttft + ttft_per_isl_token_ms * prompt_token_count. "
+                "Set e.g. 0.05 to make TTFT scale ~50ms per 1k input tokens."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--ttft-per-isl-token-ms"),
+    ] = 0.0
+
+    ttft_concurrency_quad_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Concurrency-quadratic TTFT penalty (ms). Models queueing: "
+                "ttft_ms += ttft_concurrency_quad_ms * active_inflight^2. "
+                "Set e.g. 0.001 to push TTFT past ~250ms above ~500 concurrent."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--ttft-concurrency-quad-ms"),
+    ] = 0.0
+
+    itl_per_osl_token_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Per-OSL-token ITL scaling (ms). Captured once per request at "
+                "TTFT-time (active OSL = max_tokens budget). itl_ms = itl + "
+                "itl_per_osl_token_ms * osl_tokens."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--itl-per-osl-token-ms"),
+    ] = 0.0
+
+    itl_concurrency_lin_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Concurrency-linear ITL penalty (ms). itl_ms += "
+                "itl_concurrency_lin_ms * active_inflight. Set e.g. 0.05 to add "
+                "~25ms of ITL at concurrency=500."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--itl-concurrency-lin-ms"),
+    ] = 0.0
+
+    scheduler_enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Enable the step-based batched scheduler. When true, requests "
+                "compete for per-step decode and prefill slots, producing a "
+                "real saturation knee. When false (default), the open-loop "
+                "TTFT/ITL latency model is used."
+            ),
+        ),
+        Parameter(name="--scheduler-enabled", negative="--no-scheduler-enabled"),
+    ] = False
+
+    scheduler_step_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Virtual decode-step cadence in milliseconds. Each step admits "
+                "up to scheduler_max_batch_size decode tokens. Smaller values "
+                "= finer-grained ITL but higher scheduler CPU cost."
+            ),
+            gt=0.0,
+            le=1000.0,
+        ),
+        Parameter(name="--scheduler-step-ms"),
+    ] = 5.0
+
+    scheduler_max_batch_size: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum concurrent decoders served per step. Past this "
+                "concurrency the per-request ITL stretches linearly. Throughput "
+                "ceiling = max_batch_size / step_ms tokens/sec."
+            ),
+            ge=1,
+        ),
+        Parameter(name="--scheduler-max-batch-size"),
+    ] = 256
+
+    scheduler_max_prefill_chunks_per_step: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum prefill chunks admitted per step. Lower = prefill "
+                "becomes the binding constraint, producing TTFT cliffs under "
+                "concurrent prompt arrivals."
+            ),
+            ge=1,
+        ),
+        Parameter(name="--scheduler-max-prefill-chunks-per-step"),
+    ] = 8
+
+    scheduler_prefill_chunk_tokens: Annotated[
+        int,
+        Field(
+            description=(
+                "Tokens per prefill chunk. A prompt of P tokens needs "
+                "ceil(P / chunk_tokens) chunks. Larger = fewer steps per "
+                "prompt but coarser-grained competition."
+            ),
+            ge=1,
+        ),
+        Parameter(name="--scheduler-prefill-chunk-tokens"),
+    ] = 512
+
+    scheduler_goodput_collapse_enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Enable goodput-collapse modeling in the scheduler. When the "
+                "decode queue grows past the threshold, the per-step admit "
+                "budget shrinks toward floor, so aggregate useful tok/s "
+                "actually decreases past the knee instead of plateauing. "
+                "Models the preemption/admission thrash real continuous-"
+                "batching servers exhibit when oversubscribed."
+            ),
+        ),
+        Parameter(
+            name="--scheduler-goodput-collapse-enabled",
+            negative="--no-scheduler-goodput-collapse-enabled",
+        ),
+    ] = False
+
+    scheduler_goodput_collapse_threshold: Annotated[
+        float,
+        Field(
+            description=(
+                "Decode-queue overload ratio at which goodput collapse "
+                "starts. ratio = decode_queue_len / max_batch_size. Below "
+                "this the full batch admits per step; above, batch shrinks."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--scheduler-goodput-collapse-threshold"),
+    ] = 1.5
+
+    scheduler_goodput_collapse_slope: Annotated[
+        float,
+        Field(
+            description=(
+                "How fast the effective batch shrinks past the threshold. "
+                "shrink = (overload - threshold) * slope, capped at "
+                "(1 - floor). Larger = sharper goodput cliff."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--scheduler-goodput-collapse-slope"),
+    ] = 0.5
+
+    scheduler_goodput_collapse_floor: Annotated[
+        float,
+        Field(
+            description=(
+                "Minimum fraction of max_batch_size that still admits per "
+                "step under heavy overload. Floor of 0.3 = even at 10x "
+                "overload at most 70% of the batch is dropped."
+            ),
+            ge=0.0,
+            le=1.0,
+        ),
+        Parameter(name="--scheduler-goodput-collapse-floor"),
+    ] = 0.3
+
+    ttft_jitter_cv: Annotated[
+        float,
+        Field(
+            description=(
+                "Lognormal jitter coefficient of variation (stddev/mean) "
+                "applied to TTFT. 0.0 = deterministic. 0.2 = ~20% TTFT "
+                "noise. Open-loop multiplies ttft_sec once per request; "
+                "scheduler mode adds positive-only sleep on top of admit."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--ttft-jitter-cv"),
+    ] = 0.0
+
+    itl_jitter_cv: Annotated[
+        float,
+        Field(
+            description=(
+                "Lognormal jitter coefficient of variation (stddev/mean) "
+                "applied to each ITL gap. 0.0 = deterministic. 0.15 = ~15% "
+                "per-token noise. Sampled fresh per token. Critical for "
+                "testing whether sweep recipes converge under realistic "
+                "noise."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--itl-jitter-cv"),
+    ] = 0.0
 
     # Embedding latency: base + per_input * num_inputs
     embedding_base_latency: Annotated[
@@ -195,9 +426,15 @@ class MockServerConfig(BaseSettings):
     # Tokenizer Options (for corpus tokenization)
     tokenizer: Annotated[
         str,
-        Field(description="HuggingFace tokenizer for corpus (name or path)"),
+        Field(
+            description=(
+                "Tokenizer for corpus tokenization. Default 'builtin' uses "
+                "AIPerf's bundled tiktoken o200k_base encoding (zero network "
+                "access). Pass any HuggingFace name or path for HF tokenizers."
+            )
+        ),
         Parameter(name="--tokenizer"),
-    ] = "Qwen/Qwen3-0.6B"
+    ] = "builtin"
 
     tokenizer_revision: Annotated[
         str,
@@ -214,7 +451,7 @@ class MockServerConfig(BaseSettings):
     no_tokenizer: Annotated[
         bool,
         Field(
-            description="Skip tokenizer loading, use character-based chunking (faster startup)"
+            description="Skip tokenizer loading entirely, use character-based chunking (faster startup, less realistic)."
         ),
         Parameter(name="--no-tokenizer"),
     ] = False
@@ -293,6 +530,6 @@ def _get_env_key(config_key: str) -> str:
 
 def _serialize_env_value(value: Any) -> str:
     """Serialize value for environment variable storage."""
-    if isinstance(value, list | dict):
+    if isinstance(value, (list, dict)):
         return json.dumps(value)
     return str(value)

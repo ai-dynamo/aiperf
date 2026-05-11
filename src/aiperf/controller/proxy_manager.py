@@ -2,21 +2,29 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.common.config import ServiceConfig
+from typing import TYPE_CHECKING
+
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ZMQProxyType
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class ProxyManager(AIPerfLifecycleMixin):
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
-        super().__init__(service_config=service_config, **kwargs)
-        self.service_config = service_config
+    def __init__(
+        self,
+        run: "BenchmarkRun",
+        **kwargs,
+    ) -> None:
+        super().__init__(run=run, **kwargs)
+        self.run = run
 
     @on_init
     async def _initialize_proxies(self) -> None:
-        comm_config = self.service_config.comm_config
+        comm_config = self.run.cfg.comm_config
         XPubXSubClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.XPUB_XSUB)
         DealerRouterClass = plugins.get_class(
             PluginType.ZMQ_PROXY, ZMQProxyType.DEALER_ROUTER

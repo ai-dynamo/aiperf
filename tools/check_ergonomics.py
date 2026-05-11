@@ -69,6 +69,35 @@ MAX_POSITIONAL_ARGS = 4  # >= 5 positional args without `*,` is an error
 MAX_PYDANTIC_FIELDS = 30
 MIN_EXCEPTION_MESSAGE_WORDS = 3  # R10: error messages must carry context
 
+# ---------------------------------------------------------------------------
+# Intentional exceptions (architectural decisions, not pending debt)
+# ---------------------------------------------------------------------------
+# Files / models listed here are exempt from the corresponding check. Unlike
+# `tools/ergonomics_baseline.json` (grandfathered debt that should be paid down
+# over time), these are deliberate design choices. Adding here requires a
+# `reason` documenting why the exception is permanent.
+
+INTENTIONAL_FILE_SIZE_EXEMPTIONS: dict[str, str] = {
+    "src/aiperf/config/flags/cli_config.py": (
+        "CLIConfig is the unified flat CLI input DTO. Every CLI flag is a "
+        "top-level field with a multi-line Annotated/Field/CLIParameter "
+        "annotation, so file size scales linearly with field count (~16 LOC "
+        "per field × ~200 fields). The flat shape is intentional per Tasks "
+        "1-13 of the v1 flatten — splitting into mixins or per-section "
+        "files re-introduces the structural complexity the flatten removed. "
+        "Section-by-Groups.X dividers + the disjointness invariant in "
+        "tests/unit/config/v1/test_section_fields.py keep the file scannable."
+    ),
+}
+
+INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS: dict[str, str] = {
+    "src/aiperf/config/flags/cli_config.py::CLIConfig": (
+        "Same rationale as INTENTIONAL_FILE_SIZE_EXEMPTIONS for cli_config.py: "
+        "CLIConfig holds every CLI flag as a top-level field by design. "
+        "Splitting into sub-models would re-nest the v1 layer."
+    ),
+}
+
 CHECKS = [
     "file-size",
     "function-size",
@@ -327,6 +356,8 @@ def _pydantic_field_count(cls: ast.ClassDef) -> int:
 
 
 def check_file_size(path: Path, rel: str) -> list[Violation]:
+    if rel in INTENTIONAL_FILE_SIZE_EXEMPTIONS:
+        return []
     lines = len(path.read_text().splitlines())
     if lines > MAX_FILE_LINES:
         return [
@@ -456,6 +487,8 @@ def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
     for qualname, node in _qualname_walk(tree):
         if isinstance(node, ast.ClassDef) and _is_pydantic_model(node):
+            if f"{rel}::{qualname}" in INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS:
+                continue
             n = _pydantic_field_count(node)
             if n > MAX_PYDANTIC_FIELDS:
                 out.append(

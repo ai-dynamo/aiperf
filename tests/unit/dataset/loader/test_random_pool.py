@@ -6,17 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import (
-    AudioConfig,
-    ImageConfig,
-    InputConfig,
-    PromptConfig,
-    VideoConfig,
-)
 from aiperf.common.models import Audio, Image, Text, Video
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
+from tests.unit.conftest import make_run_from_v1
 
 
 class TestRandomPool:
@@ -100,7 +94,7 @@ class TestRandomPoolDatasetLoader:
         filepath = create_jsonl_file(content)
 
         loader = RandomPoolDatasetLoader(
-            filename=filepath, user_config=default_user_config
+            filename=filepath, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -125,7 +119,7 @@ class TestRandomPoolDatasetLoader:
         filepath = create_jsonl_file(content)
 
         loader = RandomPoolDatasetLoader(
-            filename=filepath, user_config=default_user_config
+            filename=filepath, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -152,7 +146,7 @@ class TestRandomPoolDatasetLoader:
         filepath = create_jsonl_file(content)
 
         loader = RandomPoolDatasetLoader(
-            filename=filepath, user_config=default_user_config
+            filename=filepath, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -194,7 +188,7 @@ class TestRandomPoolDatasetLoader:
                 )
 
             loader = RandomPoolDatasetLoader(
-                filename=str(temp_path), user_config=default_user_config
+                filename=str(temp_path), run=make_run_from_v1(default_user_config)
             )
             dataset = loader.load_dataset()
 
@@ -231,7 +225,7 @@ class TestRandomPoolDatasetLoader:
         data = {"file1.jsonl": [RandomPool(text="Hello world")]}
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -252,7 +246,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -280,7 +274,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -305,7 +299,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", user_config=default_user_config
+            filename="dummy_dir", run=make_run_from_v1(default_user_config)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -334,7 +328,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", user_config=default_user_config
+            filename="dummy_dir", run=make_run_from_v1(default_user_config)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -361,7 +355,9 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", user_config=default_user_config, num_conversations=2
+            filename="dummy_dir",
+            run=make_run_from_v1(default_user_config),
+            num_conversations=2,
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -414,16 +410,14 @@ class TestRandomPoolBatchSize:
         batch_size_audio=1,
         batch_size_video=1,
     ):
-        from aiperf.common.config import EndpointConfig, UserConfig
+        from aiperf.config.flags.cli_config import CLIConfig
 
-        return UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                image=ImageConfig(batch_size=batch_size_image),
-                prompt=PromptConfig(batch_size=batch_size_text),
-                audio=AudioConfig(batch_size=batch_size_audio),
-                video=VideoConfig(batch_size=batch_size_video),
-            ),
+        return CLIConfig(
+            model_names=["test-model"],
+            image_batch_size=batch_size_image,
+            prompt_batch_size=batch_size_text,
+            audio_batch_size=batch_size_audio,
+            video_batch_size=batch_size_video,
         )
 
     def test_batch_size_image_produces_correct_image_count(self, default_user_config):
@@ -438,7 +432,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -460,7 +454,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -481,7 +475,7 @@ class TestRandomPoolBatchSize:
         ]
         data = {"f.jsonl": [RandomPool(image=img) for img in pool_images]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -495,7 +489,7 @@ class TestRandomPoolBatchSize:
         pool_texts = ["alpha", "beta", "gamma"]
         data = {"f.jsonl": [RandomPool(text=t) for t in pool_texts]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -514,7 +508,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -534,7 +528,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -548,7 +542,9 @@ class TestRandomPoolBatchSize:
         """When batch_size is 1 (default), the existing per-entry sampling path is used."""
         data = {"f.jsonl": [RandomPool(text="hello"), RandomPool(text="world")]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config, num_conversations=2
+            filename="dummy.jsonl",
+            run=make_run_from_v1(default_user_config),
+            num_conversations=2,
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -570,7 +566,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -594,7 +590,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -627,7 +623,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -654,7 +650,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -684,7 +680,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -704,7 +700,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -737,7 +733,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -775,7 +771,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -801,7 +797,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -821,7 +817,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -829,25 +825,6 @@ class TestRandomPoolBatchSize:
             turn = conv.turns[0]
             assert turn.images == []
             assert len(turn.texts[0].contents) == 2
-
-    def test_batch_size_text_zero_disables_texts(self, default_user_config):
-        """batch_size_text=0 should suppress text output even when texts are in the pool."""
-        config = self._make_config(batch_size_image=2, batch_size_text=0)
-        data = {
-            "f.jsonl": [
-                RandomPool(image="https://example.com/img1.png", text="query1"),
-                RandomPool(image="https://example.com/img2.png", text="query2"),
-            ]
-        }
-        loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
-        )
-        conversations = loader.convert_to_conversations(data)
-
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert turn.texts == []
-            assert len(turn.images[0].contents) == 2
 
     def test_image_zero_text_one_disables_images_via_legacy_path(
         self, default_user_config
@@ -861,7 +838,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -872,32 +849,17 @@ class TestRandomPoolBatchSize:
             )
             assert len(turn.texts) == 1
 
-    def test_image_one_text_zero_disables_texts_via_legacy_path(
-        self, default_user_config
-    ):
-        """batch_size_image=1/text=0 must not emit texts even via the legacy sampler path."""
-        config = self._make_config(batch_size_image=1, batch_size_text=0)
-        data = {
-            "f.jsonl": [
-                RandomPool(image="https://example.com/img1.png", text="query1"),
-                RandomPool(image="https://example.com/img2.png", text="query2"),
-            ]
-        }
-        loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
-        )
-        conversations = loader.convert_to_conversations(data)
-
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert turn.texts == [], "texts should be suppressed when batch_size_text=0"
-            assert len(turn.images) == 1
+    # Removed: test_batch_size_text_zero_disables_texts and
+    # test_image_one_text_zero_disables_texts_via_legacy_path. v2 PromptConfig
+    # rejects batch_size=0 (ge=1); the "disable text via batch_size_text=0"
+    # path is unreachable from a valid v2 config so the assertion has no path
+    # to exercise. Image/audio/video batch_size=0 paths remain covered.
 
     def test_num_conversations_none_defaults_to_100(self, default_user_config):
         """When num_conversations=None is passed, the loader should default to 100."""
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
+            run=make_run_from_v1(default_user_config),
             num_conversations=None,
         )
         assert loader.num_conversations == 100
@@ -914,7 +876,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -936,7 +898,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -957,7 +919,7 @@ class TestRandomPoolBatchSize:
         ]
         data = {"f.jsonl": [RandomPool(audio=a) for a in pool_audios]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -975,7 +937,7 @@ class TestRandomPoolBatchSize:
         ]
         data = {"f.jsonl": [RandomPool(video=v) for v in pool_videos]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -993,7 +955,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -1013,7 +975,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -1039,7 +1001,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -1064,7 +1026,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=config, num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -1076,6 +1038,8 @@ class TestRandomPoolBatchSize:
     def test_audio_video_batch_sizes_read_from_config(self, default_user_config):
         """batch_size_audio and batch_size_video should be read from the user config."""
         config = self._make_config(batch_size_audio=2, batch_size_video=3)
-        loader = RandomPoolDatasetLoader(filename="dummy.jsonl", user_config=config)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_v1(config)
+        )
         assert loader.batch_size_audio == 2
         assert loader.batch_size_video == 3

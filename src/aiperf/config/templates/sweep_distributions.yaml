@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Grid Sweep + Multi-Run
+# description: Cartesian product sweep over ISL x rate with statistical multi-run aggregation.
+# category: Sweep & Multi-Run
+# tags: sweep, grid, multi-run, statistics
+# difficulty: intermediate
+# features: grid sweep, multi-run, confidence intervals
+#
+# Sweep + Distributions
+# =====================
+# Demonstrates a grid sweep over ISL x rate combined with statistical
+# multi-run aggregation. For the scenario-sweep approach (hand-curated
+# named workload profiles), see scenario_workload_profiles.yaml.
+#
+# Run: aiperf profile --config sweep_distributions.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 15.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+  disableWarmupAfterFirst: true
+
+# --- Grid Sweep ---
+# Sweep across ISL sizes and request rates.
+# ISL is set as a scalar (FixedDistribution), so the grid varies the fixed value.
+# Result: 3 ISL values x 3 rates = 9 benchmark runs.
+sweep:
+  type: grid
+  parameters:
+    # Grid sweep parameters use dot-paths rooted under `benchmark`. For
+    # list-shaped `phases:` the second segment is the phase's `name`
+    # (e.g. ``profiling``), so ``phases.profiling.rate`` targets the phase
+    # named ``profiling``. The 12 most-swept phase fields also have
+    # bare-name sugar — `rate` below is the alias for `phases.profiling.rate`
+    # (see docs/tutorials/sweeps.md "Bare-Name Aliases" for the full list).
+    # For ``datasets:`` use the dataset's ``name`` — the singular ``dataset:``
+    # shorthand auto-names the sole dataset ``default``, so
+    # ``datasets.default.prompts.isl`` is the right path.
+    datasets.default.prompts.isl: [128, 512, 2048]
+    rate: [10.0, 30.0, 50.0]
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: ${TIMEOUT:600.0}
+
+  dataset:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: 512 # Overridden by sweep
+      osl: {mean: 128, stddev: 25}
+
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 8
+      excludeFromResults: true
+
+    - name: profiling
+      type: poisson
+      rate: 20.0 # Overridden by sweep
+      duration: 120
+      concurrency: 64
+      gracePeriod: 60
+
+  artifacts:
+    dir: ./artifacts/sweep_distributions
+    summary: [json]
+    records: [jsonl]

@@ -4,7 +4,6 @@
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -13,21 +12,23 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     ServerMetricsResults,
 )
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
+from tests.unit.conftest import make_run_from_v1
 
 
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    """Provide minimal UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        )
+def mock_user_config() -> BenchmarkRun:
+    """Provide a minimal BenchmarkRun for testing (built from a v1 CLIConfig)."""
+    user_cfg = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        streaming=False,
     )
+    return make_run_from_v1(user_cfg)
 
 
 @pytest.fixture
@@ -81,7 +82,7 @@ def sample_server_metrics_record(
 class TestServerMetricsResultsProcessor:
     """Test cases for ServerMetricsResultsProcessor."""
 
-    async def test_initialization(self, mock_user_config: UserConfig) -> None:
+    async def test_initialization(self, mock_user_config: BenchmarkRun) -> None:
         """Test processor initialization sets up hierarchy."""
         processor = ServerMetricsAccumulator(mock_user_config)
 
@@ -89,7 +90,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_process_server_metrics_record(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
         sample_server_metrics_record: ServerMetricsRecord,
     ) -> None:
         """Test processing a server metrics record adds it to the hierarchy."""
@@ -100,7 +101,7 @@ class TestServerMetricsResultsProcessor:
         endpoint_url = sample_server_metrics_record.endpoint_url
         assert endpoint_url in processor._server_metrics_hierarchy.endpoints
 
-    async def test_export_results_no_data(self, mock_user_config: UserConfig) -> None:
+    async def test_export_results_no_data(self, mock_user_config: BenchmarkRun) -> None:
         """Test export_results returns None when no data collected."""
         processor = ServerMetricsAccumulator(mock_user_config)
 
@@ -113,7 +114,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_data(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
     ) -> None:
         """Test export_results returns ServerMetricsResults with collected data."""
         processor = ServerMetricsAccumulator(mock_user_config)
@@ -148,7 +149,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_error_summary(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
         sample_server_metrics_record: ServerMetricsRecord,
     ) -> None:
         """Test export_results includes error summary when provided."""
@@ -178,7 +179,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_time_filter(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
     ) -> None:
         """Test export_results includes the provided time filter."""
         processor = ServerMetricsAccumulator(mock_user_config)
@@ -211,7 +212,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_multiple_endpoints(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
     ) -> None:
         """Test export_results handles multiple endpoints correctly."""
         processor = ServerMetricsAccumulator(mock_user_config)
@@ -246,7 +247,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_labeled_metrics(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
     ) -> None:
         """Test export_results handles metrics with labels correctly."""
         processor = ServerMetricsAccumulator(mock_user_config)
@@ -280,7 +281,7 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_computes_endpoint_metadata(
         self,
-        mock_user_config: UserConfig,
+        mock_user_config: BenchmarkRun,
     ) -> None:
         """Test export_results computes duration, scrape count, and latency correctly."""
         processor = ServerMetricsAccumulator(mock_user_config)
@@ -321,10 +322,10 @@ class TestServerMetricsResultsProcessor:
         assert summary.info.median_update_interval_ms == 1000.0
 
     async def test_export_results_median_robust_to_outliers(
-        self, mock_user_config: UserConfig
+        self, mock_user_config: BenchmarkRun
     ):
         """Test that median_update_interval_ms is robust to outliers."""
-        processor = ServerMetricsAccumulator(user_config=mock_user_config)
+        processor = ServerMetricsAccumulator(run=mock_user_config)
 
         # Create records with non-uniform intervals:
         # Intervals: 1s, 1s, 1s, 5s (outlier)
@@ -371,17 +372,16 @@ class TestSliceDurationConfig:
     async def test_slice_duration_controls_window_size(self):
         """Test that slice_duration from config is used for windowed stats."""
         # Create config with custom slice_duration
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            )
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            streaming=False,
         )
-        # Set slice_duration to 2 seconds
-        config.output.slice_duration = 2.0
 
-        processor = ServerMetricsAccumulator(user_config=config)
+        run = make_run_from_v1(config)
+        # Set slice_duration on the converted v2 artifacts config (2 seconds).
+        run.cfg.artifacts.slice_duration = 2.0
+        processor = ServerMetricsAccumulator(run=run)
         assert processor._slice_duration == 2.0
 
         # Add counter samples at 1 second intervals (10 samples = 9 seconds of data)
@@ -429,16 +429,15 @@ class TestSliceDurationConfig:
 
     async def test_default_window_size_is_1_second(self):
         """Test that default window size is 1 second when slice_duration is None."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            )
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            streaming=False,
         )
-        # Ensure slice_duration is None (default)
-        config.output.slice_duration = None
 
-        processor = ServerMetricsAccumulator(user_config=config)
+        run = make_run_from_v1(config)
+        # Ensure slice_duration is None on the converted v2 artifacts config.
+        run.cfg.artifacts.slice_duration = None
+        processor = ServerMetricsAccumulator(run=run)
         # When None, windowed stats are not computed
         assert processor._slice_duration is None

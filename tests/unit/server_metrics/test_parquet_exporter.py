@@ -17,10 +17,11 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import TimeRangeFilter
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import (
@@ -31,6 +32,7 @@ from aiperf.server_metrics.storage import (
     ServerMetricsHierarchy,
     ServerMetricsTimeSeries,
 )
+from tests.unit.conftest import make_run_from_v1
 
 # =============================================================================
 # Mock Data Builders
@@ -100,12 +102,12 @@ def build_hierarchy(
 
 
 def create_mock_accumulator(
-    user_config: UserConfig,
+    run: BenchmarkRun,
     hierarchy: ServerMetricsHierarchy,
 ) -> MagicMock:
     """Create a mock accumulator that returns the given hierarchy."""
     mock = MagicMock()
-    mock.user_config = user_config
+    mock.run = run
     mock.get_hierarchy_for_export.return_value = hierarchy
     return mock
 
@@ -128,30 +130,31 @@ def verify_no_filesystem_pollution(tmp_path):
 
 
 @pytest.fixture
-def mock_user_config(tmp_path):
-    """Create a UserConfig with Parquet format enabled.
+def mock_user_config(tmp_path) -> BenchmarkRun:
+    """Create a BenchmarkRun with Parquet format enabled.
 
     Uses pytest's tmp_path fixture to ensure all files are created in
     a temporary directory that is automatically cleaned up after tests.
+    The fixture name is preserved so the existing test bodies (which
+    reference ``mock_user_config.cfg.artifacts.server_metrics_export_parquet_file``)
+    continue to read fluently.
     """
-    config = UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="/v1/chat/completions",
-        ),
-        output={"artifact_directory": str(tmp_path)},
+    user_cfg = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        custom_endpoint="/v1/chat/completions",
+        artifact_directory=str(tmp_path),
         server_metrics_formats=[ServerMetricsFormat.PARQUET],
     )
+    run = make_run_from_v1(user_cfg)
 
     # Verify that output path is within tmp_path (isolation check)
-    assert str(config.output.server_metrics_export_parquet_file).startswith(
-        str(tmp_path)
-    ), (
-        f"Parquet file path {config.output.server_metrics_export_parquet_file} is not within tmp_path {tmp_path}"
+    parquet_path = run.cfg.artifacts.server_metrics_export_parquet_file
+    assert str(parquet_path).startswith(str(tmp_path)), (
+        f"Parquet file path {parquet_path} is not within tmp_path {tmp_path}"
     )
 
-    return config
+    return run
 
 
 @pytest.fixture
@@ -240,7 +243,7 @@ class TestParquetExporterBasics:
 
     def test_parquet_disabled_when_format_not_selected(self, mock_user_config):
         """Exporter is disabled when Parquet format not selected."""
-        mock_user_config.server_metrics_formats = [ServerMetricsFormat.JSON]
+        mock_user_config.cfg.server_metrics.formats = [ServerMetricsFormat.JSON]
         hierarchy = build_hierarchy({})
         mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
 
@@ -257,7 +260,7 @@ class TestParquetExporterBasics:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         assert parquet_file.exists()
 
         table = pq.read_table(parquet_file)
@@ -336,7 +339,7 @@ class TestSchemaDiscovery:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -369,7 +372,7 @@ class TestSchemaDiscovery:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         schema_names = table.schema.names
 
@@ -396,7 +399,7 @@ class TestDeltaCalculations:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -416,7 +419,7 @@ class TestDeltaCalculations:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -443,7 +446,7 @@ class TestDeltaCalculations:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -529,7 +532,7 @@ class TestTimeFilteringEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -562,7 +565,7 @@ class TestTimeFilteringEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -619,7 +622,7 @@ class TestNumericEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -661,7 +664,7 @@ class TestNumericEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -693,7 +696,7 @@ class TestNumericEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -733,7 +736,7 @@ class TestLabelHandlingEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -772,7 +775,7 @@ class TestLabelHandlingEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -813,7 +816,7 @@ class TestLabelHandlingEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -859,7 +862,7 @@ class TestHistogramBucketEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -901,7 +904,7 @@ class TestHistogramBucketEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -940,7 +943,7 @@ class TestHistogramBucketEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -985,7 +988,7 @@ class TestSchemaConsistency:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -1041,7 +1044,7 @@ class TestSchemaConsistency:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -1094,7 +1097,7 @@ class TestMultiEndpoint:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -1139,7 +1142,7 @@ class TestEdgeCases:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -1218,7 +1221,7 @@ class TestDataValidation:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -1254,7 +1257,7 @@ class TestDataValidation:
         await exporter.export()
 
         table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
+            mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         )
         df = table.to_pandas()
 
@@ -1278,7 +1281,7 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1295,7 +1298,9 @@ class TestParquetMetadataFields:
         assert version != "unknown"
 
         benchmark_id = metadata[b"aiperf.benchmark_id"].decode()
-        assert len(benchmark_id) == 36  # UUID format
+        # v2 ArtifactsConfig stores benchmark_id as a 32-char hex string
+        # (uuid4().hex); v1 used the 36-char dashed form. Accept either.
+        assert len(benchmark_id) in (32, 36)
 
         # Verify it's a valid UUID
         import uuid
@@ -1313,7 +1318,7 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1335,14 +1340,14 @@ class TestParquetMetadataFields:
     async def test_parquet_benchmark_id_matches_user_config(
         self, mock_user_config, gauge_hierarchy
     ):
-        """Verify Parquet benchmark_id matches UserConfig benchmark_id."""
+        """Verify Parquet benchmark_id matches CLIConfig benchmark_id."""
         mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1364,7 +1369,7 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_user_config.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 

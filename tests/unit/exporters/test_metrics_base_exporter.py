@@ -9,11 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.models import MetricResult
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.plugin.enums import EndpointType
+from tests.unit.exporters.conftest import make_exporter_config
 
 
 class ConcreteExporter(MetricsBaseExporter):
@@ -29,13 +30,11 @@ class ConcreteExporter(MetricsBaseExporter):
 
 @pytest.fixture
 def mock_user_config():
-    """Create a mock UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="custom_endpoint",
-        )
+    """Create a mock CLIConfig for testing."""
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        custom_endpoint="/custom_endpoint",
     )
 
 
@@ -66,11 +65,10 @@ def mock_results():
 def exporter_config(mock_results, mock_user_config):
     """Create ExporterConfig for testing."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        mock_user_config.output.artifact_directory = Path(temp_dir)
-        yield ExporterConfig(
+        mock_user_config.artifact_directory = Path(temp_dir)
+        yield make_exporter_config(
             results=mock_results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -81,11 +79,10 @@ class TestMetricsBaseExporterInitialization:
     def test_base_exporter_initialization(self, mock_results, mock_user_config):
         """Verify all instance variables are set correctly from ExporterConfig."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
-            config = ExporterConfig(
+            mock_user_config.artifact_directory = Path(temp_dir)
+            config = make_exporter_config(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -93,7 +90,7 @@ class TestMetricsBaseExporterInitialization:
 
             assert exporter._results is mock_results
             assert exporter._telemetry_results is None
-            assert exporter._user_config is mock_user_config
+            assert exporter._cfg is config.cfg
             assert exporter._output_directory == Path(temp_dir)
 
 
@@ -154,12 +151,11 @@ class TestMetricsBaseExporterExport:
         """Verify directory is created if it doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "nested" / "output"
-            mock_user_config.output.artifact_directory = output_dir
+            mock_user_config.artifact_directory = output_dir
 
-            config = ExporterConfig(
+            config = make_exporter_config(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -176,11 +172,10 @@ class TestMetricsBaseExporterExport:
     async def test_export_calls_generate_content(self, mock_results, mock_user_config):
         """Verify _generate_content() is called during export."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
-            config = ExporterConfig(
+            mock_user_config.artifact_directory = Path(temp_dir)
+            config = make_exporter_config(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -197,11 +192,10 @@ class TestMetricsBaseExporterExport:
     async def test_export_writes_content_to_file(self, mock_results, mock_user_config):
         """Verify file contains returned content."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
-            config = ExporterConfig(
+            mock_user_config.artifact_directory = Path(temp_dir)
+            config = make_exporter_config(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -221,11 +215,10 @@ class TestMetricsBaseExporterExport:
     async def test_export_handles_write_errors(self, mock_results, mock_user_config):
         """Verify error is logged and exception is re-raised on write failure."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
-            config = ExporterConfig(
+            mock_user_config.artifact_directory = Path(temp_dir)
+            config = make_exporter_config(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -256,11 +249,10 @@ class TestMetricsBaseExporterExport:
     async def test_export_logs_debug_message(self, mock_results, mock_user_config):
         """Verify debug message is logged with file path."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
-            config = ExporterConfig(
+            mock_user_config.artifact_directory = Path(temp_dir)
+            config = make_exporter_config(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(verbose=True),
+                cli_config=mock_user_config,
                 telemetry_results=None,
             )
 

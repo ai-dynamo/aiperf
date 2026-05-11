@@ -22,7 +22,7 @@ def create_mock_records_manager(
     instance = MagicMock()
     instance.expected_duration_sec = expected_duration_sec
     instance.start_time_ns = start_time_ns
-    instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
+    instance.cli_config.benchmark_grace_period = grace_period_sec
     instance.debug = MagicMock()
     return instance
 

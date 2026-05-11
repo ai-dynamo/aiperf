@@ -90,14 +90,11 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         Raises:
             DataExporterDisabled: If server metrics are disabled or no data is available
         """
-        if exporter_config.user_config.server_metrics_disabled:
+        if exporter_config.cfg.server_metrics_disabled:
             raise DataExporterDisabled("Server metrics is disabled")
 
         # Check if CSV format is enabled
-        if (
-            ServerMetricsFormat.CSV
-            not in exporter_config.user_config.server_metrics_formats
-        ):
+        if ServerMetricsFormat.CSV not in exporter_config.cfg.server_metrics_formats:
             raise DataExporterDisabled(
                 "Server metrics CSV export disabled: format not selected"
             )
@@ -112,9 +109,7 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
             )
 
         super().__init__(exporter_config, **kwargs)
-        self._file_path = (
-            exporter_config.user_config.output.server_metrics_export_csv_file
-        )
+        self._file_path = exporter_config.cfg.artifacts.server_metrics_export_csv_file
         self.trace_or_debug(
             lambda: f"Initializing ServerMetricsCsvExporter with config: {exporter_config}",
             lambda: f"Initializing ServerMetricsCsvExporter with file path: {self._file_path}",

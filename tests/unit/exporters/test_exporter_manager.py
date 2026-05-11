@@ -5,22 +5,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin.enums import (
     EndpointType,
 )
+from tests.unit.conftest import make_run_from_v1
 
 
 @pytest.fixture
 def endpoint_config():
-    return EndpointConfig(type=EndpointType.CHAT, streaming=True, model_names=["gpt2"])
+    return CLIConfig(
+        endpoint_type=EndpointType.CHAT, streaming=True, model_names=["gpt2"]
+    )
 
 
 @pytest.fixture
 def output_config(tmp_path):
-    return OutputConfig(artifact_directory=tmp_path)
+    """Returns the artifact directory path used by mock_user_config."""
+    return tmp_path
 
 
 @pytest.fixture
@@ -37,7 +41,10 @@ def sample_records():
 
 @pytest.fixture
 def mock_user_config(endpoint_config, output_config):
-    config = UserConfig(endpoint=endpoint_config, output=output_config)
+    config = CLIConfig(
+        **endpoint_config.model_dump(exclude_unset=True),
+        artifact_directory=output_config,
+    )
     return config
 
 
@@ -68,8 +75,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                run=make_run_from_v1(mock_user_config),
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -112,8 +118,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                run=make_run_from_v1(mock_user_config),
                 telemetry_results=None,
             )
             await manager.export_console(Console())

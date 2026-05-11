@@ -6,23 +6,19 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
+from aiperf.config.flags import CLIConfig
 from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_run_from_v1
 
 
-def _make_user_config(system_prompt: str | None = None) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(
-            benchmark=AccuracyBenchmarkType.MMLU,
-            system_prompt=system_prompt,
-        ),
+def _make_user_config(system_prompt: str | None = None) -> CLIConfig:
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
+        accuracy_system_prompt=system_prompt,
     )
 
 
@@ -40,7 +36,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
     def test_system_prompt_prepended_to_texts_for_completions(self) -> None:
         """system_prompt is prepended to turn.texts so the completions endpoint receives it."""
         loader = AccuracyDatasetLoader(
-            user_config=_make_user_config(system_prompt="Answer concisely.")
+            run=make_run_from_v1(_make_user_config(system_prompt="Answer concisely."))
         )
         conversations = loader._convert_to_conversations(
             [_make_problem(prompt="What is 2+2?")]
@@ -52,7 +48,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
     def test_system_prompt_also_in_raw_messages_for_chat(self) -> None:
         """system_prompt is the first raw_message so the chat endpoint also receives it."""
         loader = AccuracyDatasetLoader(
-            user_config=_make_user_config(system_prompt="Answer concisely.")
+            run=make_run_from_v1(_make_user_config(system_prompt="Answer concisely."))
         )
         conversations = loader._convert_to_conversations([_make_problem()])
 
@@ -66,7 +62,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
     def test_no_system_prompt_leaves_texts_unchanged(self) -> None:
         """Without a system_prompt, turn.texts contains only the problem prompt."""
         loader = AccuracyDatasetLoader(
-            user_config=_make_user_config(system_prompt=None)
+            run=make_run_from_v1(_make_user_config(system_prompt=None))
         )
         conversations = loader._convert_to_conversations(
             [_make_problem(prompt="What is 2+2?")]
@@ -78,7 +74,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
     def test_no_system_prompt_raw_messages_has_no_system_role(self) -> None:
         """Without a system_prompt, raw_messages contains only the user turn."""
         loader = AccuracyDatasetLoader(
-            user_config=_make_user_config(system_prompt=None)
+            run=make_run_from_v1(_make_user_config(system_prompt=None))
         )
         conversations = loader._convert_to_conversations([_make_problem()])
 
@@ -90,7 +86,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
     @pytest.mark.asyncio
     async def test_load_raises_on_empty_problems(self) -> None:
         """load() raises ValueError when the benchmark returns no problems."""
-        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        loader = AccuracyDatasetLoader(run=make_run_from_v1(_make_user_config()))
 
         with (
             patch(
@@ -104,7 +100,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
     def test_system_prompt_applied_to_all_problems(self) -> None:
         """system_prompt is prepended to every problem's texts, not just the first."""
         loader = AccuracyDatasetLoader(
-            user_config=_make_user_config(system_prompt="Be brief.")
+            run=make_run_from_v1(_make_user_config(system_prompt="Be brief."))
         )
         problems = [_make_problem(prompt=f"Q{i}") for i in range(3)]
         conversations = loader._convert_to_conversations(problems)
@@ -116,7 +112,7 @@ class TestAccuracyDatasetLoaderSystemPrompt:
 class TestAccuracyDatasetLoaderRawMessages:
     def test_prebuilt_raw_messages_passed_through_unchanged(self) -> None:
         """When problem.raw_messages is set, Turn.raw_messages receives them as-is."""
-        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        loader = AccuracyDatasetLoader(run=make_run_from_v1(_make_user_config()))
         problem = BenchmarkProblem(
             prompt="What is 2+2?",
             ground_truth="A",
@@ -139,7 +135,7 @@ class TestAccuracyDatasetLoaderRawMessages:
 
     def test_accuracy_ground_truth_stamped_on_conversation(self) -> None:
         """_convert_to_conversations stamps problem.ground_truth onto Conversation."""
-        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        loader = AccuracyDatasetLoader(run=make_run_from_v1(_make_user_config()))
         problem = _make_problem(ground_truth="C")
 
         conversations = loader._convert_to_conversations([problem])
@@ -148,7 +144,7 @@ class TestAccuracyDatasetLoaderRawMessages:
 
     def test_accuracy_task_stamped_on_conversation(self) -> None:
         """_convert_to_conversations stamps problem.task onto Conversation."""
-        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        loader = AccuracyDatasetLoader(run=make_run_from_v1(_make_user_config()))
         problem = BenchmarkProblem(
             prompt="Q?", ground_truth="B", task="abstract_algebra"
         )
@@ -159,7 +155,7 @@ class TestAccuracyDatasetLoaderRawMessages:
 
     def test_metadata_propagates_accuracy_fields(self) -> None:
         """Conversation.metadata() carries accuracy fields into ConversationMetadata."""
-        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        loader = AccuracyDatasetLoader(run=make_run_from_v1(_make_user_config()))
         problem = BenchmarkProblem(prompt="Q?", ground_truth="D", task="virology")
 
         conversations = loader._convert_to_conversations([problem])
@@ -171,7 +167,7 @@ class TestAccuracyDatasetLoaderRawMessages:
     def test_system_prompt_prepended_to_prebuilt_raw_messages(self) -> None:
         """system_prompt is inserted at index 0 of pre-built raw_messages."""
         loader = AccuracyDatasetLoader(
-            user_config=_make_user_config(system_prompt="Be concise.")
+            run=make_run_from_v1(_make_user_config(system_prompt="Be concise."))
         )
         problem = BenchmarkProblem(
             prompt="What is 2+2?",

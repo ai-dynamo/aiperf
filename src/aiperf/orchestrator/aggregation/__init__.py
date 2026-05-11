@@ -13,9 +13,9 @@ from aiperf.orchestrator.aggregation.confidence import (
 from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
 from aiperf.orchestrator.aggregation.sweep import (
     DEFAULT_PARETO_OBJECTIVES,
-    Objective,
     OptimizationDirection,
     ParameterCombination,
+    ParetoObjective,
     SweepAnalyzer,
     identify_pareto_optimal,
 )
@@ -27,9 +27,9 @@ __all__ = [
     "ConfidenceMetric",
     "DetailedAggregation",
     "DEFAULT_PARETO_OBJECTIVES",
-    "Objective",
     "OptimizationDirection",
     "ParameterCombination",
+    "ParetoObjective",
     "SweepAnalyzer",
     "identify_pareto_optimal",
 ]

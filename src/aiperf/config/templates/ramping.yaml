@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Gradual Load Ramping
+# description: Smoothly ramp concurrency and request rate to avoid cold-start transients and connection storms.
+# category: Load Testing
+# tags: ramp, concurrency, rate, capacity, stress
+# difficulty: intermediate
+# features: concurrencyRamp, rateRamp, prefillRamp, two-phase
+#
+# Gradual Load Ramping
+# ====================
+# Avoids the "instant full load" anti-pattern. Without ramping, a benchmark
+# starting at high concurrency typically sees:
+#   - Connection storms       (hundreds of simultaneous opens)
+#   - KV-cache allocation spikes that look like server bugs
+#   - Cold-start metrics polluting steady-state numbers
+#
+# This template ramps three independent dimensions:
+#   concurrencyRamp : session concurrency rises from 1 to target in steps of +1
+#   rateRamp        : request rate interpolates linearly from ~0 to target
+#   prefillRamp     : limits how quickly prefill concurrency grows (memory safety)
+#
+# The warmup phase ramps to a moderate level; profiling ramps to full target,
+# then sustains. Tune `duration` on each ramp for your server's startup cost
+# (~8 connections/sec is a safe default).
+#
+# Run: aiperf profile --config ramping.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 5000
+    isl: {mean: 512, stddev: 50}
+    osl: {mean: 256, stddev: 25}
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 200
+      concurrency: 50
+      concurrencyRamp: 10s         # Ramp 1 -> 50 over 10s
+
+    - name: profiling
+      type: poisson
+      duration: 300                 # 5-minute steady-state window after the ramps complete
+      rate: 200.0
+      concurrency: 200
+      concurrencyRamp: 60s          # Ramp session concurrency 1 -> 200 over 60s
+      rateRamp: 60s                 # Smooth rate ramp ~0 -> 200 QPS over 60s
+      prefillRamp: 30s              # Pair with prefillConcurrency for memory-safe long-context ramps
+      gracePeriod: 60s
+
+  artifacts:
+    dir: ./artifacts/ramping
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 15s              # Short windows so the ramp curve is visible in per-window stats

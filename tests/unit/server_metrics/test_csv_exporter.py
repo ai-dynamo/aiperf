@@ -9,7 +9,6 @@ from typing import TypeAlias
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import GenericMetricUnit
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import (
@@ -27,6 +26,7 @@ from aiperf.common.models import (
     ServerMetricsEndpointSummary,
     ServerMetricsResults,
 )
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.csv_exporter import CsvMetricInfo, ServerMetricsCsvExporter
 from tests.unit.conftest import create_exporter_config
@@ -101,7 +101,7 @@ def _generate_csv_content(
     """Create exporter and generate CSV content."""
     config = create_exporter_config(
         profile_results=mock_profile_results,
-        user_config=mock_user_config,
+        cli_config=mock_user_config,
         server_metrics_results=server_metrics_results,
     )
     return ServerMetricsCsvExporter(config)._generate_content()
@@ -114,14 +114,12 @@ def _generate_csv_content(
 
 @pytest.fixture
 def mock_user_config(tmp_path):
-    """Create a UserConfig with a temp output directory."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="/v1/chat/completions",
-        ),
-        output={"artifact_dir": str(tmp_path)},
+    """Create a CLIConfig with a temp output directory."""
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        custom_endpoint="/v1/chat/completions",
+        artifact_directory=str(tmp_path),
     )
 
 
@@ -338,7 +336,7 @@ class TestServerMetricsCsvExporterInitialization:
         """Test that exporter initializes correctly with valid config."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            cli_config=mock_user_config,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         assert ServerMetricsCsvExporter(config) is not None
@@ -349,7 +347,7 @@ class TestServerMetricsCsvExporterInitialization:
         """Test that exporter raises DataExporterDisabled when no results."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            cli_config=mock_user_config,
             server_metrics_results=None,
         )
         with pytest.raises(DataExporterDisabled):
@@ -368,7 +366,7 @@ class TestServerMetricsCsvExporterGetExportInfo:
         """Test that export info contains correct type and path."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            cli_config=mock_user_config,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         info = ServerMetricsCsvExporter(config).get_export_info()
@@ -987,14 +985,14 @@ class TestServerMetricsCsvExporterIntegration:
         """Test that export creates a valid CSV file."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            cli_config=mock_user_config,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         exporter = ServerMetricsCsvExporter(config)
         await exporter.export()
 
         # Read and parse the exported file
-        output_file = mock_user_config.output.server_metrics_export_csv_file
+        output_file = config.cfg.artifacts.server_metrics_export_csv_file
         assert output_file.exists()
 
         with open(output_file) as f:

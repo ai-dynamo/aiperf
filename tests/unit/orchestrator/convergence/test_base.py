@@ -18,6 +18,10 @@ from aiperf.orchestrator.models import RunResult
 class _StubCriterion(ConvergenceCriterion):
     """Concrete stub so we can test the base class utility method."""
 
+    @classmethod
+    def from_plan(cls, plan) -> "_StubCriterion":
+        return cls()
+
     def is_converged(self, results: list[RunResult]) -> bool:
         return False
 

@@ -30,11 +30,22 @@ class TokenizedText:
     """Tokenized text with metadata."""
 
     text: str
+    """Original input text before tokenization."""
+
     tokens: list[str]
+    """Output tokens generated from the input."""
+
     prompt_token_count: int
+    """Number of tokens in the input prompt."""
+
     reasoning_tokens: int = 0
+    """Number of reasoning tokens generated."""
+
     reasoning_content_tokens: list[str] = field(default_factory=list)
+    """Individual reasoning content tokens."""
+
     finish_reason: str = "stop"
+    """Reason generation stopped (stop or length)."""
 
     @property
     def count(self) -> int:
@@ -115,8 +126,13 @@ class _ReasoningResult:
     """Result of reasoning token generation with budget management."""
 
     token_count: int
+    """Number of reasoning tokens generated."""
+
     content_tokens: list[str]
+    """Individual reasoning content tokens."""
+
     remaining_budget: int | None
+    """Remaining token budget after reasoning allocation."""
 
 
 @dataclass(slots=True)
@@ -124,8 +140,13 @@ class _TokenBudget:
     """Token budget calculation result."""
 
     total: int
+    """Total token budget for generation."""
+
     min_tokens: int
+    """Minimum number of tokens to generate."""
+
     max_tokens: int
+    """Maximum number of tokens to generate."""
 
 
 # ============================================================================
@@ -180,11 +201,13 @@ def tokenize_request(request: RequestT) -> TokenizedText:
     # For embeddings, rankings, and images - simple token counting without generation options
     if isinstance(
         request,
-        EmbeddingRequest
-        | RankingRequest
-        | HFTEIRerankRequest
-        | CohereRerankRequest
-        | ImageGenerationRequest,
+        (
+            EmbeddingRequest,
+            RankingRequest,
+            HFTEIRerankRequest,
+            CohereRerankRequest,
+            ImageGenerationRequest,
+        ),
     ):
         return TokenizedText(
             text=text,
@@ -289,12 +312,12 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     if isinstance(request, ChatCompletionRequest):
         text = _extract_chat_messages(request.messages)
         return text, request.max_output_tokens
-    elif isinstance(request, CompletionRequest | TGIGenerateRequest):
+    elif isinstance(request, (CompletionRequest, TGIGenerateRequest)):
         return request.prompt_text, request.max_tokens
     elif isinstance(request, EmbeddingRequest):
         text = "\n".join(request.inputs)
         return text, None
-    elif isinstance(request, RankingRequest | HFTEIRerankRequest | CohereRerankRequest):
+    elif isinstance(request, (RankingRequest, HFTEIRerankRequest, CohereRerankRequest)):
         text = request.query_text + "\n" + "\n".join(request.passage_texts)
         return text, None
     elif isinstance(request, ImageGenerationRequest):
@@ -448,8 +471,8 @@ def _load_corpus() -> tuple[str, ...] | None:
             f"SERVER NOT READY - Loading corpus with tokenizer '{server_config.tokenizer}'... This may take a while..."
         )
         try:
-            from aiperf.common.config import PromptConfig
             from aiperf.common.tokenizer import Tokenizer
+            from aiperf.config import PromptConfig
             from aiperf.dataset.generator.prompt import PromptGenerator
 
             tokenizer = Tokenizer.from_pretrained(

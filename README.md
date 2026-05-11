@@ -51,7 +51,8 @@ aiperf profile \
   --streaming \
   --endpoint-type chat \
   --tokenizer ibm-granite/granite-4.0-micro \
-  --url http://localhost:11434
+  --url http://localhost:11434 \
+  --request-count 10
 ```
 
 
@@ -63,7 +64,7 @@ aiperf profile \
   --streaming \
   --endpoint-type chat \
   --tokenizer ibm-granite/granite-4.0-micro \
-  --url http://localhost:11434
+  --url http://localhost:11434 \
   --concurrency 5 \
   --request-count 10
 ```
@@ -101,7 +102,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ## Features
 
-- Scalable multiprocess architecture with 9 services communicating via ZMQ
+- Scalable multiprocess architecture with 10 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
 - Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
@@ -117,6 +118,8 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Getting Started
 - [Basic Tutorial](docs/tutorial.md) - Profile Qwen3-0.6B with vLLM
 - [Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md) - 5 real-world use cases
+- [YAML Configuration Files](docs/tutorials/yaml-config.md) - Drive AIPerf from a config file instead of CLI flags
+- [Sampling Distributions in YAML Configs](docs/tutorials/yaml-distributions.md) - Fixed, Normal, Log-normal, Multimodal, and Empirical shapes for ISL/OSL/turns/etc.
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
@@ -138,6 +141,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [SageMaker Data Capture](docs/tutorials/sagemaker-data-capture.md) - Replay production traffic from SageMaker endpoints
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
+- [Inline Datasets](docs/tutorials/inline-datasets.md) - Embed records directly in the YAML config (single_turn, multi_turn, multi-pool random_pool, traces)
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
 - [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning datasets (NuminaMath-TIR, NuminaMath-CoT, NuminaMath-1.5, AIME)
 - [MMStar Dataset](docs/tutorials/mmstar.md) - Profile vision language models with MMStar visual QA benchmark
@@ -174,10 +178,14 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis
 - [Goodput](docs/tutorials/goodput.md) - SLO-based throughput measurement
+- [Parameter Sweeps](docs/tutorials/sweeps.md) - YAML reference for grid/zip/scenarios sweeps + multi-run, with picker for choosing a sweep mode
+- [Adaptive Search](docs/tutorials/adaptive-search.md) - Bayesian-optimization walkthrough (single-objective + multi-objective Pareto)
+- [Search Recipes](docs/sweeping/search-recipes.md) - Named recipe catalog including `pareto-sweep`, `max-throughput-ttft-sla`, `max-concurrency-under-sla`
 - [HTTP Trace Metrics](docs/tutorials/http-trace-metrics.md) - DNS, TCP/TLS, TTFB timing
 - [Multi-Run Confidence](docs/tutorials/multi-run-confidence.md) - Confidence intervals across repeated runs
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
+- [Auto-Plot After Profile](docs/tutorials/auto-plot.md) - Run `aiperf plot` automatically after `aiperf profile`
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
 - [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 

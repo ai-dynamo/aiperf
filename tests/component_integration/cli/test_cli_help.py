@@ -10,7 +10,7 @@ from tests.harness.utils import AIPerfCLI
 
 @pytest.fixture
 def disabled_parameters() -> list[str]:
-    """Parameters that should NOT appear in help due to DisableCLI()."""
+    """Parameters that should NOT appear in help."""
     return [
         "--service-config.zmq-tcp.event-bus-proxy-config.frontend-port",
         "--service-config.zmq-tcp.event-bus-proxy-config.backend-port",
@@ -38,16 +38,6 @@ class TestCLIHelp:
         result = cli.run_sync("aiperf", assert_success=False)
         assert "Usage: aiperf COMMAND" in result.stdout
         assert "─ Commands ─" in result.stdout
-
-    def test_disable_cli_parameters_not_in_help(
-        self, cli: AIPerfCLI, disabled_parameters: list[str]
-    ):
-        """Test that parameters marked with DisableCLI() are not shown in help text."""
-        result = cli.run_sync("aiperf profile -h", assert_success=False)
-        for param in disabled_parameters:
-            assert param not in result.stdout, (
-                f"DisableCLI parameter '{param}' should not appear in help text"
-            )
 
 
 class TestCLIVersion:

@@ -36,7 +36,7 @@ def spy_tokenizer():
 @pytest.fixture
 def server_token_parser(setup_inference_parser):
     """Parser with server token count enabled."""
-    setup_inference_parser.user_config.endpoint.use_server_token_count = True
+    setup_inference_parser.run.cfg.endpoint.use_server_token_count = True
     return setup_inference_parser
 
 
@@ -357,7 +357,7 @@ class TestServerTokenCount:
         self, setup_inference_parser, request_record, spy_tokenizer
     ):
         """Client-side tokenization works when flag is disabled."""
-        assert not setup_inference_parser.user_config.endpoint.use_server_token_count
+        assert not setup_inference_parser.run.cfg.endpoint.use_server_token_count
 
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(

@@ -6,7 +6,6 @@ from abc import ABC
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
@@ -28,8 +27,8 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
     """Mixin to provide message bus clients (pub and sub)for AIPerf components, as well as
     a hook to handle messages: @on_message."""
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
-        super().__init__(service_config=service_config, **kwargs)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         # NOTE: The communication base class will automatically manage the pub/sub clients' lifecycle.
         self.sub_client = self.comms.create_sub_client(
             CommAddress.EVENT_BUS_PROXY_BACKEND

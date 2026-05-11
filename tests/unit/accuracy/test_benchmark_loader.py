@@ -7,20 +7,26 @@ import pytest
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
+from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_run_from_v1
 
 
-def _make_user_config(n_shots: int | None = None) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU, n_shots=n_shots),
+def _make_run(n_shots: int | None = None):
+    # v1 CLIConfig requires int for n_shots, but the loader honors None
+    # as "fall back to plugin metadata". Build via v1 with a placeholder, then
+    # mutate the v2 cfg to expose the None path the loader actually reads.
+    cli_config = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
+        accuracy_n_shots=n_shots if n_shots is not None else 0,
     )
+    run = make_run_from_v1(cli_config)
+    if n_shots is None:
+        run.cfg.accuracy.n_shots = None
+    return run
 
 
 def _make_problem() -> BenchmarkProblem:
@@ -31,7 +37,7 @@ def _make_problem() -> BenchmarkProblem:
 class TestLoadBenchmarkProblemsNShots:
     async def test_uses_explicit_n_shots_without_consulting_metadata(self) -> None:
         """When n_shots is set explicitly, plugin metadata is never consulted."""
-        user_config = _make_user_config(n_shots=3)
+        run = _make_run(n_shots=3)
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -47,7 +53,7 @@ class TestLoadBenchmarkProblemsNShots:
             ),
             patch("aiperf.accuracy.benchmark_loader.plugins.get_metadata") as mock_meta,
         ):
-            result = await load_benchmark_problems(user_config)
+            result = await load_benchmark_problems(run)
 
         mock_meta.assert_not_called()
         mock_benchmark.load_problems.assert_awaited_once_with(
@@ -57,7 +63,7 @@ class TestLoadBenchmarkProblemsNShots:
 
     async def test_falls_back_to_default_n_shots_from_metadata(self) -> None:
         """When n_shots is None, default_n_shots from plugin metadata is used."""
-        user_config = _make_user_config(n_shots=None)
+        run = _make_run(n_shots=None)
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -76,7 +82,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={"default_n_shots": 5},
             ),
         ):
-            result = await load_benchmark_problems(user_config)
+            result = await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=5, enable_cot=False
@@ -87,7 +93,7 @@ class TestLoadBenchmarkProblemsNShots:
         self,
     ) -> None:
         """When n_shots is None and metadata has no default_n_shots, n_shots defaults to 0."""
-        user_config = _make_user_config(n_shots=None)
+        run = _make_run(n_shots=None)
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -106,7 +112,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={},
             ),
         ):
-            result = await load_benchmark_problems(user_config)
+            result = await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=0, enable_cot=False

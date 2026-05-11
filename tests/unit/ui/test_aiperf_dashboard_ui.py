@@ -12,7 +12,7 @@ class TestAIPerfDashboardUIInitialization:
     """Test AIPerfDashboardUI initialization."""
 
     @pytest.fixture
-    def mock_dependencies(self, service_config, user_config):
+    def mock_dependencies(self, benchmark_run):
         """Create mocked dependencies for AIPerfDashboardUI."""
         mock_log_queue = Mock()
         mock_controller = MagicMock()
@@ -20,8 +20,7 @@ class TestAIPerfDashboardUIInitialization:
 
         return {
             "log_queue": mock_log_queue,
-            "service_config": service_config,
-            "user_config": user_config,
+            "run": benchmark_run,
             "controller": mock_controller,
         }
 
@@ -84,9 +83,9 @@ class TestAIPerfDashboardUIInitialization:
         assert hasattr(dashboard_ui.app, "on_realtime_telemetry_metrics")
 
     def test_init_stores_references(self, dashboard_ui, mock_dependencies):
-        """Test that controller and service_config are stored."""
+        """Test that controller and run are stored."""
         assert dashboard_ui.controller == mock_dependencies["controller"]
-        assert dashboard_ui.service_config == mock_dependencies["service_config"]
+        assert dashboard_ui.run == mock_dependencies["run"]
 
     def test_init_creates_textual_app(self, mock_dependencies):
         """Test that AIPerfTextualApp is created with correct parameters."""
@@ -100,7 +99,7 @@ class TestAIPerfDashboardUIInitialization:
 
             mock_app_class.assert_called_once()
             call_kwargs = mock_app_class.call_args[1]
-            assert call_kwargs["service_config"] == mock_dependencies["service_config"]
+            assert call_kwargs["run"] == mock_dependencies["run"]
             assert call_kwargs["controller"] == mock_dependencies["controller"]
 
 
@@ -108,7 +107,7 @@ class TestAIPerfDashboardUILifecycle:
     """Test lifecycle hooks."""
 
     @pytest.fixture
-    def dashboard_ui(self, service_config, user_config):
+    def dashboard_ui(self, benchmark_run):
         """Create AIPerfDashboardUI instance with mocked dependencies."""
         mock_log_queue = Mock()
         mock_controller = MagicMock()
@@ -124,8 +123,7 @@ class TestAIPerfDashboardUILifecycle:
 
             dashboard = AIPerfDashboardUI(
                 log_queue=mock_log_queue,
-                service_config=service_config,
-                user_config=user_config,
+                run=benchmark_run,
                 controller=mock_controller,
             )
 

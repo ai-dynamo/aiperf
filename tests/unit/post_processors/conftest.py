@@ -9,7 +9,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CreditPhase,
     ExportLevel,
@@ -44,6 +43,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
 )
 from aiperf.common.types import MetricTagT
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -82,49 +82,64 @@ async def aiperf_lifecycle(instance: T) -> T:
 
 
 @asynccontextmanager
-async def raw_record_processor(service_id: str, user_config: UserConfig):
+async def raw_record_processor(service_id: str, run):
     """Async context manager for RawRecordWriterProcessor lifecycle.
 
     Handles initialize, start, and stop automatically.
 
     Usage:
-        async with raw_record_processor("processor-1", user_config) as processor:
+        async with raw_record_processor("processor-1", run) as processor:
             await processor.process_record(record, metadata)
     """
 
     processor = RawRecordWriterProcessor(
         service_id=service_id,
-        user_config=user_config,
+        run=run,
     )
     async with aiperf_lifecycle(processor) as proc:
         yield proc
 
 
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        )
+def mock_user_config() -> CLIConfig:
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
     )
 
 
 @pytest.fixture
-def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
-    """Create a UserConfig for raw record testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-            export_level=ExportLevel.RAW,
-        ),
+def mock_run(mock_user_config: CLIConfig):
+    """v2 BenchmarkRun built from the mock_user_config fixture.
+
+    Tests should mutate ``mock_run.cfg.endpoint`` / ``mock_run.cfg.slos``
+    instead of ``mock_user_config`` because the v2 resolver flattens config
+    state at construction time.
+    """
+    from tests.unit.conftest import make_run_from_v1
+
+    return make_run_from_v1(mock_user_config)
+
+
+@pytest.fixture
+def user_config_raw(tmp_artifact_dir: Path) -> CLIConfig:
+    """Create a CLIConfig for raw record testing."""
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        streaming=False,
+        artifact_directory=tmp_artifact_dir,
+        export_level=ExportLevel.RAW,
     )
+
+
+@pytest.fixture
+def run_raw(user_config_raw: CLIConfig):
+    """v2 BenchmarkRun built from the user_config_raw fixture."""
+    from tests.unit.conftest import make_run_from_v1
+
+    return make_run_from_v1(user_config_raw)
 
 
 def _create_test_request_info(
@@ -253,11 +268,12 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
-def create_exporter_config(user_config: UserConfig) -> ExporterConfig:
+def create_exporter_config(cli_config: CLIConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
+    from tests.unit.conftest import make_cfg_from_v1
+
     return ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        cfg=make_cfg_from_v1(cli_config),
         results=ProfileResults(
             records=None,
             completed=0,
@@ -322,19 +338,19 @@ def setup_mock_registry_sequences(
 
 
 def create_results_processor_with_metrics(
-    user_config: UserConfig, *metrics: type[BaseMetric]
+    run, *metrics: type[BaseMetric]
 ) -> MetricResultsProcessor:
     """Create a MetricResultsProcessor with pre-configured metrics.
 
     Args:
-        user_config: User configuration for the processor
+        run: BenchmarkRun for the processor
         metrics: list of metric classes
 
     Returns:
         Configured MetricResultsProcessor instance
     """
 
-    processor = MetricResultsProcessor(user_config)
+    processor = MetricResultsProcessor(run)
     processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
     processor._instances_map = {metric.tag: metric() for metric in metrics}
     return processor

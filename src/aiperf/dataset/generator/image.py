@@ -7,8 +7,8 @@ from pathlib import Path
 from PIL import Image
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
+from aiperf.config.dataset.content import ImageConfig
 from aiperf.dataset import utils
 from aiperf.dataset.generator.base import BaseGenerator
 
@@ -22,7 +22,7 @@ class ImageGenerator(BaseGenerator):
     The dimensions can be randomized based on mean and standard deviation values.
     """
 
-    def __init__(self, config: ImageConfig, **kwargs):
+    def __init__(self, config: ImageConfig | None, **kwargs):
         super().__init__(**kwargs)
 
         # Separate RNGs for independent concerns
@@ -30,7 +30,11 @@ class ImageGenerator(BaseGenerator):
         self._format_rng = rng.derive("dataset.image.format")
         self._source_rng = rng.derive("dataset.image.source")
 
-        self.config = config
+        # Fall back to default ImageConfig when the dataset doesn't configure
+        # images. The composer's ``include_image`` gate normally prevents
+        # ``generate()`` from running in that case, but having a real config
+        # object simplifies callers (no None-checks on every read).
+        self.config = config if config is not None else ImageConfig()
 
         # Pre-load source images into memory for fast sampling
         source_images_dir = Path(__file__).parent.resolve() / "assets" / "source_images"
@@ -60,11 +64,13 @@ class ImageGenerator(BaseGenerator):
             formats = [f for f in ImageFormat if f != ImageFormat.RANDOM]
             image_format = self._format_rng.choice(formats)
 
+        width_dist = self.config.width
+        height_dist = self.config.height
         width = self._dimensions_rng.sample_positive_normal_integer(
-            self.config.width.mean, self.config.width.stddev
+            int(width_dist.expected_value), int(getattr(width_dist, "stddev", 0) or 0)
         )
         height = self._dimensions_rng.sample_positive_normal_integer(
-            self.config.height.mean, self.config.height.stddev
+            int(height_dist.expected_value), int(getattr(height_dist, "stddev", 0) or 0)
         )
 
         self.logger.debug(

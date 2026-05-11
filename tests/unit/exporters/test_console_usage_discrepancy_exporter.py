@@ -7,9 +7,9 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import GenericMetricUnit, MetricTimeUnit
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_usage_discrepancy_exporter import (
     ConsoleUsageDiscrepancyExporter,
 )
@@ -25,12 +25,10 @@ class TestConsoleUsageDiscrepancyExporter:
     @pytest.fixture
     def mock_user_config(self):
         """Create a mock user config."""
-        return UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="custom_endpoint",
-            )
+        return CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/custom_endpoint",
         )
 
     def _create_profile_results(

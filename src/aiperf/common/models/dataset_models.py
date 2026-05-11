@@ -47,10 +47,12 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
     conversation_count: int = Field(
         default=0,
+        ge=0,
         description="Number of conversations stored in the mmap files.",
     )
     total_size_bytes: int = Field(
         default=0,
+        ge=0,
         description="Total size of the data file in bytes.",
     )
     # Pre-compressed files for Kubernetes HTTP transfer (optional)
@@ -64,6 +66,7 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
     compressed_size_bytes: int = Field(
         default=0,
+        ge=0,
         description="Total size of the compressed data file in bytes.",
     )
 
@@ -112,6 +115,7 @@ class TurnMetadata(AIPerfBaseModel):
     )
     delay_ms: int | float | None = Field(
         default=None,
+        ge=0,
         description="The delay of the turn in the conversation (in milliseconds).",
     )
 
@@ -134,7 +138,9 @@ class Turn(AIPerfBaseModel):
         description="The delay of the turn in the conversation (in milliseconds).",
     )
     max_tokens: int | None = Field(
-        default=None, description="Maximum number of tokens to generate for this turn."
+        default=None,
+        ge=1,
+        description="Maximum number of tokens to generate for this turn.",
     )
     raw_messages: list[dict[str, Any]] | None = Field(
         default=None,
@@ -164,6 +170,7 @@ class Turn(AIPerfBaseModel):
     )
     audio_duration_seconds: float | None = Field(
         default=None,
+        ge=0,
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )

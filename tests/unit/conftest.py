@@ -8,6 +8,7 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from io import BytesIO
@@ -19,7 +20,6 @@ import zmq.asyncio
 
 from aiperf.common import random_generator as rng
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.messages import Message
 from aiperf.common.models import (
     Conversation,
@@ -34,8 +34,8 @@ from aiperf.common.models import (
 from aiperf.common.models.record_models import TokenCounts
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.plugin.enums import CommunicationBackend, ServiceRunType
 from aiperf.plugin.plugins import _PluginRegistry as PluginRegistry
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.time_traveler import TimeTraveler
@@ -378,17 +378,44 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-    return config
+def cli_config() -> CLIConfig:
+    """Unified CLIConfig fixture combining benchmark + service-runtime fields.
+
+    Replaces the pre-rename ``user_config`` and ``service_config`` fixtures.
+    """
+    return CLIConfig(model_names=["test-model"])
+
+
+def make_run_from_v1(
+    cli_config: CLIConfig,
+):
+    """Build a v2 ``BenchmarkRun`` from a v1 ``CLIConfig``.
+
+    Test-only helper for fixtures that historically constructed components with
+    ``cli_config`` kwargs. Flows through the v1 -> v2 resolver and yields the
+    v2 ``BenchmarkRun`` the production constructors now require.
+    """
+    from aiperf.config import BenchmarkRun
+    from aiperf.config.flags.resolver import resolve_config
+
+    aiperf_config = resolve_config(cli_config, cli_config.config_file)
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=aiperf_config.benchmark,
+        artifact_dir=aiperf_config.benchmark.artifacts.dir,
+        random_seed=aiperf_config.random_seed,
+        variables=dict(aiperf_config.variables),
+    )
 
 
 @pytest.fixture
-def service_config() -> ServiceConfig:
-    return ServiceConfig(
-        service_run_type=ServiceRunType.MULTIPROCESSING,
-        comm_backend=CommunicationBackend.ZMQ_IPC,
-    )
+def benchmark_run(cli_config: CLIConfig):
+    """Build a v2 ``BenchmarkRun`` from the existing v1 fixture.
+
+    Tests migrating off ``cli_config`` constructors should depend on this
+    fixture instead.
+    """
+    return make_run_from_v1(cli_config)
 
 
 class MockPubClient:
@@ -714,18 +741,46 @@ def tmp_artifact_dir(tmp_path: Path) -> Path:
     return artifact_dir
 
 
+def make_cfg_from_v1(
+    cli_config: CLIConfig,
+    artifact_directory: Path | None = None,
+):
+    """Build a v2 ``BenchmarkConfig`` from a v1 ``CLIConfig``.
+
+    Wrapper around ``make_run_from_v1`` that returns just the ``cfg`` for tests
+    that need a BenchmarkConfig (e.g. ``ExporterConfig(cfg=...)``) without
+    needing the full BenchmarkRun. If ``artifact_directory`` is provided, the
+    cfg's ``artifacts.dir`` is overridden so exporter tests can write to a
+    tempdir.
+    """
+    cfg = make_run_from_v1(cli_config).cfg
+    if artifact_directory is not None:
+        cfg.artifacts.dir = Path(artifact_directory)
+    return cfg
+
+
 def create_exporter_config(
     profile_results,
-    user_config,
+    cli_config,
     telemetry_results=None,
     server_metrics_results=None,
     verbose=True,
 ):
-    """Helper to create ExporterConfig with common defaults."""
+    """Helper to create ExporterConfig with common defaults.
+
+    Accepts either a v1 ``CLIConfig`` (legacy) or a v2 ``BenchmarkConfig``
+    directly. v1 inputs are converted via ``make_cfg_from_v1``.
+    """
+    from aiperf.config.config import BenchmarkConfig
+
+    if isinstance(cli_config, BenchmarkConfig):
+        cfg = cli_config
+    else:
+        cli_with_verbose = cli_config.model_copy(update={"verbose": verbose})
+        cfg = make_cfg_from_v1(cli_with_verbose)
     return ExporterConfig(
         results=profile_results,
-        user_config=user_config,
-        service_config=ServiceConfig(verbose=verbose),
+        cfg=cfg,
         telemetry_results=telemetry_results,
         server_metrics_results=server_metrics_results,
     )

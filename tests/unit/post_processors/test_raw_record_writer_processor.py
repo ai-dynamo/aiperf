@@ -4,11 +4,11 @@
 import orjson
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import RawRecordInfo
+from aiperf.config.defaults import OutputDefaults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
@@ -30,16 +30,15 @@ def sample_parsed_record(sample_parsed_record_with_raw_responses: ParsedResponse
 class TestRawRecordWriterProcessorInitialization:
     """Test RawRecordWriterProcessor initialization."""
 
-    def test_init_creates_output_directory(self, user_config_raw: UserConfig):
+    def test_init_creates_output_directory(self, user_config_raw: CLIConfig, run_raw):
         """Test that initialization creates the raw_records directory."""
         processor = RawRecordWriterProcessor(
             service_id="processor-1",
-            user_config=user_config_raw,
+            run=run_raw,
         )
 
         expected_dir = (
-            user_config_raw.output.artifact_directory
-            / OutputDefaults.RAW_RECORDS_FOLDER
+            user_config_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
         )
         assert expected_dir.exists()
         assert expected_dir.is_dir()
@@ -57,22 +56,23 @@ class TestRawRecordWriterProcessorInitialization:
     )
     def test_filename_sanitization(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         service_id: str,
         expected_filename: str,
     ):
         """Test various service_id sanitization scenarios."""
         processor = RawRecordWriterProcessor(
             service_id=service_id,
-            user_config=user_config_raw,
+            run=run_raw,
         )
         assert processor.output_file.name == expected_filename
 
-    def test_init_with_none_service_id(self, user_config_raw: UserConfig):
+    def test_init_with_none_service_id(self, user_config_raw: CLIConfig, run_raw):
         """Test initialization with None service_id defaults to 'processor'."""
         processor = RawRecordWriterProcessor(
             service_id=None,
-            user_config=user_config_raw,
+            run=run_raw,
         )
 
         assert processor.service_id == "processor"
@@ -85,11 +85,12 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_writes_valid_data(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that process_record writes valid raw data to file."""
-        async with raw_record_processor("processor-1", user_config_raw) as processor:
+        async with raw_record_processor("processor-1", run_raw) as processor:
             metadata = create_metric_metadata(
                 session_num=0,
                 conversation_id="conv-123",
@@ -118,11 +119,12 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_with_error(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         error_parsed_record: ParsedResponseRecord,
     ):
         """Test that process_record handles error records correctly."""
-        async with raw_record_processor("processor-1", user_config_raw) as processor:
+        async with raw_record_processor("processor-1", run_raw) as processor:
             metadata = create_metric_metadata(
                 session_num=0,
                 conversation_id="conv-error",
@@ -143,11 +145,12 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_multiple_records(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test processing multiple records."""
-        async with raw_record_processor("processor-1", user_config_raw) as processor:
+        async with raw_record_processor("processor-1", run_raw) as processor:
             for i in range(5):
                 metadata = create_metric_metadata(
                     session_num=i,
@@ -173,11 +176,12 @@ class TestRawRecordWriterProcessorFileFormat:
     @pytest.mark.asyncio
     async def test_output_is_valid_jsonl_and_record_structure(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that output is valid JSONL format and record structure is complete."""
-        async with raw_record_processor("processor-1", user_config_raw) as processor:
+        async with raw_record_processor("processor-1", run_raw) as processor:
             metadata = create_metric_metadata(
                 conversation_id="test-conv",
                 turn_index=2,
@@ -212,15 +216,14 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_combines_multiple_files(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that aggregator combines multiple processor files."""
         # Create multiple processor files
         for i in range(3):
-            async with raw_record_processor(
-                f"processor-{i}", user_config_raw
-            ) as processor:
+            async with raw_record_processor(f"processor-{i}", run_raw) as processor:
                 for j in range(2):
                     metadata = create_metric_metadata(
                         session_num=i * 2 + j,
@@ -242,13 +245,12 @@ class TestRawRecordAggregator:
 
         # Verify raw_records directory is cleaned up
         raw_records_dir = (
-            user_config_raw.output.artifact_directory
-            / OutputDefaults.RAW_RECORDS_FOLDER
+            user_config_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
         )
         assert not raw_records_dir.exists()
 
     @pytest.mark.asyncio
-    async def test_aggregator_with_no_files(self, user_config_raw: UserConfig):
+    async def test_aggregator_with_no_files(self, user_config_raw: CLIConfig, run_raw):
         """Test that aggregator handles no input files gracefully."""
         exporter_config = create_exporter_config(user_config_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
@@ -262,13 +264,13 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_skips_empty_lines(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
     ):
         """Test that aggregator skips empty lines in input files."""
         # Create a processor file with some empty lines
         raw_records_dir = (
-            user_config_raw.output.artifact_directory
-            / OutputDefaults.RAW_RECORDS_FOLDER
+            user_config_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
         )
         raw_records_dir.mkdir(parents=True, exist_ok=True)
 
@@ -294,17 +296,18 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_clears_existing_output(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: CLIConfig,
+        run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that aggregator clears existing output file."""
         # Create existing output file
-        output_file = user_config_raw.output.profile_export_raw_jsonl_file
+        output_file = run_raw.cfg.artifacts.profile_export_raw_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("old content\n")
 
         # Create a processor file
-        async with raw_record_processor("processor-1", user_config_raw) as processor:
+        async with raw_record_processor("processor-1", run_raw) as processor:
             metadata = create_metric_metadata()
             await processor.process_record(sample_parsed_record, metadata)
 

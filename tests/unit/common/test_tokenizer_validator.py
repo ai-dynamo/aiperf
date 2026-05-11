@@ -3,8 +3,9 @@
 
 """Tests for early tokenizer validation and preloading."""
 
-import os
+import logging
 from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,24 +16,29 @@ from aiperf.common.tokenizer import (
     Tokenizer,
 )
 from aiperf.common.tokenizer_validator import (
-    preload_tokenizers,
+    _cache_tokenizer,
+    _init_worker,
     validate_tokenizer_early,
 )
 
 
 @pytest.fixture
 def mock_user_config() -> MagicMock:
-    """Create a mock UserConfig with tokenizer requiring endpoints."""
+    """Create a mock BenchmarkConfig with tokenizer-requiring endpoint.
+
+    Mirrors the v2 BenchmarkConfig surface ``validate_tokenizer_early`` reads:
+    ``endpoint.{type,use_server_token_count}``, ``tokenizer.{name,...}``, and
+    the ``get_model_names()`` / ``get_default_dataset()`` accessors.
+    """
     config = MagicMock()
     config.endpoint.type = "openai_chat"
-    config.endpoint.model_names = ["gpt-4o", "gpt-4o-mini"]
     config.endpoint.use_server_token_count = False
-    config.input.public_dataset = None
-    config.input.custom_dataset_type = None
-    config.input.file = None
     config.tokenizer.name = None
     config.tokenizer.trust_remote_code = False
     config.tokenizer.revision = "main"
+    config.get_model_names.return_value = ["gpt-4o", "gpt-4o-mini"]
+    # Default dataset is non-synthetic by default.
+    config.get_default_dataset.return_value = MagicMock(type=None)
     return config
 
 
@@ -59,159 +65,6 @@ def _clean_hf_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remove HF offline env vars before each test so assertions are reliable."""
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
-
-
-class TestPreloadTokenizers:
-    """Tests for preload_tokenizers() — cache-warming step before child processes spawn."""
-
-    @pytest.mark.asyncio
-    async def test_skips_when_resolved_names_none(self) -> None:
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
-            await preload_tokenizers(None)
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_when_resolved_names_empty(self) -> None:
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
-            await preload_tokenizers({})
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_builtin_name(self) -> None:
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
-            await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("encoding_name", sorted(TIKTOKEN_ENCODING_NAMES))
-    async def test_skips_tiktoken_encoding_names(self, encoding_name: str) -> None:
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
-            await preload_tokenizers({"model": encoding_name})
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_already_cached(self) -> None:
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=True),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
-        ):
-            await preload_tokenizers({"model": "meta-llama/Llama-2-7b-hf"})
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_local_absolute_path(self, tmp_path) -> None:
-        local_path = str(tmp_path)
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
-            await preload_tokenizers({"model": local_path})
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("local_name", ["./my-tokenizer", "../my-tokenizer"])
-    async def test_skips_local_relative_path(self, local_name: str) -> None:
-        with patch.object(Tokenizer, "from_pretrained") as mock_load:
-            await preload_tokenizers({"model": local_name})
-        mock_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_deduplicates_same_tokenizer_across_models(self) -> None:
-        resolved = {
-            "model-a": "meta-llama/Llama-2-7b-hf",
-            "model-b": "meta-llama/Llama-2-7b-hf",
-        }
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
-        ):
-            await preload_tokenizers(resolved)
-        mock_load.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_calls_from_pretrained_with_correct_params(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
-        ):
-            await preload_tokenizers(
-                resolved,
-                trust_remote_code=True,
-                revision="v1.0",
-            )
-        mock_load.assert_called_once_with(
-            "meta-llama/Llama-2-7b-hf",
-            trust_remote_code=True,
-            revision="v1.0",
-            resolve_alias=False,
-        )
-
-    @pytest.mark.asyncio
-    async def test_swallows_exception_and_warns(self, mock_logger: MagicMock) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(
-                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
-            ),
-        ):
-            await preload_tokenizers(resolved, logger=mock_logger)  # must not raise
-
-        mock_logger.warning.assert_called_once()
-        assert "meta-llama/Llama-2-7b-hf" in mock_logger.warning.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_loads_multiple_distinct_tokenizers(self) -> None:
-        resolved = {
-            "model-a": "meta-llama/Llama-2-7b-hf",
-            "model-b": "mistralai/Mistral-7B-v0.1",
-        }
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
-        ):
-            await preload_tokenizers(resolved)
-        assert mock_load.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_enables_offline_mode_after_successful_preload(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained"),
-        ):
-            await preload_tokenizers(resolved)
-        assert os.environ.get("HF_HUB_OFFLINE") == "1"
-        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
-
-    @pytest.mark.asyncio
-    async def test_enables_offline_mode_when_all_already_cached(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=True),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
-        ):
-            await preload_tokenizers(resolved)
-        mock_load.assert_not_called()
-        assert os.environ.get("HF_HUB_OFFLINE") == "1"
-        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
-
-    @pytest.mark.asyncio
-    async def test_does_not_enable_offline_mode_on_failure(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(
-                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
-            ),
-        ):
-            await preload_tokenizers(resolved)
-        assert os.environ.get("HF_HUB_OFFLINE") is None
-        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
-
-    @pytest.mark.asyncio
-    async def test_does_not_enable_offline_mode_when_skipped(self) -> None:
-        await preload_tokenizers(None)
-        assert os.environ.get("HF_HUB_OFFLINE") is None
-        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
 
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")
@@ -254,7 +107,7 @@ class TestValidatorFakeModelFallback:
         self, mock_user_config, mock_logger
     ) -> None:
         mock_user_config.tokenizer.name = None
-        mock_user_config.endpoint.model_names = ["mock-llama", "test-model"]
+        mock_user_config.get_model_names.return_value = ["mock-llama", "test-model"]
 
         with patch.object(Tokenizer, "resolve_alias") as mock_resolve:
             result = validate_tokenizer_early(mock_user_config, mock_logger)
@@ -273,7 +126,10 @@ class TestValidatorFakeModelFallback:
         self, mock_user_config, mock_logger
     ) -> None:
         mock_user_config.tokenizer.name = None
-        mock_user_config.endpoint.model_names = ["mock-llama", "Qwen/Qwen3-0.6B"]
+        mock_user_config.get_model_names.return_value = [
+            "mock-llama",
+            "Qwen/Qwen3-0.6B",
+        ]
 
         resolution = MagicMock()
         resolution.is_ambiguous = False
@@ -296,7 +152,7 @@ class TestValidatorFakeModelFallback:
     ) -> None:
         """Explicit --tokenizer wins, even if --model is placeholder-shaped."""
         mock_user_config.tokenizer.name = "Qwen/Qwen3-0.6B"
-        mock_user_config.endpoint.model_names = ["mock-llama"]
+        mock_user_config.get_model_names.return_value = ["mock-llama"]
 
         resolution = MagicMock()
         resolution.is_ambiguous = False
@@ -311,3 +167,59 @@ class TestValidatorFakeModelFallback:
         # No placeholder warning emitted.
         mock_logger.warning.assert_not_called()
         assert result == {"mock-llama": "Qwen/Qwen3-0.6B"}
+
+
+class TestInitWorker:
+    """_init_worker must not raise and must configure the root logger."""
+
+    @pytest.mark.parametrize(
+        "level",
+        ["DEBUG", "INFO", "WARNING", "ERROR"],
+    )  # fmt: skip
+    def test_init_worker_does_not_raise(self, level: str) -> None:
+        # Should import cleanly and run without error.
+        _init_worker(level)
+
+    def test_init_worker_configures_root_logger(self) -> None:
+        root = logging.getLogger()
+        original_level = root.level
+        try:
+            _init_worker("WARNING")
+            assert root.level == logging.WARNING
+        finally:
+            root.setLevel(original_level)
+
+
+@pytest.mark.network
+class TestCacheTokenizerCauseChainPreservation:
+    """cause_chain survives the ProcessPool boundary via the plain attribute."""
+
+    def test_cause_chain_preserved_across_process_boundary(self) -> None:
+        # _cache_tokenizer sets e.cause_chain before re-raising so that
+        # concurrent.futures._RemoteTraceback doesn't strip the original chain.
+        with ProcessPoolExecutor(
+            max_workers=1,
+            initializer=_init_worker,
+            initargs=("WARNING",),
+        ) as pool:
+            future = pool.submit(
+                _cache_tokenizer, "clearly-not-a-real-model", False, "main"
+            )
+            with pytest.raises(Exception) as exc_info:  # noqa: BLE001
+                future.result()
+
+        e = exc_info.value
+        cause_chain = getattr(e, "cause_chain", None)
+        assert cause_chain is not None, (
+            "cause_chain attribute must be set by the worker"
+        )
+        assert len(cause_chain) > 0, "cause_chain must be non-empty"
+        # The chain must contain at least one real HF exception — not just _RemoteTraceback.
+        real_hf_types = {
+            "OSError",
+            "LocalEntryNotFoundError",
+            "RepositoryNotFoundError",
+        }
+        assert any(t in real_hf_types for t in cause_chain), (
+            f"Expected a real HF exception type in cause_chain, got: {cause_chain}"
+        )

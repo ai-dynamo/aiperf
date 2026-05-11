@@ -120,12 +120,17 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     @on_init
     async def _setup(self) -> None:
         """Create output directory and open data file for streaming writes."""
-        self._data_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            self._data_path.parent.mkdir, parents=True, exist_ok=True
+        )
 
         if self._compress_only:
             zstd = _import_zstandard()
             compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
-            self._raw_data_file = self._compressed_data_path.open("wb")
+            # zstd stream_writer expects a sync file-like object; open off the loop.
+            self._raw_data_file = await asyncio.to_thread(
+                self._compressed_data_path.open, "wb"
+            )
             self._stream_writer = compressor.stream_writer(self._raw_data_file)
             self.info(
                 f"Memory-mapped backing store initialized in compress_only mode "
@@ -227,8 +232,9 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         zstd = _import_zstandard()
         compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
-        compressed_index = compressor.compress(index_bytes)
-        self._compressed_index_path.write_bytes(compressed_index)
+        compressed_index = await asyncio.to_thread(compressor.compress, index_bytes)
+        async with aiofiles.open(self._compressed_index_path, "wb") as f:
+            await f.write(compressed_index)
 
         self._compressed_size = compressed_data_size
         self.info(f"Compressed index file created: {self._compressed_index_path}")

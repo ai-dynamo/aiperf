@@ -8,7 +8,7 @@ from pathlib import Path
 
 import orjson
 
-from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.config.defaults import OutputDefaults
 
 logger = logging.getLogger(__name__)
 

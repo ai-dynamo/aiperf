@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Request Cancellation Test
+# description: Test server behavior when clients cancel in-flight requests.
+# category: Load Testing
+# tags: cancellation, resilience
+# difficulty: advanced
+# features: cancellation, rate + delay
+#
+# Request Cancellation Test
+# =========================
+# Measures how the server handles mid-flight cancellations. This matters
+# for production deployments where users navigate away, close tabs, or
+# hit timeout limits — the server should free GPU resources promptly.
+#
+# This run cancels 10% of requests 0.5s after dispatch (long enough for
+# prefill, simulating user impatience during decode). Tune `cancellation.rate`
+# (0-100) and `cancellation.delay` (seconds) to model different scenarios:
+#   - immediate cancellation (delay: 0.0) simulates load balancer timeouts
+#   - higher rates (25-50%) stress the cancellation path
+#
+# Compare against a baseline run (cancellation removed) to spot QPS drops,
+# P99 latency spikes, or server-side resource leaks.
+#
+# Run: aiperf profile --config request_cancellation.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
+
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 512, stddev: 100}  # Long output gives cancellation time to trigger
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 50
+      concurrency: 8
+
+    - name: profiling
+      type: poisson
+      requests: 500
+      concurrency: 32
+      rate: 20.0
+      cancellation:
+        rate: 10.0 # 10% of requests cancelled
+        delay: 0.5 # After 0.5s — enough for prefill, cancels during decode
+      duration: 120
+      gracePeriod: 60
+
+  artifacts:
+    dir: ./artifacts/request_cancellation
+    summary: [json]
+    records: [jsonl]
+
+  # Compare server-side metrics across phases to spot resource leaks
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv]

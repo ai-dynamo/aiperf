@@ -1,408 +1,781 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-import contextlib
-import sys
+from __future__ import annotations
 
+import contextlib
+import os
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+from aiperf._cli_runner_helpers import (
+    aggregate_and_export,
+    aggregate_per_variation_and_export,
+    aggregate_sweep_and_export,
+    build_strategy,
+    log_multi_run_banner,
+    validate_convergence_config,
+)
+from aiperf._cli_runner_helpers import (
+    print_aggregate_summary as _print_aggregate_summary,
+)
 from aiperf.cli_utils import raise_startup_error_and_exit
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 from aiperf.plugin.enums import ServiceType, UIType
 
+if TYPE_CHECKING:
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.config import BenchmarkConfig, BenchmarkPlan, BenchmarkRun
+    from aiperf.orchestrator.models import RunResult
+    from aiperf.orchestrator.strategies import ExecutionStrategy
 
-def _validate_ui_compatibility(
-    is_multi_run: bool,
-    is_sweep: bool,
-    service_config: ServiceConfig,
-) -> None:
-    """Validate UI type compatibility with multi-run modes.
 
-    Dashboard UI cannot be used with parameter sweeps or multi-run confidence
-    trials because each subprocess run needs terminal control.
+@dataclass(frozen=True, slots=True)
+class CompletedRun:
+    """Payload passed to post-run callbacks after a successful benchmark.
+
+    Carries the resolved artifact directory so callbacks (e.g. auto-plot) can
+    locate the run's outputs without re-deriving them from BenchmarkConfig.
+    """
+
+    artifact_dir: Path
+
+
+# Post-run hook signature. Invoked once per successful run/sweep with a
+# CompletedRun payload. Each callback runs in isolation: an exception is
+# logged with a full traceback, the run is forced to exit non-zero, and
+# subsequent callbacks still run. Set ``AIPERF_RAISE_ON_CALLBACK_ERROR=true``
+# to re-raise the first failure (after running the remaining callbacks) for
+# strict-mode pipelines that want the exception to surface.
+OnComplete = Callable[[CompletedRun], None]
+
+
+def _invoke_callbacks(
+    callbacks: list[OnComplete],
+    completed: CompletedRun,
+    exit_code: int,
+    logger: Any,
+) -> int:
+    """Run every OnComplete callback, isolating failures.
+
+    Each callback is invoked even if a prior one raised. On any failure the
+    traceback is logged and ``exit_code`` is forced non-zero (preserving an
+    already non-zero ``exit_code``). When the opt-in env var
+    ``AIPERF_RAISE_ON_CALLBACK_ERROR`` is true, the first captured exception
+    is re-raised after every callback has been attempted, providing a
+    strict-mode contract where callback failures propagate to the caller.
+
+    Returns the (possibly elevated) exit code so the caller can pass it to
+    ``os._exit``.
+    """
+    # Read through the Pydantic Settings registry so the env var goes
+    # through the project-wide validation/coercion pipeline (booleans
+    # accept ``on``/``true``/``1``/``yes`` consistently). Reading raw
+    # ``os.environ`` here would diverge from Pydantic's bool coercion
+    # and silently default-False values like ``=on``. Instantiated at
+    # call-time (not import-time) so unit tests that set the env var
+    # via ``monkeypatch.setenv`` see the updated value.
+    from aiperf.common.environment import _CLIRunnerSettings
+
+    raise_on_error = _CLIRunnerSettings().RAISE_ON_CALLBACK_ERROR
+    first_exc: BaseException | None = None
+    for callback in callbacks:
+        try:
+            callback(completed)
+        except Exception as exc:
+            logger.exception(
+                f"OnComplete callback {getattr(callback, '__name__', callback)!r} "
+                f"failed; continuing with remaining callbacks"
+            )
+            if first_exc is None:
+                first_exc = exc
+            if exit_code == 0:
+                exit_code = 1
+    if first_exc is not None and raise_on_error:
+        raise first_exc
+    return exit_code
+
+
+__all__ = [
+    "CompletedRun",
+    "OnComplete",
+    "_print_aggregate_summary",
+    "_run_multi_benchmark",
+    "_run_single_benchmark",
+    "run_benchmark",
+]
+
+
+def run_benchmark(plan: BenchmarkPlan) -> None:
+    """Run benchmarks from a BenchmarkPlan.
+
+    For single-config single-trial plans, runs directly (Dashboard works).
+    For multi-config or multi-trial plans, uses the MultiRunOrchestrator.
 
     Args:
-        is_multi_run: True if num_profile_runs > 1
-        is_sweep: True if a sweep parameter is detected
-        service_config: Service configuration (checked for explicit ui_type)
-
-    Raises:
-        ValueError: If dashboard UI is explicitly set with multi-run modes.
+        plan: BenchmarkPlan to execute.
     """
-    if not (is_multi_run or is_sweep):
-        return
-
-    if (
-        "ui_type" in service_config.model_fields_set
-        and service_config.ui_type == UIType.DASHBOARD
-    ):
+    if plan.use_adaptive and plan.trials <= 1:
         raise ValueError(
-            "Dashboard UI (--ui dashboard) is not supported with multi-run mode "
-            "(--num-profile-runs > 1) or parameter sweeps due to terminal control "
-            "limitations when running multiple sequential benchmarks. "
-            "Use --ui simple (recommended, shows progress bars) or --ui none (no UI output). "
-            "Example: aiperf --concurrency 10,20,30 --ui simple ..."
+            "--convergence-metric requires --num-profile-runs > 1. "
+            "Set --num-profile-runs to at least 2 to enable adaptive convergence."
+        )
+
+    _preflight_artifact_dir(plan)
+    _preflight_fd_limit()
+    _preflight_endpoint_ready(plan)
+
+    callbacks: list[OnComplete] = []
+    if plan.configs[0].artifacts.auto_plot:
+        from aiperf.plot.auto_plot import build_auto_plot_callback
+
+        callbacks.append(
+            build_auto_plot_callback(
+                plot_required=plan.configs[0].artifacts.plot_required,
+                plot_envelope=plan.plot,
+            )
+        )
+
+    if plan.is_single_run:
+        from aiperf.orchestrator.orchestrator import _resolve_run_seed
+
+        seed = _resolve_run_seed(plan, plan.variations[0])
+        run = _make_benchmark_run(
+            plan.configs[0], random_seed=seed, variables=plan.variables
+        )
+        _run_single_benchmark(run, on_complete=callbacks)
+    else:
+        _run_multi_benchmark(plan, on_complete=callbacks)
+
+
+def _preflight_artifact_dir(plan: BenchmarkPlan) -> None:
+    """Validate that the artifact directory is creatable and writable.
+
+    Why: ``setup_rich_logging`` calls ``log_folder.mkdir(parents=True)`` deep
+    inside the controller bootstrap; without this preflight, an existing-file
+    artifact path or a read-only parent surfaces as a stack-trace-laden
+    ``NotADirectoryError``/``PermissionError`` instead of a clean config error.
+    Surfacing it here lets ``profile.py`` render a single actionable panel via
+    ``exit_on_error(quiet_for=(ConfigurationError,))``.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    artifact_dir: Path = plan.configs[0].artifacts.dir
+    if artifact_dir.exists() and not artifact_dir.is_dir():
+        raise ConfigurationError(
+            f"artifact_dir '{artifact_dir}' exists but is not a directory. "
+            f"Remove the file or pick a different --artifact-dir."
+        )
+
+    parent = artifact_dir if artifact_dir.exists() else artifact_dir.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if parent.exists() and not os.access(parent, os.W_OK):
+        raise ConfigurationError(
+            f"artifact_dir '{artifact_dir}' is not writable "
+            f"(no write permission on existing parent '{parent}'). "
+            f"Pick a different --artifact-dir or fix permissions."
         )
 
 
-def run_system_controller(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
-) -> None:
-    """Run the system controller with the given configuration.
+def _preflight_fd_limit() -> None:
+    """Raise RLIMIT_NOFILE soft limit and bail early if hard limit is too low.
 
-    If num_profile_runs > 1 OR parameter sweep is detected, runs multi-run orchestration.
-    Otherwise, runs a single benchmark (backward compatibility).
+    Why: aiperf's multiprocess service mesh (ZMQ inproc/IPC + per-worker HTTP
+    pools) needs hundreds of file descriptors. With the default soft limit of
+    1024 on most distros it usually fits, but bumping to 8192 leaves headroom
+    for higher concurrency. When the hard limit is below the working floor,
+    the ZMQ ipc_listener SIGABRTs mid-startup (`Too many open files
+    src/ipc_listener.cpp:297`) — surface a clean error here instead.
     """
-    is_sweep = user_config.loadgen.get_sweep_parameter() is not None
-    is_multi_run = user_config.loadgen.num_profile_runs > 1
+    try:
+        import resource
+    except ImportError:
+        return  # Windows / unsupported platform; nothing to do.
 
-    # Validate dashboard UI is not used with multi-run modes
-    _validate_ui_compatibility(is_multi_run, is_sweep, service_config)
+    from aiperf.config.loader.errors import ConfigurationError
 
-    if is_multi_run or is_sweep:
-        _run_multi_benchmark(user_config, service_config)
-    else:
-        _run_single_benchmark(user_config, service_config)
+    target_soft = 8192
+    min_required = 256
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and hard < min_required:
+        raise ConfigurationError(
+            f"file descriptor hard limit too low: {hard} (need at least "
+            f"{min_required}). Raise it via `ulimit -n 4096` (or larger) "
+            f"before running aiperf."
+        )
+    if soft >= target_soft or soft == resource.RLIM_INFINITY:
+        return
+    new_soft = target_soft if hard == resource.RLIM_INFINITY else min(target_soft, hard)
+    if new_soft <= soft:
+        return
+    with contextlib.suppress(ValueError, OSError):
+        resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
-def _run_single_benchmark(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
-) -> None:
-    """Run a single benchmark (original behavior)."""
+def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
+    """Block until the target endpoint is ready (see ready_checker).
 
-    # NOTE: On macOS, when using the Textual UI with multiprocessing, terminal corruption
-    # (ASCII garbage, freezing) can occur when mouse events interfere with child processes.
-    # We apply multiple layers of protection:
-    # 1. Set spawn method early (before any multiprocessing operations)
-    # 2. Create log_queue before any UI initialization
-    # 3. Set FD_CLOEXEC on terminal file descriptors
-    # 4. Close terminal FDs in child processes (done in bootstrap.py)
+    Runs before any service bootstrap so a slow/down server fails fast with
+    a clear error instead of timing out inside the system controller. Uses
+    the endpoint config of the first run in the plan — multi-run sweeps are
+    assumed to share an endpoint.
+    """
+    import asyncio
+    import logging
 
+    cfg = plan.configs[0].endpoint
+    if cfg.wait_for_model_timeout <= 0:
+        return
+
+    # Preflight runs before rich logging is installed; install a minimal
+    # stderr handler so probe lines are visible.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+    from aiperf.common.readiness_probe import wait_for_endpoint
+
+    headers = dict(cfg.headers or {})
+    if cfg.api_key:
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+
+    asyncio.run(
+        wait_for_endpoint(
+            urls=list(cfg.urls),
+            model_names=plan.configs[0].get_model_names(),
+            mode=cfg.wait_for_model_mode,
+            endpoint_type=str(cfg.type),
+            custom_endpoint=cfg.path,
+            timeout_s=cfg.wait_for_model_timeout,
+            interval_s=cfg.wait_for_model_interval,
+            headers=headers,
+        )
+    )
+
+
+def _make_benchmark_run(
+    config: BenchmarkConfig,
+    *,
+    benchmark_id: str | None = None,
+    trial: int = 0,
+    artifact_dir: Path | None = None,
+    random_seed: int | None = None,
+    variables: dict[str, Any] | None = None,
+) -> BenchmarkRun:
+    """Wrap a BenchmarkConfig into a BenchmarkRun."""
+    from aiperf.config import BenchmarkRun
+
+    return BenchmarkRun(
+        benchmark_id=benchmark_id or uuid4().hex[:12],
+        cfg=config,
+        trial=trial,
+        artifact_dir=artifact_dir or config.artifacts.dir,
+        random_seed=random_seed,
+        variables=dict(variables or {}),
+    )
+
+
+def _configure_multiprocessing_start_method(using_dashboard: bool) -> None:
+    """Pick a multiprocessing start method compatible with the current UI.
+
+    NOTE: On macOS, when using the Textual UI with multiprocessing, terminal
+    corruption (ASCII garbage, freezing) can occur when mouse events interfere
+    with child processes. We apply multiple layers of protection:
+      1. Set spawn method early (before any multiprocessing operations)
+      2. Create log_queue before any UI initialization
+      3. Set FD_CLOEXEC on terminal file descriptors
+      4. Close terminal FDs in child processes (done in bootstrap.py)
+    Env override takes precedence for all platforms.
+    """
     import multiprocessing
     import platform
 
-    is_macos = platform.system() == "Darwin"
-    using_dashboard = service_config.ui_type == UIType.DASHBOARD
+    from aiperf.common.environment import Environment
 
-    # Force spawn method on macOS to prevent fork-related issues.
-    # This should already be the default, but we'll set it explicitly just in case.
-    if is_macos and using_dashboard:
+    configured_start_method = getattr(
+        Environment.SERVICE, "MULTIPROCESSING_START_METHOD", None
+    )
+    if configured_start_method:
+        with contextlib.suppress(RuntimeError):
+            multiprocessing.set_start_method(configured_start_method, force=True)
+        return
+
+    if platform.system() == "Darwin" and using_dashboard:
         with contextlib.suppress(RuntimeError):
             multiprocessing.set_start_method("spawn", force=True)
 
+
+def _setup_ui_queues(using_dashboard: bool, run: BenchmarkRun, logger: AIPerfLogger):  # noqa: ANN202
+    """Create the Dashboard log queue when needed.
+
+    Returns the log_queue (or ``None`` when no Dashboard UI is active). When
+    Dashboard UI is running on macOS, FD_CLOEXEC is set on terminal
+    descriptors to prevent child processes corrupting the parent terminal.
+    """
+    import platform
+
+    if not using_dashboard:
+        from aiperf.common.logging import setup_rich_logging
+
+        setup_rich_logging(run)
+        return None
+
+    from aiperf.common.logging import get_global_log_queue
+
+    log_queue = get_global_log_queue()
+
+    if platform.system() == "Darwin":
+        _set_fd_cloexec_on_terminal(logger)
+    return log_queue
+
+
+def _set_fd_cloexec_on_terminal(logger: AIPerfLogger) -> None:
+    """Mark stdio as close-on-exec (macOS terminal-corruption mitigation)."""
+    import fcntl
+
+    try:
+        for fd in [sys.stdin.fileno(), sys.stdout.fileno(), sys.stderr.fileno()]:
+            flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+            fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
+        logger.debug("Set FD_CLOEXEC on terminal file descriptors for macOS")
+    except (OSError, ValueError, AttributeError) as e:
+        # Non-fatal if this fails, other layers will protect
+        logger.debug(f"Could not set FD_CLOEXEC on terminal descriptors: {e}")
+
+
+def _configure_tokenizer_preload(run: BenchmarkRun) -> None:
+    """Surface tokenizer identities into env so the forkserver preload sees them.
+
+    Read by :mod:`aiperf.records._tokenizer_preload` at forkserver-helper
+    startup. Must be called before the first subprocess spawn (and
+    therefore before queue creation in :func:`_setup_ui_queues`), since
+    Python's forkserver starts on demand and snapshots the env once.
+
+    Name selection mirrors :class:`~aiperf.records.inference_result_parser.InferenceResultParser`:
+    an explicit ``tokenizer.name`` in config overrides per-model defaults
+    for every model. Without it, each model name is used as its own
+    tokenizer name.
+
+    Uses raw (unresolved) names because the resolver chain hasn't run yet
+    when this is called. In the common case of canonical HF IDs (e.g.
+    ``Qwen/Qwen3-0.6B``) the raw name is the correct tokenizer name and
+    CoW sharing works; aliased names (e.g. ``gpt2``) miss the preload
+    cache and fall through to per-RP on-demand loading — same as without
+    this feature.
+    """
+    import os
+
+    cfg = run.cfg
+    tokenizer_cfg = cfg.tokenizer
+    if tokenizer_cfg is not None and tokenizer_cfg.name:
+        names = [tokenizer_cfg.name]
+    else:
+        names = cfg.get_model_names()
+    if not names:
+        return
+    os.environ.setdefault("AIPERF_PRELOAD_TOKENIZERS", ",".join(names))
+    if tokenizer_cfg is not None:
+        os.environ.setdefault(
+            "AIPERF_PRELOAD_TOKENIZER_TRUST_REMOTE_CODE",
+            "true" if tokenizer_cfg.trust_remote_code else "false",
+        )
+        os.environ.setdefault(
+            "AIPERF_PRELOAD_TOKENIZER_REVISION",
+            tokenizer_cfg.revision or "main",
+        )
+
+
+def _run_single_benchmark(
+    run: BenchmarkRun,
+    *,
+    on_complete: list[OnComplete] | None = None,
+) -> None:
+    """Run a single benchmark.
+
+    Args:
+        run: BenchmarkRun to execute.
+        on_complete: Optional list of callbacks invoked in list order after a
+            successful run (exit_code == 0). Skipped on failure. Each
+            callback is isolated by ``_invoke_callbacks``: an exception is
+            logged, the exit code is forced non-zero, and remaining callbacks
+            still run. ``AIPERF_RAISE_ON_CALLBACK_ERROR=true`` opts into
+            re-raising the first failure after all callbacks have run.
+    """
+    config = run.cfg
+    using_dashboard = config.ui_type == UIType.DASHBOARD
+
+    _configure_multiprocessing_start_method(using_dashboard)
+    _configure_tokenizer_preload(run)
+
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
-    from aiperf.common.tokenizer_validator import (
-        preload_tokenizers,
-        validate_tokenizer_early,
-    )
+    from aiperf.config.resolution.resolvers import build_default_resolver_chain
 
     logger = AIPerfLogger(__name__)
 
-    # Create log_queue before UI initialization to minimize FD inheritance issues.
-    log_queue = None
-    if using_dashboard:
-        from aiperf.common.logging import get_global_log_queue
+    # Create queues before UI initialization to minimize FD inheritance issues.
+    log_queue = _setup_ui_queues(using_dashboard, run, logger)
 
-        log_queue = get_global_log_queue()
-
-        # Set FD_CLOEXEC on terminal file descriptors on macOS.
-        # This ensures terminal FDs are closed when child processes spawn.
-        if is_macos:
-            import fcntl
-            import sys
-
-            try:
-                for fd in [
-                    sys.stdin.fileno(),
-                    sys.stdout.fileno(),
-                    sys.stderr.fileno(),
-                ]:
-                    flags = fcntl.fcntl(fd, fcntl.F_GETFD)
-                    fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
-                logger.debug("Set FD_CLOEXEC on terminal file descriptors for macOS")
-            except (OSError, ValueError, AttributeError) as e:
-                # Non-fatal if this fails, other layers will protect
-                logger.debug(f"Could not set FD_CLOEXEC on terminal descriptors: {e}")
-    else:
-        from aiperf.common.logging import setup_rich_logging
-
-        setup_rich_logging(user_config, service_config)
-
-    # Create and start the system controller
     logger.info("Starting AIPerf System")
 
-    # Validate tokenizer early (before spawning services) to fail fast.
-    user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
-
-    # Preload tokenizer files into HF disk cache so child processes use
-    # local_files_only=True and make zero HF network calls.
-    asyncio.run(
-        preload_tokenizers(
-            user_config.tokenizer.resolved_names,
-            trust_remote_code=user_config.tokenizer.trust_remote_code,
-            revision=user_config.tokenizer.revision,
-            logger=logger,
+    try:
+        chain = build_default_resolver_chain()
+        chain.resolve_all(run)
+    except Exception as e:  # noqa: BLE001 - resolver chain wraps every user-input error type
+        # ``logger.error`` over ``.exception``: user-input errors carry their
+        # own context; tracebacks trip chaos-harness crash heuristics.
+        logger.error(f"Configuration resolution failed: {e}")
+        raise_startup_error_and_exit(
+            f"Configuration resolution failed: {e}",
+            title="Configuration Error",
         )
-    )
 
-    # Validate custom GPU metrics CSV file
-    if user_config.gpu_telemetry_metrics_file:
-        try:
-            csv_path = user_config.gpu_telemetry_metrics_file
-            logger.info(f"Custom GPU metrics file configured: {csv_path}")
-
-            loader = MetricsConfigLoader()
-            custom_metrics, _ = loader.build_custom_metrics_from_csv(csv_path)
-            logger.info(
-                f"Validated {len(custom_metrics)} custom metrics from {csv_path}"
-            )
-        except Exception as e:
-            logger.exception("Error validating custom GPU metrics file")
-            raise_startup_error_and_exit(
-                f"Invalid custom GPU metrics file: {e}",
-                title="GPU Metrics Configuration Error",
-            )
-
+    exit_code = 0
     try:
         bootstrap_and_run_service(
             service_type=ServiceType.SYSTEM_CONTROLLER,
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             log_queue=log_queue,
         )
+    except SystemExit as e:
+        exit_code = int(e.code) if e.code is not None else 0
     except Exception:
         logger.exception("Error running AIPerf System")
-        raise
+        exit_code = 1
     finally:
         logger.debug("AIPerf System exited")
 
+    if exit_code == 0 and on_complete:
+        completed = CompletedRun(artifact_dir=run.artifact_dir)
+        exit_code = _invoke_callbacks(on_complete, completed, exit_code, logger)
+
+    # Bypass Python's normal teardown: multiprocessing atexit handlers,
+    # leftover ZMQ contexts, and daemon threads can otherwise block the
+    # interpreter from exiting — which is fatal under pytest-xdist where
+    # the parent waits on communicate(). The controller already flushed
+    # logs and wrote artifacts; killing the interpreter here is safe.
+    import os as _os
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    _os._exit(exit_code)
+    # Production never reaches here (``os._exit`` terminates the process).
+    # The component-integration test harness mocks ``os._exit`` to a no-op,
+    # so re-raise via ``sys.exit`` to surface the failure as a SystemExit
+    # the harness can catch.
+    if exit_code:
+        sys.exit(exit_code)
+
+
+def _estimate_and_log_duration(
+    plan: BenchmarkPlan,
+    first_config: BenchmarkConfig,
+    total_runs: int,
+    logger: AIPerfLogger,
+) -> Path:
+    """Resolve artifact/timing for a probe run, log duration, return base_dir."""
+    from aiperf.config import BenchmarkRun
+    from aiperf.config.resolution.resolvers import ArtifactDirResolver, TimingResolver
+
+    probe_run = BenchmarkRun(
+        benchmark_id="probe",
+        cfg=first_config,
+        artifact_dir=first_config.artifacts.dir,
+        variables=dict(plan.variables),
+    )
+    ArtifactDirResolver().resolve(probe_run, for_probe=True)
+    TimingResolver().resolve(probe_run)
+
+    per_run_duration = probe_run.resolved.total_expected_duration
+    if per_run_duration is not None:
+        total_benchmark = per_run_duration * total_runs
+        total_with_cooldown = total_benchmark + plan.cooldown_seconds * max(
+            total_runs - 1, 0
+        )
+        logger.info(f"  Estimated duration: {total_with_cooldown:.0f}s")
+
+    return probe_run.artifact_dir
+
+
+def _validate_multi_benchmark_plan(plan: BenchmarkPlan) -> None:
+    """Reject configurations multi-run can't honor before any setup work."""
+    _reject_in_process_sweep_under_operator(plan)
+
+    first_config = plan.configs[0]
+
+    if first_config.ui_type == UIType.DASHBOARD:
+        raise ValueError(
+            "Dashboard UI is not supported with sweep/multi-run mode. "
+            "Please use '--ui simple' or '--ui none' instead."
+        )
+
+
+def _log_search_planner_active(
+    plan: BenchmarkPlan, search_planner: Any, logger: Any
+) -> None:
+    """Log the adaptive-search banner when a planner was built."""
+    if search_planner is None:
+        return
+    sweep = plan.sweep
+    assert sweep is not None  # _build_search_planner returned non-None
+    logger.info(
+        f"Adaptive search active: planner={sweep.planner}, "
+        f"max_iterations={sweep.max_iterations}, "
+        f"search-space={[d.path for d in sweep.search_space]}, "
+        f"objectives=[{','.join(f'{o.metric}:{o.stat}:{o.direction}' for o in sweep.objectives)}]"
+    )
+
 
 def _run_multi_benchmark(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    plan: BenchmarkPlan,
+    *,
+    on_complete: list[OnComplete] | None = None,
 ) -> None:
-    """Run multiple benchmarks for confidence reporting or parameter sweeps.
+    """Run multiple benchmarks from a BenchmarkPlan.
 
-    Executes benchmarks according to the detected mode:
-    - Parameter sweep only: Tests different parameter values
-    - Confidence trials only: Runs same config multiple times
-    - Both: Combines sweep and confidence (nested execution)
+    Executes trials x configs benchmarks, then aggregates results and
+    computes confidence statistics. When convergence flags are set, uses
+    AdaptiveStrategy for early stopping and runs both ConfidenceAggregation
+    and DetailedAggregation.
 
-    When convergence flags are set, uses AdaptiveStrategy for early stopping.
-
-    Follows the same pattern as _run_single_benchmark where the orchestrator
-    handles execution, aggregation, and export internally.
+    Args:
+        plan: BenchmarkPlan describing the configs/trials to execute.
+        on_complete: Optional list of callbacks invoked in list order after
+            the orchestrator returns successfully. Skipped if execution
+            raises. Each callback is isolated by ``_invoke_callbacks``:
+            an exception is logged, the exit code is forced non-zero, and
+            remaining callbacks still run. ``AIPERF_RAISE_ON_CALLBACK_ERROR=true``
+            opts into re-raising the first failure.
     """
     from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.enums import ConvergenceMode, ExportLevel
     from aiperf.common.logging import setup_rich_logging
-    from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 
-    # Set default to simple if ui_type wasn't explicitly set
-    # (dashboard is already rejected by _validate_ui_compatibility)
-    if "ui_type" not in service_config.model_fields_set:
-        service_config.ui_type = UIType.SIMPLE
+    _validate_multi_benchmark_plan(plan)
+    first_config = plan.configs[0]
 
-    # Set up logging so output is visible
-    setup_rich_logging(user_config, service_config)
-
+    setup_rich_logging(_make_benchmark_run(first_config))
     logger = AIPerfLogger(__name__)
 
-    # Resolve tokenizer aliases and preload files into HF disk cache once,
-    # before any subprocesses spawn. Each subprocess then finds the tokenizer
-    # cached on disk and makes zero HF network calls.
-    from aiperf.common.tokenizer_validator import (
-        preload_tokenizers,
-        validate_tokenizer_early,
+    total_runs = len(plan.configs) * plan.trials
+
+    validate_convergence_config(plan)
+    log_multi_run_banner(plan, total_runs, logger)
+
+    base_dir = _estimate_and_log_duration(plan, first_config, total_runs, logger)
+
+    # Strategy is rebuilt per-cell inside the orchestrator; this top-level
+    # instance is kept solely so aggregate_and_export() can resolve aggregate
+    # paths and seed/warmup helpers consistently with what the runs used.
+    strategy = build_strategy(plan, logger)
+
+    results = _execute_multi_benchmark(plan, base_dir, logger)
+
+    exit_code = _summarize_and_export(
+        plan,
+        results,
+        total_runs=total_runs,
+        strategy=strategy,
+        base_dir=base_dir,
+        logger=logger,
     )
 
-    user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
-    asyncio.run(
-        preload_tokenizers(
-            user_config.tokenizer.resolved_names,
-            trust_remote_code=user_config.tokenizer.trust_remote_code,
-            revision=user_config.tokenizer.revision,
-            logger=logger,
-        )
+    # Run callbacks whenever ANY run produced artifacts, even on a partial
+    # failure path: with one successful trial the per-run JSONL/CSV/JSON are
+    # on disk and downstream hooks (auto-plot, exporters) can still consume
+    # them. Only skip when zero runs succeeded.
+    successful_runs = [r for r in results if r.success]
+    if on_complete and successful_runs:
+        completed = CompletedRun(artifact_dir=plan.configs[0].artifacts.dir)
+        exit_code = _invoke_callbacks(on_complete, completed, exit_code, logger)
+
+    # Match _run_single_benchmark's hang-protection: bypass Python's normal
+    # teardown so multiprocessing atexit handlers and leftover ZMQ contexts
+    # cannot block the interpreter from exiting (multi-run has MORE
+    # subprocesses than single-run, so this is at least as critical here).
+    # The orchestrator already flushed logs and wrote artifacts; killing
+    # the interpreter is safe.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)
+    # Production never reaches here (``os._exit`` terminates the process).
+    # The component-integration test harness mocks ``os._exit`` to a no-op,
+    # so re-raise via ``sys.exit`` to surface the failure as a SystemExit
+    # the harness can catch.
+    if exit_code != 0:
+        sys.exit(exit_code)
+
+
+def _execute_multi_benchmark(
+    plan: BenchmarkPlan,
+    base_dir: Path,
+    logger: AIPerfLogger,
+) -> list[RunResult]:
+    """Build the orchestrator + executor + planner and run the plan to completion.
+
+    Split out from :func:`_run_multi_benchmark` so the outer function stays
+    under the function-size ceiling. Wraps the asyncio run in a
+    try/except that re-raises after logging — exceptions are owned by the
+    caller's exit-code path.
+    """
+    import asyncio as _asyncio
+
+    from aiperf._cli_runner_helpers import _build_search_planner
+    from aiperf._sweep_table_logger import (
+        SweepTableLogger,
+        _should_emit_sweep_table,
     )
+    from aiperf.orchestrator.local_executor import LocalSubprocessExecutor
+    from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 
-    # Inform user about UI mode (now that logging is set up)
-    if "ui_type" not in service_config.model_fields_set:
-        logger.info(
-            "Multi-run mode: UI automatically set to 'simple' "
-            "(use '--ui none' to disable UI output)"
-        )
-
-    # Detect mode for banner
-    sweep_info = user_config.loadgen.get_sweep_parameter()
-    is_sweep = sweep_info is not None
-    is_confidence = user_config.loadgen.num_profile_runs > 1
-
-    # Print multi-run banner
-    num_runs = user_config.loadgen.num_profile_runs
-    confidence_level = user_config.loadgen.confidence_level
-    cooldown = user_config.loadgen.profile_run_cooldown_seconds
-    convergence_metric = user_config.loadgen.convergence_metric
-    use_adaptive = convergence_metric is not None
-
-    # Validate convergence configuration
-    if use_adaptive:
-        if num_runs <= 1:
-            raise ValueError(
-                "--convergence-metric requires --num-profile-runs > 1. "
-                "Set --num-profile-runs to at least 2 to enable adaptive convergence."
-            )
-        if (
-            user_config.loadgen.convergence_mode == ConvergenceMode.DISTRIBUTION
-            and user_config.output.export_level == ExportLevel.SUMMARY
-        ):
-            raise ValueError(
-                "--convergence-mode distribution requires per-request JSONL data, "
-                "but --export-level is set to 'summary'. "
-                "Use --export-level records or --export-level raw."
-            )
-
-    # Print banner based on mode
-    logger.info("=" * 80)
-    if is_sweep and is_confidence:
-        param_name, param_values = sweep_info
-        logger.info("Starting Parameter Sweep with Confidence Trials")
-        logger.info(f"  Parameter: {param_name} = {param_values}")
-        logger.info(f"  Sweep mode: {user_config.loadgen.parameter_sweep_mode}")
-        logger.info(f"  Trials per value: {user_config.loadgen.num_profile_runs}")
-        logger.info(f"  Confidence level: {user_config.loadgen.confidence_level:.0%}")
-    elif is_sweep:
-        param_name, param_values = sweep_info
-        logger.info("Starting Parameter Sweep")
-        logger.info(f"  Parameter: {param_name} = {param_values}")
-        logger.info(
-            f"  Sweep cooldown: {user_config.loadgen.parameter_sweep_cooldown_seconds}s"
-        )
-    elif is_confidence:
-        logger.info("Starting Multi-Run Confidence Reporting")
-        logger.info(f"  Number of runs: {num_runs}")
-        logger.info(f"  Confidence level: {confidence_level:.0%}")
-        logger.info(f"  Cooldown between runs: {cooldown}s")
-        if use_adaptive:
-            logger.info(f"  Convergence mode: {user_config.loadgen.convergence_mode}")
-            logger.info(f"  Convergence metric: {convergence_metric}")
-            logger.info(
-                f"  Convergence threshold: {user_config.loadgen.convergence_threshold}"
-            )
-            if user_config.loadgen.convergence_mode == ConvergenceMode.DISTRIBUTION:
-                logger.info(
-                    "  Note: distribution mode converges when KS p-value > threshold "
-                    "(higher threshold = stricter, opposite of ci_width/cv)"
-                )
-    else:
-        raise ValueError(
-            "_run_multi_benchmark requires sweep or confidence mode. "
-            "Single-run benchmarks should use _run_single_benchmark() directly."
-        )
-    logger.info("=" * 80)
-
-    # Create strategy (for confidence/adaptive modes; sweep uses orchestrator auto-detect)
-    strategy = None
-    if is_confidence and not is_sweep:
-        from aiperf.orchestrator.strategies import FixedTrialsStrategy
-
-        if use_adaptive:
-            from aiperf.orchestrator.convergence import (
-                CIWidthConvergence,
-                CVConvergence,
-                DistributionConvergence,
-            )
-            from aiperf.orchestrator.strategies import AdaptiveStrategy
-
-            mode = user_config.loadgen.convergence_mode
-            threshold = user_config.loadgen.convergence_threshold
-
-            if mode == ConvergenceMode.CI_WIDTH:
-                criterion = CIWidthConvergence(
-                    metric=convergence_metric,
-                    stat=user_config.loadgen.convergence_stat,
-                    threshold=threshold,
-                    confidence_level=confidence_level,
-                )
-            elif mode == ConvergenceMode.CV:
-                criterion = CVConvergence(
-                    metric=convergence_metric,
-                    threshold=threshold,
-                    stat=user_config.loadgen.convergence_stat,
-                )
-            else:
-                criterion = DistributionConvergence(
-                    metric=convergence_metric,
-                    p_value_threshold=threshold,
-                    jsonl_filename=str(user_config.output._profile_export_jsonl_file),
-                )
-
-            effective_min_runs = min(3, num_runs)
-            if effective_min_runs < 3:
-                logger.warning(
-                    f"--num-profile-runs={num_runs} is below the recommended minimum of 3. "
-                    "Convergence checks will have reduced statistical power."
-                )
-
-            strategy = AdaptiveStrategy(
-                criterion=criterion,
-                min_runs=effective_min_runs,
-                max_runs=num_runs,
-                cooldown_seconds=cooldown,
-                auto_set_seed=user_config.loadgen.set_consistent_seed,
-                disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
-            )
-        else:
-            strategy = FixedTrialsStrategy(
-                num_trials=num_runs,
-                cooldown_seconds=cooldown,
-                auto_set_seed=user_config.loadgen.set_consistent_seed,
-                disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
-            )
-
-    # Create orchestrator
-    orchestrator = MultiRunOrchestrator(
-        base_dir=user_config.output.artifact_directory, service_config=service_config
+    no_flag = plan.no_sweep_table
+    table_logger = (
+        SweepTableLogger(plan, logger)
+        if _should_emit_sweep_table(plan, no_sweep_table=no_flag)
+        else None
     )
+    orchestrator = MultiRunOrchestrator(base_dir=base_dir, cell_callback=table_logger)
+    executor = LocalSubprocessExecutor(base_dir=base_dir)
+    search_planner = _build_search_planner(plan)
+    _log_search_planner_active(plan, search_planner, logger)
 
-    # Execute runs, aggregate, and export (orchestrator handles everything)
     try:
-        results = orchestrator.execute_and_export(user_config, strategy=strategy)
+        return _asyncio.run(
+            orchestrator.execute(plan, executor, search_planner=search_planner)
+        )
     except Exception:
         logger.exception("Error executing multi-run benchmark")
         raise
 
-    # Count successful runs
+
+def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
+    """Block in-process grid sweep when running inside an operator-managed pod.
+
+    The k8s operator drives grid sweeps cluster-wide via the AIPerfSweep CR
+    (one AIPerfJob per variation, controller pod sees a single-config plan).
+    Adaptive outer loops, in contrast, run inside the controller pod itself
+    via ``BayesianSearchPlanner`` — the controller proposes each variation
+    one at a time, so the in-process adaptive path is allowed under the
+    operator and is not blocked here.
+    """
+    if os.environ.get("AIPERF_OPERATOR_MANAGED") != "1":
+        return
+    if plan.is_sweep:
+        swept_params = sorted(
+            {
+                k
+                for variation in plan.variations
+                if variation is not None
+                for k in variation.values
+            }
+        )
+        raise SystemExit(
+            f"In-process parameter sweep ({len(plan.configs)} variations across "
+            f"{swept_params or '<unknown>'}) is not supported in operator-managed "
+            f"runs (AIPERF_OPERATOR_MANAGED=1). Use the AIPerfSweep CRD "
+            f"(cluster-scope) for cross-job sweeps — see docs/kubernetes/sweeps.md "
+            f"— or submit one AIPerfJob per variation. To run as a single point "
+            f"benchmark, drop the comma in --concurrency / other magic-list flags."
+        )
+
+
+def _log_failed_sweep_variations(
+    failed_runs: list[RunResult], logger: AIPerfLogger
+) -> None:
+    """Log per-variation failures for a sweep, grouped by (label, sorted values).
+
+    Keying by label too is required so QMC cells with collision-prone integer
+    values (Sobol/LHS) don't get pooled into one row of the summary; mirrors
+    ``_cli_runner_sweep_helpers``.
+    """
+    by_variation: dict[tuple, list[RunResult]] = {}
+    for r in failed_runs:
+        key = (
+            r.variation_label or "",
+            tuple(sorted((r.variation_values or {}).items())),
+        )
+        by_variation.setdefault(key, []).append(r)
+    failed_values_str = [
+        f"{label}: {', '.join(f'{k}={v}' for k, v in values)}"
+        if label
+        else ", ".join(f"{k}={v}" for k, v in values)
+        for label, values in by_variation
+    ]
+    logger.warning(f"Some sweep variations failed: {failed_values_str}")
+    for (label, values), group in by_variation.items():
+        params_str = (
+            f"{label}: {', '.join(f'{k}={v}' for k, v in values)}"
+            if label
+            else ", ".join(f"{k}={v}" for k, v in values)
+        )
+        for r in group:
+            error_msg = r.error or "(no error message)"
+            logger.warning(f"  {params_str}: {error_msg}")
+
+
+def _summarize_and_export(
+    plan: BenchmarkPlan,
+    results: list[RunResult],
+    *,
+    total_runs: int,
+    strategy: ExecutionStrategy,
+    base_dir: Path,
+    logger: AIPerfLogger,
+) -> int:
+    """Log success/failure summary and run confidence + sweep aggregation.
+
+    Returns an exit code (0 on full success, 1 when fewer than 2 runs
+    succeeded). Does not call ``sys.exit`` — the caller is responsible for
+    propagating the code so that registered ``on_complete`` callbacks still
+    run on whatever per-run artifacts were produced.
+    """
+    import asyncio as _asyncio
+
     successful_runs = [r for r in results if r.success]
     failed_runs = [r for r in results if not r.success]
 
     logger.info("=" * 80)
-    logger.info(f"All runs complete: {len(successful_runs)}/{len(results)} successful")
+    if not plan.is_sweep:
+        logger.info(
+            f"All runs complete: {len(successful_runs)}/{total_runs} successful"
+        )
     if failed_runs:
-        logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
+        if plan.is_sweep:
+            _log_failed_sweep_variations(failed_runs, logger)
+        else:
+            logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
     logger.info("=" * 80)
 
-    # Check for failures and exit appropriately
-    if is_sweep and not is_confidence:
-        # Sweep-only mode
-        if len(successful_runs) < len(results):
-            logger.warning("Some sweep values failed. Check logs for details.")
-            sys.exit(1)
-        else:
-            logger.info("Parameter sweep completed successfully!")
-    elif len(successful_runs) < 2:
-        # Confidence or sweep+confidence mode needs at least 2 successful runs
-        if len(successful_runs) == 1:
-            logger.warning(
-                "Only 1 successful run - cannot compute confidence statistics. "
-                "At least 2 successful runs are required."
+    if len(successful_runs) >= 2:
+        logger.info("Computing aggregate statistics...")
+        if plan.is_sweep:
+            # Per-variation confidence aggregates (one JSON+CSV per cell with
+            # >=2 successful runs).
+            _asyncio.run(
+                aggregate_per_variation_and_export(results, plan, base_dir, logger)
             )
+            logger.info("Computing sweep aggregate across variations...")
+            _asyncio.run(aggregate_sweep_and_export(results, plan, base_dir, logger))
         else:
-            logger.error(
-                "All runs failed - cannot compute aggregate statistics. "
-                "Please check the error messages above."
+            _asyncio.run(
+                aggregate_and_export(
+                    results, plan, strategy=strategy, base_dir=base_dir, logger=logger
+                )
             )
-        sys.exit(1)
+        return 0
+    if len(successful_runs) == 1:
+        logger.warning(
+            "Only 1 successful run - cannot compute confidence statistics. "
+            "At least 2 successful runs are required."
+        )
+        return 1
+    logger.error(
+        "All runs failed - cannot compute aggregate statistics. "
+        "Please check the error messages above."
+    )
+    return 1

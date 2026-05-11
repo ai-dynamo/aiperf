@@ -6,9 +6,9 @@ Tests for zmq_comms.py - ZMQ communication classes.
 
 import pytest
 
-from aiperf.common.config import ZMQTCPConfig
 from aiperf.common.enums import CommAddress, LifecycleState
 from aiperf.common.exceptions import InvalidStateError
+from aiperf.config.comm import ZMQTCPConfig
 from aiperf.plugin.enums import CommClientType
 from aiperf.zmq.zmq_comms import (
     ZMQTCPCommunication,

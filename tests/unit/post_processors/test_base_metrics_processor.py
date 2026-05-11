@@ -5,7 +5,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import UserConfig
 from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -22,10 +21,10 @@ from tests.unit.post_processors.conftest import (
 class TestBaseMetricsProcessor:
     """Test cases for BaseMetricsProcessor."""
 
-    def test_initialization(self, mock_user_config: UserConfig) -> None:
-        """Test processor initialization stores user config."""
-        processor = BaseMetricsProcessor(mock_user_config)
-        assert processor.user_config == mock_user_config
+    def test_initialization(self, mock_run) -> None:
+        """Test processor initialization stores the run."""
+        processor = BaseMetricsProcessor(mock_run)
+        assert processor.run is mock_run
 
     @pytest.mark.parametrize(
         "endpoint_type,streaming,expected_supported_flags",
@@ -65,16 +64,16 @@ class TestBaseMetricsProcessor:
     )
     def test_get_filters(
         self,
-        mock_user_config: UserConfig,
+        mock_run,
         endpoint_type: EndpointType,
         streaming: bool,
         expected_supported_flags: list[MetricFlags],
     ) -> None:
         """Test filter generation based on endpoint capabilities."""
-        mock_user_config.endpoint.type = endpoint_type
-        mock_user_config.endpoint.streaming = streaming
+        mock_run.cfg.endpoint.type = endpoint_type
+        mock_run.cfg.endpoint.streaming = streaming
 
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         required_flags, disallowed_flags = processor.get_filters()
 
         assert required_flags == MetricFlags.NONE
@@ -88,7 +87,7 @@ class TestBaseMetricsProcessor:
     def test_setup_metrics_basic(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_run,
     ) -> None:
         """Test basic metric setup."""
         metric_types = [RequestLatencyMetric, RequestCountMetric]
@@ -96,7 +95,7 @@ class TestBaseMetricsProcessor:
             mock_metric_registry, metric_types
         )
 
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         metrics = processor._setup_metrics(MetricType.RECORD, MetricType.AGGREGATE)
 
         assert len(metrics) == len(metric_tags)
@@ -170,7 +169,7 @@ class TestBaseMetricsProcessor:
     def test_setup_metrics_error_flag_scenarios(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_run,
         error_metrics_only: bool,
         exclude_error_metrics: bool,
         expected_required: MetricFlags,
@@ -184,7 +183,7 @@ class TestBaseMetricsProcessor:
             mock_metric_registry, [metric_type]
         )
 
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         metrics = processor._setup_metrics(
             MetricType.RECORD,
             error_metrics_only=error_metrics_only,
@@ -201,10 +200,10 @@ class TestBaseMetricsProcessor:
         )
 
     def test_setup_metrics_empty_result(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test metric setup when no applicable metrics found."""
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         metrics = processor._setup_metrics(MetricType.RECORD)
 
         assert metrics == []
@@ -212,7 +211,7 @@ class TestBaseMetricsProcessor:
     def test_setup_metrics_multiple_types(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_run,
     ) -> None:
         """Test metric setup with multiple metric types."""
         metric_tags = setup_mock_registry_for_metrics(
@@ -224,7 +223,7 @@ class TestBaseMetricsProcessor:
             ],
         )
 
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         metrics = processor._setup_metrics(
             MetricType.RECORD, MetricType.AGGREGATE, MetricType.DERIVED
         )
@@ -248,12 +247,12 @@ class TestBaseMetricsProcessor:
     def test_setup_metrics_disallows_goodput_flag_when_no_slos(
         self,
         mock_metric_registry: Mock,
-        mock_user_config,
+        mock_run,
     ):
-        mock_user_config.input.goodput = None
+        mock_run.cfg.slos = None
 
         mock_metric_registry.tags_applicable_to.return_value = set()
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         processor._setup_metrics(MetricType.RECORD)
         required_flags = mock_metric_registry.tags_applicable_to.call_args[0][0]
         disallowed_flags = mock_metric_registry.tags_applicable_to.call_args[0][1]
@@ -264,9 +263,9 @@ class TestBaseMetricsProcessor:
     def test_setup_metrics_calls_set_slos(
         self,
         mock_metric_registry: Mock,
-        mock_user_config,
+        mock_run,
     ):
-        mock_user_config.input.goodput = {"request_latency": 250.0}
+        mock_run.cfg.slos = {"request_latency": 250.0}
 
         supported = {GOOD_REQUEST_COUNT_TAG, "request_latency"}
         mock_metric_registry.tags_applicable_to.return_value = supported
@@ -286,7 +285,7 @@ class TestBaseMetricsProcessor:
 
         mock_metric_registry.get_instance.side_effect = _get_instance
 
-        processor = BaseMetricsProcessor(mock_user_config)
+        processor = BaseMetricsProcessor(mock_run)
         metrics = processor._setup_metrics(MetricType.RECORD)
 
         GoodReqCountClass.set_slos.assert_called_once_with({"request_latency": 250.0})
@@ -295,9 +294,9 @@ class TestBaseMetricsProcessor:
     def test_setup_metrics_raises_runtimeerror_when_set_slos_invalid(
         self,
         mock_metric_registry: Mock,
-        mock_user_config,
+        mock_run,
     ):
-        mock_user_config.input.goodput = {"unknown_metric": 123.0}
+        mock_run.cfg.slos = {"unknown_metric": 123.0}
 
         mock_metric_registry.tags_applicable_to.return_value = {GOOD_REQUEST_COUNT_TAG}
         mock_metric_registry.create_dependency_order_for.return_value = [
@@ -312,14 +311,14 @@ class TestBaseMetricsProcessor:
         mock_metric_registry.get_class.return_value = GoodReqCountInvalidSLO
 
         with pytest.raises(RuntimeError, match="Invalid --goodput:"):
-            BaseMetricsProcessor(mock_user_config)._setup_metrics(MetricType.RECORD)
+            BaseMetricsProcessor(mock_run)._setup_metrics(MetricType.RECORD)
 
     def test_setup_metrics_raises_when_goodput_slo_tag_not_applicable(
         self,
         mock_metric_registry: Mock,
-        mock_user_config,
+        mock_run,
     ):
-        mock_user_config.input.goodput = {"inter_token_latency": 10.0}
+        mock_run.cfg.slos = {"inter_token_latency": 10.0}
 
         mock_metric_registry.tags_applicable_to.return_value = {GOOD_REQUEST_COUNT_TAG}
         mock_metric_registry.create_dependency_order_for.return_value = [
@@ -329,6 +328,6 @@ class TestBaseMetricsProcessor:
         mock_metric_registry.get_class.return_value = GoodReqCountClass
 
         with pytest.raises(RuntimeError, match="not applicable"):
-            BaseMetricsProcessor(mock_user_config)._setup_metrics(MetricType.RECORD)
+            BaseMetricsProcessor(mock_run)._setup_metrics(MetricType.RECORD)
 
         GoodReqCountClass.set_slos.assert_not_called()

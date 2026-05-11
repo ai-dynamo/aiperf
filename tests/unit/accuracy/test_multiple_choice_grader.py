@@ -4,21 +4,19 @@
 import pytest
 
 from aiperf.accuracy.graders.multiple_choice import MultipleChoiceGrader
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
+from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_run_from_v1
 
 
 def _make_grader() -> MultipleChoiceGrader:
-    user_config = UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+    cli_config = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
     )
-    return MultipleChoiceGrader(user_config=user_config)
+    return MultipleChoiceGrader(run=make_run_from_v1(cli_config))
 
 
 @pytest.mark.asyncio

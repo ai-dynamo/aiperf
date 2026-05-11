@@ -4,6 +4,7 @@
 
 import csv
 import io
+import math
 
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
@@ -55,12 +56,19 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
             # Build header: param1, param2, ..., metric1_mean, metric1_std, ...
             header = param_names.copy()
 
-            # Get all metric names from the first combination
-            if per_combination_metrics:
-                first_combo = per_combination_metrics[0]
-                metric_names = sorted(first_combo.get("metrics", {}).keys())
-            else:
-                metric_names = []
+            # Build the metric column set as the UNION of metric keys across
+            # every combination. Using only the first combo's keys silently
+            # drops metrics that appear in later combos but not the first
+            # (and strips ALL metric columns if combo[0] failed and is
+            # empty). Combos missing a column write an empty cell, matching
+            # the missing-value convention used by _format_number(None).
+            metric_names = sorted(
+                {
+                    key
+                    for combo in per_combination_metrics
+                    for key in combo.get("metrics", {})
+                }
+            )
 
             # Add columns for each metric's statistics
             for metric_name in metric_names:
@@ -160,19 +168,25 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
     def _format_number(self, value: float | int | None, decimals: int = 2) -> str:
         """Format a number for CSV output.
 
+        Non-finite floats (NaN, +inf, -inf) render as the empty string,
+        matching the missing-value convention used for ``None``. NaN must
+        be filtered with ``math.isfinite`` rather than equality against
+        ``float("inf")`` because NaN compares unequal to everything,
+        including itself; an equality check would let it fall through to
+        ``f"{value:.2f}"`` and produce the literal string ``"nan"``,
+        which downstream pandas/duckdb readers parse inconsistently.
+
         Args:
             value: Number to format
             decimals: Number of decimal places
 
         Returns:
-            str: Formatted number or empty string if None
+            str: Formatted number, or empty string if None / non-finite
         """
         if value is None:
             return ""
         if isinstance(value, float):
-            if value == float("inf"):
-                return "inf"
-            if value == float("-inf"):
-                return "-inf"
+            if not math.isfinite(value):
+                return ""
             return f"{value:.{decimals}f}"
         return str(value)

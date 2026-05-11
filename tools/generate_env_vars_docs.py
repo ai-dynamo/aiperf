@@ -213,7 +213,21 @@ def generate_markdown(settings_list: list[Settings]) -> str:
     )
 
     for settings in sorted_settings:
+        # Derive section heading from env_prefix (e.g. AIPERF_HTTP_ -> HTTP).
+        # When env_prefix is the bare ``AIPERF_`` (no subsystem segment),
+        # fall back to the class name with the leading underscore and
+        # trailing ``Settings`` suffix stripped (e.g. ``_CLIRunnerSettings``
+        # -> ``CLI RUNNER``). Otherwise the H2 heading would be empty.
         section = settings.env_prefix.replace("AIPERF_", "").replace("_", "")
+        if not section:
+            stripped = settings.name.lstrip("_")
+            if stripped.endswith("Settings"):
+                stripped = stripped[: -len("Settings")]
+            # Insert a space before each interior capital so CamelCase
+            # renders as space-separated (CLIRunner -> "CLI RUNNER").
+            spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", stripped)
+            spaced = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", spaced)
+            section = spaced.upper()
         lines.append(f"## {section}")
         lines.append("")
         if settings.docstring:

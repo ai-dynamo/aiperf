@@ -7,26 +7,23 @@ from pathlib import Path
 import pytest
 
 from aiperf.accuracy.accuracy_data_exporter import AccuracyDataExporter
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
+from aiperf.config.flags import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_cfg_from_v1
 
 
 def _make_exporter(tmp_path: Path, records: list[MetricResult]) -> AccuracyDataExporter:
-    user_config = UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+    cli_config = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        streaming=False,
+        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
     )
     exporter_config = ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        cfg=make_cfg_from_v1(cli_config),
         results=ProfileResults(
             records=records,
             completed=len(records),
@@ -102,17 +99,14 @@ class TestAccuracyDataExporterExport:
     async def test_export_does_nothing_when_records_is_none(
         self, tmp_path: Path
     ) -> None:
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            ),
-            accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            streaming=False,
+            accuracy_benchmark=AccuracyBenchmarkType.MMLU,
         )
         exporter_config = ExporterConfig(
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=make_cfg_from_v1(cli_config),
             results=ProfileResults(records=None, completed=0, start_ns=0, end_ns=1),
             telemetry_results=None,
         )

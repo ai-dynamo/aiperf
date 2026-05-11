@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus.
+Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
@@ -26,7 +26,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - `BaseComponentService` for services, `BaseService` for SystemController only.
 - Message bus for inter-service communication - no shared mutable state.
 - CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
-- YAML plugin registry for extensible features (`plugins.yaml`).
+- YAML plugin registry for extensible features (`src/aiperf/plugin/plugins.yaml`).
 - Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
 - Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
 - No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
@@ -38,6 +38,22 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
 - No emojis in code or comments.
 - Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
+
+## NaN/Inf Discipline
+
+Every numeric metric value crossing a serialization boundary or feeding a numerical algorithm must be either finite or explicitly `None`; NaN/+inf/-inf must be scrubbed first. orjson silently coerces NaN/inf to JSON `null`, which collides with the contract that `null` means "absent"; `np.mean`/`np.std`/`polyfit` poison downstream decision logic without raising. Use `aiperf.common.finite`:
+
+- `FiniteFloat` (or `FiniteFloat | None`) for any Pydantic float field that holds a metric. The validator rejects NaN/+inf/-inf at config time.
+- `scrub_non_finite(payload)` before `orjson.dumps(payload)` for any metric-bearing payload.
+- `nan_safe_mean(values)` / `nan_safe_std(values)` instead of `np.mean`/`np.std` in any aggregation that may see partial-failure samples; both return `None` (not NaN) when no finite values remain.
+- `is_finite_value(x)` for the canonical finiteness check — handles `numpy.float32`/`float64` correctly, where `isinstance(x, float)` does not.
+
+Mechanical CI invariants enforce this:
+- `tests/unit/property/test_finite_invariants.py::test_every_json_exporter_calls_scrub_non_finite`
+- `tests/unit/property/test_finite_invariants.py::test_every_metric_field_is_finite_or_optional`
+- `tests/unit/property/test_finite_invariants.py::test_every_numeric_field_has_bounds`
+
+Adding a new exporter or metric field without a scrubber/`FiniteFloat` will fail CI. The baseline files `tests/unit/property/_metric_field_baseline.txt` and `_numeric_bounds_baseline.txt` ratchet existing debt to zero — fields can leave the baseline, but new entries are rejected. See `docs/dev/global-invariants.md` for the full property-test contract.
 
 ## Build and Test Commands
 
@@ -69,7 +85,7 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 ## Adding a New Service
 
 1. Create class extending `BaseComponentService` with `@on_message` handlers
-2. Register in `plugins.yaml` under `service` category with `class`, `description`, `metadata`
+2. Register in `src/aiperf/plugin/plugins.yaml` under `service` category with `class`, `description`, `metadata`
 3. Add message type to `common/enums/enums.py` if new messages needed
 4. Create message class in `messages/` with `message_type` field
 5. Validate with `aiperf plugins --validate`
@@ -84,9 +100,13 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 ## Adding a New Plugin
 
 1. Create plugin class implementing the appropriate base
-2. Add entry to `plugins.yaml` with `class`, `description`, `metadata`
+2. Add entry to `src/aiperf/plugin/plugins.yaml` with `class`, `description`, `metadata`
 3. Validate with `make validate-plugin-schemas`
 4. Use via `plugins.get_class(PluginType.X, 'name')`
+
+## Adding a New CLI Flag
+
+See `docs/dev/patterns.md` § "Adding a New CLI Flag". CLIConfig is flat; never add a nested config class.
 
 ## Testing Conventions
 
@@ -120,14 +140,26 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
 
+## Plot Envelope Section
+
+`AIPerfConfig.plot: PlotEnvelopeConfig | None` lets a single AIPerf YAML own its
+visualization. Two forms: bare-string path (`plot: ./plots/baseline.yaml`,
+resolved relative to the AIPerf YAML's dir) or inline dict mirroring
+`src/aiperf/plot/default_plot_config.yaml`. When set, `~/.aiperf/plot_config.yaml`
+is ignored and `artifacts.auto_plot` flips to True (unless explicitly False).
+The auto-plot callback materializes the resolved envelope to
+`<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>` reproduces.
+See `src/aiperf/config/plot.py` for the Pydantic models.
+
 ## Pre-Commit Checklist
 
 1. Review diff: all lines required?
 2. `ruff format . && ruff check --fix .`
 3. `uv run pytest tests/unit/ -n auto`
-4. Type hints on all functions
-5. `Field(description=...)` on all Pydantic fields
-6. `git commit -s`
+4. `uv run pytest tests/unit/property/ -n auto` (mechanical NaN/inf and field-validator invariants)
+5. Type hints on all functions
+6. `Field(description=...)` on all Pydantic fields
+7. `git commit -s`
 
 ## Four-File Sync Rule
 

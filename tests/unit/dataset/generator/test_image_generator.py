@@ -8,38 +8,53 @@ from unittest.mock import Mock, patch
 import pytest
 from PIL import Image
 
-from aiperf.common.config import ImageConfig, ImageHeightConfig, ImageWidthConfig
 from aiperf.common.enums import ImageFormat
+from aiperf.config.dataset.content import ImageConfig
+from aiperf.config.distributions import NormalDistribution
 from aiperf.dataset.generator import ImageGenerator
 
 
+def make_image_config(
+    *,
+    width_mean: float,
+    width_stddev: float,
+    height_mean: float,
+    height_stddev: float,
+    image_format: ImageFormat = ImageFormat.PNG,
+) -> ImageConfig:
+    """Build a v2 ImageConfig from mean/stddev parameters."""
+    return ImageConfig(
+        width=NormalDistribution(mean=width_mean, stddev=width_stddev),
+        height=NormalDistribution(mean=height_mean, stddev=height_stddev),
+        format=image_format,
+    )
+
+
 @pytest.fixture
-def base_config():
+def base_config() -> ImageConfig:
     """Base configuration for ImageGenerator tests."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=2),
-        height=ImageHeightConfig(mean=10, stddev=2),
-        format=ImageFormat.PNG,
+    return make_image_config(
+        width_mean=10, width_stddev=2, height_mean=10, height_stddev=2
     )
 
 
 @pytest.fixture
-def config_random_format():
-    """Configuration with no format specified (for random format selection)."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=2),
-        height=ImageHeightConfig(mean=10, stddev=2),
-        format=ImageFormat.RANDOM,
+def config_random_format() -> ImageConfig:
+    """Configuration with random format selection."""
+    return make_image_config(
+        width_mean=10,
+        width_stddev=2,
+        height_mean=10,
+        height_stddev=2,
+        image_format=ImageFormat.RANDOM,
     )
 
 
 @pytest.fixture
-def config_fixed_dimensions():
+def config_fixed_dimensions() -> ImageConfig:
     """Configuration with fixed dimensions (stddev=0)."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=0),
-        height=ImageHeightConfig(mean=10, stddev=0),
-        format=ImageFormat.PNG,
+    return make_image_config(
+        width_mean=10, width_stddev=0, height_mean=10, height_stddev=0
     )
 
 
@@ -82,26 +97,32 @@ def mock_file_system():
 
 @pytest.fixture(
     params=[
-        ImageConfig(
-            width=ImageWidthConfig(mean=50, stddev=5),
-            height=ImageHeightConfig(mean=75, stddev=8),
-            format=ImageFormat.JPEG,
+        dict(
+            width_mean=50,
+            width_stddev=5,
+            height_mean=75,
+            height_stddev=8,
+            image_format=ImageFormat.JPEG,
         ),
-        ImageConfig(
-            width=ImageWidthConfig(mean=200, stddev=20),
-            height=ImageHeightConfig(mean=150, stddev=15),
-            format=ImageFormat.RANDOM,
+        dict(
+            width_mean=200,
+            width_stddev=20,
+            height_mean=150,
+            height_stddev=15,
+            image_format=ImageFormat.RANDOM,
         ),
-        ImageConfig(
-            width=ImageWidthConfig(mean=1024, stddev=0),
-            height=ImageHeightConfig(mean=768, stddev=0),
-            format=ImageFormat.PNG,
+        dict(
+            width_mean=1024,
+            width_stddev=0,
+            height_mean=768,
+            height_stddev=0,
+            image_format=ImageFormat.PNG,
         ),
     ]
 )
-def various_configs(request):
+def various_configs(request) -> ImageConfig:
     """Parameterized fixture providing various ImageConfig configurations."""
-    return request.param
+    return make_image_config(**request.param)
 
 
 @pytest.fixture(
@@ -111,13 +132,14 @@ def various_configs(request):
         (200, 50, 300, 75),  # Variable size
     ]
 )
-def dimension_params(request):
+def dimension_params(request) -> ImageConfig:
     """Parameterized fixture providing various dimension configurations."""
     width_mean, width_stddev, height_mean, height_stddev = request.param
-    return ImageConfig(
-        width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
-        height=ImageHeightConfig(mean=height_mean, stddev=height_stddev),
-        format=ImageFormat.PNG,
+    return make_image_config(
+        width_mean=width_mean,
+        width_stddev=width_stddev,
+        height_mean=height_mean,
+        height_stddev=height_stddev,
     )
 
 
@@ -259,10 +281,12 @@ class TestImageGenerator:
         self, mock_sample_image, image_format, expected_prefix, test_image
     ):
         """Test generate method with different image formats."""
-        config = ImageConfig(
-            width=ImageWidthConfig(mean=100, stddev=0),
-            height=ImageHeightConfig(mean=100, stddev=0),
-            format=image_format,
+        config = make_image_config(
+            width_mean=100,
+            width_stddev=0,
+            height_mean=100,
+            height_stddev=0,
+            image_format=image_format,
         )
 
         mock_sample_image.return_value = test_image

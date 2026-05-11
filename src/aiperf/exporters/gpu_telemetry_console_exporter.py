@@ -23,8 +23,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
-        self._user_config = exporter_config.user_config
-        self._service_config = exporter_config.service_config
+        self._cfg = exporter_config.cfg
         self._exporter_config = exporter_config
         self._telemetry_results = exporter_config.telemetry_results
 
@@ -38,10 +37,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             console: Rich Console instance for formatted output
         """
 
-        if (
-            self._user_config.gpu_telemetry is None
-            or self._user_config.gpu_telemetry_disabled
-        ):
+        if self._cfg.gpu_telemetry_disabled:
             return
 
         if not self._telemetry_results:

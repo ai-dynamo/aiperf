@@ -445,3 +445,22 @@ class ServiceMetadata(BaseModel):
         default=False,
         description="Whether the service can have multiple instances running in parallel.",
     )
+
+
+# =============================================================================
+# Re-exports
+# =============================================================================
+# New orchestrator metadata classes live in `_orchestrator_schemas.py` to keep
+# this file under the 500-line ergonomics ceiling. Re-exported here so
+# plugins.yaml references like
+# ``metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata``
+# keep resolving.
+from aiperf.plugin.schema._orchestrator_schemas import (  # noqa: E402
+    ConvergenceCriterionMetadata,
+    SearchPlannerMetadata,
+)
+
+__all__ = [
+    "ConvergenceCriterionMetadata",
+    "SearchPlannerMetadata",
+]

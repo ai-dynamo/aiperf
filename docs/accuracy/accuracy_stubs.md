@@ -55,6 +55,7 @@ class GradingResult(AIPerfBaseModel):
     reasoning: str          # Explanation of the grading decision
     extracted_answer: str   # Answer extracted from the model response
     ground_truth: str       # Expected correct answer
+    unparsed: bool = False  # True when fallback parsing was needed
 ```
 
 ### BenchmarkProblem
@@ -67,7 +68,7 @@ class BenchmarkProblem(AIPerfBaseModel):
     ground_truth: str                 # The expected correct answer
     task: str                         # Task/subtask name within the benchmark
     metadata: dict = {}               # Additional problem metadata
-    few_shot_examples: list[dict] = [] # Few-shot examples to prepend
+    raw_messages: list[dict] | None = None # Preformatted messages, when supplied by a loader
 ```
 
 ---
@@ -81,7 +82,7 @@ class BenchmarkProblem(AIPerfBaseModel):
 ```python
 @runtime_checkable
 class AccuracyGraderProtocol(Protocol):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
     async def grade(self, response_text: str, ground_truth: str, **kwargs) -> GradingResult: ...
     def extract_answer(self, response_text: str, **kwargs) -> str: ...
 ```
@@ -91,7 +92,7 @@ class AccuracyGraderProtocol(Protocol):
 ```python
 @runtime_checkable
 class AccuracyBenchmarkProtocol(Protocol):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
     async def load_problems(self, tasks: list[str] | None, n_shots: int, enable_cot: bool) -> list[BenchmarkProblem]: ...
 ```
 
@@ -99,7 +100,7 @@ class AccuracyBenchmarkProtocol(Protocol):
 
 ## CLI Configuration
 
-**File:** `src/aiperf/common/config/accuracy_config.py`
+**File:** `src/aiperf/config/accuracy.py`
 
 All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 
@@ -107,7 +108,7 @@ All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 |----------|-------|------|---------|-------------|
 | `--accuracy-benchmark` | `benchmark` | `str \| None` | `None` | Benchmark to run (e.g., `mmlu`, `aime`). **Enables accuracy mode when set.** |
 | `--accuracy-tasks` | `tasks` | `list[str] \| None` | `None` | Subtasks to evaluate (e.g., MMLU subjects) |
-| `--accuracy-n-shots` | `n_shots` | `int` (0-8) | `0` | Number of few-shot examples |
+| `--accuracy-n-shots` | `n_shots` | `int | None` (0-32 when set) | `None` | Number of few-shot examples; `None` uses the benchmark default |
 | `--accuracy-enable-cot` | `enable_cot` | `bool` | `False` | Enable chain-of-thought prompting |
 | `--accuracy-grader` | `grader` | `str \| None` | `None` | Override benchmark's default grader |
 | `--accuracy-system-prompt` | `system_prompt` | `str \| None` | `None` | Custom system prompt override |
@@ -115,7 +116,7 @@ All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 
 **Key property:** `AccuracyConfig.enabled -> bool` returns `self.benchmark is not None`.
 
-**Stub validator** in `UserConfig.validate_accuracy_config()` is a no-op `pass` — add validation logic here (e.g., verify benchmark name is a valid `AccuracyBenchmarkType`).
+**Stub-plugin validator** lives in `AccuracyConfig._reject_stub_plugins()`, which rejects accuracy plugins that still advertise stub status. Update that validator when converting a stub into a supported plugin.
 
 ---
 
@@ -129,7 +130,7 @@ All graders inherit from `BaseGrader(AIPerfLoggerMixin)` and must implement 2 me
 
 ```python
 class BaseGrader(AIPerfLoggerMixin):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None
     async def grade(self, response_text: str, ground_truth: str, **kwargs) -> GradingResult     # raises NotImplementedError
     def extract_answer(self, response_text: str, **kwargs) -> str                               # raises NotImplementedError
 ```
@@ -310,7 +311,7 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 | Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
-| Config Validator | 0 | 1 | 1 (`validate_accuracy_config`) | 1 |
+| Stub-plugin Validator | 0 | 1 | 1 (`AccuracyConfig._reject_stub_plugins`) | 1 |
 | **Total** | **6** | **13** | | **15** |
 
 ### Self-Disabling Pattern
@@ -323,7 +324,7 @@ The processors, exporters, and one grader/benchmark pair are already wired end-t
 
 1. **Graders** — use `MultipleChoiceGrader` as reference; implement `ExactMatchGrader` next (simplest), then `MathGrader`
 2. **Benchmarks** — use `MMLUBenchmark` as reference; implement dataset loading for each remaining benchmark
-3. **Config validator** — validate benchmark name against `AccuracyBenchmarkType` enum in `UserConfig.validate_accuracy_config()`
+3. **Stub-plugin validator** — update `AccuracyConfig._reject_stub_plugins()` when a benchmark or grader moves from stubbed to supported
 
 ### Key Files for Reference
 

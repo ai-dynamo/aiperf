@@ -11,8 +11,8 @@ import pytest
 import soundfile as sf
 from PIL import Image
 
-from aiperf.common.config import VideoAudioConfig, VideoConfig
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.config.dataset.video import VideoAudioConfig, VideoConfig
 from aiperf.dataset.generator.video import VideoGenerator
 
 

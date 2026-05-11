@@ -77,22 +77,22 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         Raises:
             DataExporterDisabled: If server metrics are disabled or Parquet format not selected
         """
-        self.user_config = server_metrics_accumulator.user_config
-        if self.user_config.server_metrics_disabled:
+        self.run = server_metrics_accumulator.run
+        if not self.run.cfg.server_metrics.enabled:
             raise DataExporterDisabled("Server metrics is disabled")
 
         # Check if Parquet format is enabled
-        if ServerMetricsFormat.PARQUET not in self.user_config.server_metrics_formats:
+        if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics.formats:
             raise DataExporterDisabled(
                 "Server metrics Parquet export disabled: format not selected"
             )
 
         super().__init__(**kwargs)
-        self._file_path = self.user_config.output.server_metrics_export_parquet_file
+        self._file_path = self.run.cfg.artifacts.server_metrics_export_parquet_file
         self._accumulator = server_metrics_accumulator
         self._time_filter = time_filter
         self.trace_or_debug(
-            lambda: f"Initializing ServerMetricsParquetExporter with config: {self.user_config}",
+            lambda: f"Initializing ServerMetricsParquetExporter with run cfg: {self.run.cfg}",
             lambda: f"Initializing ServerMetricsParquetExporter with file path: {self._file_path}",
         )
 
@@ -211,11 +211,13 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
 
             if actual_rows != total_rows:
                 self.warning(
-                    f"Row count mismatch: wrote {total_rows:,} rows but file contains {actual_rows:,} rows"
+                    f"Parquet validation failed: wrote {total_rows:,} rows but read "
+                    f"{actual_rows:,} rows back from {self._file_path}. "
+                    "The file may be corrupt or partially written."
                 )
             else:
                 self.info(
-                    f"Successfully wrote and validated {total_rows:,} rows to {self._file_path}"
+                    f"Parquet export complete: {self._file_path}, {total_rows:,} rows."
                 )
 
         except Exception as e:
@@ -264,7 +266,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         metadata = {
             b"aiperf.schema_version": b"1.0",
             b"aiperf.version": aiperf_version.encode("utf-8"),
-            b"aiperf.benchmark_id": self.user_config.benchmark_id.encode("utf-8"),
+            b"aiperf.benchmark_id": self.run.benchmark_id.encode("utf-8"),
             b"aiperf.export_timestamp_utc": datetime.now(timezone.utc)
             .isoformat()
             .encode("utf-8"),
@@ -305,24 +307,24 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                 ).encode("utf-8")
 
         # Benchmark configuration (full context)
-        # Dump entire user config with exclude_unset to capture actual benchmark settings
-        config_dict = self.user_config.model_dump(
+        # Dump entire run config with exclude_unset to capture actual benchmark settings
+        config_dict = self.run.cfg.model_dump(
             mode="json", exclude_unset=True, exclude_none=True
         )
         metadata[b"aiperf.input_config"] = orjson.dumps(config_dict)
 
         # Also add key config values for quick access (without parsing JSON)
-        metadata[b"aiperf.model_names"] = orjson.dumps(
-            self.user_config.endpoint.model_names
-        )
+        metadata[b"aiperf.model_names"] = orjson.dumps(self.run.cfg.get_model_names())
+        # Use the first profiling phase's concurrency/rate for the parquet header
+        profiling_phases = self.run.cfg.get_profiling_phases()
+        head_phase = profiling_phases[0] if profiling_phases else self.run.cfg.phases[0]
         metadata[b"aiperf.concurrency"] = str(
-            self.user_config.loadgen.concurrency
+            getattr(head_phase, "concurrency", None)
         ).encode("utf-8")
 
-        if self.user_config.loadgen.request_rate is not None:
-            metadata[b"aiperf.request_rate"] = str(
-                self.user_config.loadgen.request_rate
-            ).encode("utf-8")
+        request_rate = getattr(head_phase, "request_rate", None)
+        if request_rate is not None:
+            metadata[b"aiperf.request_rate"] = str(request_rate).encode("utf-8")
 
         # Endpoint information
         hierarchy = self._accumulator.get_hierarchy_for_export()

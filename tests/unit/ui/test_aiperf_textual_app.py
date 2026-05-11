@@ -19,16 +19,14 @@ class TestAIPerfTextualAppInitialization:
         """Create a mock controller."""
         controller = MagicMock()
         controller.service_id = "test_controller"
-        controller.user_config = MagicMock()
-        controller.user_config.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        controller.run = MagicMock()
+        controller.run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=MagicMock(), controller=mock_controller)
 
     def test_init_sets_title(self, app):
         """Test that initialization sets the correct title."""
@@ -52,17 +50,15 @@ class TestAIPerfTextualAppActions:
         """Create a mock controller."""
         controller = AsyncMock()
         controller.service_id = "test_controller"
-        controller.user_config = MagicMock()
-        controller.user_config.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        controller.run = MagicMock()
+        controller.run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
         controller.publish = AsyncMock()
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=MagicMock(), controller=mock_controller)
 
     @pytest.mark.asyncio
     async def test_action_quit_cleanup(self, app):
@@ -188,7 +184,7 @@ class TestAIPerfTextualAppActions:
             await app.action_toggle_maximize_telemetry()
 
             assert (
-                mock_controller.user_config.gpu_telemetry_mode
+                mock_controller.run.cfg.gpu_telemetry_mode
                 == GPUTelemetryMode.REALTIME_DASHBOARD
             )
             app.realtime_telemetry_dashboard.set_status_message.assert_called_once_with(
@@ -208,15 +204,13 @@ class TestAIPerfTextualAppProgressHandlers:
         """Create a mock controller."""
         controller = MagicMock()
         controller.service_id = "test_controller"
-        controller.user_config = MagicMock()
+        controller.run = MagicMock()
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=MagicMock(), controller=mock_controller)
 
     @pytest.mark.asyncio
     async def test_on_warmup_progress(self, app):
@@ -347,15 +341,13 @@ class TestAIPerfTextualAppMetricsHandlers:
         """Create a mock controller."""
         controller = MagicMock()
         controller.service_id = "test_controller"
-        controller.user_config = MagicMock()
+        controller.run = MagicMock()
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=MagicMock(), controller=mock_controller)
 
     @pytest.mark.asyncio
     async def test_on_worker_update(self, app):

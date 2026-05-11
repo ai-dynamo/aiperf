@@ -1,0 +1,10 @@
+{"timestamp": 0, "input_length": 512, "output_length": 128}
+{"timestamp": 50, "input_length": 256, "output_length": 64}
+{"timestamp": 120, "input_length": 1024, "output_length": 256, "hash_ids": [1, 2, 3]}
+{"timestamp": 200, "input_length": 384, "output_length": 96}
+{"timestamp": 350, "input_length": 768, "output_length": 192, "hash_ids": [1, 2]}
+{"timestamp": 500, "input_length": 1536, "output_length": 320, "hash_ids": [1, 2, 4]}
+{"timestamp": 750, "input_length": 256, "output_length": 64}
+{"timestamp": 900, "input_length": 512, "output_length": 128}
+{"timestamp": 1100, "input_length": 2048, "output_length": 512, "hash_ids": [1, 2, 3, 5]}
+{"timestamp": 1500, "input_length": 384, "output_length": 96}

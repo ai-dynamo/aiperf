@@ -11,6 +11,7 @@ from aiperf.common.models import Image, Text
 from aiperf.dataset.loader.models import SingleTurn
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
+from tests.unit.conftest import make_run_from_v1
 
 
 class TestSingleTurn:
@@ -171,7 +172,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -203,7 +204,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -220,7 +221,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -251,7 +252,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -275,7 +276,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -301,7 +302,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -342,7 +343,7 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         dataset = loader.load_dataset()
 
@@ -372,7 +373,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_simple_text_data(self, default_user_config):
         """Test converting simple text data to conversations."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [SingleTurn(text="Hello world")],
@@ -393,7 +394,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_multimodal_data(self, default_user_config):
         """Test converting multimodal data to conversations."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [
@@ -419,7 +420,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_batched_data(self, default_user_config):
         """Test converting batched data to conversations."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [
@@ -445,7 +446,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_with_timing_data(self, default_user_config):
         """Test converting data with timestamp and delay."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [
@@ -472,7 +473,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_with_output_length(self, default_user_config):
         """Test converting data with output_length sets Turn.max_tokens."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [SingleTurn(text="Write a haiku.", output_length=50)],
@@ -486,7 +487,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_without_output_length_is_none(self, default_user_config):
         """Test converting data without output_length leaves Turn.max_tokens as None."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [SingleTurn(text="Hello")],
@@ -500,7 +501,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_multimodal_with_output_length(self, default_user_config):
         """Test converting multimodal data with output_length sets Turn.max_tokens."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         data = {
             "session_1": [
@@ -522,7 +523,7 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
     def test_convert_structured_text_objects(self, default_user_config):
         """Test converting data with structured Text objects."""
         loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", run=make_run_from_v1(default_user_config)
         )
         text_objects = [
             Text(name="query", contents=["What is AI?"]),
@@ -554,7 +555,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -587,7 +588,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -605,7 +606,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -631,7 +632,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -664,7 +665,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -694,7 +695,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
 
@@ -711,7 +712,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -744,7 +745,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -764,7 +765,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -785,7 +786,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -816,7 +817,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -834,7 +835,7 @@ class TestSingleTurnMediaEncoding:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -864,7 +865,7 @@ class TestSingleTurnSessionId:
         ]
         filename = create_jsonl_file(content)
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
 
@@ -881,7 +882,7 @@ class TestSingleTurnSessionId:
         ]
         filename = create_jsonl_file(content)
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
 
@@ -898,7 +899,7 @@ class TestSingleTurnSessionId:
         ]
         filename = create_jsonl_file(content)
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
@@ -916,7 +917,7 @@ class TestSingleTurnSessionId:
         content = ['{"text": "standalone request"}']
         filename = create_jsonl_file(content)
         loader = SingleTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
+            filename=filename, run=make_run_from_v1(default_user_config)
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)

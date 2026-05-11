@@ -106,7 +106,7 @@ def load_json_str(
             else json_str[:200].decode("utf-8", errors="replace")
         )
         snippet = raw + ("..." if len(json_str) > 200 else "")
-        _logger.exception(f"Failed to parse JSON string: '{snippet}' - {e!r}")
+        _logger.warning(f"Failed to parse JSON string: '{snippet}' - {e!r}")
         raise
 
 
