@@ -78,6 +78,10 @@ class ServerMetricsTimeSeries:
         self.last_fetch_ns: int = 0
         self._total_fetch_count: int = 0
         self._fetch_latencies_ns: list[int] = []
+        # Track metric names that have logged a type-mismatch warning so we
+        # only emit the warning once per metric (avoids log spam every scrape).
+        self._type_mismatch_warned: set[str] = set()
+        self._logger = logging.getLogger(__name__)
 
     @property
     def _update_intervals_ns(self) -> list[int]:
@@ -162,6 +166,24 @@ class ServerMetricsTimeSeries:
                     self.metrics[key] = ServerMetricEntry.from_metric_family(
                         metric_family
                     )
+                elif self.metrics[key].metric_type != metric_family.type:
+                    # Type changed between scrapes (e.g. server reclassified
+                    # 'foo' from histogram to gauge, or two TYPE declarations
+                    # for the same name collide in a single scrape). Appending
+                    # a value-typed sample to a HistogramTimeSeries (or vice
+                    # versa) would raise inside the storage class and abort
+                    # processing for this record. Skip the sample, preserving
+                    # the existing time series, and warn once per metric.
+                    if metric_name not in self._type_mismatch_warned:
+                        self._type_mismatch_warned.add(metric_name)
+                        self._logger.warning(
+                            f"Server metric {metric_name!r} changed type from "
+                            f"{self.metrics[key].metric_type} to {metric_family.type}; "
+                            "ignoring samples with the new type to preserve the existing "
+                            "time series. Check the server's exposition for inconsistent "
+                            "TYPE declarations."
+                        )
+                    continue
                 self.metrics[key].data.append(timestamp_ns, sample)
 
     def __len__(self) -> int:
