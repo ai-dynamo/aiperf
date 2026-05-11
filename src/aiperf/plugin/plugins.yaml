@@ -765,6 +765,15 @@ results_processor:
       time slices, enabling time-series analysis of benchmark performance.
       Enabled when timeslice config is set.
 
+  archetype:
+    class: aiperf.post_processors.archetype_metric_results_processor:ArchetypeMetricResultsProcessor
+    description: |
+      Per-archetype results processor for media mix benchmarks. Groups
+      records by archetype_name (set by SyntheticDatasetComposer) and
+      computes metrics independently for each archetype, producing
+      diagnostic per-request-type breakdowns alongside the aggregate
+      metrics. Self-disables when media_mix is not configured.
+
   accuracy_results:
     class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
     description: |

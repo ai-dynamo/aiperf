@@ -79,7 +79,7 @@ RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordPr
 
 ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
-"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.OTEL_METRICS_STREAMER, ResultsProcessorType.TIMESLICE"""
+"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.METRIC_RESULTS, ResultsProcessorType.OTEL_METRICS_STREAMER, ResultsProcessorType.TIMESLICE"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
