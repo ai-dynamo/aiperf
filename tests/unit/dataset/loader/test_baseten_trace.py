@@ -373,3 +373,87 @@ class TestBasetenTraceModel:
         )
 
         assert trace.dataset_version == "0.0.11"
+
+
+class TestSynthesisHooks:
+    def test_synthesis_exclude_fields(self, tmp_path: Path) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        excluded = loader._synthesis_exclude_fields()
+
+        assert "prompt" in excluded
+        assert "request_body" in excluded
+        assert "provided_session_id" in excluded
+        assert "poor_man_session_id" in excluded
+        assert "total_hashes" in excluded
+
+    def test_reconstruct_traces_preserves_original_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            prompt_generator=_mock_prompt_generator(),
+        )
+        originals = [
+            BasetenTrace(
+                timestamp_start_unix_ms=100,
+                prompt="original",
+                input_tokens=10,
+                output_tokens=20,
+                poor_man_session_id=7,
+                total_hashes=[1, 2],
+                block_size=64,
+            )
+        ]
+        synth_dicts = [
+            {"timestamp": 5, "input_length": 50, "output_length": 60},
+        ]
+
+        result = loader._reconstruct_traces(originals, synth_dicts)
+
+        assert len(result) == 1
+        assert result[0].timestamp == 5
+        assert result[0].input_length == 50
+        assert result[0].output_length == 60
+        assert result[0].prompt == "original"
+        assert result[0].poor_man_session_id == 7
+        assert result[0].total_hashes == [1, 2]
+
+    def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            prompt_generator=_mock_prompt_generator(),
+        )
+        originals = [
+            BasetenTrace(
+                timestamp_start_unix_ms=100,
+                prompt="only-original",
+                input_tokens=10,
+                output_tokens=20,
+                poor_man_session_id=7,
+            )
+        ]
+        synth_dicts = [
+            {"timestamp": 5, "input_length": 50, "output_length": 60},
+            {"timestamp": 6, "input_length": 51, "output_length": 61},
+        ]
+
+        result = loader._reconstruct_traces(originals, synth_dicts)
+
+        assert len(result) == 2
+        assert result[1].timestamp == 6
+        assert result[1].input_length == 51
+        assert result[1].output_length == 61
+        assert result[1].prompt == "only-original"
+        assert result[1].poor_man_session_id == 7

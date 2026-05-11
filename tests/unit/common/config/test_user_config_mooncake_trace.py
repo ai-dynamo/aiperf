@@ -9,7 +9,7 @@ This module tests:
 2. Integration with existing UserConfig functionality
 """
 
-from unittest.mock import mock_open, patch
+from unittest.mock import Mock, mock_open, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -20,6 +20,7 @@ from aiperf.common.config import (
     LoadGeneratorConfig,
     UserConfig,
 )
+from aiperf.common.config.user_config import _read_first_parquet_row
 from aiperf.plugin.enums import CustomDatasetType
 
 
@@ -296,6 +297,50 @@ class TestTraceDatasetTimingDetection:
         )
 
         assert config._should_use_fixed_schedule_for_trace_dataset() is True
+
+    def test_baseten_trace_empty_parquet_disables_fixed_schedule(self, tmp_path):
+        parquet_path = tmp_path / "empty.parquet"
+        pq.write_table(
+            pa.Table.from_pylist(
+                [],
+                schema=pa.schema(
+                    [
+                        ("timestamp_start_unix_ms", pa.int64()),
+                        ("prompt", pa.string()),
+                        ("input_tokens", pa.int64()),
+                        ("output_tokens", pa.int64()),
+                    ]
+                ),
+            ),
+            parquet_path,
+        )
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(parquet_path),
+                custom_dataset_type=CustomDatasetType.BASETEN_TRACE,
+            ),
+        )
+
+        assert config._should_use_fixed_schedule_for_trace_dataset() is False
+
+    def test_read_first_parquet_row_returns_none_when_iter_batches_empty(self):
+        parquet_file = Mock()
+        parquet_file.metadata.num_rows = 1
+        parquet_file.iter_batches.return_value = iter([])
+
+        with patch("pyarrow.parquet.ParquetFile", return_value=parquet_file):
+            assert _read_first_parquet_row("/fake/path/test.parquet") is None
+
+    def test_read_first_parquet_row_returns_none_for_empty_first_batch(self):
+        parquet_file = Mock()
+        parquet_file.metadata.num_rows = 1
+        empty_batch = Mock()
+        empty_batch.num_rows = 0
+        parquet_file.iter_batches.return_value = iter([empty_batch])
+
+        with patch("pyarrow.parquet.ParquetFile", return_value=parquet_file):
+            assert _read_first_parquet_row("/fake/path/test.parquet") is None
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
