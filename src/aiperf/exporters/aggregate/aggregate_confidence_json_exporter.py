@@ -59,18 +59,10 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         Returns:
             JsonExportData with aggregate metrics and metadata
         """
-        from importlib.metadata import version as get_version
-
+        from aiperf import __version__ as aiperf_version
         from aiperf.common.models.export_models import JsonExportData
 
-        # Get AIPerf version (same approach as MetricsJsonExporter)
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
-
-        # Create base export data with standard metadata. Note we use this
-        # exporter's own SCHEMA_VERSION, not JsonExportData.SCHEMA_VERSION,
+        # Use this exporter's own SCHEMA_VERSION, not JsonExportData.SCHEMA_VERSION,
         # because the aggregate file's per-metric shape evolves independently
         # from the regular profile export.
         export_data = JsonExportData(
