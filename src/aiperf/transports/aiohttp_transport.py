@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -272,7 +274,15 @@ class AioHttpTransport(BaseTransport):
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
-            json_bytes = orjson.dumps(payload)
+            use_form_data = (
+                request_info.model_endpoint.endpoint.request_content_type
+                == RequestContentType.MULTIPART_FORM_DATA
+            )
+            body: bytes | aiohttp.FormData = (
+                self._build_form_data(payload)
+                if use_form_data
+                else orjson.dumps(payload)
+            )
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -311,7 +321,7 @@ class AioHttpTransport(BaseTransport):
 
             record = await self.aiohttp_client.post_request(
                 url,
-                json_bytes,
+                body,
                 headers,
                 cancel_after_ns=request_info.cancel_after_ns,
                 first_token_callback=first_token_callback,
@@ -405,19 +415,36 @@ class AioHttpTransport(BaseTransport):
     def _build_form_data(payload: dict[str, Any]) -> aiohttp.FormData:
         """Build multipart form data from a payload dict.
 
-        Args:
-            payload: Key-value pairs to encode as form fields
+        File fields are encoded as ``{"b64_data": <str>, "filename": <str>,
+        "content_type": <str>}``. Keeping bytes base64-encoded in the payload
+        lets it stay JSON-serialisable upstream; decoding happens here.
 
-        Returns:
-            aiohttp.FormData ready for submission
+        ``default_to_multipart=True`` forces multipart/form-data even when the
+        payload happens to be text-only (e.g., image_edit with a `url` field
+        instead of an inline image), so the wire format always matches the
+        endpoint's declared `requires_form_data` contract.
         """
-        form_data = aiohttp.FormData()
+        form_data = aiohttp.FormData(default_to_multipart=True)
         for key, value in payload.items():
-            if value is not None:
-                str_value = (
-                    str(value).lower() if isinstance(value, bool) else str(value)
+            if value is None:
+                continue
+            if isinstance(value, dict) and isinstance(value.get("b64_data"), str):
+                try:
+                    file_bytes = base64.b64decode(value["b64_data"], validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    raise ValueError(
+                        f"Field {key!r}: 'b64_data' is not valid base64."
+                    ) from exc
+                form_data.add_field(
+                    key,
+                    file_bytes,
+                    filename=value.get("filename") or key,
+                    content_type=value.get("content_type")
+                    or "application/octet-stream",
                 )
-                form_data.add_field(key, str_value)
+                continue
+            str_value = str(value).lower() if isinstance(value, bool) else str(value)
+            form_data.add_field(key, str_value)
         return form_data
 
     async def _submit_video_job(

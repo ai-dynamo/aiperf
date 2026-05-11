@@ -355,6 +355,14 @@ class FakeTransport(BaseTransport):
                     self._do_simple,
                     build_response=_build_image_response_data,
                 )
+            case EndpointType.IMAGE_EDIT:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    ImageGenerationRequest,
+                    self._do_simple,
+                    build_response=_build_image_response_data,
+                )
             case EndpointType.IMAGE_RETRIEVAL:
                 return await self._do_image_retrieval(payload)
             case EndpointType.HUGGINGFACE_GENERATE:
