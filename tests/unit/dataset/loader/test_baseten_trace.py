@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
 from aiperf.dataset.loader.models import BasetenTrace
 
@@ -149,6 +150,44 @@ class TestBasetenTraceDatasetLoader:
             "hash_ids": [11, 12],
             "block_size": 64,
         }
+
+    def test_convert_to_conversations_grouped_session_is_self_contained(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "this is turn 1",
+                    "input_tokens": 10,
+                    "output_tokens": 12,
+                    "poor_man_session_id": 7,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "this is turn 1, response to turn 1, and now turn 2 with all context included.",
+                    "input_tokens": 22,
+                    "output_tokens": 13,
+                    "poor_man_session_id": 7,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+        assert len(conversations[0].turns) == 2
 
     def test_sessions_are_ordered_by_first_timestamp_not_session_id(
         self, tmp_path: Path

@@ -28,10 +28,10 @@ class CompletionsEndpoint(BaseEndpoint):
         Returns:
             OpenAI Completions API payload
         """
-        if not request_info.turns:
-            raise ValueError("Completions endpoint requires at least one turn.")
+        if len(request_info.turns) != 1:
+            raise ValueError("Completions endpoint only supports one turn.")
 
-        turn = request_info.turns[-1]
+        turn = request_info.turns[0]
         model_endpoint = request_info.model_endpoint
 
         prompts = [

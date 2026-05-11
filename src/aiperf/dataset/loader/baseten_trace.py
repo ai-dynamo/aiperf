@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import ConversationContextMode
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import BasetenTrace
 
@@ -78,6 +79,13 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             trace.request_body["hash_ids"] = trace.hash_ids
         if trace.block_size is not None:
             trace.request_body["block_size"] = trace.block_size
+
+    def _infer_context_mode(
+        self, traces: list[BasetenTrace]
+    ) -> ConversationContextMode | None:
+        if len(traces) > 1:
+            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        return None
 
     def _group_traces(self, items: list[BasetenTrace]) -> dict[str, list[BasetenTrace]]:
         if not items:

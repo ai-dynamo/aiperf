@@ -241,7 +241,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--fixed-schedule`
 
@@ -263,6 +263,11 @@ Start offset in milliseconds for fixed schedule replay. Skips all requests befor
 End offset in milliseconds for fixed schedule replay. Stops issuing requests after this timestamp, allowing benchmark of specific trace subsets. Requests at exactly the end offset are included. Defaults to last timestamp in dataset. Must be ≥ `--fixed-schedule-start-offset` if both specified.
 <br/>_Constraints: ≥ 0_
 
+#### `--trace-session-sample-ratio` `<float>`
+
+Optional fraction of trace sessions to keep for replay. Applied at the whole-session level after rows are grouped into sessions, preserving multi-turn integrity. Useful for replaying a live 10% slice of a large production trace. Sampling is deterministic when `--random-seed` is set.
+<br/>_Constraints: > 0.0, ≤ 1.0_
+
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
@@ -274,8 +279,8 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`]_
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -494,7 +499,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`, `baseten_trace`). When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
 
