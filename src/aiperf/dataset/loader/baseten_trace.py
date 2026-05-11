@@ -1,5 +1,36 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Baseten.co, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+# trace reader that parses the following dataset format:
+# [
+#     {
+#         # relative timestamp since start of experiment in milliseconds
+#         "timestamp_start_unix_ms": 100,
+#         # a prompt that replaces the original tokenized text
+#         "prompt": "this is turn 1",
+#         # targeted response to preserve multi-turn gap-free prefills
+#         "output_text": ", response to turn 1",
+#         # metadata used to construct prompt and output_text. spans across input and output.
+#         "total_hashes": [1, 2],
+#         # recorded input and output tokens for tokenizer
+#         "input_tokens": 10,
+#         "output_tokens": 12,
+#         # session ids, poor man session id is e.g. total_hashes[200] etc
+#         "poor_man_session_id": 7,
+#         "provided_session_id": 1,
+#         # speculation ratio, per decode iteration average tokens.
+#         "speculation_ratio": 1.5,
+#     },
+#     {
+#         "timestamp_start_unix_ms": 200,
+#         "prompt": "this is turn 1, response to turn 1, and now turn 2 with all context included.",
+#         "output_text": ", and response to turn 2",
+#         "total_hashes": [1, 2, 3],
+#         "input_tokens": 22,
+#         "output_tokens": 13,
+#         "poor_man_session_id": 7,
+#     },
+# ]
 
 from __future__ import annotations
 
