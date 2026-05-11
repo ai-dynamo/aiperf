@@ -7,6 +7,7 @@ from datetime import datetime
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
+    ArchetypeData,
     JsonExportData,
     JsonMetricResult,
 )
@@ -68,6 +69,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
             start_time=start_time,
             end_time=end_time,
             telemetry_data=self._telemetry_results,
+            archetypes=self._build_archetype_blocks(),
         )
 
         # Add all prepared metrics dynamically
@@ -81,6 +83,44 @@ class MetricsJsonExporter(MetricsBaseExporter):
         return export_data.model_dump_json(
             indent=2, exclude_unset=True, exclude_none=True
         )
+
+    def _build_archetype_blocks(self) -> list[ArchetypeData] | None:
+        """Build the per-archetype metric blocks for the JSON export.
+
+        Returns None when no archetype results exist so the field is
+        omitted from the output for non-media-mix benchmarks.
+
+        Each block carries the archetype's identity (name + configured
+        weight) plus dynamic metric fields populated via setattr, the
+        same pattern JsonExportData uses for the top-level aggregate.
+        """
+        archetype_results = getattr(self._results, "archetype_metric_results", None)
+        if not archetype_results:
+            return None
+
+        weights = self._archetype_weights_by_name()
+
+        blocks: list[ArchetypeData] = []
+        for archetype_name, metric_results in archetype_results.items():
+            block = ArchetypeData(
+                archetype_name=archetype_name,
+                archetype_weight=weights.get(archetype_name),
+            )
+            for tag, json_result in self._prepare_metrics_for_json(
+                metric_results
+            ).items():
+                setattr(block, tag, json_result)
+            blocks.append(block)
+        return blocks
+
+    def _archetype_weights_by_name(self) -> dict[str, float]:
+        """Return a {name: weight} map from the configured media_mix archetypes.
+
+        Returns an empty map when media_mix is unconfigured (the archetype
+        results would also be empty in that case).
+        """
+        media_mix = self._user_config.input.media_mix or []
+        return {a.name: a.weight for a in media_mix if a.name is not None}
 
     def _prepare_metrics_for_json(
         self, metric_results: Iterable[MetricResult]
