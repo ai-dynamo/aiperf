@@ -287,15 +287,13 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
             trace = BasetenTrace.model_validate(row)
             self._preprocess_trace(trace)
+            if min_timestamp is not None and trace.timestamp is not None:
+                trace.timestamp = int(trace.timestamp) - int(min_timestamp)
 
             if not self._filter_and_cap_trace(trace):
                 continue
 
             items.append(trace)
-
-        if items and min_timestamp is not None:
-            for trace in items:
-                trace.timestamp = int(trace.timestamp or 0) - int(min_timestamp)
 
         self._log_filtering_summary()
         data = self._group_traces(items)

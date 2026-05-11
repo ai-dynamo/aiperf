@@ -360,6 +360,69 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
+    def test_fixed_schedule_offsets_filter_relative_window_on_unix_timestamps(
+        self, tmp_path: Path
+    ):
+        # fixed_schedule_start_offset/end_offset are inclusive bounds [start, end],
+        # applied to normalized trace-relative timestamps (first row becomes t=0).
+        base_ts_ms = 1_730_000_000_000
+        one_hour_ms = 60 * 60 * 1000
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": base_ts_ms,
+                    "prompt": "hour0",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 1,
+                },
+                {
+                    "timestamp_start_unix_ms": base_ts_ms + (2 * one_hour_ms),
+                    "prompt": "hour2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 2,
+                },
+                {
+                    "timestamp_start_unix_ms": base_ts_ms + (3 * one_hour_ms),
+                    "prompt": "hour3",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 3,
+                },
+                {
+                    "timestamp_start_unix_ms": base_ts_ms + (4 * one_hour_ms),
+                    "prompt": "hour4",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 4,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file=str(path),
+                    fixed_schedule=True,
+                    fixed_schedule_start_offset=2 * one_hour_ms,
+                    fixed_schedule_end_offset=3 * one_hour_ms,
+                ),
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        traces = [trace for session in dataset.values() for trace in session]
+
+        assert sorted(trace.text_input for trace in traces) == ["hour2", "hour3"]
+        assert sorted(int(trace.timestamp or 0) for trace in traces) == [
+            2 * one_hour_ms,
+            3 * one_hour_ms,
+        ]
+
 
 class TestBasetenTraceModel:
     def test_model_maps_alias_fields(self):
