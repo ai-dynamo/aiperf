@@ -163,6 +163,32 @@ class InputConfig(BaseConfig):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_media_mix_archetype_names(self) -> Self:
+        """Ensure each archetype has a unique non-None name.
+
+        Auto-assigns synthetic `_archetype_{i}` names to archetypes where
+        `name` is None, then rejects any remaining duplicates. The per-archetype
+        metrics processor uses `name` as a dict key, so collisions would cause
+        records from distinct archetype configs to silently merge into one bucket.
+        """
+        if not self.media_mix:
+            return self
+
+        for i, archetype in enumerate(self.media_mix):
+            if archetype.name is None:
+                archetype.name = f"_archetype_{i}"
+
+        names = [a.name for a in self.media_mix]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"Duplicate archetype names: {duplicates}. "
+                "Each archetype's `name` must be unique within `media_mix` "
+                "so per-archetype metrics group correctly."
+            )
+        return self
+
     @model_validator(mode="before")
     @classmethod
     def inflate_media_mix_shorthand(cls, data: dict) -> dict:

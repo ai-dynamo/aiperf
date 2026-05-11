@@ -210,3 +210,57 @@ class TestTextOverrideConfig:
         config = TextOverrideConfig()
         assert config.input_tokens is None
         assert config.output_tokens is None
+
+
+class TestArchetypeNameValidation:
+    """InputConfig.validate_media_mix_archetype_names (Decision 9)."""
+
+    @staticmethod
+    def _single_image_modality() -> ModalityEntry:
+        return ModalityEntry(
+            modality="image",
+            profiles=[
+                ImageProfileConfig(
+                    weight=1.0,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                )
+            ],
+        )
+
+    def test_duplicate_archetype_names_rejected(self):
+        from aiperf.common.config import InputConfig
+
+        with pytest.raises(ValueError, match="Duplicate archetype names"):
+            InputConfig(
+                media_mix=[
+                    MediaMixArchetype(
+                        weight=0.5,
+                        name="image",
+                        modalities=[self._single_image_modality()],
+                    ),
+                    MediaMixArchetype(
+                        weight=0.5,
+                        name="image",  # duplicate
+                        modalities=[self._single_image_modality()],
+                    ),
+                ]
+            )
+
+    def test_unnamed_archetypes_get_synthetic_names(self):
+        from aiperf.common.config import InputConfig
+
+        config = InputConfig(
+            media_mix=[
+                MediaMixArchetype(
+                    weight=0.5,
+                    modalities=[self._single_image_modality()],
+                ),
+                MediaMixArchetype(
+                    weight=0.5,
+                    modalities=[self._single_image_modality()],
+                ),
+            ]
+        )
+        names = [a.name for a in config.media_mix]
+        assert names == ["_archetype_0", "_archetype_1"]
