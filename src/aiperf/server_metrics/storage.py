@@ -161,30 +161,44 @@ class ServerMetricsTimeSeries:
         for metric_name, metric_family in record.metrics.items():
             for sample in metric_family.samples:
                 key = ServerMetricKey.from_name_and_labels(metric_name, sample.labels)
-
-                if key not in self.metrics:
-                    self.metrics[key] = ServerMetricEntry.from_metric_family(
-                        metric_family
-                    )
-                elif self.metrics[key].metric_type != metric_family.type:
-                    # Type changed between scrapes (e.g. server reclassified
-                    # 'foo' from histogram to gauge, or two TYPE declarations
-                    # for the same name collide in a single scrape). Appending
-                    # a value-typed sample to a HistogramTimeSeries (or vice
-                    # versa) would raise inside the storage class and abort
-                    # processing for this record. Skip the sample, preserving
-                    # the existing time series, and warn once per metric.
-                    if metric_name not in self._type_mismatch_warned:
-                        self._type_mismatch_warned.add(metric_name)
-                        self._logger.warning(
-                            f"Server metric {metric_name!r} changed type from "
-                            f"{self.metrics[key].metric_type} to {metric_family.type}; "
-                            "ignoring samples with the new type to preserve the existing "
-                            "time series. Check the server's exposition for inconsistent "
-                            "TYPE declarations."
-                        )
+                entry = self._get_or_create_entry(key, metric_name, metric_family)
+                if entry is None:
                     continue
-                self.metrics[key].data.append(timestamp_ns, sample)
+                entry.data.append(timestamp_ns, sample)
+
+    def _get_or_create_entry(
+        self,
+        key: "ServerMetricKey",
+        metric_name: str,
+        metric_family: MetricFamily,
+    ) -> "ServerMetricEntry | None":
+        """Return the storage entry for ``key``, creating it on first sight.
+
+        Returns ``None`` (and logs a one-time warning) when the existing entry's
+        metric type does not match the incoming family's type — for example, a
+        server reclassifies ``foo`` from histogram to gauge between scrapes, or
+        two TYPE declarations for the same name collide in a single scrape.
+        Appending a value-typed sample to a HistogramTimeSeries (or vice versa)
+        would otherwise raise inside the storage class and abort processing for
+        the whole record.
+        """
+        entry = self.metrics.get(key)
+        if entry is None:
+            entry = ServerMetricEntry.from_metric_family(metric_family)
+            self.metrics[key] = entry
+            return entry
+        if entry.metric_type != metric_family.type:
+            if metric_name not in self._type_mismatch_warned:
+                self._type_mismatch_warned.add(metric_name)
+                self._logger.warning(
+                    f"Server metric {metric_name!r} changed type from "
+                    f"{entry.metric_type} to {metric_family.type}; ignoring "
+                    "samples with the new type to preserve the existing time "
+                    "series. Check the server's exposition for inconsistent "
+                    "TYPE declarations."
+                )
+            return None
+        return entry
 
     def __len__(self) -> int:
         """Number of unique metric updates (excluding duplicates).
