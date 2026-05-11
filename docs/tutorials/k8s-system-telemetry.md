@@ -198,7 +198,7 @@ spec:
     resources:
       limits:
         nvidia.com/gpu: 1
-  
+
   # Node Exporter sidecar
   - name: node-exporter
     image: prom/node-exporter:v1.8.2
@@ -216,7 +216,7 @@ spec:
     - name: sys
       mountPath: /host/sys
       readOnly: true
-  
+
   volumes:
   - name: proc
     hostPath:
@@ -499,7 +499,7 @@ aiperf profile --model MODEL ... --server-metrics http://node-exporter:9100 --se
 
 # Query with DuckDB
 duckdb -c "
-SELECT 
+SELECT
   metric_name,
   AVG(value) as avg_value,
   MAX(value) as max_value
