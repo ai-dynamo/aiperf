@@ -131,6 +131,34 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
 
 
 # =============================================================================
+# Per-Archetype Export Data (Media Mix)
+# =============================================================================
+
+
+class ArchetypeData(AIPerfBaseModel):
+    """Per-archetype metric block within a JSON export (media mix mode).
+
+    NOTE:
+    Like JsonExportData, this model uses extra="allow" so the exporter can
+    populate dynamic metric fields (time_to_first_token, request_latency, etc.)
+    at runtime via setattr. Static fields below are just the archetype "identity".
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    archetype_name: str = Field(
+        description="Matches MediaMixArchetype.name. Use this as the join key "
+        "to cross-reference input_config.input.media_mix[] for the full archetype "
+        "config (profiles, dimensions, formats, etc.).",
+    )
+    archetype_weight: float | None = Field(
+        default=None,
+        description="The configured weight of this archetype within media_mix, "
+        "echoed from input_config for self-contained reading.",
+    )
+
+
+# =============================================================================
 # Main JSON Export Data
 # =============================================================================
 
@@ -149,8 +177,10 @@ class JsonExportData(AIPerfBaseModel):
     #       but we are setting it here to guard against base model changes.
     model_config = ConfigDict(extra="allow")
 
-    # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.1"
+    # Increment on breaking changes to the export structure.
+    # 1.0 -> 1.1: added count and sum on JsonMetricResult (PR #881).
+    # 1.1 -> 1.2: added archetypes array for per-archetype metrics (media mix).
+    SCHEMA_VERSION: ClassVar[str] = "1.2"
 
     schema_version: str | None = Field(
         default=None,
@@ -190,6 +220,11 @@ class JsonExportData(AIPerfBaseModel):
     error_isl: JsonMetricResult | None = None
     total_error_isl: JsonMetricResult | None = None
     telemetry_data: TelemetryExportData | None = None
+    archetypes: list[ArchetypeData] | None = Field(
+        default=None,
+        description="Per-archetype metric breakdowns (media mix mode). "
+        "Populated when InputConfig.media_mix is configured.",
+    )
     input_config: UserConfig | None = None
     was_cancelled: bool | None = None
     error_summary: list[ErrorDetailsCount] | None = None

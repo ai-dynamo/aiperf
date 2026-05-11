@@ -180,6 +180,13 @@ class ProfileResults(AIPerfBaseModel):
         default=None,
         description="The timeslice metric results of the profile (if using timeslice mode)",
     )
+    archetype_metric_results: dict[str, list[MetricResult]] | None = Field(
+        default=None,
+        description="Per-archetype metric results (if using media mix mode). "
+        "Keys are MediaMixArchetype.name values; each value is the same "
+        "list[MetricResult] shape as the aggregate `records` field but "
+        "computed from only the records belonging to that archetype.",
+    )
     total_expected: int | None = Field(
         default=None,
         description="The total number of inference requests expected to be made (if known)",
