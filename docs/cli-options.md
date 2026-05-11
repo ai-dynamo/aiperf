@@ -697,7 +697,7 @@ MLflow Tracking Server URI used for post-run uploads (e.g., http://localhost:500
 
 #### `--mlflow-experiment` `<str>`
 
-MLflow experiment name for post-run uploads. Ignored unless --mlflow-tracking-uri is set.
+MLflow experiment name for post-run uploads. Requires --mlflow-tracking-uri to be set.
 <br/>_Default: `aiperf`_
 
 #### `--mlflow-run-name` `<str>`

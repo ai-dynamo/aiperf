@@ -168,7 +168,7 @@ class TestMLflowMetadataRoundtripParentRunId:
     ) -> None:
         """New-run path: parent_run_id from CLI appears in final metadata."""
         _write_artifact(tmp_path / "profile_export_aiperf.json")
-        # Pre-create mlflow_export.json so it's found by _iter_artifact_files
+        # Pre-create mlflow_export.json so it's found by _collect_artifact_files
         # and uploaded alongside other artifacts.
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps({}))
 

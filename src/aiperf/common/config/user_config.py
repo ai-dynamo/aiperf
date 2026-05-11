@@ -573,7 +573,7 @@ class UserConfig(BaseConfig):
             default=MLflowDefaults.EXPERIMENT,
             description=(
                 "MLflow experiment name for post-run uploads. "
-                "Ignored unless --mlflow-tracking-uri is set."
+                "Requires --mlflow-tracking-uri to be set."
             ),
         ),
         CLIParameter(
@@ -942,13 +942,10 @@ class UserConfig(BaseConfig):
                 or self.mlflow_parent_run_id is not None
             )
             if has_secondary:
-                # Warn (don't raise): users commonly pre-seed MLflow flags in a
-                # shared config profile and only pass --mlflow-tracking-uri on
-                # some runs. Raising here would break that workflow.
-                _logger.warning(
+                raise ValueError(
                     "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
                     "--mlflow-artifact-glob, and --mlflow-parent-run-id "
-                    "are ignored because --mlflow-tracking-uri is not set."
+                    "require --mlflow-tracking-uri to be set."
                 )
             return self
 

@@ -788,21 +788,27 @@ class TestMLflowConfig:
         assert config.mlflow_enabled is True
         assert config.mlflow_tracking_uri == "http://localhost:5000"
 
-    def test_mlflow_secondary_flags_without_tracking_uri_warns(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        "secondary_kwargs",
+        [
+            param({"mlflow_experiment": "pre-seeded-experiment"}, id="experiment"),
+            param({"mlflow_run_name": "my-run"}, id="run-name"),
+            param({"mlflow_tags": "team:perf"}, id="tags"),
+            param({"mlflow_artifact_globs": ["plots/*.png"]}, id="artifact-globs"),
+            param({"mlflow_parent_run_id": "parent-123"}, id="parent-run-id"),
+        ],
+    )  # fmt: skip
+    def test_mlflow_secondary_flags_require_tracking_uri(
+        self, secondary_kwargs: dict[str, object]
     ):
-        """Secondary MLflow flags without --mlflow-tracking-uri should warn,
-        not raise — users commonly pre-seed them in a shared config profile.
+        """Secondary MLflow flags without --mlflow-tracking-uri are a silent no-op,
+        so the validator rejects them — mirrors the OTel secondary-flag behavior.
         """
-        import logging
-
-        with caplog.at_level(logging.WARNING):
-            config = make_config(mlflow_experiment="pre-seeded-experiment")
-        assert config.mlflow_enabled is False
-        assert any(
-            "--mlflow-experiment" in rec.message and "ignored" in rec.message
-            for rec in caplog.records
-        )
+        with pytest.raises(
+            ValueError,
+            match=r"require --mlflow-tracking-uri to be set",
+        ):
+            make_config(**secondary_kwargs)
 
 
 # =============================================================================

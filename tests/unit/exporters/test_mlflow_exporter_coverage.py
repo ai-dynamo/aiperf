@@ -16,6 +16,7 @@ from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import ProfileResults
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
+from aiperf.exporters.mlflow_metadata import normalize_mlflow_uri
 
 
 def _make_config(
@@ -153,16 +154,18 @@ class TestResolveLiveStreamingRunId:
 
 
 class TestNormalizeUri:
-    """Regression: _normalize_uri must not collapse case-distinct paths."""
+    """Regression: normalize_mlflow_uri must not collapse case-distinct paths."""
 
     def test_different_path_case_compare_unequal(self) -> None:
         """On case-sensitive filesystems (Linux), /tmp/MLRuns != /tmp/mlruns."""
-        n = MLflowDataExporter._normalize_uri
-        assert n("file:///tmp/MLRuns") != n("file:///tmp/mlruns")
+        assert normalize_mlflow_uri("file:///tmp/MLRuns") != normalize_mlflow_uri(
+            "file:///tmp/mlruns"
+        )
 
     def test_scheme_and_host_are_case_insensitive(self) -> None:
-        n = MLflowDataExporter._normalize_uri
-        assert n("HTTP://Host.Com:5000/path") == n("http://host.com:5000/path")
+        assert normalize_mlflow_uri(
+            "HTTP://Host.Com:5000/path"
+        ) == normalize_mlflow_uri("http://host.com:5000/path")
 
     @pytest.mark.parametrize(
         "upper,lower",
@@ -180,22 +183,21 @@ class TestNormalizeUri:
         netloc (file:///, sqlite:///). RFC 3986 §3.1 says scheme is case-
         insensitive; the early-return guard previously skipped lowercasing.
         """
-        n = MLflowDataExporter._normalize_uri
-        assert n(upper) == n(lower)
+        assert normalize_mlflow_uri(upper) == normalize_mlflow_uri(lower)
 
     def test_trailing_slash_stripped(self) -> None:
-        n = MLflowDataExporter._normalize_uri
-        assert n("http://host:5000/path/") == n("http://host:5000/path")
+        assert normalize_mlflow_uri("http://host:5000/path/") == normalize_mlflow_uri(
+            "http://host:5000/path"
+        )
 
     def test_query_case_preserved(self) -> None:
-        n = MLflowDataExporter._normalize_uri
-        assert n("http://host:5000/?MixedCase=Value") != n(
-            "http://host:5000/?mixedcase=value"
-        )
+        assert normalize_mlflow_uri(
+            "http://host:5000/?MixedCase=Value"
+        ) != normalize_mlflow_uri("http://host:5000/?mixedcase=value")
 
     @pytest.mark.parametrize("uri", [None, "", "   "])
     def test_empty_inputs(self, uri: str | None) -> None:
-        assert MLflowDataExporter._normalize_uri(uri) == ""
+        assert normalize_mlflow_uri(uri) == ""
 
 
 class TestDisabledExporter:

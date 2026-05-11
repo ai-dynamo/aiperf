@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import orjson
 
@@ -15,6 +15,10 @@ from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.optional_dependencies import mlflow_dependency_message
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.exporters.mlflow_metadata import (
+    MLflowExportMetadata,
+    normalize_mlflow_uri,
+)
 
 
 class MLflowDataExporter(AIPerfLoggerMixin):
@@ -238,7 +242,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 )
 
             # Enumerate artifact files, excluding mlflow_export.json (written below).
-            artifact_files = self._iter_artifact_files()
+            artifact_files = self._collect_artifact_files()
 
             # Compute uploaded_artifact_names including mlflow_export.json itself.
             uploaded_artifacts = self.uploaded_artifact_names(
@@ -393,7 +397,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         tags.update(self._user_config.mlflow_tags_dict)
         return tags
 
-    def _iter_artifact_files(self) -> list[Path]:
+    def _collect_artifact_files(self) -> list[Path]:
         """Enumerate artifact files matching configured globs, excluding mlflow_export.json."""
         files: list[Path] = []
         seen: set[str] = set()
@@ -413,7 +417,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 files.append(candidate)
         return files
 
-    def _load_existing_metadata(self) -> dict[str, Any]:
+    def _load_existing_metadata(self) -> MLflowExportMetadata:
         if not self._metadata_file.exists():
             return {}
         try:
@@ -423,15 +427,19 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 f"Ignoring malformed MLflow metadata file: {self._metadata_file}"
             )
             return {}
+        # Runtime guard: mlflow_export.json is on disk and may be hand-edited
+        # or corrupted. The TypedDict only asserts shape to the type checker.
         if not isinstance(metadata, dict):
             self.warning(
                 "Ignoring unexpected MLflow metadata payload type in "
                 f"{self._metadata_file}: {type(metadata).__name__}"
             )
             return {}
-        return metadata
+        return cast(MLflowExportMetadata, metadata)
 
-    def _resolve_live_streaming_run_id(self, metadata: dict[str, Any]) -> str | None:
+    def _resolve_live_streaming_run_id(
+        self, metadata: MLflowExportMetadata
+    ) -> str | None:
         if metadata.get("live_streaming") is not True:
             return None
 
@@ -441,8 +449,8 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         if (
             not isinstance(metadata_run_id, str)
             or not metadata_run_id
-            or self._normalize_uri(metadata_tracking_uri)
-            != self._normalize_uri(self._tracking_uri)
+            or normalize_mlflow_uri(metadata_tracking_uri)
+            != normalize_mlflow_uri(self._tracking_uri)
         ):
             return None
 
@@ -453,13 +461,6 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         ):
             return None
         return metadata_run_id
-
-    @staticmethod
-    def _normalize_uri(uri: str | None) -> str:
-        """Normalize a URI for metadata comparison (see mlflow_metadata)."""
-        from aiperf.exporters.mlflow_metadata import normalize_mlflow_uri
-
-        return normalize_mlflow_uri(uri)
 
     def _write_export_metadata(
         self,
@@ -474,8 +475,6 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         live_streaming: bool,
         parent_run_id: str | None = None,
     ) -> None:
-        from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
-
         self._artifact_directory.mkdir(parents=True, exist_ok=True)
         metadata: MLflowExportMetadata = {
             "tracking_uri": self._tracking_uri,

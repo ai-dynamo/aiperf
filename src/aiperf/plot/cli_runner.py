@@ -3,17 +3,18 @@
 """CLI runner for plot command."""
 
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import orjson
 
 from aiperf.common.config import MLflowDefaults
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
+from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
 from aiperf.plot.constants import PLOT_LOG_FILE, PlotMode, PlotTheme
 from aiperf.plot.plot_controller import PlotController
 
 
-def _load_mlflow_metadata(metadata_file: Path) -> dict[str, Any]:
+def _load_mlflow_metadata(metadata_file: Path) -> MLflowExportMetadata:
     if not metadata_file.exists():
         return {}
     try:
@@ -23,12 +24,14 @@ def _load_mlflow_metadata(metadata_file: Path) -> dict[str, Any]:
             f"expected JSON object for MLflow metadata in {metadata_file} but failed to decode"
         ) from exc
 
+    # Runtime guard: mlflow_export.json is on disk and may be hand-edited
+    # or corrupted. The TypedDict only asserts shape to the type checker.
     if not isinstance(metadata, dict):
         raise ValueError(
             f"expected JSON object for MLflow metadata in {metadata_file} "
             f"but got {type(metadata).__name__}"
         )
-    return metadata
+    return cast(MLflowExportMetadata, metadata)
 
 
 def _resolve_mlflow_upload_target(
