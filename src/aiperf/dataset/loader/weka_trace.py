@@ -40,6 +40,20 @@ _logger = AIPerfLogger(__name__)
 _NormalRequestT = WekaNormalRequest | WekaStreamingRequest
 
 
+def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
+    """Recorded end time of a subagent, in seconds.
+
+    Uses ``duration_ms`` when present. Falls back to ``max(inner.t + inner.api_time)``
+    when ``duration_ms`` is None (recorded for ``status='async_launched'`` subagents).
+    Falls back further to ``entry.t`` when both are unavailable.
+    """
+    if entry.duration_ms is not None:
+        return entry.t + entry.duration_ms / 1000.0
+    if entry.requests:
+        return max(ir.t + (ir.api_time or 0.0) for ir in entry.requests)
+    return entry.t
+
+
 def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float:
     """Clamp a delay to at most cap_seconds * 1000 ms.
 
@@ -663,7 +677,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 defaultdict(list)
             )
             group_order: list[tuple[int | None, int | None]] = []
+            group_following_outer: dict[tuple[int | None, int | None], int | None] = {}
             dropped_sa_agent_ids: set[str] = set()
+            outer_to_t: dict[int, float] = {
+                outer_idx: req.t for outer_idx, req in plan.normals
+            }
 
             for sa_outer_idx, sa_entry in plan.subagents:
                 preceding = max(
@@ -681,9 +699,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                     dropped_sa_agent_ids.add(sa_entry.agent_id)
                     continue
+                following_outer_idx = min(
+                    (oi for oi in outer_to_t if oi > sa_outer_idx),
+                    default=None,
+                )
                 key = (preceding, following)
                 if key not in groups:
                     group_order.append(key)
+                    group_following_outer[key] = following_outer_idx
                 groups[key].append(sa_entry)
 
             for preceding, following in group_order:
@@ -691,6 +714,19 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 child_sids = [f"{plan.trace_id}::sa:{e.agent_id}" for e in entries]
                 branch_id = f"{plan.trace_id}:spawn:{entries[0].agent_id}"
                 is_background = following is None
+                if not is_background:
+                    following_outer_idx = group_following_outer[(preceding, following)]
+                    following_t = outer_to_t[following_outer_idx]
+                    sa_end_t = max(_sa_end_seconds(entry) for entry in entries)
+                    if sa_end_t > following_t:
+                        is_background = True
+                        _logger.info(
+                            f"Trace {plan.trace_id}: reclassifying subagent branch "
+                            f"'{branch_id}' as background - recorded subagent end "
+                            f"t={sa_end_t:.2f}s exceeds following parent turn "
+                            f"t={following_t:.2f}s (parent did not wait in the "
+                            f"recording)."
+                        )
                 conv.branches.append(
                     ConversationBranchInfo(
                         branch_id=branch_id,
@@ -700,7 +736,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                 )
                 conv.turns[preceding].branch_ids.append(branch_id)
-                if following is not None:
+                if following is not None and not is_background:
                     conv.turns[following].prerequisites.append(
                         TurnPrerequisite(
                             kind=PrerequisiteKind.SPAWN_JOIN,
