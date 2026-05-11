@@ -41,8 +41,10 @@ async def cleanup_communication():
 @pytest.fixture
 def mock_tokenizer(mock_tokenizer_cls):
     """Fixture to mock tokenizer creation."""
-    with patch("aiperf.common.tokenizer.Tokenizer.from_pretrained") as mock:
-        mock.return_value = mock_tokenizer_cls.from_pretrained("test-model")
+    mock_tok = mock_tokenizer_cls.from_pretrained("test-model")
+    with patch(
+        "aiperf.dataset.dataset_manager.load_tokenizer_guarded", return_value=mock_tok
+    ) as mock:
         yield mock
 
 

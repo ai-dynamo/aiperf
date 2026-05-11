@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 
 if TYPE_CHECKING:
@@ -598,8 +599,6 @@ def load_tokenizer_guarded(name: str, **kwargs: object) -> "Tokenizer":
     Prevents indefinite hangs when the tiktoken CDN or HuggingFace Hub is
     reachable but unresponsive.
     """
-    from aiperf.common.environment import Environment
-
     timeout = Environment.TOKENIZER.LOAD_TIMEOUT
     result_q: mp.Queue = mp.Queue()
 

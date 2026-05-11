@@ -170,7 +170,7 @@ class TestPreloadTokenizers:
         }
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
+            patch("aiperf.common.tokenizer.load_tokenizer_guarded") as mock_load,
         ):
             await preload_tokenizers(resolved)
         mock_load.assert_called_once()
