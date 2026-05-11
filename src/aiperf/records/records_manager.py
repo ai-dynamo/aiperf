@@ -739,30 +739,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=True,
         )
         self.debug(f"All processors completed summarize, got {len(results)} results")
-        records_results: list[MetricResult] = []
-        timeslice_metric_results: dict = {}
-        error_results: list[ErrorDetails] = []
-        for outcome in results:
-            if isinstance(outcome, ErrorDetails):
-                error_results.append(outcome)
-                continue
-            if isinstance(outcome, BaseException):
-                self.error(f"Exception processing results: {outcome!r}")
-                error_results.append(ErrorDetails.from_exception(outcome))
-                continue
-            kind, payload = outcome
-            if kind == "records":
-                records_results.extend(payload)
-            elif kind == "timeslice":
-                timeslice_metric_results = payload
-            else:
-                self.warning(f"Unknown result_kind '{kind}' from processor; dropping.")
+        (
+            records_results,
+            timeslice_metric_results,
+            archetype_metric_results,
+            error_results,
+        ) = self._dispatch_processor_outcomes(results)
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
                 timeslice_metric_results=timeslice_metric_results,
+                archetype_metric_results=archetype_metric_results or None,
                 completed=len(records_results),
                 start_ns=phase_stats.start_ns or time.time_ns(),
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
@@ -803,6 +792,45 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self.debug("_process_results completed, returning result")
         return result
+
+    def _dispatch_processor_outcomes(
+        self,
+        outcomes: list[Any],
+    ) -> tuple[list[MetricResult], dict, dict, list[ErrorDetails]]:
+        """Route (kind, payload) tuples from summarize() into per-kind buckets.
+
+        Each MetricResultsProcessor declares a `result_kind` class attribute;
+        _summarize_with_logging returns (kind, payload). This method drains
+        the outcomes list (including any BaseExceptions raised by gather)
+        and returns the per-kind buckets used to populate ProfileResults.
+        """
+        records_results: list[MetricResult] = []
+        timeslice_metric_results: dict = {}
+        archetype_metric_results: dict = {}
+        error_results: list[ErrorDetails] = []
+        for outcome in outcomes:
+            if isinstance(outcome, ErrorDetails):
+                error_results.append(outcome)
+                continue
+            if isinstance(outcome, BaseException):
+                self.error(f"Exception processing results: {outcome!r}")
+                error_results.append(ErrorDetails.from_exception(outcome))
+                continue
+            kind, payload = outcome
+            if kind == "records":
+                records_results.extend(payload)
+            elif kind == "timeslice":
+                timeslice_metric_results = payload
+            elif kind == "archetype":
+                archetype_metric_results = payload
+            else:
+                self.warning(f"Unknown result_kind '{kind}' from processor; dropping.")
+        return (
+            records_results,
+            timeslice_metric_results,
+            archetype_metric_results,
+            error_results,
+        )
 
     def _process_telemetry_results(self) -> ProcessTelemetryResult:
         """Process telemetry results by exporting the accumulated telemetry data.
