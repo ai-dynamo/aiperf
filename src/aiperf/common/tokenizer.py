@@ -9,8 +9,8 @@ import io
 import logging
 import multiprocessing as mp
 import os
-import queue
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -567,6 +567,20 @@ def _set_daemon(daemon: bool) -> None:
         mp.current_process()._config["daemon"] = daemon
 
 
+@contextmanager
+def _non_daemon_parent() -> Iterator[None]:
+    """multiprocessing forbids daemon processes from having children;
+    temporarily clear the flag so we can spawn one."""
+    was_daemon = mp.current_process().daemon
+    if was_daemon:
+        _set_daemon(False)
+    try:
+        yield
+    finally:
+        if was_daemon:
+            _set_daemon(True)
+
+
 def _tokenizer_subprocess_worker(
     result_q: "mp.Queue[tuple[str, object]]",
     name: str,
@@ -581,22 +595,15 @@ def _tokenizer_subprocess_worker(
 def load_tokenizer_guarded(name: str, **kwargs: object) -> "Tokenizer":
     """Load a tokenizer in a subprocess with a hard timeout.
 
-    Runs ``Tokenizer.from_pretrained`` in a child process and kills it if it
-    does not respond within ``AIPERF_TOKENIZER_LOAD_TIMEOUT`` seconds (default
-    30). This prevents indefinite hangs when the tiktoken CDN or HuggingFace
-    Hub is reachable but unresponsive.
-
-    AIPerf services run as daemon processes; the daemon flag is temporarily
-    cleared so Python's multiprocessing allows spawning a child.
+    Prevents indefinite hangs when the tiktoken CDN or HuggingFace Hub is
+    reachable but unresponsive.
     """
     from aiperf.common.environment import Environment
 
     timeout = Environment.TOKENIZER.LOAD_TIMEOUT
     result_q: mp.Queue = mp.Queue()
-    was_daemon = mp.current_process().daemon
-    try:
-        if was_daemon:
-            _set_daemon(False)
+
+    with _non_daemon_parent():
         p = mp.Process(
             target=_tokenizer_subprocess_worker,
             args=(result_q, name),
@@ -604,23 +611,19 @@ def load_tokenizer_guarded(name: str, **kwargs: object) -> "Tokenizer":
             daemon=False,
         )
         p.start()
-    finally:
-        if was_daemon:
-            _set_daemon(True)
+
     try:
-        try:
-            status, payload = result_q.get(timeout=timeout)
-        except queue.Empty:
-            p.kill()
+        p.join(timeout=timeout)
+        if p.is_alive():
             raise TimeoutError(
                 f"Tokenizer '{name}' did not load within {timeout}s "
                 "(set AIPERF_TOKENIZER_LOAD_TIMEOUT to adjust)"
-            ) from None
+            )
+        status, payload = result_q.get_nowait()
         if status == "error":
             raise payload  # type: ignore[misc]
         return payload  # type: ignore[return-value]
     finally:
-        p.join(timeout=2.0)
         if p.is_alive():
             p.kill()
-            p.join()
+        p.join()

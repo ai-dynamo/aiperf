@@ -176,13 +176,18 @@ class TestLoadTokenizerGuarded:
     """
 
     def _make_process_factory(self, result: tuple):
-        """Return a fake mp.Process factory that puts *result* into the queue on start()."""
+        """Return a fake mp.Process factory that writes *result* to the queue on start()
+        and immediately exits (join returns, is_alive returns False)."""
 
         def _factory(*posargs, target=None, args=(), kwargs=None, daemon=False, **kw):
             result_q = args[0]
             proc = MagicMock()
             proc.is_alive.return_value = False
-            proc.start.side_effect = lambda: result_q.put(result)
+
+            def _start():
+                result_q.put(result)
+
+            proc.start.side_effect = _start
             return proc
 
         return _factory
@@ -296,17 +301,19 @@ class TestLoadTokenizerGuarded:
 
     def test_joins_subprocess_on_success(self) -> None:
         fake_tokenizer = MagicMock(spec=Tokenizer)
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+
+        def _factory(*posargs, target=None, args=(), kwargs=None, daemon=False, **kw):
+            args[0].put(("ok", fake_tokenizer))
+            return proc
 
         with (
             patch("aiperf.common.tokenizer.mp.Queue", queue.Queue),
-            patch(
-                "aiperf.common.tokenizer.mp.Process",
-                side_effect=self._make_process_factory(("ok", fake_tokenizer)),
-            ),
-        ) as (_, mock_proc_cls):
+            patch("aiperf.common.tokenizer.mp.Process", side_effect=_factory),
+        ):
             load_tokenizer_guarded("builtin")
 
-        proc = mock_proc_cls.return_value
         proc.join.assert_called()
 
     def test_kills_zombie_process_after_timeout(self) -> None:
