@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -710,8 +711,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         async def _summarize_with_logging(
             processor: ResultsProcessorProtocol, idx: int
-        ) -> list[MetricResult] | BaseException:
-            """Wrapper to log before/after summarize calls."""
+        ) -> tuple[str, Any]:
+            """Wrapper to log before/after summarize calls.
+
+            Returns (result_kind, payload) so the caller can route the result
+            into the correct ProfileResults field without inspecting types.
+            """
             name = processor.__class__.__name__
             self.debug(f"Starting summarize for processor {idx}: {name}")
             try:
@@ -720,7 +725,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     timeout=Environment.RECORD.PROCESS_RECORDS_TIMEOUT,
                 )
                 self.debug(f"Completed summarize for processor {idx}: {name}")
-                return result
+                return (getattr(processor, "result_kind", "records"), result)
             except Exception as e:
                 self.error(f"Error in summarize for processor {idx}: {name}: {e!r}")
                 raise
@@ -734,17 +739,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=True,
         )
         self.debug(f"All processors completed summarize, got {len(results)} results")
-        records_results, timeslice_metric_results, error_results = [], {}, []
-        for result in results:
-            if isinstance(result, list):
-                records_results.extend(result)
-            elif isinstance(result, dict):
-                timeslice_metric_results = result
-            elif isinstance(result, ErrorDetails):
-                error_results.append(result)
-            elif isinstance(result, BaseException):
-                self.error(f"Exception processing results: {result!r}")
-                error_results.append(ErrorDetails.from_exception(result))
+        records_results: list[MetricResult] = []
+        timeslice_metric_results: dict = {}
+        error_results: list[ErrorDetails] = []
+        for outcome in results:
+            if isinstance(outcome, ErrorDetails):
+                error_results.append(outcome)
+                continue
+            if isinstance(outcome, BaseException):
+                self.error(f"Exception processing results: {outcome!r}")
+                error_results.append(ErrorDetails.from_exception(outcome))
+                continue
+            kind, payload = outcome
+            if kind == "records":
+                records_results.extend(payload)
+            elif kind == "timeslice":
+                timeslice_metric_results = payload
+            else:
+                self.warning(f"Unknown result_kind '{kind}' from processor; dropping.")
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
         result = ProcessRecordsResult(

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections import defaultdict
-from typing import Any
+from typing import Any, ClassVar
 
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -20,6 +20,8 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
 
     Groups metrics by time slices based on request timestamps and slice_duration.
     """
+
+    result_kind: ClassVar[str] = "timeslice"
 
     def __init__(self, user_config: UserConfig, **kwargs: Any):
         super().__init__(user_config=user_config, **kwargs)

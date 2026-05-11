@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import (
@@ -30,6 +30,10 @@ class MetricResultsProcessor(BaseMetricsProcessor):
     This is the final stage of the metrics processing pipeline, and is done is a unified manner by the RecordsManager.
     It is responsible for processing the results and returning them to the RecordsManager, as well as summarizing the results.
     """
+
+    # Discriminator the RecordsManager uses to route summarize() output into the
+    # correct ProfileResults field. Subclasses override.
+    result_kind: ClassVar[str] = "records"
 
     def __init__(self, user_config: UserConfig, **kwargs: Any):
         super().__init__(user_config=user_config, **kwargs)
