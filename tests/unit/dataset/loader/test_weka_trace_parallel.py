@@ -114,6 +114,7 @@ def _drive_parallel_inproc(
         from collections import defaultdict
 
         children_by_trace = defaultdict(list)
+        sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
             requests_dicts = [
                 {
@@ -124,7 +125,7 @@ def _drive_parallel_inproc(
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                 }
-                for creq in cp.entry.requests
+                for creq in cp.stream_requests
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
@@ -136,6 +137,9 @@ def _drive_parallel_inproc(
                     "system_tokens": cp.entry.system_tokens,
                     "requests": requests_dicts,
                 }
+            )
+            sids_by_subagent[(cp.parent_trace_id, cp.subagent_index)].append(
+                cp.session_id
             )
 
         results = []
@@ -156,17 +160,27 @@ def _drive_parallel_inproc(
                 )
                 for outer_idx, req in plan.normals
             ]
-            subagents_dicts = [
-                (
-                    outer_idx,
-                    {
-                        "agent_id": sa.agent_id,
-                        "tool_tokens": sa.tool_tokens,
-                        "system_tokens": sa.system_tokens,
-                    },
+            subagents_dicts = []
+            for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
+                child_sids = sids_by_subagent.get((plan.trace_id, sa_index), [])
+                if sa.duration_ms is not None:
+                    sa_end = sa.t + sa.duration_ms / 1000.0
+                elif sa.requests:
+                    sa_end = max(ir.t + (ir.api_time or 0.0) for ir in sa.requests)
+                else:
+                    sa_end = sa.t
+                subagents_dicts.append(
+                    (
+                        outer_idx,
+                        {
+                            "agent_id": sa.agent_id,
+                            "tool_tokens": sa.tool_tokens,
+                            "system_tokens": sa.system_tokens,
+                            "child_session_ids": child_sids,
+                            "sa_end_seconds": sa_end,
+                        },
+                    )
                 )
-                for outer_idx, sa in plan.subagents
-            ]
             task = wpc._WekaTraceTask(
                 trace_id=plan.trace_id,
                 parent={
