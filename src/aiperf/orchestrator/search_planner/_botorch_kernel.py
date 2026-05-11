@@ -20,10 +20,10 @@ SAASBO; out of scope for this migration).
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
-import torch
-from gpytorch.kernels import MaternKernel, ScaleKernel
-from gpytorch.priors import GammaPrior, LogNormalPrior
+if TYPE_CHECKING:
+    from gpytorch.kernels import ScaleKernel
 
 
 def make_dsp_kernel(d: int) -> ScaleKernel:
@@ -35,6 +35,10 @@ def make_dsp_kernel(d: int) -> ScaleKernel:
     The output-scale prior is the BoTorch default ``Gamma(2, 0.15)``,
     which is well-behaved for objectives normalized via ``Standardize``.
     """
+    import torch
+    from gpytorch.kernels import MaternKernel, ScaleKernel
+    from gpytorch.priors import GammaPrior, LogNormalPrior
+
     if d < 1:
         raise ValueError(f"d must be >= 1; got {d}")
     loc = torch.tensor(math.sqrt(2.0) + 0.5 * math.log(d), dtype=torch.float64)
