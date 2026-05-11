@@ -12,7 +12,7 @@ from aiperf.common.models import Image, Text, Turn
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.endpoints.openai_image_edit import (
     ImageEditEndpoint,
-    _sniff_mime_from_magic_bytes,
+    _sniff_mime_from_b64_prefix,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -133,6 +133,29 @@ class TestImageEditEndpoint:
         assert payload["url"] == "https://example.com/source.png"
         assert "image" not in payload
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "HTTPS://example.com/img.png",
+            "HTTP://example.com/img.png",
+            "Https://Example.COM/img.png",
+        ],
+    )
+    def test_format_payload_url_scheme_is_case_insensitive(
+        self, endpoint, model_endpoint, url: str
+    ) -> None:
+        """RFC-legal uppercase/mixed-case schemes still route to the `url` field."""
+        turn = Turn(
+            texts=[Text(contents=["edit"])],
+            images=[Image(contents=[url])],
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["url"] == url
+        assert "image" not in payload
+
     def test_format_payload_jpeg_data_url_uses_jpg_filename(
         self, endpoint, model_endpoint
     ) -> None:
@@ -237,6 +260,23 @@ class TestImageEditEndpoint:
         assert payload["image"]["content_type"] == "image/png"
         assert payload["image"]["b64_data"] == b64
 
+    def test_format_payload_svg_xml_data_url_strips_subtype_suffix(
+        self, endpoint, model_endpoint
+    ) -> None:
+        """`image/svg+xml` -> filename `image.svg` (not `image.svg+xml`)."""
+        b64 = base64.b64encode(b"<svg/>").decode("ascii")
+        turn = Turn(
+            texts=[Text(contents=["edit"])],
+            images=[Image(contents=[f"data:image/svg+xml;base64,{b64}"])],
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["image"]["filename"] == "image.svg"
+        # Content-Type retains the full `image/svg+xml` MIME — only the filename strips.
+        assert payload["image"]["content_type"] == "image/svg+xml"
+
     def test_format_payload_no_turns_raises(self, endpoint, model_endpoint) -> None:
         """Missing turns raises a clear ValueError instead of indexing into an empty list."""
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
@@ -272,13 +312,13 @@ class TestImageEditEndpoint:
     def test_format_payload_invalid_base64_raises(
         self, endpoint, model_endpoint
     ) -> None:
-        """Non-base64 image content surfaces a clear decode error."""
+        """Image content not matching any known b64 prefix raises a clear error."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
             images=[Image(contents=["not!base64!data"])],
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
-        with pytest.raises(ValueError, match="not valid base64"):
+        with pytest.raises(ValueError, match="not a recognized image format"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_malformed_data_url_raises(
@@ -371,21 +411,28 @@ class TestImageEditEndpoint:
         assert parsed.perf_ns == 999_888_777
 
 
-class TestSniffMimeFromMagicBytes:
-    """Covers each branch of _sniff_mime_from_magic_bytes."""
+class TestSniffMimeFromB64Prefix:
+    """Covers each branch of _sniff_mime_from_b64_prefix."""
 
     @pytest.mark.parametrize(
-        "magic,expected",
+        "magic_bytes,expected",
         [
             pytest.param(b"\x89PNG\r\n\x1a\n", "image/png", id="png"),
             pytest.param(b"\xff\xd8\xff\xe0", "image/jpeg", id="jpeg"),
-            pytest.param(b"RIFF\x00\x00\x00\x00WEBP", "image/webp", id="webp"),
+            pytest.param(b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp", id="webp"),
             pytest.param(b"GIF87a", "image/gif", id="gif87a"),
             pytest.param(b"GIF89a", "image/gif", id="gif89a"),
             pytest.param(b"BM\x00\x00", "image/bmp", id="bmp"),
-            pytest.param(b"\x00\x00\x00\x00", None, id="unknown"),
         ],
     )  # fmt: skip
-    def test_magic_bytes_dispatch(self, magic: bytes, expected: str | None) -> None:
-        """Each supported image format dispatches to the matching MIME, unknown returns None."""
-        assert _sniff_mime_from_magic_bytes(magic) == expected
+    def test_b64_prefix_dispatch(self, magic_bytes: bytes, expected: str) -> None:
+        """Each supported image format dispatches via its base64 prefix."""
+        b64 = base64.b64encode(magic_bytes).decode("ascii")
+        assert _sniff_mime_from_b64_prefix(b64) == expected
+
+    def test_unknown_prefix_returns_none(self) -> None:
+        """Non-image b64 content (or non-b64 garbage) returns None."""
+        # "garbage" b64-encoded -> "Z2FyYmFnZQ==" — doesn't match any prefix.
+        assert _sniff_mime_from_b64_prefix("Z2FyYmFnZQ==") is None
+        # Pure non-base64 garbage also returns None (no decode is attempted).
+        assert _sniff_mime_from_b64_prefix("not!base64!data") is None

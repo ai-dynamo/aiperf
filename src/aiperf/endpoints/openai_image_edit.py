@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import base64
-import binascii
 from typing import Any
 
 from aiperf.common.models import (
@@ -22,23 +20,27 @@ _MIME_BY_EXT: dict[str, str] = {
     "bmp": "image/bmp",
 }
 
-# Keys derived from turn data or expected as binary uploads that
-# --extra-inputs must not overwrite.
+# Keys protected from --extra-inputs (turn-derived or binary uploads).
 _RESERVED_PAYLOAD_KEYS: frozenset[str] = frozenset({"prompt", "image", "url", "mask"})
 
+# Base64-encoded magic-byte prefixes. PNG bytes `\x89PNG\r\n\x1a\n` -> `iVBORw0KGgo`,
+# JPEG `\xff\xd8\xff` -> `/9j/`, GIF87a/89a -> `R0lGODdh`/`R0lGODlh`, RIFF -> `UklGR`
+# (reported as WebP — image_edit inputs are image-only), BMP `BM` -> `Qk`.
+_MIME_BY_B64_PREFIX: tuple[tuple[str, str], ...] = (
+    ("iVBORw0KGgo", "image/png"),
+    ("/9j/", "image/jpeg"),
+    ("R0lGODlh", "image/gif"),
+    ("R0lGODdh", "image/gif"),
+    ("UklGR", "image/webp"),
+    ("Qk", "image/bmp"),
+)
 
-def _sniff_mime_from_magic_bytes(image_bytes: bytes) -> str | None:
-    """Detect MIME type from the magic bytes of a raw base64-decoded image."""
-    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if image_bytes.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
-        return "image/webp"
-    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if image_bytes.startswith(b"BM"):
-        return "image/bmp"
+
+def _sniff_mime_from_b64_prefix(b64: str) -> str | None:
+    """Return the MIME type implied by a base64-encoded image's leading characters."""
+    for prefix, mime in _MIME_BY_B64_PREFIX:
+        if b64.startswith(prefix):
+            return mime
     return None
 
 
@@ -46,10 +48,9 @@ class ImageEditEndpoint(BaseEndpoint):
     """OpenAI Image Edit (image-to-image) endpoint.
 
     Multipart upload of a reference image plus text prompt. Compatible with
-    SGLang's /v1/images/edits and FLUX.2 unified diffusion serving.
-
-    See: https://platform.openai.com/docs/api-reference/images/createEdit
-    See: https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/runtime/entrypoints/openai/image_api.py
+    SGLang's /v1/images/edits and FLUX.2 unified diffusion serving. The
+    ``url`` form-field path (HTTP/HTTPS reference image) is an SGLang
+    extension; stock OpenAI ``/v1/images/edits`` only accepts file uploads.
     """
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
@@ -87,18 +88,19 @@ class ImageEditEndpoint(BaseEndpoint):
             "n": 1,
         }
 
-        if image_content.startswith(("http://", "https://")):
+        if image_content.lower().startswith(("http://", "https://")):
             payload["url"] = image_content
         else:
             payload["image"] = self._build_image_field(image_content)
 
-        for key, value in model_endpoint.endpoint.extra or []:
-            if key in _RESERVED_PAYLOAD_KEYS:
-                self.warning(
-                    f"--extra-inputs {key!r} is managed by the endpoint and was ignored."
-                )
-                continue
-            payload[key] = value
+        if model_endpoint.endpoint.extra:
+            for key, value in model_endpoint.endpoint.extra:
+                if key in _RESERVED_PAYLOAD_KEYS:
+                    self.warning(
+                        f"--extra-inputs {key!r} is managed by the endpoint and was ignored."
+                    )
+                    continue
+                payload[key] = value
 
         self.trace(lambda: f"Formatted image edit payload keys: {list(payload)}")
         return payload
@@ -115,24 +117,22 @@ class ImageEditEndpoint(BaseEndpoint):
                 raise ValueError(
                     "Malformed data URL for image content (missing comma)."
                 ) from exc
-            if header.startswith("data:") and ";" in header:
+            if ";" in header:
                 candidate = header.removeprefix("data:").split(";", 1)[0]
-                # Only honor the data URL MIME when it actually claims an image,
-                # so a malformed `data:text/html;base64,...` cannot poison the
-                # outgoing multipart Content-Type.
+                # Only honor `image/*` MIME claims; a malformed
+                # `data:text/html;base64,...` falls back to sniffing.
                 if candidate.startswith("image/"):
                     explicit_mime = candidate
 
-        try:
-            image_bytes = base64.b64decode(b64, validate=True)
-        except (binascii.Error, ValueError) as exc:
+        mime = explicit_mime or _sniff_mime_from_b64_prefix(b64)
+        if mime is None:
             raise ValueError(
-                "Image content is not valid base64; expected a data URL or "
-                "raw base64 image (PNG/JPEG/WebP/GIF/BMP)."
-            ) from exc
+                "Image content is not a recognized image format; expected a "
+                "data URL or raw base64 image (PNG/JPEG/WebP/GIF/BMP)."
+            )
 
-        mime = explicit_mime or _sniff_mime_from_magic_bytes(image_bytes) or "image/png"
-        ext = mime.split("/", 1)[1] if "/" in mime else "png"
+        # Strip subtype suffix (e.g., `svg+xml` -> `svg`) so the filename is clean.
+        ext = mime.split("/", 1)[1].split("+", 1)[0] if "/" in mime else "png"
         filename_ext = "jpg" if ext == "jpeg" else ext
         return {
             "b64_data": b64,

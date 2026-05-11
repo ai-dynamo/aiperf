@@ -390,7 +390,8 @@ class EndpointConfig(BaseConfig):
         ):
             raise ValueError(
                 f"--endpoint-type {self.type} requires multipart/form-data; "
-                f"application/json is not supported on this endpoint."
+                f"application/json is not supported on this endpoint. "
+                f"Omit --request-content-type to use the auto-default."
             )
 
         if self.request_content_type == RequestContentType.APPLICATION_JSON:

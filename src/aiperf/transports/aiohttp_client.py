@@ -38,12 +38,11 @@ def _expected_request_body_size(data: Any) -> int | None:
     if isinstance(data, bytes):
         return len(data)
     if isinstance(data, aiohttp.FormData):
+        # TODO: compute size analytically from `data._fields` to avoid the
+        # extra MultipartWriter materialization that session.request() will do.
         try:
             return data().size
         except (ValueError, TypeError, AttributeError):
-            # Misshapen FormData: aiohttp raises during __call__ when a field's
-            # value type is not supported. Fall back to None so a single bad
-            # request doesn't block the cancellation path for the whole run.
             return None
     return None
 

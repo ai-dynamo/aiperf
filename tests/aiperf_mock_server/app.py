@@ -788,7 +788,7 @@ async def image_edits(
     prompt: str = Form(...),  # noqa: B008
     image: UploadFile | None = File(None),  # noqa: B008
     url: str | None = Form(None),  # noqa: B008
-    model: str = Form("black-forest-labs/FLUX.2-klein-4B"),  # noqa: B008
+    model: str = Form("mock-model"),  # noqa: B008
     n: int = Form(1),  # noqa: B008
     response_format: str = Form("b64_json"),  # noqa: B008
     size: str | None = Form(None),  # noqa: B008
