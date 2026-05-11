@@ -179,6 +179,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
+- [K8s System Telemetry](docs/tutorials/k8s-system-telemetry.md) - CPU, memory, network metrics from Kubernetes with Prometheus Node Exporter
 - [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation

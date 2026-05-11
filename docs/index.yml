@@ -132,6 +132,8 @@ navigation:
       path: tutorials/user-centric-timing.md
     - page: GPU Telemetry with AIPerf
       path: tutorials/gpu-telemetry.md
+    - page: K8s System Telemetry (CPU/Memory/Network)
+      path: tutorials/k8s-system-telemetry.md
   - section: Configuration
     collapsed: true
     contents:
