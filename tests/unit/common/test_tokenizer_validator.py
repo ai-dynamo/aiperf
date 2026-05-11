@@ -3,7 +3,6 @@
 
 """Tests for early tokenizer validation and preloading."""
 
-import os
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +15,7 @@ from aiperf.common.tokenizer import (
 )
 from aiperf.common.tokenizer_validator import (
     preload_tokenizers,
+    preload_tokenizers_in_subprocess,
     validate_tokenizer_early,
 )
 
@@ -171,47 +171,84 @@ class TestPreloadTokenizers:
             await preload_tokenizers(resolved)
         assert mock_load.call_count == 2
 
-    @pytest.mark.asyncio
-    async def test_enables_offline_mode_after_successful_preload(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(Tokenizer, "from_pretrained"),
-        ):
-            await preload_tokenizers(resolved)
-        assert os.environ.get("HF_HUB_OFFLINE") == "1"
-        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
 
-    @pytest.mark.asyncio
-    async def test_enables_offline_mode_when_all_already_cached(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=True),
-            patch.object(Tokenizer, "from_pretrained") as mock_load,
-        ):
-            await preload_tokenizers(resolved)
-        mock_load.assert_not_called()
-        assert os.environ.get("HF_HUB_OFFLINE") == "1"
-        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+class TestPreloadTokenizersInSubprocess:
+    """Tests for the sync subprocess wrapper around preload_tokenizers."""
 
-    @pytest.mark.asyncio
-    async def test_does_not_enable_offline_mode_on_failure(self) -> None:
-        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
-        with (
-            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
-            patch.object(
-                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
-            ),
-        ):
-            await preload_tokenizers(resolved)
-        assert os.environ.get("HF_HUB_OFFLINE") is None
-        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
+    def test_skips_subprocess_when_resolved_names_none(self) -> None:
+        with patch("multiprocessing.get_context") as mock_get_context:
+            preload_tokenizers_in_subprocess(None)
+        mock_get_context.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_does_not_enable_offline_mode_when_skipped(self) -> None:
-        await preload_tokenizers(None)
-        assert os.environ.get("HF_HUB_OFFLINE") is None
-        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
+    def test_skips_subprocess_when_resolved_names_empty(self) -> None:
+        with patch("multiprocessing.get_context") as mock_get_context:
+            preload_tokenizers_in_subprocess({})
+        mock_get_context.assert_not_called()
+
+    def test_spawns_with_correct_args(self) -> None:
+        import logging
+
+        from aiperf.common import tokenizer_validator
+
+        resolved = {"model-a": "meta-llama/Llama-2-7b-hf"}
+        mock_proc = MagicMock()
+        mock_queue = MagicMock()
+        mock_queue.get_nowait.return_value = ("ok", None)
+        mock_ctx = MagicMock()
+        mock_ctx.Queue.return_value = mock_queue
+        mock_ctx.Process.return_value = mock_proc
+
+        with patch(
+            "multiprocessing.get_context", return_value=mock_ctx
+        ) as mock_get_context:
+            preload_tokenizers_in_subprocess(
+                resolved, trust_remote_code=True, revision="v1.0"
+            )
+
+        mock_get_context.assert_called_once_with("spawn")
+        mock_ctx.Process.assert_called_once_with(
+            target=tokenizer_validator._preload_subprocess_main,
+            kwargs={
+                "resolved_names": resolved,
+                "trust_remote_code": True,
+                "revision": "v1.0",
+                "log_level": logging.INFO,
+                "result_queue": mock_queue,
+            },
+            name="aiperf-tokenizer-preload",
+        )
+        mock_proc.start.assert_called_once()
+        mock_proc.join.assert_called_once()
+
+    def test_warns_on_subprocess_error_without_raising(self) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        mock_queue = MagicMock()
+        mock_queue.get_nowait.return_value = ("error", "RuntimeError('boom')")
+        mock_ctx = MagicMock()
+        mock_ctx.Queue.return_value = mock_queue
+        logger = MagicMock()
+
+        with patch("multiprocessing.get_context", return_value=mock_ctx):
+            preload_tokenizers_in_subprocess(resolved, logger=logger)  # must not raise
+
+        logger.warning.assert_called_once()
+        assert "RuntimeError('boom')" in logger.warning.call_args[0][0]
+
+    def test_warns_when_subprocess_exits_without_result(self) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        mock_proc = MagicMock(exitcode=137)
+        mock_queue = MagicMock()
+        mock_queue.get_nowait.side_effect = RuntimeError("queue empty")
+        mock_ctx = MagicMock()
+        mock_ctx.Queue.return_value = mock_queue
+        mock_ctx.Process.return_value = mock_proc
+        logger = MagicMock()
+
+        with patch("multiprocessing.get_context", return_value=mock_ctx):
+            preload_tokenizers_in_subprocess(resolved, logger=logger)
+
+        logger.warning.assert_called_once()
+        assert "137" in logger.warning.call_args[0][0]
 
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")

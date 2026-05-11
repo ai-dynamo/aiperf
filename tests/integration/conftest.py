@@ -75,23 +75,17 @@ def _needs_tokenizer(args: list[str]) -> bool:
 
 @pytest.fixture(scope="package", autouse=True)
 def setup_integration_tokenizer():
-    """Set up tokenizer caching for integration tests.
+    """Pre-cache default tokenizers for integration tests.
 
-    This fixture runs once per test session and:
-    1. Pre-caches the default tokenizer to avoid 429 rate limits
-    2. Enables offline mode to prevent network requests during tests
-
-    This prevents 429 rate limiting errors from HuggingFace when running
-    many integration tests that load tokenizers.
+    Pre-caching avoids 429 rate limits from HuggingFace when many tests load
+    tokenizers. The Tokenizer loader detects the warm cache via _is_hf_cached
+    and skips network calls automatically — no env-var mutation needed.
     """
-    # Check if offline mode is explicitly disabled (for CI cache warming)
     if bool(os.environ.get("AIPERF_SKIP_HF_OFFLINE", False)):
-        _logger.info("HuggingFace offline mode disabled via AIPERF_SKIP_HF_OFFLINE")
+        _logger.info("HuggingFace pre-caching disabled via AIPERF_SKIP_HF_OFFLINE")
         yield
         return
 
-    # Pre-cache the tokenizer before enabling offline mode
-    # This ensures the tokenizer is available for offline use
     try:
         from aiperf.common.tokenizer import Tokenizer
 
@@ -102,20 +96,8 @@ def setup_integration_tokenizer():
         _logger.info("Tokenizer cached successfully")
     except Exception as e:
         _logger.warning(f"Failed to pre-cache tokenizer: {e}")
-        # Don't enable offline mode if caching failed
-        yield
-        return
-
-    # Enable offline mode for all subsequent tokenizer loads
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    _logger.info("HuggingFace offline mode enabled for integration tests")
 
     yield
-
-    # Restore original environment (optional, session scope so not strictly needed)
-    os.environ.pop("HF_HUB_OFFLINE", None)
-    os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
 def pytest_runtest_setup(item):
