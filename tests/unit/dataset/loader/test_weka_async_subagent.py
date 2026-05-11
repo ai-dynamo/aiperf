@@ -192,3 +192,78 @@ def test_subagent_duration_ms_none_falls_back_to_inner_api_time(tmp_path, monkey
     parent = next(c for c in convs if c.session_id == "t_no_dur")
     branch = parent.branches[0]
     assert branch.is_background is True
+
+
+def test_subagent_with_overlapping_inner_requests_emits_separate_child_conversations(
+    tmp_path, monkeypatch
+):
+    """Two inner requests with overlapping [t, t+api_time] become two child
+    Conversations under one multi-child SPAWN branch.
+    """
+    data = _build_trace(
+        "t_par",
+        [
+            _normal(t=0.0),
+            # Two inner requests at t=1 and t=1.1, both running 100s - overlap ~99.9s.
+            _subagent(
+                "a1",
+                t=1.0,
+                duration_ms=100_000,
+                inner=[(0.0, 100.0), (0.1, 100.0)],
+            ),
+            _normal(t=200.0),  # well after both inner ends; SPAWN_JOIN-eligible.
+        ],
+    )
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    parent = next(c for c in convs if c.session_id == "t_par")
+    branch = parent.branches[0]
+    # Two streams -> two child conversations as siblings in the branch.
+    assert len(branch.child_conversation_ids) == 2, (
+        f"Expected 2 sibling child conversations, got {branch.child_conversation_ids}"
+    )
+    expected_sids = {"t_par::sa:a1:s0", "t_par::sa:a1:s1"}
+    assert set(branch.child_conversation_ids) == expected_sids
+
+    children = {c.session_id: c for c in convs if c.session_id.startswith("t_par::sa")}
+    assert set(children.keys()) == expected_sids
+    for sid in expected_sids:
+        assert len(children[sid].turns) == 1, (
+            f"each parallel stream is one inner request -> one turn; "
+            f"{sid} has {len(children[sid].turns)} turns"
+        )
+
+
+def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
+    tmp_path, monkeypatch
+):
+    """Two non-overlapping inner requests stay in ONE child Conversation as two
+    sequential turns (regression: don't fragment serial inners).
+    """
+    data = _build_trace(
+        "t_seq",
+        [
+            _normal(t=0.0),
+            # Inner 0: t=1, runs 1s (ends t=2). Inner 1: t=3, runs 1s (ends t=4).
+            _subagent(
+                "a1",
+                t=1.0,
+                duration_ms=3000,
+                inner=[(0.0, 1.0), (2.0, 1.0)],
+            ),
+            _normal(t=10.0),
+        ],
+    )
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    parent = next(c for c in convs if c.session_id == "t_seq")
+    branch = parent.branches[0]
+    assert branch.child_conversation_ids == ["t_seq::sa:a1"], (
+        "single sequential stream keeps the legacy session-id shape (no :s0 suffix)"
+    )
+    child = next(c for c in convs if c.session_id == "t_seq::sa:a1")
+    assert len(child.turns) == 2

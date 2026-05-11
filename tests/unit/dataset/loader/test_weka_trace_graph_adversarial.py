@@ -261,9 +261,11 @@ def test_subagent_status_async_launched_with_null_telemetry_parses_and_converts(
 def test_subagent_inner_decreasing_timestamps_produce_negative_delay(
     tmp_path, monkeypatch
 ):
-    """A subagent whose inner requests have a decreasing ``t`` sequence
-    (5.0 -> 3.0) currently produces a child turn with a negative ``delay``
-    (3.0 - 5.0 == -2.0). Documents the current raw-subtraction behavior.
+    """A subagent whose inner requests appear in the trace with decreasing
+    ``t`` (5.0 then 3.0) is sorted by ``t`` during stream-packing, so the
+    child turns end up in monotonic order with a positive +2s delay
+    (5.0 - 3.0). Documents the post-stream-packing contract: inner requests
+    are reordered by ``t`` rather than preserved in raw insertion order.
     """
     requests = [
         _normal(t=0.0),
@@ -278,7 +280,7 @@ def test_subagent_inner_decreasing_timestamps_produce_negative_delay(
     loader = _make_loader(path, _mk_user_config(), monkeypatch)
     convs = loader.convert_to_conversations(loader.load_dataset())
     child = next(c for c in convs if c.session_id == "t1::sa:a1")
-    assert child.turns[1].delay == pytest.approx(-2000.0)
+    assert child.turns[1].delay == pytest.approx(2000.0)
 
 
 def test_subagent_inner_models_mismatch_declared_models_no_error(tmp_path, monkeypatch):

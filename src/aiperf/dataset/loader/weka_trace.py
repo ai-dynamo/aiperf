@@ -54,6 +54,41 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     return entry.t
 
 
+def _pack_into_streams(
+    requests: list[WekaNormalRequest],
+) -> list[list[WekaNormalRequest]]:
+    """Partition inner requests into the minimum number of non-overlapping
+    sequential streams (interval-graph chromatic decomposition, greedy
+    earliest-fit).
+
+    Two requests ``A``, ``B`` overlap when ``[A.t, A.t + A.api_time)`` intersects
+    ``[B.t, B.t + B.api_time)``. Each returned stream is a chain of
+    non-overlapping requests in ``t``-order. The number of streams equals the
+    maximum number of concurrent inner requests at any instant.
+
+    A request with ``api_time = None`` is treated as zero-duration (the
+    interval becomes the instant ``[t, t)``) - it never overlaps anything by
+    itself, so it lands in the first stream by ``t``. This matches the
+    behaviour of subagents whose telemetry was not captured.
+    """
+    sorted_reqs = sorted(requests, key=lambda r: r.t)
+    streams: list[list[WekaNormalRequest]] = []
+    stream_ends: list[float] = []
+    for r in sorted_reqs:
+        r_end = r.t + (r.api_time or 0.0)
+        placed = False
+        for i, end in enumerate(stream_ends):
+            if end <= r.t:
+                streams[i].append(r)
+                stream_ends[i] = r_end
+                placed = True
+                break
+        if not placed:
+            streams.append([r])
+            stream_ends.append(r_end)
+    return streams
+
+
 def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float:
     """Clamp a delay to at most cap_seconds * 1000 ms.
 
@@ -80,6 +115,43 @@ class _ChildPlan:
     parent_trace_id: str
     subagent_index: int
     entry: WekaSubagentEntry
+    stream_index: int
+    stream_requests: list[WekaNormalRequest]
+
+
+def _expand_subagent_to_child_plans(
+    trace_id: str,
+    sa_index: int,
+    entry: WekaSubagentEntry,
+) -> list[_ChildPlan]:
+    """Pack a subagent's inner requests into per-stream child plans.
+
+    Single-stream subagents keep the legacy ``::sa:{agent_id}`` session-id
+    shape; multi-stream subagents append ``:s{stream_index}``. Subagents with
+    zero recorded inner requests still emit one (empty) child to preserve
+    the parent SPAWN branch's child-conversation target.
+    """
+    streams = _pack_into_streams(list(entry.requests))
+    if not streams:
+        streams = [[]]
+    plans: list[_ChildPlan] = []
+    multi = len(streams) > 1
+    for stream_idx, stream_reqs in enumerate(streams):
+        if multi:
+            child_sid = f"{trace_id}::sa:{entry.agent_id}:s{stream_idx}"
+        else:
+            child_sid = f"{trace_id}::sa:{entry.agent_id}"
+        plans.append(
+            _ChildPlan(
+                session_id=child_sid,
+                parent_trace_id=trace_id,
+                subagent_index=sa_index,
+                entry=entry,
+                stream_index=stream_idx,
+                stream_requests=stream_reqs,
+            )
+        )
+    return plans
 
 
 class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
@@ -478,14 +550,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 else:  # WekaSubagentEntry
                     sa_index = len(subagents)
                     subagents.append((idx, req))
-                    child_sid = f"{trace_id}::sa:{req.agent_id}"
-                    child_plans.append(
-                        _ChildPlan(
-                            session_id=child_sid,
-                            parent_trace_id=trace_id,
-                            subagent_index=sa_index,
-                            entry=req,
-                        )
+                    child_plans.extend(
+                        _expand_subagent_to_child_plans(trace_id, sa_index, req)
                     )
             parent_plans.append(_ParentPlan(trace_id, normals, subagents))
 
@@ -711,7 +777,21 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
             for preceding, following in group_order:
                 entries = groups[(preceding, following)]
-                child_sids = [f"{plan.trace_id}::sa:{e.agent_id}" for e in entries]
+                child_sids: list[str] = []
+                for e in entries:
+                    e_streams = _pack_into_streams(list(e.requests))
+                    if len(e_streams) == 1:
+                        child_sids.append(f"{plan.trace_id}::sa:{e.agent_id}")
+                    else:
+                        for stream_idx in range(len(e_streams)):
+                            child_sids.append(
+                                f"{plan.trace_id}::sa:{e.agent_id}:s{stream_idx}"
+                            )
+                        _logger.info(
+                            f"Trace {plan.trace_id}: subagent '{e.agent_id}' has "
+                            f"{len(e_streams)} parallel inner-request streams; emitting "
+                            f"as sibling child conversations."
+                        )
                 branch_id = f"{plan.trace_id}:spawn:{entries[0].agent_id}"
                 is_background = following is None
                 if not is_background:
@@ -777,7 +857,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 session_id=cp.session_id,
                 context_mode=self._resolved_context_mode(),
             )
-            for k, creq in enumerate(cp.entry.requests):
+            for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 if k == 0:
                     child_recon.init_turn_0(
@@ -788,7 +868,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         seed=seed,
                     )
                 else:
-                    prev_creq = cp.entry.requests[k - 1]
+                    prev_creq = cp.stream_requests[k - 1]
                     child_recon.advance_turn(
                         prev_hash_ids=prev_creq.hash_ids,
                         prev_in_tokens=prev_creq.input_length,
@@ -803,7 +883,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 elif think_time_only and creq.think_time is not None:
                     child_delay_ms = creq.think_time * 1000.0
                 else:
-                    child_delay_ms = t_ms - cp.entry.requests[k - 1].t * 1000.0
+                    child_delay_ms = t_ms - cp.stream_requests[k - 1].t * 1000.0
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
