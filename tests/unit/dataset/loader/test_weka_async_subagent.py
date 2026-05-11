@@ -7,12 +7,15 @@ Reuses the helpers from test_weka_trace_graph_adversarial.py: same
 loader path.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import orjson
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
+
+FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
 
 def _mk_user_config():
@@ -387,3 +390,63 @@ def test_parallel_inner_split_under_parallel_reconstruction(tmp_path, monkeypatc
     }
     for sid in children:
         assert len(children[sid].turns) == 1
+
+
+def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
+    """End-to-end regression against the real captured trace.
+
+    Trace shape (verified by inspection):
+      - 7 streaming parent turns at t=0, 13.01, 23.89, 32.36, 36.54, 271.10, 280.18
+      - 1 subagent at outer index 4 (t=33.161, duration_ms=246584)
+        with TWO overlapping inner requests (api_time ~237s each)
+
+    Expected loader output:
+      - 1 SPAWN branch with is_background=True (sa_end ~279.75 > 36.54)
+      - 2 sibling child conversations with session ids
+        '<trace>::sa:codex_subagent_001:s0' and ':s1'
+      - No SPAWN_JOIN prerequisite on parent turn 4 (the t=36.54 turn)
+    """
+    src = FIXTURES / "async_subagent_with_parallel_inner.json"
+    assert src.exists(), f"regression fixture missing: {src}"
+    # Loader requires a single file path or directory; copy into tmp_path
+    # so we don't depend on the fixture location at runtime.
+    dst = tmp_path / src.name
+    dst.write_bytes(src.read_bytes())
+
+    uc = _mk_user_config()
+    loader = _make_loader(dst, uc, monkeypatch)
+    # Real Weka captures truncate hash_ids relative to in_tokens; raise
+    # block_size so floor(in_tokens / bs) <= len(hash_ids) for every turn
+    # (incl. parallel inner requests) and the loader's strict turn-0
+    # validator passes against the captured fixture. _make_loader pins
+    # bs=64; we override here without touching the shared helper.
+    loader._block_size = 512
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    parent = next(
+        c for c in convs if c.session_id == "91a41301c26657b2500e2dc71141217dd11b"
+    )
+    assert len(parent.branches) == 1
+    branch = parent.branches[0]
+    assert branch.mode == ConversationBranchMode.SPAWN
+    assert branch.is_background is True
+    assert set(branch.child_conversation_ids) == {
+        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s0",
+        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s1",
+    }
+    # No SPAWN_JOIN on any parent turn for this branch.
+    for turn in parent.turns:
+        for prereq in turn.prerequisites:
+            assert not (
+                prereq.kind == PrerequisiteKind.SPAWN_JOIN
+                and prereq.branch_id == branch.branch_id
+            )
+
+    # Both children exist and each has exactly one turn.
+    sid_s0 = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s0"
+    sid_s1 = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s1"
+    children_by_sid = {c.session_id: c for c in convs}
+    assert sid_s0 in children_by_sid
+    assert sid_s1 in children_by_sid
+    assert len(children_by_sid[sid_s0].turns) == 1
+    assert len(children_by_sid[sid_s1].turns) == 1
