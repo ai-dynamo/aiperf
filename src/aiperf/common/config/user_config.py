@@ -409,7 +409,11 @@ class UserConfig(BaseConfig):
                         data = orjson.loads(line)
                     except JSONDecodeError:
                         continue
-                    if "timestamp" in data and data["timestamp"] is not None:
+                    if (
+                        isinstance(data, dict)
+                        and "timestamp" in data
+                        and data["timestamp"] is not None
+                    ):
                         return True
         except (OSError, FileNotFoundError):
             _logger.warning(
