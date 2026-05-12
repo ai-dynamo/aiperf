@@ -330,7 +330,9 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
 
     await profiling.execute_phase()
     # All 4 trajectories are now active.
-    assert profiling._active_traces == {t.conversation_id for t in source.trajectories}
+    assert set(profiling._active_traces) == {
+        t.conversation_id for t in source.trajectories
+    }
     pre_recycle = list(log.entries)
 
     # Pick one trajectory and finalize it. The strategy discards it from
