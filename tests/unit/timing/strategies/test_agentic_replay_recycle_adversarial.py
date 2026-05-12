@@ -148,7 +148,7 @@ async def test_single_trace_concurrency_one_recycles_self():
     # Register the in-flight session's lane (normally done by _execute_profiling).
     # Seed _active_traces so the new pop loop skips trace_0 while it is alive.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     # Final turn (last index = 2 of num_turns=3)
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
@@ -208,8 +208,8 @@ async def test_pool_one_concurrency_two_no_deadlock():
     # session is currently alive, mirroring _execute_profiling behavior.
     strategy._correlation_to_lane["xcorr_a"] = 0
     strategy._correlation_to_lane["xcorr_b"] = 1
-    strategy._active_traces.add("trace_0")
-    strategy._active_traces.add("trace_1")
+    strategy._active_traces["trace_0"] += 1
+    strategy._active_traces["trace_1"] += 1
 
     # Two parallel consumers complete. We use asyncio.gather to drive them
     # concurrently within the same event-loop tick. asyncio.Queue is non-blocking
@@ -283,7 +283,7 @@ async def test_burst_of_ten_completions_preserves_completion_order():
     # is alive (mirroring _execute_profiling).
     for i in range(10):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces.add(f"trace_{i}")
+        strategy._active_traces[f"trace_{i}"] += 1
 
     # Fire 10 completions in completion order: trace_0..trace_9 finish in order.
     for i in range(10):
@@ -363,7 +363,7 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
     # _active_traces too so the new pop loop skips alive trace_ids.
     for i in range(50):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces.add(f"trace_{i}")
+        strategy._active_traces[f"trace_{i}"] += 1
 
     finals = [
         _make_credit(
@@ -468,7 +468,7 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
     # so the cooldown gate is reached after the discard at the top of
     # _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     # Final turn arrives during cooldown.
     final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
@@ -548,7 +548,7 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
     for lane in range(trajectory_count):
         corr = f"xcorr_traj_{lane}"
         strategy._correlation_to_lane[corr] = lane
-        strategy._active_traces.add(f"trace_{lane}")
+        strategy._active_traces[f"trace_{lane}"] += 1
         in_flight.append((f"trace_{lane}", corr))
 
     total_completions = 1500
@@ -896,7 +896,7 @@ async def test_root_final_turn_still_recycles_after_child_shortcircuit():
     )
     await strategy.setup_phase()
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     # Root credit: agent_depth defaults to 0 via _make_credit.
     root_final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)

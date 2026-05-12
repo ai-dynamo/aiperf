@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -98,12 +99,21 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._in_flight_recycled: set[str] = set()
         # Trace_ids whose session is currently dispatched (any turn in flight
         # or scheduled). Used by ``_spawn_from_recycle_or_id`` to skip
-        # popping a trace whose session is still alive — prevents two
-        # concurrent sessions for the same trace_id, which would otherwise
-        # be possible when the initial recycle queue spans the full pool
-        # (trajectories appear in the queue while their sessions are still
-        # running at PROFILING start).
-        self._active_traces: set[str] = set()
+        # popping a trace whose every lane is already alive — prevents over-
+        # subscribing a trace_id, which would otherwise be possible when the
+        # initial recycle queue spans the full pool (trajectories appear in
+        # the queue while their sessions are still running at PROFILING start).
+        # Multiset (Counter) rather than a set because wrap-fill can place
+        # multiple lanes on the same trace_id: skip only when every lane for
+        # this trace is busy. Collapses to set-style semantics when every
+        # value in _lanes_per_trace is 1.
+        self._active_traces: Counter[str] = Counter()
+        # Lane multiplicity per trace_id, frozen at strategy init from the
+        # trajectory list. _pop_next_eligible_trace skips only when every
+        # lane for a trace is busy (count >= capacity).
+        self._lanes_per_trace: Counter[str] = Counter(
+            t.conversation_id for t in conversation_source.trajectories
+        )
         self._failed_warmup_traces: list[str] = []
         # Track which x_correlation_ids correspond to trajectories in WARMUP
         # so that terminal failures can be attributed to a trace_id.
@@ -187,7 +197,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
-            self._active_traces.add(trajectory.conversation_id)
+            self._active_traces[trajectory.conversation_id] += 1
             self._mint_marker_for_session(
                 session.x_correlation_id, trajectory.conversation_id, lane
             )
@@ -222,7 +232,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
-            self._active_traces.add(trajectory.conversation_id)
+            self._active_traces[trajectory.conversation_id] += 1
             self._mint_marker_for_session(
                 session.x_correlation_id, trajectory.conversation_id, lane
             )
@@ -349,7 +359,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """
         # Prune unconditionally so every early-return path leaves dicts clean.
         self._session_marker.pop(finished_correlation_id, None)
-        self._active_traces.discard(finished_trace_id)
+        self._active_traces[finished_trace_id] -= 1
+        if self._active_traces[finished_trace_id] <= 0:
+            del self._active_traces[finished_trace_id]
 
         lane = self._release_lane_for(finished_correlation_id, finished_trace_id)
 
@@ -383,7 +395,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
 
         self._correlation_to_lane[session.x_correlation_id] = lane
-        self._active_traces.add(next_trace_id)
+        self._active_traces[next_trace_id] += 1
         self._mint_marker_for_session(session.x_correlation_id, next_trace_id, lane)
 
         turn = self._build_turn_for_session(session, 0)
@@ -424,7 +436,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 candidate = self._recycle_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return None
-            if candidate in self._active_traces:
+            lane_cap = self._lanes_per_trace.get(candidate, 1) or 1
+            if self._active_traces[candidate] >= lane_cap:
                 self._recycle_queue.put_nowait(candidate)
                 continue
             return candidate
