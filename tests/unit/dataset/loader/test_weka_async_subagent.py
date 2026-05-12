@@ -415,12 +415,6 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
 
     uc = _mk_user_config()
     loader = _make_loader(dst, uc, monkeypatch)
-    # Real Weka captures truncate hash_ids relative to in_tokens; raise
-    # block_size so floor(in_tokens / bs) <= len(hash_ids) for every turn
-    # (incl. parallel inner requests) and the loader's strict turn-0
-    # validator passes against the captured fixture. _make_loader pins
-    # bs=64; we override here without touching the shared helper.
-    loader._block_size = 512
     convs = loader.convert_to_conversations(loader.load_dataset())
 
     parent = next(
