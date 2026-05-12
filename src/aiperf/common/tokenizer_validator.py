@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -249,8 +248,18 @@ async def preload_tokenizers(
 
 
 def _enable_hf_offline_mode(logger: AIPerfLogger | None = None) -> None:
-    """Set HF environment variables so spawned processes never make network calls."""
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    """No-op: workers set HF_HUB_OFFLINE on init themselves.
+
+    Previously this set HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 in the
+    parent process so spawned children would inherit them. That mutation
+    also affected same-process consumers that legitimately need HF online
+    (e.g. ``dataset_manager`` loading a public HF dataset right after the
+    tokenizer preload finishes), causing ``OfflineModeIsEnabled``.
+
+    Worker init functions in ``dataset/loader/parallel_convert.py``,
+    ``dataset/loader/weka_parallel_convert.py``, and
+    ``dataset/generator/parallel_decode.py`` already re-set these vars
+    on ``_init_worker``, so the parent-side mutation was redundant.
+    """
     if logger:
-        logger.debug("Enabled HF offline mode for child processes")
+        logger.debug("HF offline mode set per-worker on init (no parent mutation)")
