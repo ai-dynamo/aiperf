@@ -318,7 +318,18 @@ def strip_string(string: str) -> str:
     string = string.replace(" .", " 0.")
     string = string.replace("{.", "{0.")
 
-    # Strip wrapping braces/parens around alphanumeric content
+    # Strip wrapping braces/parens around alphanumeric content.
+    #
+    # NOTE: This block is verbatim from the trt-llm recipe
+    # (``parser.py`` lines 292-303) including the latent bug —
+    # ``string.isalnum()`` checks the WHOLE string, which always
+    # includes the wrapper characters, so the condition can never be
+    # True and the branch is effectively dead. We deliberately keep
+    # the dead branch to preserve byte-equal parity with the recipe's
+    # ``strip_string``; rewriting to ``string[1:-1].isalnum()`` would
+    # cause divergent strip output (e.g. ``"{12}" -> "12"`` here vs.
+    # unchanged in the recipe), which would then change downstream
+    # ``math_equal`` numeric-comparison decisions.
     if (
         string.startswith("{")
         and string.endswith("}")
