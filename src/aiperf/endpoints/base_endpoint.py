@@ -39,11 +39,22 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         self.model_endpoint = model_endpoint
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
-        """Get endpoint headers (auth + user custom). Override to customize."""
+        """Get endpoint headers (auth + user custom + per-turn). Override to customize.
+
+        Merge order (later wins on conflict): endpoint config -> auth -> per-turn
+        headers from the current turn. Per-turn headers come from trace dataset
+        loaders (e.g., MooncakeTrace) and let traces drive request-affinity
+        headers like `x-session-token` or W3C `baggage`.
+        """
         cfg = self.model_endpoint.endpoint
         headers = dict(cfg.headers) if cfg.headers else {}
         if cfg.api_key:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
+        # turns[-1] is the current turn; in DELTAS_WITHOUT_RESPONSES mode the
+        # worker accumulates prior user/assistant turns in the list, so turns[0]
+        # would always pick the first turn's headers.
+        if request_info.turns and request_info.turns[-1].headers:
+            headers.update(request_info.turns[-1].headers)
         return headers
 
     def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]:

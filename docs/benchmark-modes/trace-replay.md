@@ -52,6 +52,7 @@ Required fields for trace replay:
 - `hash_ids`: List of block hashes (optional)
 - `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
 - `extra`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch; user-supplied keys win over `--extra-inputs`.
+- `headers`: Per-request HTTP headers as a `{name: value}` dict (optional). See [Per-Request HTTP Headers](#per-request-http-headers).
 
 Example entry:
 
@@ -143,6 +144,19 @@ Use the `extra` field to inject arbitrary key-value pairs into the HTTP payload 
 ```
 
 **Merge semantics:** Merging is shallow — a per-entry `{"nvext": {...}}` replaces the entire global `nvext` key. Deep merge is not performed.
+
+## Per-Request HTTP Headers
+
+Each trace row may carry an optional `headers` dict whose entries are injected as HTTP headers on the outgoing request for that turn. This is useful for inference platforms that route on a header value -- for example a session/affinity token or a W3C `baggage` header for distributed-tracing context propagation:
+
+```json
+{"timestamp": 0, "text_input": "hello", "output_length": 10, "headers": {"x-session-token": "tok-A"}}
+{"timestamp": 100, "text_input": "world", "output_length": 10, "headers": {"x-session-token": "tok-B", "baggage": "userId=alice,sessionId=tok-B"}}
+```
+
+Headers are merged on top of the endpoint-level headers configured via `--header`/`-H`, so on key conflict the trace value wins. Different turns in the same session may carry different headers.
+
+The merge is performed at the dict level, not at the value level: if `baggage` is set both in the endpoint configuration and in a trace row, the trace row's value replaces the endpoint value entirely -- entries are not concatenated. To combine them, place the full merged string in the trace row.
 
 ## Profile using real Mooncake Trace
 

@@ -194,6 +194,45 @@ class TestMooncakeTraceIntegration:
         assert result.request_count == request_count
         assert result.has_all_outputs
 
+    async def test_mooncake_trace_with_per_row_headers(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        tmp_path: Path,
+    ):
+        """Trace rows carrying a `headers` dict run end-to-end without errors.
+
+        Header-on-wire fidelity is covered by unit tests on
+        `BaseEndpoint.get_endpoint_headers`; this is a pipeline-regression smoke
+        test that the new field does not break dataset loading, Turn
+        construction, payload formatting, or the request loop.
+        """
+        traces = [
+            {"timestamp": 0, "text_input": "hello", "output_length": 10, "headers": {"x-session-token": "tok-A"}},
+            {"timestamp": 100, "text_input": "world", "output_length": 10, "headers": {"x-session-token": "tok-B", "baggage": "userId=alice,sessionId=tok-B"}},
+            {"timestamp": 200, "messages": [{"role": "user", "content": "hi"}], "output_length": 10, "headers": {"baggage": "userId=bob"}},
+        ]  # fmt: skip
+        trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)
+
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --input-file {trace_file} \
+                --custom-dataset-type mooncake_trace \
+                --request-count {request_count} \
+                --fixed-schedule \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == request_count
+        assert result.has_all_outputs
+
     async def test_mooncake_trace_text_input_with_synthesis_speedup(
         self,
         cli: AIPerfCLI,
