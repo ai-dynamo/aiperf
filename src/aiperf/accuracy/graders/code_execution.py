@@ -31,6 +31,7 @@ Reference: ``lighteval/tasks/tasks/lcb/main.py:CodegenMetric``
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -146,7 +147,12 @@ class CodeExecutionGrader(BaseGrader):
         generated_code = [[snippet]]
 
         try:
-            metrics, _ = codegen_metrics(
+            # ``codegen_metrics`` is synchronous and spins up a
+            # ProcessPoolExecutor internally — pushing it to a worker
+            # thread keeps the event loop free for other concurrent
+            # grade() calls during a benchmark run.
+            metrics, _ = await asyncio.to_thread(
+                codegen_metrics,
                 evaluation_sample,
                 generated_code,
                 k_list=list(_LCB_PASS_AT_K),
