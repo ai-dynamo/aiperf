@@ -163,6 +163,10 @@ class _WekaTraceTask:
     ``model_map`` rewrites the trace's per-request ``model`` field to the
     run's configured ``endpoint.model_names``. Built per-trace in the parent
     process so workers don't need ``UserConfig``.
+
+    ``block_size`` is per-trace (real Weka captures declare their own
+    ``block_size`` per file; the parent process resolves
+    user-override > trace-declared > 64 before shipping the task here).
     """
 
     trace_id: str
@@ -172,6 +176,7 @@ class _WekaTraceTask:
     ignore_delays: bool
     think_time_only: bool
     model_map: dict[str, str]
+    block_size: int
     emit_assistant_segments: bool = True
 
 
@@ -231,13 +236,20 @@ def _init_worker(args: _WekaWorkerInitArgs) -> None:
 
 def _make_scope_helpers(
     scope: str,
+    block_size: int,
 ) -> tuple[_DecodeBlocksFn, _SamplePartialTailFn, _DecodeTokensFn]:
     """Return (decode_block_tokens, sample_partial_tail_tokens, decode_tokens_to_text)
     bound to a fresh per-scope cache + RNG.
+
+    ``block_size`` is per-trace (the parent process resolves
+    user-override > trace-declared > 64 before shipping the task to the
+    worker; see ``WekaTraceLoader._block_size_for_trace``). The closure
+    captures it so multiple traces processed by the same worker can use
+    different block sizes.
     """
     assert _worker_state is not None
     state = _worker_state
-    bs = state.block_size
+    bs = block_size
     corpus = state.corpus
     corpus_size = state.corpus_size
 
@@ -287,13 +299,13 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     )
 
     state = _worker_state
-    bs = state.block_size
+    bs = task.block_size
     cap_seconds = task.cap_seconds
     delay_tracker = DelayCapTracker(cap_seconds=cap_seconds)
 
     parent = task.parent
     parent_decode, parent_partial, parent_decode_text = _make_scope_helpers(
-        task.trace_id
+        task.trace_id, bs
     )
 
     parent_recon = ConversationReconstructor(
@@ -411,7 +423,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             continue
 
         child_decode, child_partial, child_decode_text = _make_scope_helpers(
-            cp["session_id"]
+            cp["session_id"], bs
         )
         child_recon = ConversationReconstructor(
             block_size=bs,
