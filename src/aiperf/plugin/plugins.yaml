@@ -905,6 +905,14 @@ console_exporter:
       Console exporter for primary benchmark metrics. Displays formatted metric
       tables to stdout for user-facing results. Always loaded.
 
+  archetype_metrics:
+    class: aiperf.exporters.console_archetype_metrics_exporter:ConsoleArchetypeMetricsExporter
+    description: |
+      Console exporter for per-archetype metrics (media mix mode). Renders one
+      Rich table per archetype with the same column set as the aggregate
+      ConsoleMetricsExporter. Self-disables when archetype data is absent so
+      non-media-mix benchmarks see no behavioral change.
+
   telemetry:
     class: aiperf.exporters.gpu_telemetry_console_exporter:GPUTelemetryConsoleExporter
     description: |
