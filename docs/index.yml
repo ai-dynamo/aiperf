@@ -173,6 +173,8 @@ navigation:
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
+  - page: Vendor Usage Field Reference
+    path: reference/vendor-usage-fields.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
 

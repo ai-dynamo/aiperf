@@ -15,6 +15,29 @@ This module provides utility functions for validating and parsing configuration 
 """
 
 
+def normalize_http_url(url: str) -> str:
+    """Prepend ``http://`` to a URL that has no scheme component.
+
+    aiohttp rejects URLs without a recognized scheme with NonHttpUrlClientError.
+    Users commonly pass ``--url localhost:8000`` expecting an implicit scheme;
+    this normalization accepts that form.
+
+    A URL is considered to "already have a scheme" if it contains ``://`` —
+    the structural separator between scheme and authority. This is preferred
+    over ``urlsplit(url).scheme`` because urlsplit parses ``localhost:8000``
+    as scheme=``localhost``, which would defeat the normalization. The
+    ``://`` check is also case-insensitive (matches ``http://``, ``HTTPS://``,
+    ``ftp://`` etc.) and preserves the original scheme; URLs with non-HTTP
+    schemes are passed through unmodified rather than corrupted.
+    """
+    return url if "://" in url else f"http://{url}"
+
+
+def normalize_http_urls(urls: list[str]) -> list[str]:
+    """Apply :func:`normalize_http_url` to each URL in the list."""
+    return [normalize_http_url(u) for u in urls]
+
+
 def parse_str_or_list(input: Any) -> list[Any] | None:
     """
     Parses the input to ensure it is either a string, a list, or None. If the input is a string,

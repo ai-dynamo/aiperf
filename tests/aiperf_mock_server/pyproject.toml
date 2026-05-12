@@ -19,7 +19,8 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "cyclopts>=3.0.0",
     "orjson>=3.9.0",
-    "prometheus-client>=0.20.0"
+    "prometheus-client>=0.20.0",
+    "python-multipart>=0.0.7", # Required for FastAPI Form/File parsing on /v1/images/edits
 ]
 readme = "README.md"
 requires-python = ">=3.10,<3.14"

@@ -280,7 +280,11 @@ class EndpointMetadata(BaseModel):
     )
     requires_form_data: bool = Field(
         default=False,
-        description="Whether endpoint supports multipart/form-data request encoding.",
+        description=(
+            "True for endpoints that require multipart/form-data (binary uploads), "
+            "e.g., video_generation, image_edit. EndpointConfig consumes this flag "
+            "to auto-select the request encoding."
+        ),
     )
     requires_inline_media: bool = Field(
         default=False,
