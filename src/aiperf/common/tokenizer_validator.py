@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import multiprocessing as mp
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -153,104 +154,290 @@ def _partition_fake_models(
     return fake_to_builtin, real_models
 
 
-async def preload_tokenizers(
-    resolved_names: dict[str, str] | None,
-    trust_remote_code: bool = False,
-    revision: str = "main",
-    logger: AIPerfLogger | None = None,
-) -> None:
-    """Preload tokenizer files into HF disk cache before spawning child processes.
+def _prefetch_one(
+    name: str,
+    trust_remote_code: bool,
+    revision: str,
+) -> tuple[str, str | None]:
+    """Subprocess target: warm one tokenizer's disk cache.
 
-    Child processes call _is_hf_cached() inside Tokenizer.from_pretrained().
-    When True, they use local_files_only=True and make zero HF network calls.
+    All heavy imports (``transformers``, ``tokenizers`` Rust ext,
+    ``tiktoken``) happen here, inside the subprocess — the CLI parent
+    never imports them. Returns ``(name, error_message_or_None)`` so the
+    parent can log per-name and continue.
+    """
+    try:
+        from aiperf.common.tokenizer import Tokenizer
 
-    Args:
-        resolved_names: Mapping of model names to resolved tokenizer names.
-                        If None or empty (validation was skipped), this is a no-op.
-        trust_remote_code: Whether to trust remote code when loading.
-        revision: The specific model version to use.
-        logger: Optional logger for progress output.
+        Tokenizer.from_pretrained(
+            name,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+            resolve_alias=False,
+        )
+        return (name, None)
+    except Exception as e:  # noqa: BLE001 - HF/tiktoken/network surface arbitrary errors; serialize and let the parent log per-name
+        return (name, f"{type(e).__name__}: {e}")
+
+
+def _partition_preload_names(
+    resolved_names: dict[str, str],
+    revision: str,
+    logger: AIPerfLogger | None,
+) -> tuple[set[str], set[str], set[str]]:
+    """Split resolved tokenizer names into:
+
+      (tiktoken_to_warm, hf_to_warm, hf_already_cached)
+
+    Local paths and tiktoken encodings already in the disk cache are
+    dropped entirely. ``hf_already_cached`` is reported separately so
+    the caller can write an offline-config stub for tokenizer-only HF
+    repos that are already present but lack a ``config.json``.
     """
     from pathlib import Path
 
     from aiperf.common.tokenizer import (
         BUILTIN_TOKENIZER_NAME,
         TIKTOKEN_ENCODING_NAMES,
-        Tokenizer,
         _is_hf_cached,
+        _is_tiktoken_cached,
     )
+
+    tiktoken_names: set[str] = set()
+    hf_names: set[str] = set()
+    hf_already_cached: set[str] = set()
+    for name in set(resolved_names.values()):
+        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
+            if _is_tiktoken_cached(name):
+                if logger:
+                    logger.debug(
+                        f"Tokenizer preload skipped for '{name}': already in tiktoken cache"
+                    )
+                continue
+            tiktoken_names.add(name)
+            continue
+        p = Path(name)
+        if p.is_absolute() or name.startswith(("./", "../")) or p.is_dir():
+            if logger:
+                logger.debug(f"Tokenizer preload skipped for '{name}': local path")
+            continue
+        if _is_hf_cached(name, revision):
+            if logger:
+                logger.debug(
+                    f"Tokenizer preload skipped for '{name}': already in HF cache"
+                )
+            hf_already_cached.add(name)
+            continue
+        hf_names.add(name)
+    return tiktoken_names, hf_names, hf_already_cached
+
+
+def _ensure_offline_config_stub(
+    name: str, revision: str, logger: AIPerfLogger | None = None
+) -> None:
+    """Write a stub ``config.json`` for tokenizer-only HF repos.
+
+    Tokenizer-only repos (e.g. ``hf-internal-testing/llama-tokenizer``)
+    ship no ``config.json``. ``AutoTokenizer.from_pretrained`` with
+    ``local_files_only=True`` then raises a misleading "Couldn't connect"
+    ``OSError`` because its config lookup can't fall through to
+    ``tokenizer_config.json`` like the online path does. Writing an empty
+    ``{}`` config.json into the cached snapshot satisfies the offline
+    lookup. Idempotent; no-op when the file already exists or when the
+    snapshot has no tokenizer indicator file at all.
+
+    Atomic via ``NamedTemporaryFile`` + ``Path.replace`` so a child
+    reading the file mid-write can never see a partial / empty config.
+
+    Raises:
+        OSError: If the stub cannot be written. Aborting startup here is
+            preferable to a downstream worker hanging with a misleading
+            "Couldn't connect" error pointing at HF Hub.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from aiperf.common.tokenizer import _get_revision_snapshot_dir
+
+    snapshot = _get_revision_snapshot_dir(name, revision)
+    if snapshot is None:
+        return
+    config_path = snapshot / "config.json"
+    if config_path.exists():
+        return
+    # Need at least one tokenizer indicator file — otherwise the snapshot
+    # is broken or unrelated, and fabricating a config won't help. Covers
+    # both legacy (tokenizer_config.json) and fast-only (tokenizer.json)
+    # repos.
+    if not any(
+        (snapshot / f).exists() for f in ("tokenizer_config.json", "tokenizer.json")
+    ):
+        return
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix="config.aiperf-",
+            dir=str(snapshot),
+            delete=False,
+        ) as tmp:
+            tmp.write("{}")
+            tmp_path = Path(tmp.name)
+        tmp_path.replace(config_path)
+    except OSError as e:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        if logger:
+            logger.error(
+                f"Could not write stub config.json for tokenizer '{name}' "
+                f"at {config_path}: {e!r}. Offline tokenizer load would fail "
+                "in child services; aborting initialization."
+            )
+        raise
+    if logger:
+        logger.debug(f"Wrote stub config.json for tokenizer-only repo '{name}'")
+
+
+async def _run_prefetch_pool(
+    all_names: list[str],
+    *,
+    trust_remote_code: bool,
+    revision: str,
+    timeout: float,
+    logger: AIPerfLogger | None,
+) -> list[tuple[str, str | None]]:
+    """Run ``_prefetch_one`` for each name in a spawn ProcessPoolExecutor.
+
+    Bounds total wall-clock by ``timeout``. On timeout, kills running
+    subprocesses and returns ``TimeoutError`` results for every name.
+    """
+    ctx = mp.get_context("spawn")
+    loop = asyncio.get_running_loop()
+    pool = ProcessPoolExecutor(max_workers=len(all_names), mp_context=ctx)
+    try:
+        futures = [
+            loop.run_in_executor(pool, _prefetch_one, name, trust_remote_code, revision)
+            for name in all_names
+        ]
+        try:
+            return await asyncio.wait_for(asyncio.gather(*futures), timeout=timeout)
+        except asyncio.TimeoutError:
+            if logger:
+                logger.warning(
+                    f"Tokenizer preload exceeded "
+                    f"AIPERF_TOKENIZER_PRELOAD_TIMEOUT={timeout}s; "
+                    "killing prefetch subprocesses and continuing."
+                )
+            # ProcessPoolExecutor's cancel_futures only cancels queued work,
+            # not running subprocesses. Kill them explicitly to prevent
+            # zombies after pool.shutdown returns.
+            for proc in list(pool._processes.values()):  # noqa: SLF001
+                if proc.is_alive():
+                    proc.kill()
+            return [(name, "TimeoutError") for name in all_names]
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+async def preload_tokenizers(
+    resolved_names: dict[str, str] | None,
+    trust_remote_code: bool = False,
+    revision: str = "main",
+    logger: AIPerfLogger | None = None,
+) -> None:
+    """Preload tokenizer files into disk cache before spawning child services.
+
+    All prefetch work runs in short-lived ``ProcessPoolExecutor`` workers
+    using the ``spawn`` mp context. The CLI parent never imports
+    ``transformers``, the Rust-backed ``tokenizers`` extension, or
+    ``tiktoken`` — important because:
+
+    * macOS spawn re-imports everything per child; a bloated parent
+      wastes memory and startup time.
+    * Linux fork inherits parent state. ``tokenizers`` spins up Rayon
+      thread pools at import; forking after Rayon init is the textbook
+      "process forked after parallelism" trap (deadlock-prone).
+
+    Total wall-clock time across all parallel subprocess pre-warms is
+    bounded by ``Environment.TOKENIZER.PRELOAD_TIMEOUT``. On timeout,
+    subprocesses are killed and AIPerf continues — child services will
+    download tokenizers themselves on first use.
+
+    The CLI parent never mutates ``HF_HUB_OFFLINE`` / ``TRANSFORMERS_OFFLINE``
+    in its own ``os.environ``: child services inherit env at spawn, so a
+    parent-side mutation poisons legitimate online consumers (e.g.
+    ``dataset_manager`` loading a public HF dataset). Workers that
+    genuinely need offline mode set it locally in their own
+    ``_init_worker`` (see ``aiperf.dataset.generator.parallel_decode``).
+
+    Args:
+        resolved_names: Mapping of model names to resolved tokenizer names.
+                        If None or empty (validation was skipped), this is a no-op.
+        trust_remote_code: Whether to trust remote code when loading.
+        revision: The HF revision to fetch.
+        logger: Optional logger for progress output.
+    """
+    from aiperf.common.environment import Environment
 
     if not resolved_names:
         if logger:
             logger.debug("Tokenizer preload skipped: validation was not run")
         return
 
-    names_to_load: list[str] = []
-    for name in set(resolved_names.values()):
-        # tiktoken/builtin: no HF download needed
-        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
-            if logger:
-                logger.debug(
-                    f"Tokenizer preload skipped for '{name}': tiktoken backend"
-                )
-            continue
-        # Local path: files already on disk
-        p = Path(name)
-        if p.is_absolute() or name.startswith(("./", "../")) or p.is_dir():
-            if logger:
-                logger.debug(f"Tokenizer preload skipped for '{name}': local path")
-            continue
-        # Already in HF disk cache
-        if _is_hf_cached(name, revision):
-            if logger:
-                logger.debug(
-                    f"Tokenizer preload skipped for '{name}': already in HF cache"
-                )
-            continue
-        names_to_load.append(name)
+    tiktoken_names, hf_names, hf_already_cached = _partition_preload_names(
+        resolved_names, revision, logger
+    )
 
-    if not names_to_load:
+    all_names = sorted(tiktoken_names | hf_names)
+    if not all_names and not hf_already_cached:
         if logger:
             logger.debug(
-                "Tokenizer preload: all tokenizers already cached, no download needed"
+                "Tokenizer preload: nothing to warm (all builtin/local/cached)"
             )
-        _enable_hf_offline_mode(logger)
         return
 
-    if logger:
-        logger.info(f"Preloading {len(names_to_load)} tokenizer(s) into local cache...")
-
-    failed: list[str] = []
-    for name in names_to_load:
+    results: list[tuple[str, str | None]] = []
+    if all_names:
         if logger:
-            logger.info(f"  Caching tokenizer: {name}")
-        try:
-            # Discard result — side effect is populating the HF disk cache so
-            # child processes find it cached and skip all network calls.
-            await asyncio.to_thread(
-                Tokenizer.from_pretrained,
-                name,
-                trust_remote_code=trust_remote_code,
-                revision=revision,
-                resolve_alias=False,  # already resolved by validate_tokenizer_early
+            parts: list[str] = []
+            if hf_names:
+                parts.append(f"{len(hf_names)} HF tokenizer(s)")
+            if tiktoken_names:
+                parts.append(f"{len(tiktoken_names)} tiktoken encoding(s)")
+            logger.info(
+                f"Preloading {' + '.join(parts)} in {len(all_names)} subprocess(es)..."
             )
-        except Exception:  # noqa: BLE001
-            failed.append(name)
 
-    if failed:
+        timeout = Environment.TOKENIZER.PRELOAD_TIMEOUT
+        start = time.perf_counter()
+        results = await _run_prefetch_pool(
+            all_names,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+            timeout=timeout,
+            logger=logger,
+        )
+        elapsed = time.perf_counter() - start
+
+        for name, err in results:
+            if err is None:
+                if logger:
+                    logger.debug(f"Preloaded tokenizer: {name}")
+            elif logger:
+                kind = "tiktoken cache" if name in tiktoken_names else "tokenizer"
+                logger.warning(
+                    f"Failed to pre-warm {kind} for '{name}' ({err}). "
+                    "Child processes will load it themselves on first use."
+                )
+
         if logger:
-            names_str = ", ".join(f"'{n}'" for n in failed)
-            logger.warning(
-                f"Failed to preload {len(failed)} tokenizer(s): {names_str}. "
-                "Child processes will attempt to load them themselves."
-            )
-    else:
-        _enable_hf_offline_mode(logger)
+            logger.debug(f"Tokenizer preload completed in {elapsed:.2f}s")
 
-
-def _enable_hf_offline_mode(logger: AIPerfLogger | None = None) -> None:
-    """Set HF environment variables so spawned processes never make network calls."""
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    if logger:
-        logger.debug("Enabled HF offline mode for child processes")
+    # Write offline-config stub for tokenizer-only HF repos. Covers both
+    # repos we warmed this run and repos that were already cached from a
+    # prior run. Idempotent and a no-op for repos that have a real
+    # config.json or aren't tokenizer-only.
+    warmed_hf = {name for name, err in results if err is None and name in hf_names}
+    for name in warmed_hf | hf_already_cached:
+        _ensure_offline_config_stub(name, revision, logger)
