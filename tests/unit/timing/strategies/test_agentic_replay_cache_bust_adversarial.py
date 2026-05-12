@@ -197,9 +197,14 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
     assert strategy._recycle_queue.qsize() == n
 
     # Each trace ends -> recycled FIFO. Drive two full passes through the pool.
+    # Only finalize turns we have not yet finalized: every recycle spawns a
+    # NEW credit with a fresh correlation_id, and the double-recycle guard
+    # (Task 5: keyed on correlation_id) raises if we replay an already-final
+    # correlation_id.
+    finalized: set[str] = set()
     for _round in range(2):
-        snapshot = list(issued_turns)
-        for turn in snapshot:
+        pending = [t for t in issued_turns if t.x_correlation_id not in finalized]
+        for turn in pending:
             final_credit = _make_credit(
                 conversation_id=turn.conversation_id,
                 x_correlation_id=turn.x_correlation_id,
@@ -207,6 +212,7 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
                 num_turns=turn.num_turns,
             )
             await strategy.handle_credit_return(final_credit)
+            finalized.add(turn.x_correlation_id)
 
     # _recycle_pass entries are bounded by the trace pool (one entry per
     # trace_id), regardless of how many recycle events fired.
