@@ -1119,3 +1119,121 @@ def test_init_turn_0_system_prefix_exceeding_hash_ids_still_raises():
             system_tokens=system_tokens,
             seed="seed",
         )
+
+
+def test_advance_turn_with_truncated_curr_hash_ids_synthesizes_tail():
+    """When ``len(curr_hash_ids) * bs < curr_in_tokens``, advance_turn must
+    synthesize the missing-block region as additional partial-tail tokens
+    so the final synth_buf state has exactly curr_in_tokens tokens (less
+    the prev_out_tokens that went to the assistant segment).
+    """
+    bs = 64
+    # Turn-0 baseline: 5 hash_ids fully covering in_tokens=320 (5*64=320, no partial tail).
+    turn0_hash_ids = list(range(1, 6))
+    turn0_in_tokens = 320
+
+    # Turn-1 has prev_out=128 (2 blocks of assistant) and curr_in_tokens=960
+    # (15 full blocks). curr_hash_ids is TRUNCATED — only 10 hash_ids
+    # (covering 640 tokens) instead of the expected 15 (960 tokens).
+    # The first 5 hash_ids equal turn0_hash_ids (LCP=5 — the prior user
+    # turn's blocks are preserved). The next 5 are new.
+    curr_hash_ids = turn0_hash_ids + list(range(6, 11))
+    curr_in_tokens = 960
+    prev_out_tokens = 128
+
+    def decode_block_tokens(hids):
+        return [hids[0] if hids else 0] * (len(hids) * bs)
+
+    def sample_partial_tail_tokens(n, seed):
+        return [-1] * n
+
+    recon = ConversationReconstructor(
+        block_size=bs,
+        decode_block_tokens=decode_block_tokens,
+        sample_partial_tail_tokens=sample_partial_tail_tokens,
+        decode_tokens_to_text=lambda toks: f"t{len(toks)}",
+        bpe_stable_terminator_tokens=[],
+    )
+
+    recon.init_turn_0(
+        hash_ids=turn0_hash_ids,
+        in_tokens=turn0_in_tokens,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="s0",
+    )
+    # Sanity: 320 tokens, 5 blocks.
+    assert sum(len(s.tokens) for s in recon._segments) == turn0_in_tokens
+
+    recon.advance_turn(
+        prev_hash_ids=turn0_hash_ids,
+        prev_in_tokens=turn0_in_tokens,
+        prev_out_tokens=prev_out_tokens,
+        curr_hash_ids=curr_hash_ids,
+        curr_in_tokens=curr_in_tokens,
+        seed="s1",
+    )
+
+    # Expected total tokens after advance: curr_in_tokens (960).
+    total = sum(len(s.tokens) for s in recon._segments)
+    assert total == curr_in_tokens, (
+        f"after advance_turn with truncated curr_hash_ids, total tokens "
+        f"= {total}; expected {curr_in_tokens}. The missing-block region "
+        f"must be synthesized as additional tail tokens."
+    )
+
+    # Sentinel count: 5 truncated blocks * 64 = 320 sentinel tokens
+    # synthesized on the trailing user segment. (No partial tail beyond
+    # block alignment: 960 % 64 == 0.)
+    all_tokens = [t for s in recon._segments for t in s.tokens]
+    sentinel_n = sum(1 for t in all_tokens if t == -1)
+    expected_sentinel = (15 - 10) * bs
+    assert sentinel_n == expected_sentinel, (
+        f"expected {expected_sentinel} synth-tail sentinels, got {sentinel_n}"
+    )
+
+
+def test_advance_turn_with_full_curr_hash_ids_unchanged():
+    """Regression guard: when curr_hash_ids fully covers curr_in_tokens (no
+    truncation), advance_turn behavior is byte-identical to today's logic —
+    no synth-tail tokens are appended for the missing-block region (because
+    there is none)."""
+    bs = 64
+    turn0_hash_ids = list(range(1, 6))
+    turn0_in_tokens = 320
+    # Fully covered: 15 hash_ids * 64 = 960 tokens.
+    curr_hash_ids = turn0_hash_ids + list(range(6, 16))
+    curr_in_tokens = 960
+    prev_out_tokens = 128
+
+    recon = ConversationReconstructor(
+        block_size=bs,
+        decode_block_tokens=lambda hids: [hids[0] if hids else 0] * (len(hids) * bs),
+        sample_partial_tail_tokens=lambda n, seed: [-1] * n,
+        decode_tokens_to_text=lambda toks: f"t{len(toks)}",
+        bpe_stable_terminator_tokens=[],
+    )
+
+    recon.init_turn_0(
+        hash_ids=turn0_hash_ids,
+        in_tokens=turn0_in_tokens,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="s0",
+    )
+    recon.advance_turn(
+        prev_hash_ids=turn0_hash_ids,
+        prev_in_tokens=turn0_in_tokens,
+        prev_out_tokens=prev_out_tokens,
+        curr_hash_ids=curr_hash_ids,
+        curr_in_tokens=curr_in_tokens,
+        seed="s1",
+    )
+
+    total = sum(len(s.tokens) for s in recon._segments)
+    assert total == curr_in_tokens
+    all_tokens = [t for s in recon._segments for t in s.tokens]
+    sentinel_n = sum(1 for t in all_tokens if t == -1)
+    assert sentinel_n == 0, (
+        f"non-truncated curr_hash_ids must NOT produce sentinel tokens; got {sentinel_n}"
+    )

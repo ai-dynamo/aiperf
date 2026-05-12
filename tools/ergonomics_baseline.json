@@ -478,6 +478,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.advance_turn"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.init_turn_0"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
