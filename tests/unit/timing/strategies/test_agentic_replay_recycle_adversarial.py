@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, CreditPhase
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
@@ -77,6 +77,7 @@ def _make_strategy(
     issuer: AsyncMock | None = None,
     scheduler: MagicMock | None = None,
     stop_checker: MagicMock | None = None,
+    cache_bust_target: CacheBustTarget | None = None,
 ) -> tuple[AgenticReplayStrategy, AsyncMock, MagicMock]:
     src = _build_real_trajectory_source(dataset=dataset, trajectories=trajectories)
     cfg = MagicMock()
@@ -85,6 +86,13 @@ def _make_strategy(
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     stop_checker = stop_checker if stop_checker is not None else MagicMock()
+    # Default user_config=None preserves the old path used by all prior tests:
+    # _cache_bust_target resolves to CacheBustTarget.NONE in __init__.
+    user_config = None
+    if cache_bust_target is not None:
+        user_config = MagicMock()
+        user_config.input.prompt.cache_bust.target = cache_bust_target
+        user_config.benchmark_id = "bench_test"
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -92,6 +100,7 @@ def _make_strategy(
         stop_checker=stop_checker,
         credit_issuer=issuer,
         lifecycle=MagicMock(),
+        user_config=user_config,
     )
     return strategy, issuer, stop_checker
 

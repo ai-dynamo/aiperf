@@ -149,6 +149,24 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             user_config.benchmark_id if user_config is not None else "unknown"
         )
 
+        # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
+        # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
+        # so this never fires there; ad-hoc agentic-replay with cache_bust
+        # explicitly off gets a loud heads-up.
+        wrap_fill_active = any(
+            count > 1 for count in self._lanes_per_trace.values()
+        )
+        if wrap_fill_active and self._cache_bust_target == CacheBustTarget.NONE:
+            self.warning(
+                "Wrap-fill active (%d distinct trace_ids fanned across %d "
+                "lanes) with cache_bust.target=NONE: per-lane traffic will "
+                "be byte-identical. Set cache_bust.target=first_turn_prefix "
+                "(or another non-NONE target) for distinct shared-trace "
+                "replays.",
+                len(self._lanes_per_trace),
+                sum(self._lanes_per_trace.values()),
+            )
+
     async def setup_phase(self) -> None:
         """Phase-specific async setup.
 
