@@ -122,7 +122,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 extra_body=trace.extra,
             )
         if trace.messages is not None:
-            return Turn(
+            turn = Turn(
                 timestamp=trace.timestamp,
                 delay=trace.delay,
                 max_tokens=trace.output_length,
@@ -130,9 +130,13 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 raw_tools=trace.tools,
                 extra_body=trace.extra,
             )
-        turn = super()._build_turn(trace, prompt)
-        if trace.extra is not None:
-            turn.extra_body = trace.extra
+        else:
+            turn = super()._build_turn(trace, prompt)
+            if trace.extra is not None:
+                turn.extra_body = trace.extra
+        # Copy to avoid aliasing the trace's dict on the Turn; matches the
+        # defensive copy pattern in Turn.copy_with_stripped_media.
+        turn.headers = dict(trace.headers) if trace.headers is not None else None
         return turn
 
     # ------------------------------------------------------------------
@@ -140,9 +144,16 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     # ------------------------------------------------------------------
 
     def _synthesis_exclude_fields(self) -> frozenset[str]:
-        return frozenset({"type"})
+        return frozenset({"type", "headers"})
 
     def _reconstruct_traces(
         self, originals: list[MooncakeTrace], synth_dicts: list[dict[str, Any]]
     ) -> list[MooncakeTrace]:
-        return [MooncakeTrace.model_validate(t) for t in synth_dicts]
+        result: list[MooncakeTrace] = []
+        for i, synth_dict in enumerate(synth_dicts):
+            trace = MooncakeTrace.model_validate(synth_dict)
+            if originals:
+                original = originals[i] if i < len(originals) else originals[-1]
+                trace.headers = original.headers
+            result.append(trace)
+        return result

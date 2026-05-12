@@ -4,6 +4,7 @@
 import pytest
 
 from aiperf.common.models import ParsedResponse, TextResponse, TextResponseData
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
     RequestInfo,
@@ -88,6 +89,80 @@ class TestBaseEndpoint:
 
         for key, value in expected_headers.items():
             assert headers[key] == value
+
+    def test_get_endpoint_headers_merges_per_turn_headers(
+        self, endpoint, model_endpoint
+    ):
+        """Per-turn headers are merged on top of endpoint headers."""
+        model_endpoint.endpoint.api_key = None
+        model_endpoint.endpoint.headers = [("X-Static", "static-value")]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[Turn(headers={"x-session-token": "tok-A"})],
+        )
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert headers["X-Static"] == "static-value"
+        assert headers["x-session-token"] == "tok-A"
+
+    def test_get_endpoint_headers_per_turn_overrides_endpoint(
+        self, endpoint, model_endpoint
+    ):
+        """On key conflict, per-turn headers win over endpoint config headers."""
+        model_endpoint.endpoint.api_key = None
+        model_endpoint.endpoint.headers = [("baggage", "from-config")]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[Turn(headers={"baggage": "from-trace"})],
+        )
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert headers["baggage"] == "from-trace"
+
+    def test_get_endpoint_headers_no_turns(self, endpoint, model_endpoint):
+        """Empty turns list does not break header construction."""
+        model_endpoint.endpoint.api_key = "k"
+        model_endpoint.endpoint.headers = None
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert headers == {"Authorization": "Bearer k"}
+
+    def test_get_endpoint_headers_turn_without_headers(self, endpoint, model_endpoint):
+        """A Turn with headers=None is a no-op for the merge."""
+        model_endpoint.endpoint.api_key = None
+        model_endpoint.endpoint.headers = [("X-Static", "v")]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[Turn(headers=None)]
+        )
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert headers == {"X-Static": "v"}
+
+    def test_get_endpoint_headers_uses_current_turn_in_multi_turn_session(
+        self, endpoint, model_endpoint
+    ):
+        """Multi-turn DELTAS_WITHOUT_RESPONSES sessions accumulate prior turns
+        in `turns`; the merge must read headers from the current (last) turn.
+        """
+        model_endpoint.endpoint.api_key = None
+        model_endpoint.endpoint.headers = None
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[
+                Turn(headers={"x-session-token": "tok-A"}),  # earlier user turn
+                Turn(headers=None),  # accumulated assistant response
+                Turn(headers={"x-session-token": "tok-B"}),  # current user turn
+            ],
+        )
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert headers["x-session-token"] == "tok-B"
 
     @pytest.mark.parametrize(
         "url_params,expected_params",
