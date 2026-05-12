@@ -161,6 +161,25 @@ class TestOTelMetricsResultsProcessor:
             )
         assert OTEL_METRICS_STREAMING_FEATURE in str(exc_info.value)
 
+    def test_init_otel_import_failure_falls_back_to_mlflow_only(
+        self,
+        service_config: ServiceConfig,
+        user_config_otel_mlflow: UserConfig,
+    ) -> None:
+        """When both sinks are configured but OTel imports fail, MLflow live
+        streaming must still be constructed. Regression: the parent-side OTel
+        import check previously disabled the entire fanout processor, dropping
+        MLflow live metrics even though MLflow was independently usable.
+        """
+        with patch("builtins.__import__", side_effect=_import_side_effect_for_otel):
+            processor = OTelMetricsResultsProcessor(
+                service_id="records-manager",
+                service_config=service_config,
+                user_config=user_config_otel_mlflow,
+            )
+        assert processor._otel_metrics_url is None
+        assert processor._mlflow_live_enabled is True
+
     @pytest.mark.asyncio
     async def test_process_result_records_histogram_values_by_metric(
         self,

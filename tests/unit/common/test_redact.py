@@ -1032,6 +1032,22 @@ class TestRedactCliCommandUrlFlags:
                 ["@h1", "@h2", "@h3"],
                 id="multi-url-consume-multiple-quoted",
             ),
+            # Regression: EndpointConfig.urls auto-prefixes `http://` for
+            # scheme-less values, so users commonly write `--url user:pass@host`
+            # without a scheme. The scheme-prefixed safety net misses these;
+            # the bare-userinfo safety net catches them.
+            param(
+                "aiperf profile --url user1:pass1@host1 user2:pass2@host2",
+                ["user1:pass1", "user2:pass2"],
+                ["--url", "@host1", "@host2"],
+                id="multi-url-scheme-less-bare-userinfo",
+            ),
+            param(
+                "aiperf profile --url 'user1:pass1@host1' 'user2:pass2@host2'",
+                ["user1:pass1", "user2:pass2"],
+                ["--url", "@host1", "@host2"],
+                id="multi-url-scheme-less-bare-userinfo-quoted",
+            ),
         ],
     )  # fmt: skip
     def test_multi_url_consume_multiple_redacts_all(

@@ -674,6 +674,43 @@ class TestOTelStreamingConfig:
         assert config.otel_stream_timing_enabled is True
 
     @pytest.mark.parametrize(
+        "resource_attrs,bad_token",
+        [
+            param(["team"], "team", id="missing-equals"),
+            param(["=prod"], "=prod", id="empty-key"),
+            param(["team="], "team=", id="empty-value"),
+            param(["env=prod,team"], "team", id="missing-equals-in-comma-list"),
+            param(["env=prod,=us-west"], "=us-west", id="empty-key-in-comma-list"),
+            param(["env=prod,team="], "team=", id="empty-value-in-comma-list"),
+        ],
+    )  # fmt: skip
+    def test_otel_resource_attributes_rejects_malformed_entries(
+        self, resource_attrs: list[str], bad_token: str
+    ):
+        """Regression: --otel-resource-attributes is documented as key=value,
+        but malformed entries were previously accepted silently — missing ``=``
+        was dropped, ``=prod`` emitted an empty key, and ``team=`` emitted an
+        empty value. Each must now raise a ValueError pinpointing the bad token.
+        """
+        with pytest.raises(ValueError, match=r"--otel-resource-attributes"):
+            make_config(
+                otel_url="collector:4318",
+                otel_resource_attributes=resource_attrs,
+            )
+
+    def test_otel_resource_attributes_accepts_well_formed_entries(self):
+        """Well-formed comma-separated and repeated entries still parse."""
+        config = make_config(
+            otel_url="collector:4318",
+            otel_resource_attributes=["team=inference", "env=prod,region=us-west-2"],
+        )
+        assert config.otel_custom_resource_attributes == {
+            "team": "inference",
+            "env": "prod",
+            "region": "us-west-2",
+        }
+
+    @pytest.mark.parametrize(
         "secondary_kwargs",
         [
             param({"stream": "metrics"}, id="stream"),

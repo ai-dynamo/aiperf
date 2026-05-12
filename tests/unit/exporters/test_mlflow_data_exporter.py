@@ -508,6 +508,45 @@ class TestMLflowDataExporter:
         # Must return within a small multiple of the 1s timeout, not 30s.
         assert elapsed < 10.0, f"export() did not honor timeout: elapsed={elapsed:.1f}s"
 
+    @pytest.mark.asyncio
+    async def test_export_subprocess_silent_crash_warns_with_exitcode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        mlflow_user_config: UserConfig,
+    ) -> None:
+        """Regression: if the spawn child dies before writing to the queue
+        (spawn bootstrap failure, SIGKILL/OOM, native crash), the parent must
+        warn using ``process.exitcode`` instead of returning silently.
+        """
+        from aiperf.exporters import mlflow_export_subprocess
+
+        monkeypatch.setattr(
+            "aiperf.exporters.mlflow_export_subprocess.run_export_in_subprocess",
+            _silent_crash_subprocess_entry,
+        )
+
+        warnings: list[str] = []
+
+        def _collect(message: str) -> None:
+            warnings.append(message)
+
+        config = ExporterConfig(
+            results=sample_results,
+            user_config=mlflow_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+        await mlflow_export_subprocess.export_with_timeout(
+            config, export_timeout=10.0, warn=_collect
+        )
+
+        assert any(
+            "exited with non-zero status" in msg and "exitcode=137" in msg
+            for msg in warnings
+        ), f"expected exitcode warning, got {warnings!r}"
+
 
 def _hang_forever_subprocess_entry(exporter_config: Any, result_queue: Any) -> None:
     """Module-level subprocess stub (must be picklable for spawn context)."""
@@ -515,3 +554,15 @@ def _hang_forever_subprocess_entry(exporter_config: Any, result_queue: Any) -> N
 
     _time.sleep(30)
     result_queue.put(None)
+
+
+def _silent_crash_subprocess_entry(exporter_config: Any, result_queue: Any) -> None:
+    """Module-level subprocess stub that exits non-zero without writing to the queue.
+
+    Simulates a spawn bootstrap failure, SIGKILL/OOM, or native crash where
+    ``run_export_in_subprocess`` never reaches its ``try/except`` block and the
+    queue therefore carries no error message.
+    """
+    import os
+
+    os._exit(137)

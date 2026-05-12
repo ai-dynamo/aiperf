@@ -922,6 +922,42 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_otel_resource_attributes(self) -> Self:
+        """Reject malformed --otel-resource-attributes entries.
+
+        Each entry must be ``key=value``. Missing ``=``, empty key, and empty
+        value are rejected — silently dropping them or emitting empty keys/
+        values produces OTLP resource attributes that tools like the
+        Collector and MLflow reject or display as ``""``.
+        """
+        if not self.otel_resource_attributes:
+            return self
+        for item in self.otel_resource_attributes:
+            for pair in item.split(","):
+                pair = pair.strip()
+                if not pair:
+                    continue
+                if "=" not in pair:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "expected key=value."
+                    )
+                key, _, value = pair.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "key cannot be empty."
+                    )
+                if not value:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "value cannot be empty."
+                    )
+        return self
+
+    @model_validator(mode="after")
     def _validate_mlflow_config(self) -> Self:
         """Validate and normalize MLflow post-run upload configuration."""
         if self.mlflow_artifact_globs is not None:
@@ -978,16 +1014,21 @@ class UserConfig(BaseConfig):
 
     @property
     def otel_custom_resource_attributes(self) -> dict[str, str]:
-        """Parse --otel-resource-attributes into a dict of key=value pairs."""
+        """Parse --otel-resource-attributes into a dict of key=value pairs.
+
+        Pre-validated by ``_validate_otel_resource_attributes`` — malformed
+        entries raise there, so this accessor can assume well-formed input.
+        """
         if not self.otel_resource_attributes:
             return {}
         attrs: dict[str, str] = {}
         for item in self.otel_resource_attributes:
             for pair in item.split(","):
                 pair = pair.strip()
-                if "=" in pair:
-                    key, _, value = pair.partition("=")
-                    attrs[key.strip()] = value.strip()
+                if not pair:
+                    continue
+                key, _, value = pair.partition("=")
+                attrs[key.strip()] = value.strip()
         return attrs
 
     @property

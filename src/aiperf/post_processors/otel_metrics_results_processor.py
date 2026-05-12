@@ -138,7 +138,15 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 self.warning(
                     f"{message} ImportError={exc!r}. python_executable={sys.executable}"
                 )
-                raise PostProcessorDisabled(message) from exc
+                # Disable only the OTel sink. MLflow live streaming runs in the
+                # same fanout process but does not need opentelemetry — tearing
+                # down the whole processor here would drop live MLflow metrics
+                # whenever OTel imports fail. The fanout itself repeats the
+                # import guard per sink (see ``otel_streaming_fanout.py``), so
+                # ``endpoint_url=None`` in the fanout config is sufficient.
+                if not self._mlflow_live_enabled:
+                    raise PostProcessorDisabled(message) from exc
+                self._otel_metrics_url = None
 
         self._histogram_instruments: dict[str, _FanoutHistogramInstrument] = {}
         self._counter_instruments: dict[str, _FanoutAddInstrument] = {}

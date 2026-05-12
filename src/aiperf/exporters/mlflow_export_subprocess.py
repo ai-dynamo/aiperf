@@ -88,10 +88,25 @@ async def export_with_timeout(
                 await asyncio.to_thread(process.join, 1.0)
             return
         # Subprocess returned; read status from the queue if present.
+        #
+        # Track whether the queue yielded any status so we can surface silent
+        # crashes via exitcode. If the child dies before reaching the ``try``
+        # in ``run_export_in_subprocess`` (spawn bootstrap failure, SIGKILL/OOM,
+        # native crash) the queue stays empty and an exitcode-only check is
+        # the last signal we have that something went wrong.
+        queue_reported_status = False
         with suppress(Exception):
             error_msg = result_queue.get_nowait()
+            queue_reported_status = True
             if error_msg is not None:
                 warn(f"MLflow export subprocess reported: {error_msg}")
+        exitcode = process.exitcode
+        if not queue_reported_status and exitcode is not None and exitcode != 0:
+            warn(
+                "MLflow export subprocess exited with non-zero status and "
+                f"left no status on the result queue. exitcode={exitcode}. "
+                "Likely a spawn bootstrap failure, SIGKILL/OOM, or native crash."
+            )
     finally:
         with suppress(Exception):
             result_queue.close()

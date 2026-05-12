@@ -145,6 +145,15 @@ _URL_FLAG_PATTERN = re.compile(
 # non-URL args with ``@`` (e.g. ``--model foo@bar``) are untouched.
 _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@/?#]+@")
 
+# Safety net for stray scheme-less URLs carrying userinfo (``user:pass@host``).
+# ``EndpointConfig.urls`` auto-prefixes scheme-less values, so users can write
+# ``--url user1:pass1@host1 user2:pass2@host2`` and ``consume_multiple=True``
+# means only the first value is caught by ``_URL_FLAG_PATTERN``. Gated on
+# whitespace/quote/start-of-string boundaries so only standalone CLI tokens
+# match — header values (which run through ``_CLI_SECRET_PATTERNS`` first)
+# and path-embedded ``@`` never match here.
+_STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
+
 
 def _redact_url_flag_match(match: re.Match[str]) -> str:
     prefix = match.group(1)
@@ -166,11 +175,16 @@ def redact_cli_command(cmd: str) -> str:
       matcher — e.g. 2nd+ URL under ``--url u1 u2 u3`` (``consume_multiple=True``).
       Restricted to ``scheme://`` URLs, so non-URL args like ``--model foo@bar``
       pass through unchanged.
+    - Stray scheme-less bare ``user:pass@host`` tokens — same 2nd+-value leak
+      under ``--url``, but ``EndpointConfig.urls`` auto-prefixes ``http://``
+      for scheme-less values, so credentialed inputs never carry a scheme at
+      CLI time.
     """
     for pattern in _CLI_SECRET_PATTERNS:
         cmd = pattern.sub(rf"\1'{REDACTED_VALUE}'", cmd)
     cmd = _URL_FLAG_PATTERN.sub(_redact_url_flag_match, cmd)
     cmd = _STRAY_URL_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", cmd)
+    cmd = _STRAY_BARE_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", cmd)
     return cmd
 
 
