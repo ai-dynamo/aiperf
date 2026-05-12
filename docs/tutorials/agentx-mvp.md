@@ -64,6 +64,7 @@ uv run aiperf profile \
     --max-context-length 128_000 \
     --endpoint-type chat \
     --streaming \
+    --use-server-token-count \
     --public-dataset semianalysis_cc_traces_weka \
     --num-dataset-entries 739 \
     --benchmark-duration 900 \
