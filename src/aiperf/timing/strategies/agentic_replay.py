@@ -96,6 +96,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.lifecycle = lifecycle
 
         self._recycle_queue: asyncio.Queue[str] | None = None
+        # Keyed on x_correlation_id (not trace_id): the guard's intent is to
+        # catch the same final turn firing handle_credit_return twice — a
+        # per-session property. trace_id-keying spuriously tripped when two
+        # wrap-filled lanes finished the same trace_id with distinct
+        # correlation_ids.
         self._in_flight_recycled: set[str] = set()
         # Trace_ids whose session is currently dispatched (any turn in flight
         # or scheduled). Used by ``_spawn_from_recycle_or_id`` to skip
@@ -370,12 +375,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         # Double-recycle guard. Raise rather than gate on __debug__ — `python -O`
         # would otherwise let the duplicate-final-turn corruption escape silently.
-        if finished_trace_id in self._in_flight_recycled:
+        if finished_correlation_id in self._in_flight_recycled:
             raise RuntimeError(
-                f"Double recycle of trace_id {finished_trace_id!r} - "
-                "handle_credit_return invoked twice for the same final turn"
+                f"Double recycle of correlation_id {finished_correlation_id!r} "
+                f"(trace_id={finished_trace_id!r}) - handle_credit_return "
+                "invoked twice for the same final turn"
             )
-        self._in_flight_recycled.add(finished_trace_id)
+        self._in_flight_recycled.add(finished_correlation_id)
 
         # Re-enqueue BEFORE the cooldown check so an in-flight credit returning
         # during cooldown can't drop the trace_id from the recycle pool.
@@ -387,8 +393,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         next_trace_id = self._pop_next_eligible_trace()
         if next_trace_id is None:
             return
-
-        self._in_flight_recycled.discard(next_trace_id)
 
         session = self._build_session_for_trace(next_trace_id)
         if session is None or not session.metadata.turns:
