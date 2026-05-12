@@ -201,6 +201,18 @@ def _payload_to_test_cases(
     public_cases = _parse_test_cases(payload.get("public_test_cases", ""))
     private_cases = _parse_test_cases(payload.get("private_test_cases", ""))
     all_cases = public_cases + private_cases
+    if not all_cases:
+        # A payload with zero test cases is unambiguously malformed:
+        # lighteval's ``codegen_metrics`` will trivially report
+        # ``pass@1 = 1.0`` against an empty test suite (vacuous truth),
+        # which would silently grade every response as correct. Fail
+        # fast so the existing ``ValueError`` branch in ``grade()``
+        # surfaces this as a clean ``_grading_failure`` rather than
+        # forwarding a false-positive verdict.
+        raise ValueError(
+            "LCB payload has no test cases — both public_test_cases "
+            "and private_test_cases are missing or empty"
+        )
     inputs = [tc["input"] for tc in all_cases]
     outputs = [tc["output"] for tc in all_cases]
 
