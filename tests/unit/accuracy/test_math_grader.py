@@ -221,6 +221,59 @@ class TestExtractWithFlag:
         assert unparsed is True
         assert "don't know" in answer
 
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            param("the answer is 3.14", "3.14", id="pi-like_decimal"),
+            param("final answer: 0.5", "0.5", id="leading_zero_decimal"),
+            param("Answer = 100.001", "100.001", id="multi_digit_decimal"),
+            param("the answer is -2.5", "-2.5", id="negative_decimal"),
+        ],
+    )  # fmt: skip
+    def test_phrase_fallback_preserves_decimal(
+        self, grader: MathGrader, response: str, expected: str
+    ) -> None:
+        """The answer-phrase regex used to terminate on ``.`` and silently
+        truncate decimals to their integer part. Pin that the full decimal
+        survives so MATH-500-style numeric answers grade correctly."""
+        answer, unparsed = grader._extract_with_flag(response)
+        assert answer == expected
+        assert unparsed is True
+
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            param(
+                "the answer is 5. Wait, the answer is 12",
+                "12",
+                id="reflection_inline",
+            ),
+            param(
+                "My first thought: the answer is 7. After reflection, the answer is 9.",
+                "9",
+                id="reflection_paragraph",
+            ),
+            param(
+                "the answer is 5\nthe answer is 12",
+                "12",
+                id="reflection_newline",
+            ),
+            param(
+                "Final answer: 5. Hmm, actually final answer: 12.",
+                "12",
+                id="self_correct_final_answer",
+            ),
+        ],
+    )  # fmt: skip
+    def test_phrase_fallback_takes_last_match(
+        self, grader: MathGrader, response: str, expected: str
+    ) -> None:
+        """Reasoning models often self-correct mid-response. The
+        answer-phrase regex used to take the first match and grade
+        against the abandoned guess; pin that the LAST claim wins."""
+        answer, _ = grader._extract_with_flag(response)
+        assert answer == expected
+
 
 class TestGradeNumeric:
     """``MathGrader.grade`` — numeric equivalence."""

@@ -86,10 +86,15 @@ def _warn_fallback_once() -> None:
 
 
 # Recognized "the answer is X" suffixes used by models that ignore the
-# \\boxed{} instruction. Captures everything to end-of-line so we can re-run
-# the boxed/numeric extractors on the captured tail.
+# \\boxed{} instruction. Captures everything to end-of-line so we can
+# re-run the boxed/numeric extractors on the captured tail.
+#
+# Terminator is ``\n`` (or end-of-string), NOT ``\.``: the regex used
+# to stop at the first period, which silently truncated decimals like
+# ``"the answer is 3.14"`` to ``"3"``. The downstream
+# ``_extract_last_number`` regex already strips trailing punctuation.
 _ANSWER_PHRASE_RE = re.compile(
-    r"(?:final\s+answer|the\s+answer\s+is|answer\s*[:=]|answer\s+is)\s*[:=]?\s*(.+?)(?:\.|$)",
+    r"(?:final\s+answer|the\s+answer\s+is|answer\s*[:=]|answer\s+is)\s*[:=]?\s*(.+?)(?:\n|$)",
     re.IGNORECASE,
 )
 
@@ -508,9 +513,12 @@ class MathGrader(BaseGrader):
         if boxed is not None:
             return _format_response_tail(boxed), False
 
-        m = _ANSWER_PHRASE_RE.search(response_text)
-        if m:
-            tail = m.group(1).strip()
+        # Take the LAST answer-phrase match, not the first: reasoning
+        # models often self-correct ("the answer is 5. Wait, actually
+        # the answer is 12") and the final claim is what we want.
+        phrase_matches = _ANSWER_PHRASE_RE.findall(response_text)
+        if phrase_matches:
+            tail = phrase_matches[-1].strip()
             tail_boxed = _extract_last_boxed(tail)
             if tail_boxed is not None:
                 return _format_response_tail(tail_boxed), True
