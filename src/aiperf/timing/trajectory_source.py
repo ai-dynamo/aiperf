@@ -23,10 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from aiperf.common.models import DatasetMetadata
-from aiperf.common.scenario.base import (
-    EmptyTracePoolError,
-    InsufficientTrajectoriesError,
-)
+from aiperf.common.scenario.base import EmptyTracePoolError
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 from aiperf.timing.conversation_source import ConversationSource, SampledSession
 
@@ -96,18 +93,24 @@ class TrajectorySource(ConversationSource):
         # post-build check below rejects the run instead of silently capping
         # effective load below --concurrency.
         self._target_size = concurrency
-        self.trajectories: list[Trajectory] = self._build_trajectories()
+        distinct: list[Trajectory] = self._build_trajectories()
 
-        if not self.trajectories:
+        if not distinct:
             raise EmptyTracePoolError(
                 "Trajectories empty after skipping invalid traces; pool exhausted."
             )
 
+        self.trajectories: list[Trajectory] = list(distinct)
         if len(self.trajectories) < concurrency:
-            raise InsufficientTrajectoriesError(
-                concurrency=concurrency,
-                usable_trajectories=len(self.trajectories),
-                pool_size=pool_size,
+            extras = self._wrap_fill_lanes(distinct, concurrency - len(distinct))
+            self.trajectories.extend(extras)
+            _logger.info(
+                "Trajectory reuse: %d distinct trajectories fanned out to %d "
+                "lanes (avg %.1f lanes per trace). Cache-bust marker keeps "
+                "per-lane traffic distinct when cache_bust.target != NONE.",
+                len(distinct),
+                concurrency,
+                concurrency / len(distinct),
             )
 
     def _build_trajectories(self) -> list[Trajectory]:
