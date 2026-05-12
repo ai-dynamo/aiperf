@@ -40,19 +40,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 
 ## NaN/Inf Discipline
 
-Every numeric metric value crossing a serialization boundary or feeding a numerical algorithm must be either finite or explicitly `None`; NaN/+inf/-inf must be scrubbed first. orjson silently coerces NaN/inf to JSON `null`, which collides with the contract that `null` means "absent"; `np.mean`/`np.std`/`polyfit` poison downstream decision logic without raising. Use `aiperf.common.finite`:
-
-- `FiniteFloat` (or `FiniteFloat | None`) for any Pydantic float field that holds a metric. The validator rejects NaN/+inf/-inf at config time.
-- `scrub_non_finite(payload)` before `orjson.dumps(payload)` for any metric-bearing payload.
-- `nan_safe_mean(values)` / `nan_safe_std(values)` instead of `np.mean`/`np.std` in any aggregation that may see partial-failure samples; both return `None` (not NaN) when no finite values remain.
-- `is_finite_value(x)` for the canonical finiteness check — handles `numpy.float32`/`float64` correctly, where `isinstance(x, float)` does not.
-
-Mechanical CI invariants enforce this:
-- `tests/unit/property/test_finite_invariants.py::test_every_json_exporter_calls_scrub_non_finite`
-- `tests/unit/property/test_finite_invariants.py::test_every_metric_field_is_finite_or_optional`
-- `tests/unit/property/test_finite_invariants.py::test_every_numeric_field_has_bounds`
-
-Adding a new exporter or metric field without a scrubber/`FiniteFloat` will fail CI. The baseline files `tests/unit/property/_metric_field_baseline.txt` and `_numeric_bounds_baseline.txt` ratchet existing debt to zero — fields can leave the baseline, but new entries are rejected. See `docs/dev/global-invariants.md` for the full property-test contract.
+Numeric metric values crossing a serialization boundary or feeding a numerical algorithm must be finite or explicitly `None`. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
 
 ## Build and Test Commands
 
