@@ -10,8 +10,10 @@ import warnings
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.enums import RequestContentType
 from aiperf.config.config import AIPerfConfig
 from aiperf.config.endpoint import EndpointConfig
+from aiperf.plugin.enums import EndpointType
 
 _ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
 
@@ -398,6 +400,80 @@ class TestEndpointBoundaryValidation:
                 urls=["http://localhost:8000"],
                 path="v1/chat/completions",
             )
+
+
+# =============================================================================
+# Request content type validation
+# =============================================================================
+
+
+class TestRequestContentTypeValidation:
+    def test_image_edit_defaults_to_multipart(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/images/edits"],
+            type=EndpointType.IMAGE_EDIT,
+        )
+        assert endpoint.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_image_edit_defaults_to_multipart_via_aiperf_config(self):
+        config = AIPerfConfig(
+            **_base_config(
+                endpoint={
+                    "urls": ["http://localhost:8000/v1/images/edits"],
+                    "type": "image_edit",
+                }
+            )
+        )
+        assert (
+            config.benchmark.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+        )
+
+    def test_video_generation_defaults_to_multipart(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/videos/generations"],
+            type=EndpointType.VIDEO_GENERATION,
+        )
+        assert endpoint.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_chat_endpoint_keeps_default_none(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/chat/completions"],
+            type=EndpointType.CHAT,
+        )
+        assert endpoint.request_content_type is None
+
+    def test_explicit_json_on_multipart_endpoint_rejected(self):
+        with pytest.raises(ValidationError, match="requires multipart/form-data"):
+            EndpointConfig(
+                urls=["http://localhost:8000/v1/images/edits"],
+                type=EndpointType.IMAGE_EDIT,
+                request_content_type=RequestContentType.APPLICATION_JSON,
+            )
+
+    def test_explicit_multipart_on_chat_rejected(self):
+        with pytest.raises(ValidationError, match="does not"):
+            EndpointConfig(
+                urls=["http://localhost:8000/v1/chat/completions"],
+                type=EndpointType.CHAT,
+                request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+            )
+
+    def test_explicit_json_on_chat_passes_through(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/chat/completions"],
+            type=EndpointType.CHAT,
+            request_content_type=RequestContentType.APPLICATION_JSON,
+        )
+        assert endpoint.request_content_type == RequestContentType.APPLICATION_JSON
+
+    def test_explicit_multipart_on_image_edit_passes_through(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/images/edits"],
+            type=EndpointType.IMAGE_EDIT,
+            request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+        )
+        assert endpoint.request_content_type == RequestContentType.MULTIPART_FORM_DATA
 
 
 # =============================================================================

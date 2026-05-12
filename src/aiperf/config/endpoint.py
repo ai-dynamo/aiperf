@@ -446,20 +446,29 @@ class EndpointConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_request_content_type(self) -> Self:
-        """multipart/form-data only on endpoints that declare requires_form_data."""
-        if (
-            self.request_content_type is None
-            or self.request_content_type == RequestContentType.APPLICATION_JSON
-        ):
-            return self
-
+        """Auto-select multipart for endpoints that declare requires_form_data."""
         from aiperf.plugin import plugins
 
         metadata = plugins.get_endpoint_metadata(self.type)
-        if not getattr(metadata, "requires_form_data", False):
+        requires_form_data = getattr(metadata, "requires_form_data", False)
+
+        if self.request_content_type is None:
+            if requires_form_data:
+                self.request_content_type = RequestContentType.MULTIPART_FORM_DATA
+            return self
+
+        if self.request_content_type == RequestContentType.APPLICATION_JSON:
+            if requires_form_data:
+                raise ValueError(
+                    f"endpoint type {self.type} requires multipart/form-data; "
+                    "application/json is not supported."
+                )
+            return self
+
+        if not requires_form_data:
             raise ValueError(
                 f"request_content_type={self.request_content_type} is only supported for "
-                f"endpoint types that accept form-data (e.g. video_generation); "
-                f"endpoint type {self.type} does not."
+                f"endpoint types that accept form-data (e.g. image_edit, "
+                f"video_generation); endpoint type {self.type} does not."
             )
         return self
