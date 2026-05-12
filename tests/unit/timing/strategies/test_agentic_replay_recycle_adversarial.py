@@ -397,12 +397,14 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
 async def test_double_recycle_same_trace_raises():
     """Calling handle_credit_return twice for the same final turn must raise.
 
-    This is a programmer-error guard: the recycle queue's invariant is that a
-    given trace_id is in-flight (either dispatched or queued) exactly once at
-    any moment. Pushing the same trace_id twice in the same recycle cycle
-    breaks that invariant.
+    This is a programmer-error guard: each session's final turn must trigger
+    exactly one recycle. Firing handle_credit_return twice with the same
+    correlation_id means the same final turn was reported twice — invariant
+    violation, never legitimate.
 
-    The guard is unconditional (was previously gated on ``__debug__``, which
+    The guard is keyed on x_correlation_id (not trace_id) so that wrap-filled
+    lanes legitimately sharing a trace_id with distinct correlation_ids don't
+    collide. It is unconditional (was previously gated on ``__debug__``, which
     ``python -O`` strips, silently allowing the duplicate-final-turn corruption
     to escape into production).
     """
@@ -417,11 +419,11 @@ async def test_double_recycle_same_trace_raises():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    # Queue starts with [trace_1, trace_2].
-    # We keep trace_0 in-flight by *not* popping it after the first push.
-    # Manually manipulate state to simulate the "trace_0 just got pushed but
-    # somehow was reported finished again before it was popped" pathology.
-    strategy._in_flight_recycled.add("trace_0")
+    # Seed the in-flight-recycled set with the correlation_id we're about to
+    # report-finished, simulating "this session's final turn was already
+    # processed and is being reported again" — the actual bug class the guard
+    # exists to catch.
+    strategy._in_flight_recycled.add("xcorr")
     # Register the in-flight session's lane bookkeeping so we get past the
     # missing-correlation guard and reach the double-recycle assertion.
     strategy._correlation_to_lane["xcorr"] = 0
