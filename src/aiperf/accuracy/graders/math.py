@@ -89,12 +89,21 @@ def _warn_fallback_once() -> None:
 # \\boxed{} instruction. Captures everything to end-of-line so we can
 # re-run the boxed/numeric extractors on the captured tail.
 #
-# Terminator is ``\n`` (or end-of-string), NOT ``\.``: the regex used
-# to stop at the first period, which silently truncated decimals like
-# ``"the answer is 3.14"`` to ``"3"``. The downstream
-# ``_extract_last_number`` regex already strips trailing punctuation.
+# Terminator combines three rules (decimals must survive, multi-line
+# responses must terminate cleanly, sentence-ending periods should be
+# stripped):
+#
+#   (?<!\d)\.(?!\d) — a period NOT surrounded by digits (sentence period)
+#   \n              — end of line for multi-line responses
+#   $               — end of string
+#
+# The previous implementation used just ``\.`` which silently truncated
+# decimals like ``3.14`` to ``3``; the simpler ``\n|$`` alternative
+# regresses to keeping trailing-sentence text in the tail. This hybrid
+# handles all three concerns.
 _ANSWER_PHRASE_RE = re.compile(
-    r"(?:final\s+answer|the\s+answer\s+is|answer\s*[:=]|answer\s+is)\s*[:=]?\s*(.+?)(?:\n|$)",
+    r"(?:final\s+answer|the\s+answer\s+is|answer\s*[:=]|answer\s+is)\s*[:=]?\s*"
+    r"(.+?)(?:(?<!\d)\.(?!\d)|\n|$)",
     re.IGNORECASE,
 )
 

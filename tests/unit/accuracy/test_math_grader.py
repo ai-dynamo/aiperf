@@ -274,6 +274,40 @@ class TestExtractWithFlag:
         answer, _ = grader._extract_with_flag(response)
         assert answer == expected
 
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            param(
+                "the answer is 3.14\nand more context follows",
+                "3.14",
+                id="decimal_then_newline",
+            ),
+            param(
+                "the answer is X. The rest is unrelated.",
+                "X",
+                id="non_numeric_then_sentence",
+            ),
+            param(
+                "the answer is 5.\nMore reasoning",
+                "5",
+                id="trailing_period_then_newline",
+            ),
+        ],
+    )  # fmt: skip
+    def test_phrase_fallback_terminator_handles_decimals_newlines_and_sentences(
+        self, grader: MathGrader, response: str, expected: str
+    ) -> None:
+        """Pin the three-way terminator behaviour:
+
+        * a period *not* surrounded by digits ends the tail (so a
+          trailing sentence doesn't pollute the captured answer),
+        * a ``\\n`` ends the tail (so the regex doesn't slurp the rest
+          of a multi-line response),
+        * end-of-string is the final fallback.
+        """
+        answer, _ = grader._extract_with_flag(response)
+        assert answer == expected
+
 
 class TestGradeNumeric:
     """``MathGrader.grade`` — numeric equivalence."""
