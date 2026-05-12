@@ -89,3 +89,85 @@ def test_wrap_fill_pool_of_two_turns_uses_k_zero():
     distinct = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     extras = src._wrap_fill_lanes(distinct, extra_count=3)
     assert all(e.start_turn_index == 0 for e in extras)
+
+
+def _make_metadata(num_traces: int, turns_per_trace: int) -> MagicMock:
+    """Build a MagicMock DatasetMetadata with N conversations of M turns each."""
+    convs = []
+    for i in range(num_traces):
+        cid = f"trace_{i}"
+        turns = [MagicMock(turn_index=t) for t in range(turns_per_trace)]
+        convs.append(MagicMock(conversation_id=cid, turns=turns))
+    md = MagicMock()
+    md.conversations = convs
+    return md
+
+
+class _FakeSampler:
+    """Hands out conversation_ids in order; raises StopIteration when exhausted.
+
+    Mirrors what the production sampler does at end-of-pool.
+    """
+
+    def __init__(self, cids: list[str]) -> None:
+        self._cids = list(cids)
+        self._i = 0
+
+    def next_conversation_id(self) -> str:
+        if self._i >= len(self._cids):
+            raise StopIteration
+        cid = self._cids[self._i]
+        self._i += 1
+        return cid
+
+
+def _build_source(
+    num_traces: int, turns_per_trace: int, concurrency: int
+) -> TrajectorySource:
+    md = _make_metadata(num_traces, turns_per_trace)
+    sampler = _FakeSampler([c.conversation_id for c in md.conversations])
+    return TrajectorySource(
+        dataset_metadata=md,
+        dataset_sampler=sampler,
+        concurrency=concurrency,
+        random_seed=42,
+    )
+
+
+def test_init_pool_1_concurrency_4_produces_4_trajectories_same_trace():
+    src = _build_source(num_traces=1, turns_per_trace=10, concurrency=4)
+    assert len(src.trajectories) == 4
+    assert {t.conversation_id for t in src.trajectories} == {"trace_0"}
+
+
+def test_init_pool_3_concurrency_10_produces_balanced_distribution():
+    src = _build_source(num_traces=3, turns_per_trace=10, concurrency=10)
+    assert len(src.trajectories) == 10
+    counts = {"trace_0": 0, "trace_1": 0, "trace_2": 0}
+    for t in src.trajectories:
+        counts[t.conversation_id] += 1
+    assert sorted(counts.values()) == [3, 3, 4]
+
+
+def test_init_pool_5_concurrency_5_no_wrap_fill_distinct_only():
+    src = _build_source(num_traces=5, turns_per_trace=10, concurrency=5)
+    assert len(src.trajectories) == 5
+    assert len({t.conversation_id for t in src.trajectories}) == 5
+
+
+def test_init_logs_info_when_wrap_fill_activates(caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="aiperf.timing.trajectory_source"):
+        _build_source(num_traces=2, turns_per_trace=10, concurrency=8)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("Trajectory reuse" in m for m in msgs), msgs
+
+
+def test_init_does_not_log_info_when_no_wrap_fill_needed(caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="aiperf.timing.trajectory_source"):
+        _build_source(num_traces=4, turns_per_trace=10, concurrency=4)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert not any("Trajectory reuse" in m for m in msgs), msgs
