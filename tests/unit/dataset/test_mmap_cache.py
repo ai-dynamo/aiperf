@@ -272,3 +272,82 @@ class TestCacheToggle:
 
         monkeypatch.setattr(Environment.DATASET, "MMAP_CACHE_ENABLED", False)
         assert mmap_cache.cache_enabled() is False
+
+
+class TestAcquireCacheLock:
+    """Coverage for :func:`mmap_cache.acquire_cache_lock` populate gate."""
+
+    @pytest.mark.asyncio
+    async def test_serializes_concurrent_acquires(self) -> None:
+        """Five concurrent contenders on the same key never overlap inside."""
+        import asyncio
+        import time
+
+        events: list[tuple[str, float]] = []
+        t0 = time.monotonic()
+
+        async def hold(name: str, dwell: float) -> None:
+            async with mmap_cache.acquire_cache_lock("k", timeout=10.0):
+                events.append((f"{name}:enter", time.monotonic() - t0))
+                await asyncio.sleep(dwell)
+                events.append((f"{name}:exit", time.monotonic() - t0))
+
+        await asyncio.gather(*(hold(n, 0.05) for n in "ABCDE"))
+
+        ordered = sorted(events, key=lambda e: e[1])
+        balance = 0
+        for tag, _ in ordered:
+            balance += 1 if "enter" in tag else -1
+            assert balance <= 1, f"overlap at {tag}: {ordered}"
+
+    @pytest.mark.asyncio
+    async def test_independent_keys_dont_serialize(self) -> None:
+        """Two contenders on different keys MAY run in parallel."""
+        import asyncio
+        import time
+
+        events: list[str] = []
+
+        async def hold(key: str) -> None:
+            async with mmap_cache.acquire_cache_lock(key, timeout=5.0):
+                events.append(f"{key}:enter")
+                await asyncio.sleep(0.2)
+                events.append(f"{key}:exit")
+
+        t0 = time.monotonic()
+        await asyncio.gather(hold("alpha"), hold("beta"))
+        elapsed = time.monotonic() - t0
+        # Sequential would be ~0.4s; parallel is ~0.2s. Allow generous
+        # scheduler slop but assert clearly under fully-serialized timing.
+        assert elapsed < 0.35, (
+            f"distinct-key acquires unexpectedly serialized: "
+            f"elapsed={elapsed:.3f}s, events={events}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self) -> None:
+        """Holder beyond timeout causes the waiter to raise filelock.Timeout."""
+        import asyncio
+
+        from filelock import Timeout as FileLockTimeout
+
+        holder_acquired = asyncio.Event()
+        holder_release = asyncio.Event()
+
+        async def holder() -> None:
+            async with mmap_cache.acquire_cache_lock("k", timeout=5.0):
+                holder_acquired.set()
+                await holder_release.wait()
+
+        async def waiter() -> None:
+            await holder_acquired.wait()
+            with pytest.raises(FileLockTimeout):
+                async with mmap_cache.acquire_cache_lock("k", timeout=0.5):
+                    pass
+
+        holder_task = asyncio.create_task(holder())
+        try:
+            await asyncio.wait_for(waiter(), timeout=5.0)
+        finally:
+            holder_release.set()
+            await holder_task
