@@ -133,7 +133,6 @@ def run_otel_streaming_fanout(
                 "run_id": run_id,
                 "step": 0,
                 "buffer": [],
-                "timing_gauge_snapshots": {},
             }
         except ImportError as exc:
             logger.warning(
@@ -155,32 +154,6 @@ def run_otel_streaming_fanout(
         buffered.append((f"live.{metric_name}", float(metric_value)))
         if len(buffered) >= max_batch_records:
             _flush_mlflow_metrics()
-
-    def _append_mlflow_timing_gauge_snapshot(
-        metric_name: str,
-        delta_value: float,
-        attributes: dict[str, Any],
-    ) -> None:
-        if mlflow_state is None:
-            return
-
-        timing_gauge_snapshots: dict[str, dict[tuple[tuple[str, Any], ...], float]] = (
-            mlflow_state["timing_gauge_snapshots"]
-        )
-        attribute_key = tuple(sorted(attributes.items()))
-        metric_snapshots = timing_gauge_snapshots.setdefault(metric_name, {})
-        next_snapshot = metric_snapshots.get(attribute_key, 0.0) + float(delta_value)
-        if abs(next_snapshot) < 1e-9:
-            metric_snapshots.pop(attribute_key, None)
-            if not metric_snapshots:
-                timing_gauge_snapshots.pop(metric_name, None)
-        else:
-            metric_snapshots[attribute_key] = next_snapshot
-
-        aggregate_snapshot = sum(metric_snapshots.values())
-        if abs(aggregate_snapshot) < 1e-9:
-            aggregate_snapshot = 0.0
-        _append_mlflow_metric(metric_name, aggregate_snapshot)
 
     def _flush_mlflow_metrics() -> None:
         if mlflow_state is None:
@@ -238,7 +211,6 @@ def run_otel_streaming_fanout(
                         histograms[metric_name].record(
                             payload["value"], payload["attributes"]
                         )
-                    _append_mlflow_metric(metric_name, payload["value"])
                 except Exception as exc:
                     logger.warning(
                         f"Invalid histogram fanout payload received: {exc!r}"
@@ -258,7 +230,6 @@ def run_otel_streaming_fanout(
                         counters[metric_name].add(
                             payload["value"], payload["attributes"]
                         )
-                    _append_mlflow_metric(metric_name, payload["value"])
                 except Exception as exc:
                     logger.warning(f"Invalid counter fanout payload received: {exc!r}")
                 continue
@@ -276,14 +247,18 @@ def run_otel_streaming_fanout(
                         up_down_counters[metric_name].add(
                             payload["value"], payload["attributes"]
                         )
-                    _append_mlflow_timing_gauge_snapshot(
-                        metric_name,
-                        payload["value"],
-                        payload["attributes"],
-                    )
                 except Exception as exc:
                     logger.warning(
                         f"Invalid up-down-counter fanout payload received: {exc!r}"
+                    )
+                continue
+
+            if event_type == "mlflow_metric_snapshot":
+                try:
+                    _append_mlflow_metric(payload["metric_name"], payload["value"])
+                except Exception as exc:
+                    logger.warning(
+                        f"Invalid MLflow snapshot fanout payload received: {exc!r}"
                     )
                 continue
 

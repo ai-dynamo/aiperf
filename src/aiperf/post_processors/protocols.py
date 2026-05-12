@@ -41,3 +41,10 @@ class FlushableResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for metric results processors that support explicit flushing."""
 
     async def flush(self, *, force: bool = False) -> None: ...
+
+
+@runtime_checkable
+class RealtimeMetricsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol for processors that consume realtime metric snapshots."""
+
+    async def process_realtime_metrics(self, metrics: list[MetricResult]) -> None: ...

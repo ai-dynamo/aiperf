@@ -560,22 +560,6 @@ class UserConfig(BaseConfig):
         ),
     ] = MLflowDefaults.TRACKING_URI
 
-    mlflow: Annotated[
-        bool,
-        Field(
-            default=False,
-            description=(
-                "Enable MLflow integration for live telemetry streaming and post-run "
-                "uploads. Requires --mlflow-tracking-uri and the AIPerf mlflow "
-                "extra (`aiperf[mlflow]`)."
-            ),
-        ),
-        CLIParameter(
-            name=("--mlflow",),
-            group=Groups.OUTPUT,
-        ),
-    ] = False
-
     mlflow_experiment: Annotated[
         str,
         Field(
@@ -877,14 +861,11 @@ class UserConfig(BaseConfig):
                 normalized_globs.append(normalized_glob)
             self.mlflow_artifact_globs = normalized_globs
 
-        if not self.mlflow:
-            # MLflow integration is explicitly gated by --mlflow.
+        if self.mlflow_tracking_uri is None:
             # Keep other MLflow fields parseable but disable integration.
-            self.mlflow_tracking_uri = None
             fields_set = getattr(self, "__pydantic_fields_set__", None)
             if isinstance(fields_set, set):
                 for field_name in (
-                    "mlflow_tracking_uri",
                     "mlflow_experiment",
                     "mlflow_run_name",
                     "mlflow_tags",
@@ -892,9 +873,6 @@ class UserConfig(BaseConfig):
                 ):
                     fields_set.discard(field_name)
             return self
-
-        if self.mlflow_tracking_uri is None:
-            raise ValueError("--mlflow requires --mlflow-tracking-uri to be set.")
 
         tracking_uri = self.mlflow_tracking_uri.strip()
         if not tracking_uri:
@@ -936,7 +914,7 @@ class UserConfig(BaseConfig):
     @property
     def mlflow_enabled(self) -> bool:
         """Check if MLflow post-run upload is enabled."""
-        return self.mlflow and self.mlflow_tracking_uri is not None
+        return self.mlflow_tracking_uri is not None
 
     @property
     def mlflow_tags_dict(self) -> dict[str, str]:

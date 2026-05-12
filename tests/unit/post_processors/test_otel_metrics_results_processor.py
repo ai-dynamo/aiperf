@@ -11,7 +11,7 @@ import pytest
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models import CreditPhaseStats, MetricResult
 from aiperf.common.optional_dependencies import OTEL_METRICS_STREAMING_FEATURE
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.otel_metrics_results_processor import (
@@ -45,7 +45,6 @@ def user_config_otel_mlflow(tmp_artifact_dir) -> UserConfig:
             artifact_directory=tmp_artifact_dir,
         ),
         otel_url="collector:4318",
-        mlflow=True,
         mlflow_tracking_uri="http://mlflow:5000",
         mlflow_experiment="aiperf-tests",
     )
@@ -61,7 +60,6 @@ def user_config_mlflow_only(tmp_artifact_dir) -> UserConfig:
         output=OutputConfig(
             artifact_directory=tmp_artifact_dir,
         ),
-        mlflow=True,
         mlflow_tracking_uri="http://mlflow:5000",
         mlflow_experiment="aiperf-tests",
     )
@@ -752,6 +750,59 @@ class TestOTelMetricsResultsProcessor:
             metric_record.metadata.benchmark_phase
         )
         assert attributes["aiperf.has_error"] is False
+        assert "aiperf.session_num" not in attributes
+        assert "aiperf.turn_index" not in attributes
+
+    @pytest.mark.asyncio
+    async def test_process_realtime_metrics_emits_mlflow_snapshot_events(
+        self,
+        fake_otel: dict[str, object],
+        service_config: ServiceConfig,
+        user_config_otel_mlflow: UserConfig,
+    ) -> None:
+        class FakeQueue:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            def put_nowait(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        processor = OTelMetricsResultsProcessor(
+            service_id="records-manager",
+            service_config=service_config,
+            user_config=user_config_otel_mlflow,
+        )
+        fake_queue = FakeQueue()
+        processor._use_fanout_process = True
+        processor._streaming_ready = True
+        processor._fanout_queue = fake_queue
+
+        await processor.process_realtime_metrics(
+            [
+                MetricResult(
+                    tag="request_count",
+                    header="Request Count",
+                    unit="requests",
+                    avg=60,
+                ),
+                MetricResult(
+                    tag="empty_metric",
+                    header="Empty",
+                    unit="1",
+                    avg=None,
+                ),
+            ]
+        )
+
+        assert fake_queue.events == [
+            {
+                "type": "mlflow_metric_snapshot",
+                "payload": {
+                    "metric_name": "aiperf.request_count",
+                    "value": 60.0,
+                },
+            }
+        ]
 
     def test_coerce_metric_values_handling(
         self,
@@ -773,3 +824,5 @@ class TestOTelMetricsResultsProcessor:
         assert processor.coerce_metric_values("test", True) == []
         assert processor.coerce_metric_values("test", {"key": "value"}) == []
         assert processor.coerce_metric_values("test", None) == []
+        assert processor.coerce_metric_values("request_latency", 200_000_000) == [200.0]
+        assert processor._metric_unit("request_latency") == "ms"

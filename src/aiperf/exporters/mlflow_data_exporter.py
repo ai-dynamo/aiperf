@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -30,8 +31,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
         if not self._user_config.mlflow_enabled:
             raise DataExporterDisabled(
-                "MLflow export is disabled "
-                "(set --mlflow --mlflow-tracking-uri to enable)."
+                "MLflow export is disabled (set --mlflow-tracking-uri to enable)."
             )
         if self._results is None:
             raise DataExporterDisabled(
@@ -60,6 +60,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
     @classmethod
     def _import_mlflow_module(cls) -> Any:
         """Import mlflow with a consistent dependency error message."""
+        cls._configure_mlflow_http_request_defaults()
         try:
             import mlflow
         except ImportError as exc:
@@ -67,6 +68,18 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 mlflow_dependency_message("MLflow export is enabled")
             ) from exc
         return mlflow
+
+    @staticmethod
+    def _configure_mlflow_http_request_defaults() -> None:
+        """Set bounded MLflow HTTP defaults without overriding user-provided values."""
+        os.environ.setdefault(
+            "MLFLOW_HTTP_REQUEST_TIMEOUT",
+            str(MLflowDefaults.REQUEST_TIMEOUT_SECONDS),
+        )
+        os.environ.setdefault(
+            "MLFLOW_HTTP_REQUEST_MAX_RETRIES",
+            str(MLflowDefaults.REQUEST_MAX_RETRIES),
+        )
 
     @classmethod
     def resolve_artifact_path(
@@ -215,9 +228,14 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 )
 
             artifact_files = self._iter_artifact_files()
-            uploaded_artifacts = self.uploaded_artifact_names(
-                artifact_directory=self._artifact_directory,
+            artifact_files = [
+                artifact_file
+                for artifact_file in artifact_files
+                if artifact_file.resolve() != self._metadata_file.resolve()
+            ]
+            uploaded_artifacts, failed_artifacts = self._log_artifacts_for_export(
                 artifact_files=artifact_files,
+                log_artifact=mlflow.log_artifact,
             )
             self._write_export_metadata(
                 run_id=run_id,
@@ -226,14 +244,18 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 param_keys=sorted(param_payload),
                 tag_keys=sorted(tag_payload),
                 uploaded_artifacts=uploaded_artifacts,
+                failed_artifacts=failed_artifacts,
                 reused_live_run=existing_live_run_id is not None,
                 live_streaming=bool(existing_metadata.get("live_streaming")),
             )
-            uploaded_artifacts = self.log_artifacts(
-                artifact_directory=self._artifact_directory,
-                artifact_files=artifact_files,
-                log_artifact=mlflow.log_artifact,
-            )
+            try:
+                self.log_artifacts(
+                    artifact_directory=self._artifact_directory,
+                    artifact_files=[self._metadata_file],
+                    log_artifact=mlflow.log_artifact,
+                )
+            except Exception as exc:
+                self.warning(f"Failed to upload MLflow export metadata: {exc!r}")
         self.info(
             f"Uploaded MLflow run '{run_name}' ({run_id}) with "
             f"{len(metric_payload)} metrics and {len(uploaded_artifacts)} artifacts."
@@ -317,6 +339,34 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 files.append(candidate)
         return files
 
+    def _log_artifacts_for_export(
+        self,
+        *,
+        artifact_files: list[Path],
+        log_artifact: Callable[[str, str | None], None],
+    ) -> tuple[list[str], list[str]]:
+        uploaded_artifacts: list[str] = []
+        failed_artifacts: list[str] = []
+        for artifact_file in artifact_files:
+            artifact_name = self._relative_artifact_name(
+                artifact_directory=self._artifact_directory,
+                artifact_file=artifact_file,
+            )
+            artifact_path = self.resolve_artifact_path(
+                artifact_directory=self._artifact_directory,
+                artifact_file=artifact_file,
+            )
+            try:
+                log_artifact(str(artifact_file), artifact_path)
+            except Exception as exc:
+                self.warning(
+                    f"Failed to upload MLflow artifact {artifact_name}: {exc!r}"
+                )
+                failed_artifacts.append(artifact_name)
+                continue
+            uploaded_artifacts.append(artifact_name)
+        return uploaded_artifacts, failed_artifacts
+
     def _load_existing_metadata(self) -> dict[str, Any]:
         if not self._metadata_file.exists():
             return {}
@@ -366,6 +416,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         param_keys: list[str],
         tag_keys: list[str],
         uploaded_artifacts: list[str],
+        failed_artifacts: list[str],
         reused_live_run: bool,
         live_streaming: bool,
     ) -> None:
@@ -382,6 +433,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "param_keys": param_keys,
             "tag_keys": tag_keys,
             "uploaded_artifacts": uploaded_artifacts,
+            "failed_artifacts": failed_artifacts,
             "exported_at_ns": time.time_ns(),
         }
         self._metadata_file.write_bytes(

@@ -166,6 +166,13 @@ def test_run_fanout_processes_events_for_otel_and_mlflow(
                     "attributes": {"aiperf.worker.id": "worker-1"},
                 },
             },
+            {
+                "type": "mlflow_metric_snapshot",
+                "payload": {
+                    "metric_name": "aiperf.request_count",
+                    "value": 1.0,
+                },
+            },
             {"type": "flush", "payload": {}},
             {"type": "shutdown", "payload": {}},
         ]
@@ -186,8 +193,7 @@ def test_run_fanout_processes_events_for_otel_and_mlflow(
         for call in mlflow_state["log_batch_calls"]
         for metric in call["metrics"]
     ]
-    assert "live.aiperf.request_latency_ns" in logged_metric_keys
-    assert "live.aiperf.requests.completed" in logged_metric_keys
+    assert "live.aiperf.request_count" in logged_metric_keys
     assert mlflow_state["end_run_called"] is True
 
     metadata = orjson.loads((tmp_path / "mlflow_export.json").read_bytes())
@@ -205,13 +211,10 @@ def test_run_fanout_without_otel_sink_still_logs_mlflow(
     queue = _SequenceQueue(
         [
             {
-                "type": "counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.requests.completed",
-                    "unit": "1",
-                    "description": "completed",
+                    "metric_name": "aiperf.request_count",
                     "value": 1.0,
-                    "attributes": {},
                 },
             },
             {"type": "shutdown", "payload": {}},
@@ -225,7 +228,7 @@ def test_run_fanout_without_otel_sink_still_logs_mlflow(
     assert mlflow_state["end_run_called"] is True
 
 
-def test_run_fanout_logs_timing_gauge_snapshots_to_mlflow(
+def test_run_fanout_logs_realtime_metric_snapshots_to_mlflow(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -235,33 +238,24 @@ def test_run_fanout_logs_timing_gauge_snapshots_to_mlflow(
     queue = _SequenceQueue(
         [
             {
-                "type": "up_down_counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.timing.requests.in_flight",
-                    "unit": "1",
-                    "description": "in-flight requests",
+                    "metric_name": "aiperf.request_count",
                     "value": 2.0,
-                    "attributes": {"aiperf.benchmark_phase": "profiling"},
                 },
             },
             {
-                "type": "up_down_counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.timing.requests.in_flight",
-                    "unit": "1",
-                    "description": "in-flight requests",
-                    "value": -1.0,
-                    "attributes": {"aiperf.benchmark_phase": "profiling"},
+                    "metric_name": "aiperf.request_count",
+                    "value": 12.0,
                 },
             },
             {
-                "type": "up_down_counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.timing.requests.in_flight",
-                    "unit": "1",
-                    "description": "in-flight requests",
-                    "value": -1.0,
-                    "attributes": {"aiperf.benchmark_phase": "profiling"},
+                    "metric_name": "aiperf.request_count",
+                    "value": 60.0,
                 },
             },
             {"type": "shutdown", "payload": {}},
@@ -274,11 +268,11 @@ def test_run_fanout_logs_timing_gauge_snapshots_to_mlflow(
     assert len(mlflow_state["log_batch_calls"]) == 1
     logged_metrics = mlflow_state["log_batch_calls"][0]["metrics"]
     assert [metric.key for metric in logged_metrics] == [
-        "live.aiperf.timing.requests.in_flight",
-        "live.aiperf.timing.requests.in_flight",
-        "live.aiperf.timing.requests.in_flight",
+        "live.aiperf.request_count",
+        "live.aiperf.request_count",
+        "live.aiperf.request_count",
     ]
-    assert [metric.value for metric in logged_metrics] == [2.0, 1.0, 0.0]
+    assert [metric.value for metric in logged_metrics] == [2.0, 12.0, 60.0]
 
 
 def test_run_fanout_flushes_mlflow_batches_when_max_batch_size_is_reached(
@@ -296,33 +290,24 @@ def test_run_fanout_flushes_mlflow_batches_when_max_batch_size_is_reached(
     queue = _ObservedSequenceQueue(
         [
             {
-                "type": "counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.requests.completed",
-                    "unit": "1",
-                    "description": "completed",
+                    "metric_name": "aiperf.request_count",
                     "value": 1.0,
-                    "attributes": {},
                 },
             },
             {
-                "type": "counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.requests.completed",
-                    "unit": "1",
-                    "description": "completed",
+                    "metric_name": "aiperf.request_count",
                     "value": 2.0,
-                    "attributes": {},
                 },
             },
             {
-                "type": "counter_add",
+                "type": "mlflow_metric_snapshot",
                 "payload": {
-                    "metric_name": "aiperf.requests.completed",
-                    "unit": "1",
-                    "description": "completed",
+                    "metric_name": "aiperf.request_count",
                     "value": 3.0,
-                    "attributes": {},
                 },
             },
             {"type": "shutdown", "payload": {}},

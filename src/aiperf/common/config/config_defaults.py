@@ -198,6 +198,8 @@ class MLflowDefaults:
     RUN_NAME = None
     TAGS = None
     ARTIFACT_GLOBS = None
+    REQUEST_TIMEOUT_SECONDS = 15
+    REQUEST_MAX_RETRIES = 1
     DEFAULT_ARTIFACT_GLOBS = (
         "*.json",
         "*.csv",

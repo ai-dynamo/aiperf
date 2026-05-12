@@ -105,6 +105,8 @@ def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         return FakeRunContext(selected_run_id)
 
     def log_artifact(local_path: str, artifact_path: str | None = None) -> None:
+        if Path(local_path).name in state.get("fail_artifact_names", set()):
+            raise RuntimeError(f"failed to upload {Path(local_path).name}")
         state["artifacts"].append((local_path, artifact_path))
         state["artifact_contents"][local_path] = Path(local_path).read_text(
             encoding="utf-8"
@@ -163,7 +165,6 @@ def mlflow_user_config(tmp_path: Path) -> UserConfig:
             urls=["http://localhost:8000"],
         ),
         output=OutputConfig(artifact_directory=tmp_path),
-        mlflow=True,
         mlflow_tracking_uri="http://mlflow:5000",
         mlflow_experiment="aiperf-tests",
         mlflow_run_name="nightly-run",
@@ -189,7 +190,7 @@ class TestMLflowDataExporter:
         )
         with pytest.raises(
             DataExporterDisabled,
-            match="set --mlflow --mlflow-tracking-uri to enable",
+            match="set --mlflow-tracking-uri to enable",
         ):
             MLflowDataExporter(config)
 
@@ -295,6 +296,7 @@ class TestMLflowDataExporter:
             "plots/request_throughput.png",
             "plots/custom/panel.html",
         }
+        assert metadata["failed_artifacts"] == []
 
     @pytest.mark.asyncio
     async def test_export_respects_custom_artifact_globs(
@@ -313,7 +315,6 @@ class TestMLflowDataExporter:
                 model_names=["test-model"],
             ),
             output=OutputConfig(artifact_directory=tmp_path),
-            mlflow=True,
             mlflow_tracking_uri="http://mlflow:5000",
             mlflow_experiment="aiperf-tests",
             mlflow_artifact_globs=["plots/**/*.png"],
@@ -331,7 +332,38 @@ class TestMLflowDataExporter:
             Path(local_path).relative_to(tmp_path).as_posix()
             for local_path, _ in state["artifacts"]
         ]
-        assert uploaded == ["plots/latency.png"]
+        assert uploaded == ["plots/latency.png", "mlflow_export.json"]
+
+    @pytest.mark.asyncio
+    async def test_export_records_failed_artifact_uploads(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        mlflow_user_config: UserConfig,
+    ) -> None:
+        _write_artifact(tmp_path / "profile_export_aiperf.json")
+        _write_artifact(tmp_path / "summary.csv")
+
+        state = _install_fake_mlflow_modules(monkeypatch)
+        state["fail_artifact_names"] = {"summary.csv"}
+        config = ExporterConfig(
+            results=sample_results,
+            user_config=mlflow_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+
+        exporter = MLflowDataExporter(config)
+        await exporter.export()
+
+        metadata = orjson.loads((tmp_path / "mlflow_export.json").read_bytes())
+        assert metadata["uploaded_artifacts"] == ["profile_export_aiperf.json"]
+        assert metadata["failed_artifacts"] == ["summary.csv"]
+        uploaded_metadata = orjson.loads(
+            state["artifact_contents"][str(tmp_path / "mlflow_export.json")]
+        )
+        assert uploaded_metadata == metadata
 
     @pytest.mark.asyncio
     async def test_export_reuses_live_streaming_run_when_metadata_matches(

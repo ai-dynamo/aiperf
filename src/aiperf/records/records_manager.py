@@ -69,6 +69,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ResultsProcessorType, UIType
 from aiperf.post_processors.protocols import (
     FlushableResultsProcessorProtocol,
+    RealtimeMetricsProcessorProtocol,
     ResultsProcessorProtocol,
 )
 from aiperf.records.error_tracker import ErrorTracker
@@ -141,6 +142,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
         self._timing_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
+        self._realtime_metrics_processors: list[RealtimeMetricsProcessorProtocol] = []  # fmt: skip
         self._gpu_telemetry_processors: list[GPUTelemetryProcessorProtocol] = []  # fmt: skip
         self._server_metrics_processors: list[ServerMetricsProcessorProtocol] = []  # fmt: skip
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None  # fmt: skip
@@ -177,6 +179,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     self._metric_results_processors.append(results_processor)
                     if entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER:
                         self._timing_results_processors.append(results_processor)
+                    if isinstance(results_processor, RealtimeMetricsProcessorProtocol):
+                        self._realtime_metrics_processors.append(results_processor)
 
                 self.debug(
                     f"Created results processor: {entry.name}: {results_processor.__class__.__name__}"
@@ -403,6 +407,29 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     f"{results_processor.__class__.__name__}: {result!r}"
                 )
 
+    async def _send_realtime_metrics_to_results_processors(
+        self, metrics: list[MetricResult]
+    ) -> None:
+        """Send realtime metric snapshots to interested results processors."""
+        if not self._realtime_metrics_processors:
+            return
+
+        results = await asyncio.gather(
+            *[
+                processor.process_realtime_metrics(metrics)
+                for processor in self._realtime_metrics_processors
+            ],
+            return_exceptions=True,
+        )
+        for processor, result in zip(
+            self._realtime_metrics_processors, results, strict=True
+        ):
+            if isinstance(result, BaseException):
+                self.exception(
+                    "Failed to process realtime metrics in "
+                    f"{processor.__class__.__name__}: {result!r}"
+                )
+
     async def _send_telemetry_to_results_processors(
         self, telemetry_records: list[TelemetryRecord]
     ) -> None:
@@ -586,6 +613,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if (
             self.service_config.ui_type != UIType.DASHBOARD
             and not Environment.UI.REALTIME_METRICS_ENABLED
+            and not self.user_config.mlflow_enabled
         ):
             return
 
@@ -627,6 +655,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Report inference metrics (used by command handler)."""
         metrics = await self._generate_realtime_metrics()
         if metrics:
+            await self._send_realtime_metrics_to_results_processors(metrics)
             await self.publish(
                 RealtimeMetricsMessage(
                     service_id=self.service_id,

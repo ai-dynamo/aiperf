@@ -15,7 +15,11 @@ from typing import Any
 from aiperf.common.config import MLflowDefaults, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import (
+    MetricTypeError,
+    MetricUnitError,
+    PostProcessorDisabled,
+)
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import CreditPhaseStats, MetricResult
@@ -23,6 +27,7 @@ from aiperf.common.optional_dependencies import (
     OTEL_METRICS_STREAMING_FEATURE,
     otel_dependency_message,
 )
+from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.post_processors.otel_streaming_fanout import (
     OTelStreamingFanoutConfig,
@@ -98,11 +103,11 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         if not self._otel_metrics_url and not self._mlflow_live_enabled:
             self.info(
                 "Telemetry streaming is disabled "
-                "(set --otel-url and/or --mlflow --mlflow-tracking-uri to enable)"
+                "(set --otel-url and/or --mlflow-tracking-uri to enable)"
             )
             raise PostProcessorDisabled(
                 "Telemetry streaming is disabled "
-                "(set --otel-url and/or --mlflow --mlflow-tracking-uri to enable)"
+                "(set --otel-url and/or --mlflow-tracking-uri to enable)"
             )
         if self._otel_metrics_url:
             try:
@@ -281,6 +286,27 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 f"Skipping unsupported OTel result payload type: {type(record_data)}"
             )
         )
+
+    async def process_realtime_metrics(self, metrics: list[MetricResult]) -> None:
+        """Send realtime snapshot metrics to the MLflow live sink."""
+        if (
+            not self._streaming_ready
+            or not self._use_fanout_process
+            or not self._mlflow_live_enabled
+        ):
+            return
+
+        for metric in metrics:
+            value = self._metric_result_snapshot_value(metric)
+            if value is None:
+                continue
+            self._queue_fanout_event(
+                "mlflow_metric_snapshot",
+                {
+                    "metric_name": f"aiperf.{metric.tag}",
+                    "value": value,
+                },
+            )
 
     async def flush(self, *, force: bool = False) -> None:
         """Force a flush of pending SDK metrics exports."""
@@ -499,10 +525,6 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         attributes["aiperf.worker.id"] = metadata.worker_id
         attributes["aiperf.record_processor.id"] = metadata.record_processor_id
         attributes["aiperf.benchmark_phase"] = str(metadata.benchmark_phase)
-        if metadata.session_num is not None:
-            attributes["aiperf.session_num"] = metadata.session_num
-        if metadata.turn_index is not None:
-            attributes["aiperf.turn_index"] = metadata.turn_index
         attributes["aiperf.was_cancelled"] = metadata.was_cancelled
         attributes["aiperf.has_error"] = record.error is not None
         return attributes
@@ -552,10 +574,12 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         if isinstance(metric_value, bool):
             return []
         if isinstance(metric_value, int | float):
-            return [float(metric_value)]
+            return [
+                self._convert_metric_value_to_display_unit(metric_name, metric_value)
+            ]
         if isinstance(metric_value, list):
             numeric_values = [
-                float(value)
+                self._convert_metric_value_to_display_unit(metric_name, value)
                 for value in metric_value
                 if isinstance(value, int | float) and not isinstance(value, bool)
             ]
@@ -572,9 +596,44 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
 
     def _metric_unit(self, metric_name: str) -> str:
         """Return a unit string for a metric name."""
+        try:
+            metric_class = MetricRegistry.get_class(metric_name)
+        except MetricTypeError:
+            metric_class = None
+        if metric_class is not None:
+            display_unit = metric_class.display_unit or metric_class.unit
+            return str(display_unit)
         if metric_name.endswith("_ns"):
             return "ns"
         return "1"
+
+    def _convert_metric_value_to_display_unit(
+        self, metric_name: str, value: int | float
+    ) -> float:
+        """Convert record metric values to the same display unit used elsewhere."""
+        try:
+            metric_class = MetricRegistry.get_class(metric_name)
+        except MetricTypeError:
+            return float(value)
+
+        display_unit = metric_class.display_unit or metric_class.unit
+        try:
+            return float(metric_class.unit.convert_to(display_unit, value))
+        except MetricUnitError as exc:
+            self.warning(
+                f"Failed to convert OTel metric {metric_name} from "
+                f"{metric_class.unit} to {display_unit}: {exc!r}"
+            )
+            return float(value)
+
+    def _metric_result_snapshot_value(self, metric: MetricResult) -> float | None:
+        """Pick the single snapshot value MLflow should plot for a realtime metric."""
+        value = metric.current if metric.current is not None else metric.avg
+        if value is None or isinstance(value, bool):
+            return None
+        if not isinstance(value, int | float):
+            return None
+        return float(value)
 
     def timing_unit(self, metric_name: str) -> str:
         """Return a unit string for timing metrics."""
