@@ -256,64 +256,66 @@ def _symbolic_equal(a_raw: str, b_raw: str) -> bool:
     return False
 
 
-def _math_equal(prediction: str, reference: str, depth: int = 0) -> bool:
-    """Hendrycks-style equality check, ported from the recipe.
-
-    Tries (in order): lowercased string equality, single-choice prefix
-    strip + recurse, comma-list ordering (sorted compare), numerical
-    equality with percentage variants, brace/paren strip + lowercase
-    compare, equation-form rewrite, and finally symbolic equality via
-    sympy.
-
-    The ``depth`` parameter is a recursion guard for the rewrites.
-    """
-    if depth > _MAX_DEPTH:
+def _handle_single_choice_prefix(prediction: str, reference: str) -> bool:
+    """Match a single-letter A-E reference by extracting the last A-E letter
+    from a cleaned prediction string."""
+    if reference not in ("A", "B", "C", "D", "E"):
         return False
+    cleaned = prediction.strip("\n").rstrip(".").rstrip("/").strip(" ").lstrip(":")
+    letters = re.findall(r"\b(A|B|C|D|E)\b", cleaned.upper())
+    return bool(letters and letters[-1] == reference)
 
-    if prediction is None or reference is None:
-        return False
 
-    pred_s = str(prediction).strip().lower()
-    ref_s = str(reference).strip().lower()
-    if pred_s == ref_s:
-        return True
-
-    # Single-letter answer with prefix unwrapping.
-    if reference in ("A", "B", "C", "D", "E"):
-        cleaned = prediction.strip("\n").rstrip(".").rstrip("/").strip(" ").lstrip(":")
-        letters = re.findall(r"\b(A|B|C|D|E)\b", cleaned.upper())
-        if letters and letters[-1] == reference:
-            return True
-
+def _apply_single_choice_patterns(prediction: str, reference: str, depth: int) -> bool:
+    """Strip a recognized choice-prefix pattern off the prediction and
+    recurse into ``_math_equal`` on the remainder."""
     for pat in _SINGLE_CHOICE_PATTERNS:
         if re.match(pat, prediction):
             cleaned = re.sub(pat, "", prediction, count=1).strip()
             if _math_equal(cleaned, reference, depth + 1):
                 return True
+    return False
 
-    # Comma-separated unordered match.
-    if "," in prediction and "," in reference:
-        pred_parts = sorted(p.strip() for p in prediction.split(","))
-        ref_parts = sorted(p.strip() for p in reference.split(","))
-        if len(pred_parts) == len(ref_parts) and all(
-            _math_equal(pp, rp, depth + 1)
-            for pp, rp in zip(pred_parts, ref_parts, strict=False)
-        ):
-            return True
 
-    # Numerical equality (with percentage variants).
-    if _is_digit(prediction) and _is_digit(reference):
-        p_num = _parse_digits(prediction)
-        r_num = _parse_digits(reference)
-        if p_num is None or r_num is None:
-            return False
-        candidates = (r_num / 100, r_num, r_num * 100)
-        return any(isclose(p_num, c, abs_tol=_NUMERIC_ABS_TOL) for c in candidates)
-
-    if not prediction and prediction not in (0, False):
+def _compare_comma_list(prediction: str, reference: str, depth: int) -> bool:
+    """Sort comma-separated lists and compare element-wise via _math_equal."""
+    if "," not in prediction or "," not in reference:
         return False
+    pred_parts = sorted(p.strip() for p in prediction.split(","))
+    ref_parts = sorted(p.strip() for p in reference.split(","))
+    return len(pred_parts) == len(ref_parts) and all(
+        _math_equal(pp, rp, depth + 1)
+        for pp, rp in zip(pred_parts, ref_parts, strict=False)
+    )
 
-    # Brace/paren strip + lowercase compare.
+
+def _numeric_equality_with_percent(prediction: str, reference: str) -> bool | None:
+    """Numeric comparison with percentage variants.
+
+    Tri-state semantics — caller must respect them:
+
+    * ``None``  → inputs are not both numeric; fall through to the next
+      strategy.
+    * ``True``  → numeric match (one of the percent-scaled candidates is
+      within ``_NUMERIC_ABS_TOL``).
+    * ``False`` → both inputs were numeric, but the parsed values are
+      not close. **Terminal** — do not fall through to brace/paren,
+      equation-rewrite, or symbolic checks. Mirrors the recipe's
+      ``return any(...)`` short-circuit.
+    """
+    if not (_is_digit(prediction) and _is_digit(reference)):
+        return None
+    p_num = _parse_digits(prediction)
+    r_num = _parse_digits(reference)
+    if p_num is None or r_num is None:
+        return False
+    candidates = (r_num / 100, r_num, r_num * 100)
+    return any(isclose(p_num, c, abs_tol=_NUMERIC_ABS_TOL) for c in candidates)
+
+
+def _brace_paren_compare(prediction: str, reference: str) -> bool:
+    """Strip mismatched outer brackets / braces / parens, then compare
+    the residual strings case-insensitively."""
     pred_str = str(prediction).strip()
     ref_str = str(reference).strip()
     if (
@@ -330,31 +332,90 @@ def _math_equal(prediction: str, reference: str, depth: int = 0) -> bool:
     for s in ("{", "}", "(", ")"):
         ref_str = ref_str.replace(s, "")
         pred_str = pred_str.replace(s, "")
-    if pred_str.lower() == ref_str.lower():
-        return True
+    return pred_str.lower() == ref_str.lower()
 
-    # Equation-form rewrites.
+
+def _equation_rewrites(prediction: str, reference: str, depth: int) -> bool:
+    """Equation-form rewrites:
+
+    * ``a = b`` vs ``c = d`` → compare ``a - (b)`` to ``c - (d)`` symbolically.
+    * ``x = v`` (lhs ≤ 2 chars) on one side, plain value on the other →
+      compare the rhs to the plain value via ``_math_equal``.
+    """
     if prediction.count("=") == 1 and reference.count("=") == 1:
         p_lhs, p_rhs = (s.strip() for s in prediction.split("="))
         r_lhs, r_rhs = (s.strip() for s in reference.split("="))
-        if _symbolic_equal(f"{p_lhs} - ({p_rhs})", f"{r_lhs} - ({r_rhs})"):
-            return True
-    elif (
+        return _symbolic_equal(f"{p_lhs} - ({p_rhs})", f"{r_lhs} - ({r_rhs})")
+    if (
         prediction.count("=") == 1
         and len(prediction.split("=")[0].strip()) <= 2
         and "=" not in reference
     ):
-        if _math_equal(prediction.split("=")[1], reference, depth + 1):
-            return True
-    elif (
+        return _math_equal(prediction.split("=")[1], reference, depth + 1)
+    if (
         reference.count("=") == 1
         and len(reference.split("=")[0].strip()) <= 2
         and "=" not in prediction
     ):
-        if _math_equal(prediction, reference.split("=")[1], depth + 1):
-            return True
+        return _math_equal(prediction, reference.split("=")[1], depth + 1)
+    return False
 
-    # Final symbolic check.
+
+def _math_equal(prediction: str, reference: str, depth: int = 0) -> bool:
+    """Hendrycks-style equality check, ported from the recipe.
+
+    Strategy order (each falls through on no-match unless noted):
+
+    1. Recursion-depth guard, then null-input guard.
+    2. Direct lowercased string equality.
+    3. ``_handle_single_choice_prefix`` — A-E letter answer matching.
+    4. ``_apply_single_choice_patterns`` — strip a choice-prefix and recurse.
+    5. ``_compare_comma_list`` — sorted comma-list element-wise compare.
+    6. ``_numeric_equality_with_percent`` — **terminal** when both inputs
+       look numeric: returns the verdict directly without falling through
+       to symbolic.
+    7. Empty-prediction shortcut (matches the recipe's exact placement
+       AFTER the numeric branch).
+    8. ``_brace_paren_compare`` — bracket-stripped lowercase compare.
+    9. ``_equation_rewrites`` — equation-form normalizations.
+    10. ``_symbolic_equal`` — sympy/latex2sympy symbolic equivalence
+        (final fallback).
+
+    ``depth`` is a recursion guard for the rewrites (capped at
+    ``_MAX_DEPTH``).
+    """
+    if depth > _MAX_DEPTH:
+        return False
+    if prediction is None or reference is None:
+        return False
+
+    if str(prediction).strip().lower() == str(reference).strip().lower():
+        return True
+
+    if _handle_single_choice_prefix(prediction, reference):
+        return True
+    if _apply_single_choice_patterns(prediction, reference, depth):
+        return True
+    if _compare_comma_list(prediction, reference, depth):
+        return True
+
+    # Numeric equality is terminal — see the helper docstring for why.
+    numeric_verdict = _numeric_equality_with_percent(prediction, reference)
+    if numeric_verdict is not None:
+        return numeric_verdict
+
+    # Post-numeric empty-pred shortcut, kept inline because it sits
+    # between two strategies in the recipe and excludes 0 / False to
+    # avoid eating valid numeric-zero predictions that the numeric
+    # branch above already handled.
+    if not prediction and prediction not in (0, False):
+        return False
+
+    if _brace_paren_compare(prediction, reference):
+        return True
+    if _equation_rewrites(prediction, reference, depth):
+        return True
+
     return _symbolic_equal(prediction, reference)
 
 

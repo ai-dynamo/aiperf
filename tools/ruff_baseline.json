@@ -1244,11 +1244,6 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/accuracy/graders/math.py",
-      "_math_equal"
-    ],
-    [
-      "PLR0912",
       "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],

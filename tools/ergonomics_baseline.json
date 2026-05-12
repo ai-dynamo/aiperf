@@ -248,11 +248,6 @@
     ],
     [
       "function-size",
-      "src/aiperf/accuracy/graders/math.py",
-      "_math_equal"
-    ],
-    [
-      "function-size",
       "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
