@@ -184,3 +184,77 @@ async def test_double_recycle_guard_still_fires_on_repeated_correlation_id():
     await strategy.handle_credit_return(final)
     with pytest.raises(RuntimeError, match="Double recycle"):
         await strategy.handle_credit_return(final)
+
+
+@pytest.mark.asyncio
+async def test_warning_emitted_when_wrap_fill_and_cache_bust_none(caplog):
+    import logging
+
+    from aiperf.common.enums import CacheBustTarget
+
+    trajectories = [
+        Trajectory(conversation_id="trace_0", start_turn_index=0),
+        Trajectory(conversation_id="trace_0", start_turn_index=1),
+    ]
+    ds = _make_dataset(num_traces=1, turns_per_trace=4)
+    with caplog.at_level(logging.WARNING, logger="AgenticReplayTiming"):
+        _make_strategy(
+            phase=CreditPhase.PROFILING,
+            trajectories=trajectories,
+            dataset=ds,
+            issuer=AsyncMock(),
+            cache_bust_target=CacheBustTarget.NONE,
+        )
+    msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("cache_bust" in m.lower() and "identical" in m.lower() for m in msgs), (
+        msgs
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_warning_when_wrap_fill_and_cache_bust_set(caplog):
+    import logging
+
+    from aiperf.common.enums import CacheBustTarget
+
+    trajectories = [
+        Trajectory(conversation_id="trace_0", start_turn_index=0),
+        Trajectory(conversation_id="trace_0", start_turn_index=1),
+    ]
+    ds = _make_dataset(num_traces=1, turns_per_trace=4)
+    with caplog.at_level(logging.WARNING, logger="AgenticReplayTiming"):
+        _make_strategy(
+            phase=CreditPhase.PROFILING,
+            trajectories=trajectories,
+            dataset=ds,
+            issuer=AsyncMock(),
+            cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+        )
+    msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert not any("identical" in m.lower() for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_no_warning_when_no_wrap_fill_and_cache_bust_none(caplog):
+    """Warning is about wrap-fill creating identical traffic, not about
+    cache-bust being off in general.
+    """
+    import logging
+
+    from aiperf.common.enums import CacheBustTarget
+
+    trajectories = [
+        Trajectory(conversation_id="trace_0", start_turn_index=0),
+        Trajectory(conversation_id="trace_1", start_turn_index=0),
+    ]
+    ds = _make_dataset(num_traces=2, turns_per_trace=4)
+    with caplog.at_level(logging.WARNING, logger="AgenticReplayTiming"):
+        _make_strategy(
+            phase=CreditPhase.PROFILING,
+            trajectories=trajectories,
+            dataset=ds,
+            issuer=AsyncMock(),
+            cache_bust_target=CacheBustTarget.NONE,
+        )
+    msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert not any("identical" in m.lower() for m in msgs), msgs
