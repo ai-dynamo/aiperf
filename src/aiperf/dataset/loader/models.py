@@ -311,6 +311,13 @@ class MooncakeTrace(AIPerfBaseModel):
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
+    headers: dict[str, str] | None = Field(
+        None,
+        description="Per-request HTTP headers to inject for this turn (e.g., "
+        "{'x-session-token': 'abc'} for routing affinity, or {'baggage': "
+        "'k1=v1,k2=v2'} for W3C context propagation). Merged into the outgoing "
+        "request after endpoint-config headers, so trace values win on key conflict.",
+    )
 
     @model_validator(mode="after")
     def validate_input(self) -> "MooncakeTrace":
