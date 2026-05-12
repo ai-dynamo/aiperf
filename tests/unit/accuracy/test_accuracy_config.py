@@ -20,8 +20,9 @@ from aiperf.common.config.accuracy_config import AccuracyConfig
 # Stub names match the ``is_implemented: false`` entries in plugins.yaml.
 # Update both lists together when a follow-up branch lands an
 # implementation (and remove the ``is_implemented: false`` from the YAML).
+# This branch (AIP-874) implements ``aime``, ``math``, and ``code_execution``,
+# so those names are absent from the stub lists.
 STUB_BENCHMARKS = (
-    "aime",
     "hellaswag",
     "bigbench",
     "aime24",
@@ -30,7 +31,7 @@ STUB_BENCHMARKS = (
     "gpqa_diamond",
     "lcb_codegeneration",
 )
-STUB_GRADERS = ("exact_match", "math", "code_execution")
+STUB_GRADERS = ("exact_match",)
 
 
 class TestAcceptsImplemented:
@@ -113,9 +114,8 @@ class TestRejectsStubGrader:
 
         AccuracyConfig stays neutral about which grader the benchmark
         defaults to — the dataset loader resolves that. This test pins
-        that behavior so the validator never blocks the default-grader
-        path even when the default itself is currently a stub (e.g.
-        ``aime`` defaulting to ``math``).
+        that behavior so the validator only ever inspects an explicit
+        ``--accuracy-grader`` override.
         """
         cfg = AccuracyConfig(benchmark="mmlu")
         assert cfg.grader is None
