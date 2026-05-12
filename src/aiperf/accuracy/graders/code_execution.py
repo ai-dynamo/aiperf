@@ -152,13 +152,11 @@ class CodeExecutionGrader(BaseGrader):
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
             )
 
-        # ``metrics.get("pass@1", [0.0])[0]`` would IndexError when
-        # lighteval returns ``{"pass@1": []}`` (a present-but-empty
-        # list). That indexing sits outside the surrounding except, so
-        # an empty list would crash the record processor instead of
-        # producing a failed grade. Default to 0.0 instead.
-        pass_at_1_list = metrics.get("pass@1")
-        pass_at_1 = float(pass_at_1_list[0]) if pass_at_1_list else 0.0
+        pass_at_1 = _extract_pass_at_1(metrics)
+        if pass_at_1 is None:
+            return _grading_failure(
+                response_text, ground_truth, "lighteval pass@1 not numeric"
+            )
         correct = pass_at_1 >= 1.0
         return GradingResult(
             correct=correct,
@@ -172,6 +170,32 @@ class CodeExecutionGrader(BaseGrader):
             extracted_answer=snippet,
             ground_truth="<lcb test cases>",
         )
+
+
+def _extract_pass_at_1(metrics: dict[str, Any]) -> float | None:
+    """Read the aggregate ``pass@1`` from ``codegen_metrics``' return shape.
+
+    ``codegen_metrics`` returns the aggregate pass@1 under the
+    ``"pass@1"`` key — a numpy scalar on lighteval 0.13+, a list on
+    older pins. (The per-task scores live under
+    ``metrics["detail"]["pass@1"]``, NOT the aggregate key.) We accept
+    both shapes and let ``float()`` coerce numpy/Python numerics
+    uniformly. Returns ``None`` when the value is missing or not
+    numerically coercible so the caller can route through
+    ``_grading_failure`` instead of crashing on a stale assumption.
+    """
+    raw = metrics.get("pass@1", 0.0)
+    if isinstance(raw, list):
+        raw = raw[0] if raw else 0.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        _log.debug(
+            "lighteval pass@1 not numeric: %r (type=%s)",
+            raw,
+            type(raw).__name__,
+        )
+        return None
 
 
 def _build_evaluation_sample(
