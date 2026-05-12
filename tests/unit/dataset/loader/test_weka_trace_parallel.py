@@ -194,6 +194,7 @@ def _drive_parallel_inproc(
                 ignore_delays=ignore_delays,
                 think_time_only=think_time_only,
                 model_map=loader._build_model_map(trace),
+                block_size=loader._block_size_for_trace(trace),
             )
             results.append(wpc._process_task(task))
         return results
@@ -233,6 +234,7 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
         trace_id: str
         normals: list
         subagents: list
+        block_size: int
 
     @dataclass
     class _ChildPlan:
@@ -242,12 +244,14 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
         entry: object
         stream_index: int
         stream_requests: list
+        block_size: int
 
     parent_plans: list = []
     child_plans: list = []
 
     for trace_id, wekas in data.items():
         trace = wekas[0]
+        trace_bs = loader._block_size_for_trace(trace)
         normals = []
         subagents = []
         for idx, req in enumerate(trace.requests):
@@ -276,9 +280,10 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
                             entry=req,
                             stream_index=stream_idx,
                             stream_requests=stream_reqs,
+                            block_size=trace_bs,
                         )
                     )
-        parent_plans.append(_ParentPlan(trace_id, normals, subagents))
+        parent_plans.append(_ParentPlan(trace_id, normals, subagents, trace_bs))
 
     return parent_plans, child_plans, {}
 
@@ -556,8 +561,8 @@ def test_worker_scope_helpers_deterministic_per_trace_id(tmp_path):
             )
             wpc._init_worker(args)
 
-        decode_a, _, _ = wpc._make_scope_helpers("scope-a")
-        decode_b, _, _ = wpc._make_scope_helpers("scope-b")
+        decode_a, _, _ = wpc._make_scope_helpers("scope-a", 64)
+        decode_b, _, _ = wpc._make_scope_helpers("scope-b", 64)
         toks_a = decode_a([42])
         toks_b = decode_b([42])
         assert toks_a != toks_b, (
@@ -565,7 +570,7 @@ def test_worker_scope_helpers_deterministic_per_trace_id(tmp_path):
         )
 
         # Determinism: re-running with same scope yields identical content.
-        decode_a2, _, _ = wpc._make_scope_helpers("scope-a")
+        decode_a2, _, _ = wpc._make_scope_helpers("scope-a", 64)
         toks_a2 = decode_a2([42])
         assert toks_a == toks_a2
     finally:

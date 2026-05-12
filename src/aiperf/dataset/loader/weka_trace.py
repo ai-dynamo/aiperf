@@ -107,6 +107,7 @@ class _ParentPlan:
     trace_id: str
     normals: list[tuple[int, _NormalRequestT]]
     subagents: list[tuple[int, WekaSubagentEntry]]
+    block_size: int
 
 
 @dataclass
@@ -117,12 +118,14 @@ class _ChildPlan:
     entry: WekaSubagentEntry
     stream_index: int
     stream_requests: list[WekaNormalRequest]
+    block_size: int
 
 
 def _expand_subagent_to_child_plans(
     trace_id: str,
     sa_index: int,
     entry: WekaSubagentEntry,
+    block_size: int,
 ) -> list[_ChildPlan]:
     """Pack a subagent's inner requests into per-stream child plans.
 
@@ -149,6 +152,7 @@ def _expand_subagent_to_child_plans(
                 entry=entry,
                 stream_index=stream_idx,
                 stream_requests=stream_reqs,
+                block_size=block_size,
             )
         )
     return plans
@@ -220,15 +224,34 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._tokenizer_revision = user_config.tokenizer.revision
         user_block_size = user_config.input.prompt.input_tokens.block_size
         if user_block_size is not None:
-            self._block_size = user_block_size
+            self._user_block_size_override: int | None = user_block_size
         elif default_block_size is not None:
-            self._block_size = default_block_size
+            self._user_block_size_override = default_block_size
         else:
-            self._block_size = 64  # matches Weka traces' default
+            self._user_block_size_override = None
+        # ``self._block_size`` is preserved for callbacks (``_decode_block_tokens``
+        # closes over it) and for tests that set it directly. It is overwritten
+        # per-trace in the reconstruction loop with the result of
+        # ``_block_size_for_trace`` so the user-override > trace-declared > 64
+        # precedence is honored without changing the callback signature.
+        self._block_size = self._user_block_size_override or 64
         self._delay_cap_tracker = DelayCapTracker(
             cap_seconds=user_config.loadgen.inter_turn_delay_cap_seconds
         )
         self._use_live_assistant = Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
+
+    def _block_size_for_trace(self, trace: WekaTrace) -> int:
+        """Resolve block_size with precedence: user-override > trace-declared > 64.
+
+        Real Weka captures declare their own ``block_size`` per file (see
+        :class:`WekaTrace.block_size`). When the user hasn't passed
+        ``--block-size`` (or whatever flag maps to
+        ``user_config.input.prompt.input_tokens.block_size``) we honor that
+        per-file value instead of silently using the historical default of 64.
+        """
+        if self._user_block_size_override is not None:
+            return self._user_block_size_override
+        return trace.block_size
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
@@ -540,6 +563,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         for trace_id, wekas in data.items():
             trace = wekas[0]
+            trace_bs = self._block_size_for_trace(trace)
             normals: list[tuple[int, _NormalRequestT]] = []
             subagents: list[tuple[int, WekaSubagentEntry]] = []
             for idx, req in enumerate(trace.requests):
@@ -551,9 +575,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     sa_index = len(subagents)
                     subagents.append((idx, req))
                     child_plans.extend(
-                        _expand_subagent_to_child_plans(trace_id, sa_index, req)
+                        _expand_subagent_to_child_plans(
+                            trace_id, sa_index, req, trace_bs
+                        )
                     )
-            parent_plans.append(_ParentPlan(trace_id, normals, subagents))
+            parent_plans.append(
+                _ParentPlan(trace_id, normals, subagents, block_size=trace_bs)
+            )
 
         # Per-trace model rewrite map. Built once here, applied in both the
         # serial and parallel reconstruction paths so workers don't need
@@ -672,6 +700,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             pg._cache.clear()
             pg._hash_id_corpus_rng.set_trace_id(plan.trace_id)
 
+            # Sync the instance attribute so the ``_decode_block_tokens``
+            # closure (which reads ``self._block_size``) sees the per-trace
+            # value resolved by ``_block_size_for_trace``.
+            self._block_size = plan.block_size
+
             model_map = model_map_per_trace.get(plan.trace_id, {})
 
             # raw_messages carries delta-encoded segments per turn; the
@@ -683,7 +716,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 context_mode=self._resolved_context_mode(),
             )
             recon = ConversationReconstructor(
-                block_size=self._block_size,
+                block_size=plan.block_size,
                 decode_block_tokens=self._decode_block_tokens,
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
@@ -844,9 +877,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             pg = self.prompt_generator
             pg._cache.clear()
             pg._hash_id_corpus_rng.set_trace_id(cp.session_id)
+            # Sync for ``_decode_block_tokens``; see parent loop above.
+            self._block_size = cp.block_size
 
             child_recon = ConversationReconstructor(
-                block_size=self._block_size,
+                block_size=cp.block_size,
                 decode_block_tokens=self._decode_block_tokens,
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
@@ -1023,6 +1058,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     think_time_only=think_time_only,
                     model_map=model_map_per_trace.get(plan.trace_id, {}),
                     emit_assistant_segments=not self._use_live_assistant,
+                    block_size=plan.block_size,
                 )
             )
 
