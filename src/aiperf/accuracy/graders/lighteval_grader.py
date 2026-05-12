@@ -264,9 +264,21 @@ class LightevalGPQAGrader(_LightevalBaseGrader):
         ``" A"`` (leading-space). lighteval expects a bare letter, so
         we strip here. We also build the four-choice shape lighteval
         uses for indices extraction.
+
+        Raises:
+            ValueError: when ``ground_truth`` does not normalize to a
+                single A/B/C/D letter. Silently coercing invalid gold
+                to choice A would treat every model picking "A" as
+                correct on a malformed row, so we fail fast and let
+                ``_safe_compute`` surface it as ``unparsed=True``.
         """
         letter = ground_truth.strip().upper()
-        gold_index = "ABCD".index(letter) if letter in "ABCD" else 0
+        if letter not in {"A", "B", "C", "D"}:
+            raise ValueError(
+                "GPQA-Diamond ground_truth must normalize to one of "
+                f"A/B/C/D; got {ground_truth!r} (cleaned: {letter!r})"
+            )
+        gold_index = "ABCD".index(letter)
         return Doc(
             task_name=type(self).__name__,
             query="",
