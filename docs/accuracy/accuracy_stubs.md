@@ -139,7 +139,7 @@ class BaseGrader(AIPerfLoggerMixin):
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | **IMPLEMENTED in PR #815** — canonical reference for new graders. Matches choice labels (A/B/C/D) by regex extraction then exact comparison. |
-| 2 | `MathGrader` | `graders/math.py` | `math` | **IMPLEMENTED with the AIME loader.** Extracts the last `\boxed{...}` (balanced braces), falls back to "the answer is X" / last-number heuristics, and compares via `Fraction` parsing or normalized string equality. Stdlib-only; no `math_verify` dependency. |
+| 2 | `MathGrader` | `graders/math.py` | `math` | **IMPLEMENTED with the AIME loader.** Extracts the last `\boxed{...}` (balanced braces), falls back to "the answer is X" / last-number heuristics. Comparison uses a sympy + latex2sympy2-extended symbolic parsing path when the `[accuracy]` extras are installed (ported from the trt-llm benchmark recipe's `math_equal`/`strip_string`); when those packages are missing, the grader transparently falls back to a stdlib `Fraction` parsing + normalized string equality comparison and emits a one-time warning. |
 
 ### Still Stubbed
 
