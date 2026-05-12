@@ -310,6 +310,24 @@ endpoint:
       tokenizes_input: true
       metrics_title: Image Generation Metrics
 
+  image_edit:
+    class: aiperf.endpoints.openai_image_edit:ImageEditEndpoint
+    description: |
+      OpenAI Image Edit (image-to-image) endpoint. Edits an input image using
+      a text prompt. Compatible with SGLang's /v1/images/edits and FLUX.2
+      unified diffusion serving. Uses multipart/form-data request encoding
+      because the input image is uploaded as a file field. Use
+      --endpoint-type image_edit.
+    metadata:
+      endpoint_path: /v1/images/edits
+      supports_streaming: false
+      produces_tokens: false
+      produces_images: true
+      supports_images: true
+      tokenizes_input: true
+      requires_form_data: true
+      metrics_title: Image Edit Metrics
+
   video_generation:
     class: aiperf.endpoints.openai_video_generation:VideoGenerationEndpoint
     description: |
