@@ -127,19 +127,7 @@ class CodeExecutionGrader(BaseGrader):
                 response_text, ground_truth, f"malformed test cases: {exc}"
             )
 
-        # Build lighteval's expected sample shape (one sample = one
-        # problem with all its test cases bundled into a JSON string).
-        evaluation_sample = [
-            {
-                "input_output": orjson.dumps(
-                    {
-                        "inputs": inputs,
-                        "outputs": outputs,
-                        "fn_name": fn_name,
-                    }
-                ).decode()
-            }
-        ]
+        evaluation_sample = _build_evaluation_sample(inputs, outputs, fn_name)
         # ``generations`` is a list-of-lists: one sample, with one
         # candidate generation. Wrap the response in extract_code so
         # we send only the code block to the sandbox.
@@ -184,6 +172,20 @@ class CodeExecutionGrader(BaseGrader):
             extracted_answer=snippet,
             ground_truth="<lcb test cases>",
         )
+
+
+def _build_evaluation_sample(
+    inputs: list[Any], outputs: list[Any], fn_name: str | None
+) -> list[dict[str, str]]:
+    """Build lighteval's expected sample shape (one sample = one problem
+    with all its test cases bundled into a JSON string under ``input_output``)."""
+    return [
+        {
+            "input_output": orjson.dumps(
+                {"inputs": inputs, "outputs": outputs, "fn_name": fn_name}
+            ).decode()
+        }
+    ]
 
 
 def _payload_to_test_cases(
