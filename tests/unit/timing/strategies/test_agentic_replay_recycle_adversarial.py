@@ -707,3 +707,203 @@ async def test_recycle_missing_correlation_id_logs_warning(caplog):
 
     # The fallback path issues a fresh credit (lane 0) so recycle progresses.
     assert issuer.issue_credit.await_count == 1
+
+
+# =============================================================================
+# Tests 10-13: DAG-child final-turn short-circuit
+#
+# DAG-child terminal completion is owned by BranchOrchestrator
+# (on_child_leaf_reached / on_child_errored, invoked by CreditCallbackHandler
+# before reaching the strategy). The trajectory recycle pool is root-only:
+# child conversation_ids like ``parent::sa:agent_id`` are NOT legitimate pool
+# entries, and they repeat across recycle passes of the same parent. Without
+# the short-circuit, the second time a parent re-runs, its child re-completes
+# with the same conversation_id and trips the double-recycle guard.
+# =============================================================================
+
+
+def _make_child_credit(
+    *,
+    conversation_id: str,
+    turn_index: int,
+    num_turns: int,
+    agent_depth: int = 1,
+    x_correlation_id: str = "xcorr_child",
+    parent_correlation_id: str = "xcorr_parent",
+) -> Credit:
+    return Credit(
+        id=0,
+        phase=CreditPhase.PROFILING,
+        conversation_id=conversation_id,
+        x_correlation_id=x_correlation_id,
+        turn_index=turn_index,
+        num_turns=num_turns,
+        issued_at_ns=0,
+        agent_depth=agent_depth,
+        parent_correlation_id=parent_correlation_id,
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+
+
+@pytest.mark.asyncio
+async def test_child_final_turn_does_not_enter_recycle_pool():
+    """A DAG-child final-turn return must NOT push the child's conversation_id
+    into the recycle queue, must NOT add it to ``_in_flight_recycled``, and
+    must NOT dispatch a fresh session.
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=3, turns_per_trace=2)
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    initial_size = strategy._recycle_queue.qsize()
+    initial_queue = list(strategy._recycle_queue._queue)
+
+    child_cid = "trace_0::sa:codex_subagent_001_3b3e9875"
+    final_child = _make_child_credit(
+        conversation_id=child_cid,
+        turn_index=4,
+        num_turns=5,
+    )
+    await strategy.handle_credit_return(final_child)
+
+    # Issuer untouched: no fresh session dispatched on child terminal.
+    assert issuer.issue_credit.await_count == 0
+    # Recycle queue untouched: child conversation_id is not a pool entry.
+    assert strategy._recycle_queue.qsize() == initial_size
+    assert list(strategy._recycle_queue._queue) == initial_queue
+    # Double-recycle bookkeeping untouched.
+    assert child_cid not in strategy._in_flight_recycled
+
+
+@pytest.mark.asyncio
+async def test_child_final_turn_repeated_does_not_trigger_double_recycle():
+    """Regression for the production crash: when the parent trace is recycled
+    and re-runs, its subagent child re-completes with the SAME
+    ``conversation_id`` (deterministic ``parent::sa:agent_id``). The strategy
+    must not raise the double-recycle ``RuntimeError`` in this case.
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=3, turns_per_trace=2)
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+
+    child_cid = "trace_0::sa:codex_subagent_001_3b3e9875"
+    # First recycle-pass child completion.
+    await strategy.handle_credit_return(
+        _make_child_credit(
+            conversation_id=child_cid,
+            turn_index=2,
+            num_turns=3,
+            x_correlation_id="xcorr_child_pass0",
+        )
+    )
+    # Second pass: same child conversation_id, fresh x_correlation_id.
+    await strategy.handle_credit_return(
+        _make_child_credit(
+            conversation_id=child_cid,
+            turn_index=2,
+            num_turns=3,
+            x_correlation_id="xcorr_child_pass1",
+        )
+    )
+
+    # Neither call raised, and neither touched recycle state.
+    assert child_cid not in strategy._in_flight_recycled
+    assert issuer.issue_credit.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_child_non_final_turn_still_dispatches_next_turn():
+    """Non-final child returns MUST continue to dispatch the next turn — the
+    short-circuit applies only to terminal child returns. This protects the
+    BranchOrchestrator's contract that "child continuation turns dispatch via
+    the strategy's normal path".
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=2, turns_per_trace=2)
+
+    # Register the child conversation_id in the metadata lookup so
+    # _dispatch_next_turn -> get_next_turn_metadata succeeds.
+    child_cid = "trace_0::sa:agent_a"
+    child_meta = ConversationMetadata(
+        conversation_id=child_cid,
+        turns=[TurnMetadata(timestamp_ms=None, delay_ms=None) for _ in range(3)],
+    )
+
+    issued: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        issued.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    strategy.conversation_source._metadata_lookup[child_cid] = child_meta
+    await strategy.setup_phase()
+
+    non_final_child = _make_child_credit(
+        conversation_id=child_cid,
+        turn_index=0,
+        num_turns=3,
+    )
+    await strategy.handle_credit_return(non_final_child)
+
+    # Next turn (turn_index=1) was issued via the normal continuation path.
+    assert issued == [(child_cid, 1)]
+
+
+@pytest.mark.asyncio
+async def test_root_final_turn_still_recycles_after_child_shortcircuit():
+    """Regression baseline: the child-final short-circuit must not affect
+    root final-turn recycling. A root (``agent_depth == 0``) final-turn return
+    must still push to the recycle queue and dispatch the next session.
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=2, turns_per_trace=2)
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    strategy._correlation_to_lane["xcorr"] = 0
+    strategy._active_traces.add("trace_0")
+
+    # Root credit: agent_depth defaults to 0 via _make_credit.
+    root_final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
+    await strategy.handle_credit_return(root_final)
+
+    # Recycle dispatched a fresh session — proves the short-circuit didn't
+    # block the root path. (For this layout the head of the recycle queue
+    # is trace_0 after push, so it self-recycles.)
+    assert len(issued) == 1
+    assert issued[0] == "trace_0"

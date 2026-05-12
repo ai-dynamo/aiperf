@@ -268,6 +268,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         compute and inflates the run's overflow rate. This mirrors the
         kv-cache-tester behavior of marking the user "truncated" on the first
         context-length error and removing them from the active pool.
+
+        DAG-child final turns short-circuit: child terminal completion is
+        owned by ``BranchOrchestrator`` (the callback handler invokes
+        ``on_child_leaf_reached`` / ``on_child_errored`` before the strategy).
+        The strategy must not push child conversation_ids into the recycle
+        pool — they're not root pool entries, and they repeat across recycle
+        passes of the parent, which would trip the double-recycle guard the
+        second time the parent re-runs.
         """
         if self.config.phase == CreditPhase.WARMUP:
             return
@@ -280,6 +288,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         if not credit.is_final_turn and not terminal_overflow:
             await self._dispatch_next_turn(credit)
+            return
+
+        # DAG-child final turns are owned by BranchOrchestrator
+        # (on_child_leaf_reached / on_child_errored, already invoked by the
+        # callback handler before reaching the strategy). The trajectory
+        # recycle pool is root-only — child conversation_ids like
+        # ``parent::sa:agent_id`` are not legitimate pool entries, and they
+        # repeat across recycle passes of the same parent, which would trip
+        # the double-recycle guard the second time the parent re-runs.
+        if credit.agent_depth > 0:
             return
 
         if terminal_overflow:
