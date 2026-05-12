@@ -114,7 +114,13 @@ class CodeExecutionGrader(BaseGrader):
 
         try:
             inputs, outputs, fn_name = _payload_to_test_cases(payload)
-        except (KeyError, ValueError, orjson.JSONDecodeError) as exc:
+        except (
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            orjson.JSONDecodeError,
+        ) as exc:
             _log.debug("LCB test-case payload malformed: %s", exc)
             return _grading_failure(
                 response_text, ground_truth, f"malformed test cases: {exc}"
@@ -169,7 +175,7 @@ class CodeExecutionGrader(BaseGrader):
 
 
 def _payload_to_test_cases(
-    payload: dict[str, Any],
+    payload: Any,
 ) -> tuple[list[Any], list[Any], str | None]:
     """Convert aiperf's stored LCB ground_truth payload to lighteval inputs.
 
@@ -177,18 +183,23 @@ def _payload_to_test_cases(
     almost the same transform: parse public + private test cases out
     of the row, concatenate ``inputs`` and ``outputs`` lists, pull
     ``fn_name`` from ``metadata.func_name``. We replicate that here.
-    """
-    public_raw = payload.get("public_test_cases", "")
-    private_raw = payload.get("private_test_cases", "")
-    metadata_raw = payload.get("metadata", "")
 
-    public_cases = orjson.loads(public_raw) if public_raw else []
-    private_cases = orjson.loads(private_raw) if private_raw else []
+    Accepts both JSON-string and already-deserialized values for each
+    field, so a payload built by the loader (strings, matching the HF
+    dataset shape) and a payload constructed in-process by a caller or
+    test (lists/dicts) both work.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError(f"expected dict payload, got {type(payload).__name__}")
+
+    public_cases = _parse_test_cases(payload.get("public_test_cases", ""))
+    private_cases = _parse_test_cases(payload.get("private_test_cases", ""))
     all_cases = public_cases + private_cases
     inputs = [tc["input"] for tc in all_cases]
     outputs = [tc["output"] for tc in all_cases]
 
     fn_name: str | None = None
+    metadata_raw = payload.get("metadata", "")
     if metadata_raw:
         meta = (
             orjson.loads(metadata_raw)
@@ -199,6 +210,19 @@ def _payload_to_test_cases(
             fn_name = meta.get("func_name")
 
     return inputs, outputs, fn_name
+
+
+def _parse_test_cases(raw: Any) -> list[dict[str, Any]]:
+    """Accept a JSON-string payload or an already-deserialized list."""
+    if not raw:
+        return []
+    if isinstance(raw, str | bytes | bytearray):
+        return orjson.loads(raw)
+    if isinstance(raw, list):
+        return raw
+    raise TypeError(
+        f"test cases must be a JSON string or list, got {type(raw).__name__}"
+    )
 
 
 def _grading_failure(
