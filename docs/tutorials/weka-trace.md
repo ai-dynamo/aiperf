@@ -68,7 +68,10 @@ Standard trace filters apply:
 
 ## Loading From HuggingFace (No Download Required)
 
-If you don't already have the trace corpus on disk, the same dataset is published on HuggingFace as [`semianalysisai/cc-traces-weka-042026`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-042026) and can be pulled directly by AIPerf with a single flag:
+If you don't already have the trace corpus on disk, two SemiAnalysis-published HuggingFace mirrors are available and can be pulled directly by AIPerf with a single flag:
+
+- [`semianalysisai/cc-traces-weka-042026`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-042026) — 739 traces, full subagent fan-out (parent + child SPAWN/JOIN topology).
+- [`semianalysisai/cc-traces-weka-no-subagents-051226`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-no-subagents-051226) — 949 traces, **main-agent only** (all `WekaSubagentEntry` blocks stripped at publication time). This is the AgentX MVP default.
 
 ```bash
 aiperf profile \
@@ -77,22 +80,25 @@ aiperf profile \
     --model claude-haiku-4-5-20251001 \
     --endpoint-type chat \
     --streaming \
-    --public-dataset semianalysis_cc_traces_weka \
+    --public-dataset semianalysis_cc_traces_weka_no_subagents \
     --fixed-schedule
 ```
 
-On first run, the full corpus downloads upfront (657 MB compressed, 739 traces) and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. The dataset is public — no HuggingFace authentication or token is required.
+Swap `_no_subagents` for the plain `semianalysis_cc_traces_weka` tag if you want the with-subagents corpus instead.
 
-> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full 739-trace corpus, pass `--num-dataset-entries 739`. The loader logs `Loading <n>/739 traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
+On first run, the full corpus downloads upfront and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. Both datasets are public — no HuggingFace authentication or token is required. The 042026 mirror is ~657 MB compressed; the 051226 no-subagents mirror is smaller.
 
-The HuggingFace path and the file-based `--input-file` path produce **byte-identical conversations** because the public-dataset loader is a thin wrapper that delegates 100% of trace reconstruction (hash_id replay, per-trace model mapping, branch + spawn-join topology, delay capping, parallel reconstruction) to the same `WekaTraceLoader.convert_to_conversations()` used by `--input-file`. There is one source of truth for trace reconstruction.
+> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full corpus, pass `--num-dataset-entries N` where N is the variant's trace count (739 for 042026, 949 for 051226). The loader logs `Loading <n>/<total> traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
+
+The HuggingFace path and the file-based `--input-file` path produce **byte-identical conversations** for the same source rows because the public-dataset loader is a thin wrapper that delegates 100% of trace reconstruction (hash_id replay, per-trace model mapping, branch + spawn-join topology, delay capping, parallel reconstruction) to the same `WekaTraceLoader.convert_to_conversations()` used by `--input-file`. There is one source of truth for trace reconstruction.
 
 ### File-Based vs HuggingFace: Which to Use
 
 | Path | When to use |
 |---|---|
 | `--input-file <dir-or-file>` (file-based) | You already have a local trace directory, you need offline runs (no outbound network), or you're developing/debugging the loader against a specific subset of traces. |
-| `--public-dataset semianalysis_cc_traces_weka` (HuggingFace) | You want zero-setup against the canonical 739-trace corpus and don't mind a one-time ~657 MB download (cached afterward). |
+| `--public-dataset semianalysis_cc_traces_weka_no_subagents` (HuggingFace, no subagents) | AgentX MVP runs, or any benchmark where you want a single linear agent stream per trace and don't care about parent/child fan-out. 949 traces. |
+| `--public-dataset semianalysis_cc_traces_weka` (HuggingFace, with subagents) | You want zero-setup against the canonical 739-trace corpus with full subagent SPAWN/JOIN topology and don't mind a one-time ~657 MB download (cached afterward). |
 
 All existing tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--scenario inferencex-agentx-mvp`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire.
 

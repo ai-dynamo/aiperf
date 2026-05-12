@@ -14,7 +14,10 @@ def test_inferencex_agentx_mvp_registered():
     assert spec.require_ignore_eos is True
     assert spec.require_use_think_time_only is True
     assert spec.forbid_input_truncation is True
-    assert spec.require_loader == ("semianalysis_cc_traces_weka", "weka_trace")
+    assert spec.require_loader == (
+        "semianalysis_cc_traces_weka_no_subagents",
+        "weka_trace",
+    )
     assert spec.min_benchmark_duration_seconds == 900
     assert spec.inter_turn_delay_cap_seconds == 60.0
 
