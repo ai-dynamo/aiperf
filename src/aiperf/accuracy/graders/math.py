@@ -110,6 +110,14 @@ _ANSWER_PHRASE_RE = re.compile(
 # Matches signed/unsigned int, decimal, or simple ratio (e.g. "1/2", "-3.14").
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?(?:/\d+)?")
 
+# Recognizes "expression-shaped" content in an answer-phrase tail —
+# LaTeX commands (``\frac``, ``\sqrt``, ``\pi``, ...) or curly braces
+# from any TeX construct. When the tail contains one of these, fall
+# through to ``strip_string`` + ``math_equal`` whole, instead of
+# running ``_extract_last_number`` which would silently grade
+# ``"\frac{1}{2}"`` as ``"2"`` (the last digit it finds).
+_LATEX_HINT_RE = re.compile(r"[\\{}]")
+
 _BOXED_TOKEN = "\\boxed{"
 
 # Numerical tolerance for ``isclose``. Mirrors the recipe's value.
@@ -531,6 +539,15 @@ class MathGrader(BaseGrader):
             tail_boxed = _extract_last_boxed(tail)
             if tail_boxed is not None:
                 return _format_response_tail(tail_boxed), True
+            # If the tail looks like a LaTeX expression (contains a
+            # backslash or curly brace), preserve it whole so
+            # ``strip_string`` + ``math_equal`` can normalize and
+            # compare it. Falling through to the last-number extractor
+            # would grade ``"\frac{1}{2}"`` against gold ``"1/2"`` as
+            # ``"2"`` — exactly the asymmetry that ``\boxed{...}``
+            # tails correctly avoid.
+            if _LATEX_HINT_RE.search(tail):
+                return tail, True
             tail_num = _extract_last_number(tail)
             if tail_num is not None:
                 return tail_num, True

@@ -308,6 +308,42 @@ class TestExtractWithFlag:
         answer, _ = grader._extract_with_flag(response)
         assert answer == expected
 
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            param("The answer is \\frac{1}{2}.", "\\frac{1}{2}", id="frac_latex"),
+            param("the answer is \\sqrt{2}", "\\sqrt{2}", id="sqrt_latex"),
+            param("final answer: \\pi", "\\pi", id="bare_latex_command"),
+            param("The answer is {1,2,3}", "{1,2,3}", id="braced_set"),
+            param("the answer is \\binom{n}{2}", "\\binom{n}{2}", id="binom_latex"),
+        ],
+    )  # fmt: skip
+    def test_phrase_fallback_preserves_latex_tail(
+        self, grader: MathGrader, response: str, expected: str
+    ) -> None:
+        """A tail containing a backslash or curly brace must be preserved
+        whole so ``strip_string`` + ``math_equal`` can normalize and
+        compare it. The previous implementation ran the last-number
+        extractor on the tail and silently graded ``"\\frac{1}{2}"`` as
+        ``"2"`` — the opposite of what the equivalent ``\\boxed{...}``
+        wrapping does."""
+        answer, _ = grader._extract_with_flag(response)
+        assert answer == expected
+
+    @pytest.mark.asyncio
+    async def test_unboxed_frac_grades_same_as_boxed_frac(
+        self, grader: MathGrader
+    ) -> None:
+        """The reviewer's specific regression: ``"The answer is \\frac{1}{2}"``
+        and ``"\\boxed{\\frac{1}{2}}"`` should grade identically against
+        gold ``"1/2"``. Previously the unboxed form extracted ``"2"`` and
+        graded as incorrect."""
+        unboxed = await grader.grade("The answer is \\frac{1}{2}", "1/2")
+        boxed = await grader.grade("\\boxed{\\frac{1}{2}}", "1/2")
+        assert unboxed.correct is True
+        assert boxed.correct is True
+        assert unboxed.correct == boxed.correct
+
 
 class TestGradeNumeric:
     """``MathGrader.grade`` — numeric equivalence."""
