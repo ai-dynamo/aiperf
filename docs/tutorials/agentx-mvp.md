@@ -57,18 +57,18 @@ near-instant.
 Then:
 
 ```bash
-aiperf profile \
+uv run aiperf profile \
     --scenario inferencex-agentx-mvp \
     --url localhost:8000 \
-    --model claude-opus-4-5-20251101 \
-    --model claude-haiku-4-5-20251001 \
+    --model deepseek-ai/DeepSeek-V4-Pro \
+    --max-context-length 128_000 \
     --endpoint-type chat \
     --streaming \
     --public-dataset semianalysis_cc_traces_weka \
     --num-dataset-entries 739 \
-    --concurrency 100 \
     --benchmark-duration 900 \
-    --num-profile-runs 3
+    --concurrency 32 \
+    --ui simple
 ```
 
 That's the whole thing. A few notes:
@@ -76,25 +76,29 @@ That's the whole thing. A few notes:
 - **`--scenario inferencex-agentx-mvp`** is the only flag that's specific to
   this benchmark. Everything else is normal AIPerf.
 - `--model` is whatever you're actually serving — you don't have to match
-  the model names baked into the trace corpus. AIPerf rewrites every trace
-  request's `model` field to one of your configured models. With one
-  `--model`, every request goes to that model. With two (e.g. one for the
-  parent agent, one for subagents), the trace's "main" model maps to the
-  first `--model` and other distinct trace models map to the rest in
-  first-appearance order. See [Per-Trace Model Rewriting](weka-trace.md#per-trace-model-rewriting)
-  in the Weka tutorial for the full behavior.
+  the model names baked into the trace corpus. The example uses a single
+  model, so AIPerf rewrites every trace request's `model` field to
+  `deepseek-ai/DeepSeek-V4-Pro`. With multiple `--model` values, the trace's
+  "main" model maps to the first `--model` and other distinct trace models map
+  to the rest in first-appearance order. See
+  [Per-Trace Model Rewriting](weka-trace.md#per-trace-model-rewriting) in the
+  Weka tutorial for the full behavior.
+- **`--max-context-length 128_000`** drops traces whose peak input length exceeds
+  128k tokens before replay. This should match the maximum context your server
+  is configured to accept.
 - **`--benchmark-duration 900`** is the minimum AgentX MVP allows (15 minutes).
   Longer is fine. AIPerf will reject anything shorter.
-- **`--concurrency`** is up to you and reflects the load you want to sustain.
-  100 is a reasonable starting point.
+- **`--concurrency`** is up to you and reflects the load you want to sustain,
+  but it must be a single integer under `--scenario`; comma-list sweeps are
+  rejected. 32 is a reasonable starting point.
 - **`--streaming`** is not forced by the scenario — pass it yourself for chat
   endpoints. The WEKA traces were captured against streaming responses, so
   streaming replay matches the recorded request shape.
-- **`--num-profile-runs 3`** is recommended for confidence-interval reporting.
-  The `submission_valid` field is stamped on every run with `--scenario` set
-  (single-run `profile_export.json` and, when `--num-profile-runs >= 2`, the
-  aggregate file). With a single run you still get the validity stamp on the
-  per-run file; multi-run adds the aggregate. See
+- **`--num-profile-runs 3`** is optional but recommended for final
+  confidence-interval reporting. The `submission_valid` field is stamped on
+  every run with `--scenario` set (single-run `profile_export.json` and, when
+  `--num-profile-runs >= 2`, the aggregate file). With a single run you still
+  get the validity stamp on the per-run file; multi-run adds the aggregate. See
   [Reading the Result](#reading-the-result-submission_valid) below.
 - **`--num-dataset-entries 739`** loads the full 739-trace corpus. Without
   this flag, the loader caps at the AIPerf default of 100 rows and you'll
@@ -148,7 +152,7 @@ flag.
 | `--use-think-time-only` is on | Inter-turn delays use the agent's recorded "think time" only, not "send-to-send time" | Send-to-send delays include the *previous* server's response time, which would unfairly slow your replay if your server is faster than the recording. |
 | `--ignore-trace-delays` is off | Trace-derived inter-turn delays (the recorded `think_time`, see the row above) are not stripped — only clamped (see below) | The whole point of replay is to preserve the agent's pacing. |
 | `--inter-turn-delay-cap-seconds = 60` | Any single inter-turn delay over 60s is clamped to 60s | Real coding sessions have 10-minute coffee-break gaps that would distort steady-state measurement. |
-| `--cache-bust system_prefix` | Inject a unique per-conversation marker into the system message at the start of every play (or, if there is no system message, into the first user turn) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
+| `--cache-bust first_turn_prefix` | Inject a unique per-conversation marker at the start of the first user turn for every play | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
 | Loader is `semianalysis_cc_traces_weka` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-042026` HF dataset (via `--public-dataset semianalysis_cc_traces_weka`) or a local copy of the same corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; `--input-file` alone won't auto-detect, you must pass the explicit type). Both produce byte-identical conversations — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
 | `--benchmark-duration ≥ 900` | The run lasts at least 15 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
@@ -168,8 +172,8 @@ once — you don't have to fix them one at a time.
 When you use `--scenario`, AIPerf stamps a submission-validity flag onto every
 JSON output for the run. The per-run `profile_export.json` carries it under
 its `metadata` block, and when you also pass `--num-profile-runs >= 2` the
-aggregate file (`profile_export_aiperf_aggregate.json`, in a per-run aggregate
-subdirectory under your artifact directory) carries it too:
+aggregate file (`aggregate/profile_export_aiperf_aggregate.json` under your
+artifact directory) carries it too:
 
 ```json
 {
@@ -251,9 +255,10 @@ seconds is silently clamped to 60 seconds.
 When a trajectory finishes its conversation (last turn dispatched and
 acknowledged), its trace ID goes back into a **FIFO recycle queue**, and the
 slot picks up the next trace ID from the head of the queue. The recycle queue
-starts pre-populated with every trace in the corpus that *isn't* currently a
-trajectory. So as long as the corpus is larger than the trajectory count, every
-trace gets played at least once before any trace is replayed twice.
+starts pre-populated with the full corpus; active traces are skipped and
+requeued until they're eligible for replay. So as long as the corpus is larger
+than the trajectory count, every trace gets played at least once before any
+trace is replayed twice.
 
 A few wrinkles worth knowing:
 
@@ -263,9 +268,8 @@ A few wrinkles worth knowing:
   to keep injecting mid-conversation jumps forever.
 - **Each play of a trace gets a fresh cache-bust marker.** When a trace ID is
   recycled (or first dispatched as a trajectory), AIPerf prepends a unique
-  short tag like `[rid:8a3f2c1b9e7d]\n\n` to the conversation's system
-  message (or, if the trace has no system message, to its first user turn —
-  one injection per play, shared across all turns of that play). The tag is
+  short tag like `[rid:8a3f2c1b9e7d]\n\n` to the first user turn — one
+  injection per play, shared across all turns of that play. The tag is
   derived deterministically *within a single run* from the run's
   auto-generated benchmark ID, the recycle pass for that slot, the
   trajectory index, and the trace ID. The trace ID is part of the digest by
@@ -277,7 +281,7 @@ A few wrinkles worth knowing:
   UUID each time), which is intentional — the whole point is that the
   server's KV-cache prefix doesn't get progressively warmer on identical
   content as the run goes on, because every recycled play has a fresh
-  prompt prefix. Locked to `system_prefix` under the scenario.
+  prompt prefix. Locked to `first_turn_prefix` under the scenario.
 - **Warmup and profiling share the marker for a given play.** The digest is
   intentionally phase-agnostic: a trajectory's warmup turn `k_i` and its
   first profiling turn `k_i+1` carry the *same* `[rid:…]`. That's how the
@@ -424,11 +428,11 @@ If you're trying to replay a *different* corpus under this scenario, that's
 not a supported submission — but you can pass `--unsafe-override` to run
 anyway; the result will be marked `submission_valid=false`.
 
-**"scenario requires `cache_bust.target=system_prefix`; got `<other>`"**
+**"scenario requires `cache_bust.target=first_turn_prefix`; got `<other>`"**
 You explicitly passed `--cache-bust <other>` (e.g. `system_suffix` or `none`)
 alongside `--scenario`, and AIPerf refuses to silently override an explicit
 user choice. If you didn't pass `--cache-bust` at all, the validator
-auto-injects `system_prefix` and you'll never see this error. If you
+auto-injects `first_turn_prefix` and you'll never see this error. If you
 genuinely need a different cache-bust target for an ablation
 study, pass `--unsafe-override` and accept the
 `submission_valid: false` stamp.
@@ -447,7 +451,7 @@ You probably ran without `--scenario`. The validity stamp is gated on the
 scenario flag — re-run with `--scenario inferencex-agentx-mvp` and look in
 the per-run `profile_export.json` (under `metadata`). If you also passed
 `--num-profile-runs >= 2`, it'll also appear in the aggregate file at
-`profile_export_aiperf_aggregate.json` in the aggregate subdirectory.
+`aggregate/profile_export_aiperf_aggregate.json` under the artifact directory.
 
 **Run is slower than I expected**
 Two common causes. First, the warmup phase replays one full conversation
@@ -476,7 +480,7 @@ average over enough requests for percentiles to stabilize.
 - [Warmup Phase tutorial](warmup.md) — the generic AIPerf warmup mechanism
   (the agentic-replay warmup is a specialization of this).
 - [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md) —
-  how `--isl`, `--apply-chat-template`, and the locked `--cache-bust system_prefix`
+  how `--isl`, `--apply-chat-template`, and the locked `--cache-bust first_turn_prefix`
   marker interact in the reported metric.
 - [ISL Budget Compensation Derivation](../reference/isl-budget-compensation.md) —
   the math behind chat-template + marker overhead compensation.
