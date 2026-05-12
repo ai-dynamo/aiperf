@@ -87,11 +87,12 @@ class TrajectorySource(ConversationSource):
         pool_size = len(dataset_metadata.conversations)
         self._concurrency = concurrency
         self._pool_size = pool_size
-        # Build trajectories up to the user-requested concurrency. If we can't
-        # fill that many lanes from the pool (either pool < concurrency, or
-        # too many traces are too short to split into warmup+profiling), the
-        # post-build check below rejects the run instead of silently capping
-        # effective load below --concurrency.
+        # Build distinct trajectories up to the user-requested concurrency.
+        # If the pool or its usable subset (after dropping traces too short
+        # to split into warmup+profile turns) is smaller than concurrency,
+        # ``_wrap_fill_lanes`` below cycles through the distinct trajectories
+        # with fresh per-lane ``start_turn_index`` salts so the run still
+        # honours ``--concurrency`` instead of silently capping effective load.
         self._target_size = concurrency
         distinct: list[Trajectory] = self._build_trajectories()
 
