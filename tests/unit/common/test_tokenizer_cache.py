@@ -356,6 +356,40 @@ class TestOfflineConfigFallback:
             raise RuntimeError("boom")
         assert hub_module.cached_file is sentinel
 
+    def test_patches_local_bindings_in_other_modules(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        """transformers modules typically do ``from .utils import cached_file``
+        at import time, creating per-module local bindings. The actual
+        config.json lookup happens via configuration_utils' local binding
+        (configuration_utils.py:725), not via transformers.utils.hub directly.
+        Patching only hub_module.cached_file leaves those bindings untouched,
+        which silently bypasses the fallback. The context manager must reach
+        every module that imported cached_file by name.
+        """
+        from transformers import configuration_utils
+        from transformers.utils import hub as hub_module
+
+        name = "hf-internal-testing/llama-tokenizer"
+        self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+
+        def raising(*args, **kwargs):
+            raise OSError("Couldn't connect")
+
+        # Replace BOTH bindings with the raising stub, mirroring real usage
+        # where transformers internals call their local binding.
+        monkeypatch.setattr(hub_module, "cached_file", raising)
+        monkeypatch.setattr(configuration_utils, "cached_file", raising)
+
+        with _offline_config_fallback(name, "main"):
+            # The bug: callers using configuration_utils' local binding get
+            # the unpatched original. The fix must patch that too.
+            path = configuration_utils.cached_file(name, "config.json")
+            assert Path(path).is_file()
+            assert Path(path).read_text() == "{}"
+
     def test_cleans_up_stub_dir_on_exit(self, hf_cache, monkeypatch) -> None:
         from transformers.utils import hub as hub_module
 

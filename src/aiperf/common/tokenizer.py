@@ -135,6 +135,50 @@ def _offline_model_info_patch():
         huggingface_hub.model_info = original
 
 
+def _rebind_cached_file(from_obj: object, to_obj: object) -> None:
+    """Replace ``cached_file`` with *to_obj* in every transformers module
+    whose local binding currently points at *from_obj*.
+
+    Transformers modules typically do ``from .utils import cached_file`` at
+    import time, creating per-module local bindings. Patching only the
+    canonical location (``transformers.utils.hub``) leaves those bindings
+    untouched, so the wrapper never gets called.
+    """
+    import sys
+
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None or not mod_name.startswith("transformers"):
+            continue
+        if mod.__dict__.get("cached_file") is from_obj:
+            mod.cached_file = to_obj
+
+
+def _make_offline_config_wrapper(
+    original: Callable, snapshot: Path, name: str, stub_path: Path
+) -> Callable:
+    """Wrap *original* so config.json lookups that raise OSError fall through
+    to a stub path, but only when on-disk evidence still matches a
+    tokenizer-only repo. Other filenames pass through unchanged.
+    """
+
+    def wrapper(path_or_repo_id, filename, *args, **kwargs):
+        if filename != "config.json":
+            return original(path_or_repo_id, filename, *args, **kwargs)
+        try:
+            return original(path_or_repo_id, filename, *args, **kwargs)
+        except OSError:
+            if (snapshot / "tokenizer_config.json").exists() and not (
+                snapshot / "config.json"
+            ).exists():
+                _logger.debug(
+                    f"Returning stub config.json for tokenizer-only repo '{name}'"
+                )
+                return str(stub_path)
+            raise
+
+    return wrapper
+
+
 @contextlib.contextmanager
 def _offline_config_fallback(name: str, revision: str):
     """Provide a stub config.json for tokenizer-only HF repos during offline load.
@@ -145,11 +189,11 @@ def _offline_config_fallback(name: str, revision: str):
     "couldn't connect" OSError that AutoTokenizer can't recover from.
 
     Patches transformers' ``cached_file`` resolver to hand back a synthetic
-    empty config.json path for the one lookup that needs it. The resolver's
-    contract — "return a local path or raise" — has been stable across
-    transformers versions, so this survives refactors that move
-    ``PreTrainedConfig.from_pretrained`` or change which exception it raises
-    on a missing entry.
+    empty config.json path for the one lookup that needs it. Rebinds every
+    transformers module that imported ``cached_file`` by name so the wrapper
+    is reached regardless of which call site (configuration_utils,
+    tokenization_auto, ...) triggers the lookup; on exit we re-scan to also
+    unpatch any module imported lazily during the ``with`` block.
     """
     import shutil
     import tempfile
@@ -178,26 +222,12 @@ def _offline_config_fallback(name: str, revision: str):
     stub_path = stub_dir / "config.json"
     stub_path.write_text("{}")
 
-    def patched(path_or_repo_id, filename, *args, **kwargs):
-        if filename != "config.json":
-            return original(path_or_repo_id, filename, *args, **kwargs)
-        try:
-            return original(path_or_repo_id, filename, *args, **kwargs)
-        except OSError:
-            if (snapshot / "tokenizer_config.json").exists() and not (
-                snapshot / "config.json"
-            ).exists():
-                _logger.debug(
-                    f"Returning stub config.json for tokenizer-only repo '{name}'"
-                )
-                return str(stub_path)
-            raise
-
-    hub_module.cached_file = patched
+    patched = _make_offline_config_wrapper(original, snapshot, name, stub_path)
+    _rebind_cached_file(original, patched)
     try:
         yield
     finally:
-        hub_module.cached_file = original
+        _rebind_cached_file(patched, original)
         shutil.rmtree(stub_dir, ignore_errors=True)
 
 
