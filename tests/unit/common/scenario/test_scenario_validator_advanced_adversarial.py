@@ -37,7 +37,7 @@ def _user_config(
     use_think_time_only: bool = True,
     ignore_trace_delays: bool = False,
     synthesis_max_isl: int | None = None,
-    loader: str | None = "semianalysis_cc_traces_weka",
+    loader: str | None = "semianalysis_cc_traces_weka_no_subagents",
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
@@ -159,7 +159,7 @@ def test_unsafe_override_with_no_violations_returns_submission_valid_true() -> N
 
 # ---------------------------------------------------------------------------
 # detected_loader=None: when scenario requires a loader, an unset detection
-# IS a violation (None != "semianalysis_cc_traces_weka"). Loader auto-detection runs before
+# IS a violation (None != "semianalysis_cc_traces_weka_no_subagents"). Loader auto-detection runs before
 # scenario validation in production; if it produced None, the user gave us
 # something we couldn't classify as the required loader.
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ def _user_config(
     use_think_time_only: bool = True,
     ignore_trace_delays: bool = False,
     synthesis_max_isl: int | None = None,
-    loader: str | None = "semianalysis_cc_traces_weka",
+    loader: str | None = "semianalysis_cc_traces_weka_no_subagents",
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
@@ -260,7 +260,7 @@ class _ReadOnlyTimingModeConfig:
         self.input.ignore_trace_delays = False
         self.input.random_seed = 42
         self.input.synthesis.max_isl = None
-        self.input.detected_loader = "semianalysis_cc_traces_weka"
+        self.input.detected_loader = "semianalysis_cc_traces_weka_no_subagents"
         self.input._use_think_time_only_explicitly_set = False
         self.loadgen = MagicMock()
         self.loadgen.benchmark_duration = 900.0

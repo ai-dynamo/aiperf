@@ -44,7 +44,7 @@ from aiperf.plugin.enums import (
 # ============================================================================
 
 
-_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-042026"
+_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-051226"
 
 
 @pytest.fixture
@@ -286,6 +286,12 @@ class TestPluginRegistry:
 
     def test_metadata_hf_dataset_name_pinned(self) -> None:
         meta = plugins.get_public_dataset_loader_metadata(
-            PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA
+            PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_NO_SUBAGENTS
         )
         assert meta.hf_dataset_name == _HF_DATASET_NAME
+
+    def test_metadata_original_variant_hf_dataset_name_pinned(self) -> None:
+        meta = plugins.get_public_dataset_loader_metadata(
+            PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA
+        )
+        assert meta.hf_dataset_name == "semianalysisai/cc-traces-weka-042026"

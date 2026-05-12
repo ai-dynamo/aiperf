@@ -22,10 +22,14 @@ copy-pasteable command first, then explanations of what it actually does and why
 AgentX MVP is a multi-turn, agentic-coding benchmark proposed by SemiAnalysis as
 part of their InferenceX effort. The idea: instead of measuring an inference
 server with synthetic 1-turn prompts, measure it with realistic *coding-agent
-sessions* — long conversations with subagents, KV-cache reuse, and inter-turn
-think time. Sessions come from the public **WEKA agentic-coding trace corpus**
-captured by Callan Fox ([kv-cache-tester](https://github.com/callanjfox/kv-cache-tester)),
-which records real Claude Code sessions byte-for-byte.
+sessions* — long conversations with KV-cache reuse and inter-turn think time.
+Sessions come from the public **WEKA agentic-coding trace corpus** captured by
+Callan Fox ([kv-cache-tester](https://github.com/callanjfox/kv-cache-tester)),
+which records real Claude Code sessions byte-for-byte. AgentX MVP runs against
+the **no-subagents variant** of that corpus, where each trace is a single
+linear main-agent stream (subagent fan-out blocks have been stripped); see
+[the Weka tutorial](weka-trace.md) for the source format and the with-subagents
+companion corpus.
 
 AgentX MVP is essentially a *recipe* on top of those traces: a fixed set of
 replay rules so two different teams running on two different servers produce
@@ -50,9 +54,9 @@ You'll need:
 - AIPerf installed (`make first-time-setup` if you're working from this repo).
 
 The trace corpus is fetched automatically from HuggingFace
-(`semianalysisai/cc-traces-weka-042026`, public, no auth, ~657 MB compressed,
-739 traces) — no manual clone required. HF caches it locally so re-runs are
-near-instant.
+(`semianalysisai/cc-traces-weka-no-subagents-051226`, public, no auth, 949
+traces, 136.1k requests) — no manual clone required. HF caches it locally so
+re-runs are near-instant.
 
 Then:
 
@@ -65,8 +69,8 @@ uv run aiperf profile \
     --endpoint-type chat \
     --streaming \
     --use-server-token-count \
-    --public-dataset semianalysis_cc_traces_weka \
-    --num-dataset-entries 739 \
+    --public-dataset semianalysis_cc_traces_weka_no_subagents \
+    --num-dataset-entries 949 \
     --benchmark-duration 900 \
     --concurrency 32 \
     --ui simple
@@ -101,11 +105,11 @@ That's the whole thing. A few notes:
   `--num-profile-runs >= 2`, the aggregate file). With a single run you still
   get the validity stamp on the per-run file; multi-run adds the aggregate. See
   [Reading the Result](#reading-the-result-submission_valid) below.
-- **`--num-dataset-entries 739`** loads the full 739-trace corpus. Without
+- **`--num-dataset-entries 949`** loads the full 949-trace corpus. Without
   this flag, the loader caps at the AIPerf default of 100 rows and you'll
-  benchmark against a 100-trace subset (the loader logs `Loading 100/739
+  benchmark against a 100-trace subset (the loader logs `Loading 100/949
   traces` at INFO so you can spot it). For a canonical AgentX MVP submission,
-  use 739 (or higher — extra rows are silently ignored).
+  use 949 (or higher — extra rows are silently ignored).
 
 You don't need to pass `--ignore-trace-delays`, `--use-think-time-only`,
 `--inter-turn-delay-cap-seconds`, `--fixed-schedule`, or anything related to
@@ -154,7 +158,7 @@ flag.
 | `--ignore-trace-delays` is off | Trace-derived inter-turn delays (the recorded `think_time`, see the row above) are not stripped — only clamped (see below) | The whole point of replay is to preserve the agent's pacing. |
 | `--inter-turn-delay-cap-seconds = 60` | Any single inter-turn delay over 60s is clamped to 60s | Real coding sessions have 10-minute coffee-break gaps that would distort steady-state measurement. |
 | `--cache-bust first_turn_prefix` | Inject a unique per-conversation marker at the start of the first user turn for every play | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
-| Loader is `semianalysis_cc_traces_weka` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-042026` HF dataset (via `--public-dataset semianalysis_cc_traces_weka`) or a local copy of the same corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; `--input-file` alone won't auto-detect, you must pass the explicit type). Both produce byte-identical conversations — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
+| Loader is `semianalysis_cc_traces_weka_no_subagents` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-no-subagents-051226` HF dataset (via `--public-dataset semianalysis_cc_traces_weka_no_subagents`) or a local copy of any compatible Weka-format corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; `--input-file` alone won't auto-detect, you must pass the explicit type). Both produce byte-identical conversations when given the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
 | `--benchmark-duration ≥ 900` | The run lasts at least 15 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
@@ -301,17 +305,18 @@ A few wrinkles worth knowing:
 
 ### Subagents
 
-AgentX MVP traces include subagent invocations — the parent agent spawns a
-helper, the helper runs to completion, the parent picks up where it left off.
-AIPerf models these as `SPAWN` / `SPAWN_JOIN` branches in the conversation
-DAG, replays the helper as a separate concurrent session, and waits for it
-before the parent's next turn. Because subagents run *alongside* their parent,
-your in-flight request count can briefly exceed `--concurrency`. That's
-expected and correct; concurrency bounds the number of *parent* trajectories,
-not the total open requests.
+The AgentX MVP corpus is the **no-subagents** variant: every trace is a single
+linear stream of main-agent turns, and `WekaSubagentEntry` blocks have been
+stripped at dataset-publication time. So during an AgentX MVP run no SPAWN /
+SPAWN_JOIN branches are constructed, no helper conversations run alongside the
+parent, and in-flight request count never exceeds `--concurrency` because of
+subagents. Steady-state load is one in-flight request per trajectory.
 
-For more on the trace format, the SPAWN/JOIN mechanics, and how AIPerf maps
-nested subagents, see the [Weka Traces tutorial](weka-trace.md).
+The underlying SPAWN/JOIN machinery is still in the AIPerf code path — it's
+exercised by the original `semianalysis_cc_traces_weka` corpus (042026, with
+subagents) and by any file-based Weka trace replay that retains them. AgentX
+MVP just doesn't use it. For the format details and SPAWN/JOIN mechanics, see
+the [Weka Traces tutorial](weka-trace.md).
 
 ---
 
@@ -393,7 +398,7 @@ your local plugin registry is out of date.
 **`EmptyTracePoolError: Loader produced 0 traces; trajectories cannot be built.`**
 The HF dataset download or row validation produced no usable traces. Check
 your network connectivity to `huggingface.co` and confirm the dataset name
-is `semianalysis_cc_traces_weka`. The shipped corpus has 739 traces.
+is `semianalysis_cc_traces_weka_no_subagents`. The shipped corpus has 949 traces.
 
 **`TrajectoryWarmupFailedError: Trajectory warmup failed for N trace(s): …`**
 Your inference server rejected one or more warmup requests after AIPerf's
@@ -413,13 +418,13 @@ see how close you were to the threshold.
 
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …"**
 The AgentX MVP scenario is defined against the public
-`semianalysisai/cc-traces-weka-042026` corpus, replayed via either the
-HuggingFace loader (`semianalysis_cc_traces_weka`, selected by
+`semianalysisai/cc-traces-weka-no-subagents-051226` corpus, replayed via either the
+HuggingFace loader (`semianalysis_cc_traces_weka_no_subagents`, selected by
 `--public-dataset`) or the explicit local file-based loader (`weka_trace`,
 selected by `--custom-dataset-type weka_trace --input-file <dir>` of the
 same JSON traces). Pass one of:
 
-- `--public-dataset semianalysis_cc_traces_weka` (zero-setup; HF download), or
+- `--public-dataset semianalysis_cc_traces_weka_no_subagents` (zero-setup; HF download), or
 - `--custom-dataset-type weka_trace --input-file <local-trace-dir>` (offline;
   the dir must contain the same Weka trace JSON files). `--input-file` alone
   does NOT auto-detect weka trace directories — you have to pass the explicit
@@ -455,11 +460,11 @@ the per-run `profile_export.json` (under `metadata`). If you also passed
 `aggregate/profile_export_aiperf_aggregate.json` under the artifact directory.
 
 **Run is slower than I expected**
-Two common causes. First, the warmup phase replays one full conversation
-prefix per trajectory before profiling starts; with deep histories that's
-a meaningful chunk of wall time on its own. Second, subagent spawns mean
-in-flight count exceeds `--concurrency` at peaks; if your server is
-concurrency-limited, that adds queueing. Drop `--concurrency` or raise the
+The warmup phase replays one full conversation prefix per trajectory before
+profiling starts; with deep histories (some no-subagents traces exceed 1000
+turns and 700k-token contexts) that's a meaningful chunk of wall time on its
+own. If your server is concurrency-limited and you raised `--concurrency`
+above its limit, you'll also see queueing. Drop `--concurrency` or raise the
 server's limit.
 
 **Results vary run-to-run on the same server**
