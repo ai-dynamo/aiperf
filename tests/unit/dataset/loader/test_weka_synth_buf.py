@@ -17,6 +17,8 @@ Invariants tested:
 
 import math
 
+import pytest
+
 from aiperf.dataset.loader.weka_synth_buf import (
     ConversationReconstructor,
     RoleSegment,
@@ -975,3 +977,145 @@ def test_prefix_stability_sweep_multi_turn():
     # for hash_id=10 was never mutated across 5 advances.
     block_10_tokens = _stub_decode_block_tokens([10])
     assert r._segments[0].tokens[:64] == block_10_tokens
+
+
+def sentinel_count(tokens):
+    return sum(1 for t in tokens if t == -1)
+
+
+def test_init_turn_0_with_truncated_hash_ids_synthesizes_tail():
+    """When len(hash_ids) < floor(in_tokens/bs), the missing region is
+    synthesized as additional partial-tail tokens on the trailing user
+    segment. The reconstructor must NOT raise.
+    Total tokens emitted must equal in_tokens.
+    """
+    bs = 64
+    in_tokens = 1000  # floor(1000/64) = 15 blocks needed, partial tail = 40
+    # Provide only 10 hash_ids — short by 5 blocks (320 tokens) of the block tile.
+    hash_ids = list(range(100, 110))
+
+    decoded_block_calls: list[list[int]] = []
+
+    def decode_block_tokens(hids):
+        decoded_block_calls.append(list(hids))
+        return [hids[0] if hids else 0] * (len(hids) * bs)
+
+    def sample_partial_tail_tokens(n, seed):
+        return [-1] * n  # sentinel for synth-tail tokens
+
+    recon = ConversationReconstructor(
+        block_size=bs,
+        decode_block_tokens=decode_block_tokens,
+        sample_partial_tail_tokens=sample_partial_tail_tokens,
+        decode_tokens_to_text=lambda toks: f"t{len(toks)}",
+        bpe_stable_terminator_tokens=[],
+    )
+
+    # MUST NOT raise.
+    recon.init_turn_0(
+        hash_ids=hash_ids,
+        in_tokens=in_tokens,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="seed",
+    )
+
+    # Total tokens across all segments must equal in_tokens.
+    total = sum(len(seg.tokens) for seg in recon._segments)
+    assert total == in_tokens, (
+        f"reconstructed total {total} != in_tokens {in_tokens}; "
+        f"the relaxed validator must fill the gap with synth-tail tokens"
+    )
+
+    # The user segment carries the synth-tail tokens (sentinel value -1)
+    # AS WELL AS the decoded block tokens.
+    user_seg = next(s for s in recon._segments if s.role == "user")
+    sentinel_n = sum(1 for t in user_seg.tokens if t == -1)
+    expected_synth_tokens = (15 - 10) * bs + 40  # 5 missing blocks + partial tail = 360
+    assert sentinel_n == expected_synth_tokens, (
+        f"user segment should carry {expected_synth_tokens} synth-tail "
+        f"sentinel tokens, got {sentinel_n}"
+    )
+
+
+def test_init_turn_0_with_truncated_hash_ids_and_system_prefix_synthesizes_user_tail():
+    """When tool_tokens + system_tokens consume the first N blocks AND hash_ids
+    is still long enough to cover those, the user segment's synth tail handles
+    only the post-system gap.
+    """
+    bs = 64
+    tool_tokens = 64  # 1 block of system prefix
+    system_tokens = 64  # 1 more block of system prefix
+    # in_tokens=1000, bs=64 -> 15 blocks needed (+ 40 partial). System consumes 2.
+    in_tokens = 1000
+    # Provide 5 hash_ids: 2 for system, 3 for user. Short by 10 blocks (640 tokens).
+    hash_ids = list(range(100, 105))
+
+    def decode_block_tokens(hids):
+        return [0] * (len(hids) * bs)
+
+    def sample_partial_tail_tokens(n, seed):
+        return [-1] * n
+
+    recon = ConversationReconstructor(
+        block_size=bs,
+        decode_block_tokens=decode_block_tokens,
+        sample_partial_tail_tokens=sample_partial_tail_tokens,
+        decode_tokens_to_text=lambda toks: f"t{len(toks)}",
+        bpe_stable_terminator_tokens=[],
+    )
+
+    recon.init_turn_0(
+        hash_ids=hash_ids,
+        in_tokens=in_tokens,
+        tool_tokens=tool_tokens,
+        system_tokens=system_tokens,
+        seed="seed",
+    )
+
+    # Total tokens == in_tokens.
+    total = sum(len(seg.tokens) for seg in recon._segments)
+    assert total == in_tokens
+
+    # System segment carries 2 blocks of decoded tokens (no synth).
+    sys_seg = next((s for s in recon._segments if s.role == "system"), None)
+    assert sys_seg is not None
+    assert len(sys_seg.tokens) == 2 * bs
+    assert sentinel_count(sys_seg.tokens) == 0, (
+        "system segment must not contain synth tokens"
+    )
+
+    # User segment carries the rest.
+    user_seg = next(s for s in recon._segments if s.role == "user")
+    expected_user_tokens = in_tokens - 2 * bs  # 872
+    assert len(user_seg.tokens) == expected_user_tokens
+
+
+def test_init_turn_0_system_prefix_exceeding_hash_ids_still_raises():
+    """If even the system+tool prefix can't be filled from hash_ids,
+    the loader should still error — synthesizing the SYSTEM segment from
+    random tokens would silently corrupt the prefix cache.
+    """
+    bs = 64
+    tool_tokens = 128
+    system_tokens = 128  # 4 blocks of system prefix
+    # Only 2 hash_ids — can't even fill the system prefix.
+    hash_ids = [100, 200]
+    in_tokens = 1000
+
+    recon = ConversationReconstructor(
+        block_size=bs,
+        decode_block_tokens=lambda hids: [0] * (len(hids) * bs),
+        sample_partial_tail_tokens=lambda n, seed: [-1] * n,
+        decode_tokens_to_text=lambda toks: "",
+        bpe_stable_terminator_tokens=[],
+    )
+
+    with pytest.raises(ValueError, match="system prefix"):
+        recon.init_turn_0(
+            hash_ids=hash_ids,
+            in_tokens=in_tokens,
+            tool_tokens=tool_tokens,
+            system_tokens=system_tokens,
+            seed="seed",
+        )
