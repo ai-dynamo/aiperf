@@ -213,7 +213,7 @@ class TestExtractWithFlag:
         assert unparsed is True
 
     def test_whitespace_only_response_marked_unparsed(self, grader: MathGrader) -> None:
-        answer, unparsed = grader._extract_with_flag("   \n\t  ")
+        _, unparsed = grader._extract_with_flag("   \n\t  ")
         assert unparsed is True
 
     def test_no_numbers_falls_through_to_raw(self, grader: MathGrader) -> None:
