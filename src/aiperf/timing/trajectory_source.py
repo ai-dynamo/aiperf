@@ -52,6 +52,17 @@ def _seed_for_trace(base_seed: int, trace_id: str) -> int:
     return int.from_bytes(h[:8], "big")
 
 
+def _seed_for_trace_lane(base_seed: int, trace_id: str, lane_index: int) -> int:
+    """Derive a per-(trace, lane) RNG seed by hashing ``trace_id`` and lane index.
+
+    Wrap-fill lanes share a ``conversation_id`` but must produce different
+    ``start_turn_index`` values; salting the digest with ``lane_index``
+    decorrelates them while keeping the choice deterministic in ``base_seed``.
+    """
+    h = hashlib.sha256(f"{base_seed}:{trace_id}:{lane_index}".encode()).digest()
+    return int.from_bytes(h[:8], "big")
+
+
 class TrajectorySource(ConversationSource):
     """ConversationSource that samples a fixed set of trajectories with randomized 0-70% start.
 
@@ -146,6 +157,41 @@ class TrajectorySource(ConversationSource):
             trajectories.append(Trajectory(conversation_id=cid, start_turn_index=k_i))
 
         return trajectories
+
+    def _wrap_fill_lanes(
+        self, distinct: list[Trajectory], extra_count: int
+    ) -> list[Trajectory]:
+        """Return ``extra_count`` additional trajectories cycling through ``distinct``.
+
+        Each wrap-filled lane reuses a source ``conversation_id`` but gets a
+        fresh ``start_turn_index`` sampled with a per-(trace, absolute-lane-index)
+        RNG seed. ``absolute_lane_index`` is ``len(distinct) + i`` where ``i``
+        is the position within the extra block, so seeds are unique even when
+        two extras share the same source ``conversation_id``.
+        """
+        extras: list[Trajectory] = []
+        base_count = len(distinct)
+        for i in range(extra_count):
+            source = distinct[i % base_count]
+            lane_index = base_count + i
+            meta = self._metadata_lookup[source.conversation_id]
+            n = len(meta.turns)
+            rng = np.random.default_rng(
+                _seed_for_trace_lane(
+                    self._random_seed, source.conversation_id, lane_index
+                )
+            )
+            if n == 2:
+                k_i = 0
+            else:
+                k_max = min(int(0.7 * n), n - 2)
+                k_i = int(rng.integers(low=0, high=k_max + 1))
+            extras.append(
+                Trajectory(
+                    conversation_id=source.conversation_id, start_turn_index=k_i
+                )
+            )
+        return extras
 
     def session_for(
         self,
