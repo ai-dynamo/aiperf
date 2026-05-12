@@ -4,6 +4,7 @@
 """Tests for HuggingFace cache detection in the tokenizer module."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,6 +13,7 @@ from aiperf.common.tokenizer import (
     _get_revision_snapshot_dir,
     _is_hf_cached,
     _offline_config_fallback,
+    _offline_model_info_patch,
 )
 
 
@@ -411,3 +413,155 @@ class TestOfflineConfigFallback:
 
         # Temp dir is removed once the context manager exits.
         assert not stub_dir.exists()
+
+    def test_reraises_when_evidence_disappears_mid_load(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        """If tokenizer_config.json disappears (or config.json appears) between
+        context entry and the cached_file call, the wrapper must re-raise the
+        OSError rather than silently return the stub path."""
+        from transformers.utils import hub as hub_module
+
+        name = "hf-internal-testing/llama-tokenizer"
+        snap = self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+
+        def raising(*args, **kwargs):
+            raise OSError("Couldn't connect")
+
+        monkeypatch.setattr(hub_module, "cached_file", raising)
+
+        with _offline_config_fallback(name, "main"):
+            # Simulate concurrent cache mutation: evidence no longer matches
+            # a tokenizer-only repo.
+            (snap / "tokenizer_config.json").unlink()
+            with pytest.raises(OSError, match="Couldn't connect"):
+                hub_module.cached_file(name, "config.json")
+
+    def test_noop_when_cached_file_attr_missing(self, hf_cache, monkeypatch) -> None:
+        """If transformers.utils.hub has no cached_file attribute (unsupported
+        version), the context manager is a no-op rather than blowing up."""
+        from transformers.utils import hub as hub_module
+
+        name = "hf-internal-testing/llama-tokenizer"
+        self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+        monkeypatch.delattr(hub_module, "cached_file", raising=False)
+
+        with _offline_config_fallback(name, "main"):
+            assert not hasattr(hub_module, "cached_file")
+
+
+class TestOfflineModelInfoPatch:
+    """Stub huggingface_hub.model_info so transformers 4.57+'s tokenizer
+    instantiation doesn't make a network call to inspect repo tags.
+    """
+
+    def test_stubs_model_info_with_tags_none(self) -> None:
+        import huggingface_hub
+
+        with _offline_model_info_patch():
+            info = huggingface_hub.model_info("any-repo")
+            assert info.tags is None
+
+    def test_restores_original_on_normal_exit(self) -> None:
+        import huggingface_hub
+
+        original = huggingface_hub.model_info
+        with _offline_model_info_patch():
+            assert huggingface_hub.model_info is not original
+        assert huggingface_hub.model_info is original
+
+    def test_restores_original_on_exception(self) -> None:
+        import huggingface_hub
+
+        original = huggingface_hub.model_info
+        with (
+            pytest.raises(RuntimeError, match="boom"),
+            _offline_model_info_patch(),
+        ):
+            raise RuntimeError("boom")
+        assert huggingface_hub.model_info is original
+
+
+class TestFromPretrainedOfflineDispatch:
+    """Exercise Tokenizer.from_pretrained's offline branch end-to-end so the
+    context manager stack in _from_pretrained_local (model_info patch +
+    config fallback) is actually entered.
+    """
+
+    def test_cached_model_routes_to_local_loader(self, hf_cache, monkeypatch) -> None:
+        """When the model dir is present in HF cache, from_pretrained must
+        take the offline branch and dispatch to _from_pretrained_local."""
+        name = "meta-llama/Llama-2-7b-hf"
+        (hf_cache / f"models--{name.replace('/', '--')}").mkdir()
+
+        stub_tokenizer = MagicMock(name="tokenizer")
+        captured: dict = {}
+
+        def fake_from_pretrained(_name, **kwargs):
+            captured["name"] = _name
+            captured["local_files_only"] = kwargs.get("local_files_only")
+            return stub_tokenizer
+
+        from transformers import AutoTokenizer
+
+        monkeypatch.setattr(AutoTokenizer, "from_pretrained", fake_from_pretrained)
+
+        result = Tokenizer.from_pretrained(name, resolve_alias=False)
+
+        assert result._tokenizer is stub_tokenizer
+        assert captured["name"] == name
+        assert captured["local_files_only"] is True
+
+    def test_offline_loader_retries_with_cached_alias(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        """When the first load attempt fails but a cached alias exists, the
+        offline loader retries with the resolved alias under a fresh
+        _offline_config_fallback context (line 562-568)."""
+        # User asks for the short alias; cache holds the full canonical name.
+        user_name = "gpt2"
+        cached_name = "openai-community/gpt2"
+        (hf_cache / "models--openai-community--gpt2").mkdir()
+
+        attempts: list[str] = []
+        stub_tokenizer = MagicMock(name="tokenizer")
+
+        def fake_from_pretrained(_name, **kwargs):
+            attempts.append(_name)
+            if _name == user_name:
+                raise OSError("not found")
+            return stub_tokenizer
+
+        from transformers import AutoTokenizer
+
+        monkeypatch.setattr(AutoTokenizer, "from_pretrained", fake_from_pretrained)
+
+        result = Tokenizer.from_pretrained(user_name, resolve_alias=False)
+
+        assert attempts == [user_name, cached_name]
+        assert result._tokenizer is stub_tokenizer
+
+    def test_offline_loader_raises_when_no_alias_match(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        """If the first attempt fails and no cached alias is found, the
+        original exception propagates."""
+        name = "meta-llama/Llama-2-7b-hf"
+        # Cache present so the offline branch is taken, but loader will raise.
+        (hf_cache / f"models--{name.replace('/', '--')}").mkdir()
+
+        def fake_from_pretrained(*args, **kwargs):
+            raise OSError("broken")
+
+        from transformers import AutoTokenizer
+
+        monkeypatch.setattr(AutoTokenizer, "from_pretrained", fake_from_pretrained)
+
+        from aiperf.common.exceptions import TokenizerError
+
+        with pytest.raises(TokenizerError):
+            Tokenizer.from_pretrained(name, resolve_alias=False)
