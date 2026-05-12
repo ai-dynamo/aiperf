@@ -20,6 +20,7 @@ Structure:
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
     Environment.TIMING.*         - Timing manager settings
+    Environment.TOKENIZER.*      - Tokenizer pre-warm and loading
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
@@ -730,6 +731,33 @@ class _ServiceSettings(BaseSettings):
         return self
 
 
+class _TokenizerSettings(BaseSettings):
+    """Tokenizer pre-warm and loading configuration.
+
+    Controls how the CLI parent pre-warms tokenizer caches before
+    spawning AIPerf services. Pre-warming runs in subprocesses so the
+    parent never imports the heavy native libraries (``transformers``,
+    Rust-backed ``tokenizers``, ``tiktoken``).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_TOKENIZER_",
+    )
+
+    PRELOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=120.0,
+        description=(
+            "Timeout in seconds for the parent's tokenizer pre-warm phase. "
+            "Bounds the total wall-clock time for all parallel subprocess "
+            "pre-warms. On timeout, subprocesses are killed and AIPerf "
+            "continues; child services may then download tokenizers "
+            "themselves on first use."
+        ),
+    )
+
+
 class _UISettings(BaseSettings):
     """User interface and dashboard configuration.
 
@@ -1031,6 +1059,10 @@ class _Environment(BaseSettings):
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,
         description="Timing manager settings",
+    )
+    TOKENIZER: _TokenizerSettings = Field(
+        default_factory=_TokenizerSettings,
+        description="Tokenizer pre-warm and loading settings",
     )
     UI: _UISettings = Field(
         default_factory=_UISettings,
