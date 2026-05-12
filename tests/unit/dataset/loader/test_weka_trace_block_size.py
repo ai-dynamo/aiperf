@@ -46,7 +46,9 @@ def _make_loader(filename, uc, monkeypatch):
     from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
 
     stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: f"<dec:{len(toks)}>"
+    loader.prompt_generator.tokenizer.decode.side_effect = (
+        lambda toks: f"<dec:{len(toks)}>"
+    )
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False
     loader._tokenizer_revision = None
@@ -88,7 +90,9 @@ def test_trace_block_size_honored_when_user_unset(tmp_path, monkeypatch):
     # Pick in_tokens that DOES tile bs=128 cleanly so this test isolates the
     # block_size resolution from any hash-id truncation concerns.
     # in_tokens=512, bs=128 -> 4 hash_ids needed.
-    trace = _trace_with_bs("t_bs128", bs=128, in_tokens=512, hash_ids=[100, 200, 300, 400])
+    trace = _trace_with_bs(
+        "t_bs128", bs=128, in_tokens=512, hash_ids=[100, 200, 300, 400]
+    )
     path = _write_trace(tmp_path, trace)
     loader = _make_loader(path, _mk_user_config(block_size=None), monkeypatch)
     # Build conversations. The success criterion is that no ValueError is raised
@@ -123,7 +127,9 @@ def test_user_block_size_overrides_trace_block_size(tmp_path, monkeypatch):
 
     monkeypatch.setattr(wsb.ConversationReconstructor, "__init__", spy)
     loader.convert_to_conversations(loader.load_dataset())
-    assert captured_block_sizes, "no ConversationReconstructor built - test setup broken"
+    assert captured_block_sizes, (
+        "no ConversationReconstructor built - test setup broken"
+    )
     assert all(bs == 32 for bs in captured_block_sizes), (
         f"user-config block_size=32 should win over trace.block_size=64. "
         f"Got: {captured_block_sizes}"
@@ -140,4 +146,6 @@ def test_default_64_when_neither_trace_nor_user_set(tmp_path, monkeypatch):
     # (a) construct a dict that bypasses Pydantic to exercise the fallback, or
     # (b) be skipped with a comment that the schema enforces the precondition.
     # Choose (b) - the schema is the right place to enforce this.
-    pytest.skip("WekaTrace.block_size is schema-required; fallback is dead code in practice")
+    pytest.skip(
+        "WekaTrace.block_size is schema-required; fallback is dead code in practice"
+    )
