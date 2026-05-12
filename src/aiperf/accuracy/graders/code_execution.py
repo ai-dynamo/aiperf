@@ -164,7 +164,13 @@ class CodeExecutionGrader(BaseGrader):
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
             )
 
-        pass_at_1 = float(metrics.get("pass@1", [0.0])[0])
+        # ``metrics.get("pass@1", [0.0])[0]`` would IndexError when
+        # lighteval returns ``{"pass@1": []}`` (a present-but-empty
+        # list). That indexing sits outside the surrounding except, so
+        # an empty list would crash the record processor instead of
+        # producing a failed grade. Default to 0.0 instead.
+        pass_at_1_list = metrics.get("pass@1")
+        pass_at_1 = float(pass_at_1_list[0]) if pass_at_1_list else 0.0
         correct = pass_at_1 >= 1.0
         return GradingResult(
             correct=correct,
