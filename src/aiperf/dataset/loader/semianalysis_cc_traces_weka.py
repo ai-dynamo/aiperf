@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """HF-backed Weka trace loader.
 
-Pulls the SemiAnalysis cc-traces-weka-042026 dataset from HuggingFace and
-delegates reconstruction to ``WekaTraceLoader`` so file-based and HF-based
-replay use the EXACT same backing code (same serial + parallel paths, same
-hash_id replay, same model mapping, same branch / spawn-join, same delay
-capping). The public loader's only job is "download + parse rows into
-WekaTrace + delegate".
+Pulls the SemiAnalysis cc-traces-weka-no-subagents-051226 dataset from
+HuggingFace and delegates reconstruction to ``WekaTraceLoader`` so file-based
+and HF-based replay use the EXACT same backing code (same serial + parallel
+paths, same hash_id replay, same model mapping, same branch / spawn-join,
+same delay capping). The public loader's only job is "download + parse rows
+into WekaTrace + delegate".
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
     """HF-backed Weka trace loader.
 
-    Downloads ``semianalysisai/cc-traces-weka-042026`` (657 MB compressed,
-    739 traces, public, no auth), validates each row as a ``WekaTrace``, and
-    delegates conversation reconstruction to :class:`WekaTraceLoader`.
-    File-based and HF-based replay are guaranteed byte-identical because
-    they share one method body.
+    Downloads ``semianalysisai/cc-traces-weka-no-subagents-051226`` (2.77 GB
+    jsonl, 949 traces, 136k requests, public, no auth), validates each row as
+    a ``WekaTrace``, and delegates conversation reconstruction to
+    :class:`WekaTraceLoader`. File-based and HF-based replay are guaranteed
+    byte-identical because they share one method body.
     """
 
     tag: ClassVar[str] = "SemiAnalysisCCTracesWeka"
@@ -73,11 +73,11 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         """Download the HF dataset and validate every row as a WekaTrace.
 
         Caps the number of rows to ``--num-dataset-entries`` (defaults to 100)
-        to avoid reconstructing the full 739-trace corpus when the benchmark
-        only needs a subset. Pass ``--num-dataset-entries 739`` (or higher)
-        to load the full corpus. Each row produces 1 parent conversation
-        plus 1 child conversation per subagent, so N rows typically yields
-        2-10x N conversations downstream.
+        to avoid reconstructing the full 949-trace corpus when the benchmark
+        only needs a subset. Pass ``--num-dataset-entries 949`` (or higher)
+        to load the full corpus. The no-subagents corpus has subagent entries
+        stripped, so each row produces exactly one main-agent conversation
+        downstream (no parent / child fan-out).
         """
         raw = await super().load_dataset()
         ds = raw["dataset"]

@@ -1766,14 +1766,16 @@ public_dataset_loader:
   semianalysis_cc_traces_weka:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
     description: |
-      SemiAnalysis Weka KV-cache-tester agentic coding trace dataset, hosted
-      on HuggingFace as semianalysisai/cc-traces-weka-042026 (657 MB
-      compressed, 739 traces, public, no auth required). Each row is a
-      complete WekaTrace; reconstruction is delegated to WekaTraceLoader so
-      file-based and HF-based replay produce byte-identical conversations.
+      SemiAnalysis Weka agentic coding trace dataset (no-subagents variant),
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-no-subagents-051226
+      (2.77 GB jsonl, 949 traces, 136k requests, public, no auth required).
+      Subagent entries are stripped: only top-level main-agent turns remain.
+      Each row is a complete WekaTrace; reconstruction is delegated to
+      WekaTraceLoader so file-based and HF-based replay produce byte-identical
+      conversations.
       Usage: --public-dataset semianalysis_cc_traces_weka
     metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-042026
+      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051226
       hf_split: train
       is_trace: true
       default_block_size: 64
