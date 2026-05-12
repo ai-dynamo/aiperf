@@ -180,16 +180,16 @@ class TestGetRevisionSnapshotDir:
 
 
 class TestOfflineConfigFallback:
-    """Patch transformers.PreTrainedConfig.from_pretrained so AutoTokenizer's
-    offline fallback returns an empty config for tokenizer-only repos.
+    """Patch transformers' cached_file resolver so AutoTokenizer's offline
+    config.json lookup falls through to tokenizer_config.json for
+    tokenizer-only HF repos (e.g. hf-internal-testing/llama-tokenizer)
+    cached without a config.json.
 
-    Why: tokenizer-only HF repos (e.g. hf-internal-testing/llama-tokenizer)
-    ship no config.json. Online, the hub returns 404 and AutoTokenizer falls
-    through to tokenizer_config.json. Offline, the missing file raises a
-    misleading "couldn't connect" OSError that AutoTokenizer doesn't recover
-    from. The patch swallows the OSError only when the on-disk evidence
-    matches a tokenizer-only repo (config.json absent, tokenizer_config.json
-    present), returning an empty PreTrainedConfig so dispatch falls through.
+    Online, the hub returns 404 for the missing config.json and AutoTokenizer
+    dispatches via tokenizer_config.json. Offline, the missing file raises a
+    misleading "couldn't connect" OSError. The context manager hands back a
+    synthetic empty config.json path only when the on-disk evidence matches
+    a tokenizer-only repo, leaving every other lookup untouched.
     """
 
     def _make_snapshot(
@@ -214,10 +214,10 @@ class TestOfflineConfigFallback:
             )
         return snap
 
-    def test_returns_empty_config_when_only_tokenizer_config_present(
-        self, hf_cache
+    def test_returns_stub_path_when_only_tokenizer_config_present(
+        self, hf_cache, monkeypatch
     ) -> None:
-        from transformers import PreTrainedConfig
+        from transformers.utils import hub as hub_module
 
         name = "hf-internal-testing/llama-tokenizer"
         self._make_snapshot(
@@ -227,66 +227,87 @@ class TestOfflineConfigFallback:
         def raising(*args, **kwargs):
             raise OSError("Couldn't connect")
 
-        # Replace the underlying loader so we exercise the patched wrapper
-        # without touching the network.
+        monkeypatch.setattr(hub_module, "cached_file", raising)
+
+        with _offline_config_fallback(name, "main"):
+            path = hub_module.cached_file(name, "config.json")
+            assert Path(path).is_file()
+            assert Path(path).read_text() == "{}"
+
+    def test_passes_through_non_config_filenames(self, hf_cache, monkeypatch) -> None:
+        from transformers.utils import hub as hub_module
+
+        name = "hf-internal-testing/llama-tokenizer"
+        self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+
+        def raising(*args, **kwargs):
+            raise OSError("Couldn't connect")
+
+        monkeypatch.setattr(hub_module, "cached_file", raising)
+
+        # tokenizer.json is not the file we stub — OSError must propagate.
         with (
             _offline_config_fallback(name, "main"),
-            pytest.MonkeyPatch.context() as mp,
+            pytest.raises(OSError, match="Couldn't connect"),
         ):
-            mp.setattr(
-                "transformers.configuration_utils.PreTrainedConfig.get_config_dict",
-                raising,
-            )
-            result = PreTrainedConfig.from_pretrained(name, local_files_only=True)
+            hub_module.cached_file(name, "tokenizer.json")
 
-        assert isinstance(result, PreTrainedConfig)
+    def test_passes_through_when_cached_file_succeeds(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        from transformers.utils import hub as hub_module
 
-    def test_reraises_when_config_present(self, hf_cache) -> None:
-        from transformers import PreTrainedConfig
+        name = "hf-internal-testing/llama-tokenizer"
+        snap = self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+        # Resolver returns a real cached path — wrapper must not intercept.
+        cached = snap / "tokenizer_config.json"
+        monkeypatch.setattr(hub_module, "cached_file", lambda *a, **kw: str(cached))
+
+        with _offline_config_fallback(name, "main"):
+            result = hub_module.cached_file(name, "config.json")
+
+        assert result == str(cached)
+
+    def test_noop_when_config_already_cached(self, hf_cache, monkeypatch) -> None:
+        from transformers.utils import hub as hub_module
 
         name = "meta-llama/Llama-2-7b-hf"
         self._make_snapshot(
             hf_cache, name, with_config=True, with_tokenizer_config=True
         )
 
-        def raising(*args, **kwargs):
-            raise OSError("Couldn't connect")
+        original = hub_module.cached_file
+        with _offline_config_fallback(name, "main"):
+            # Snapshot already has config.json — context manager is a no-op.
+            assert hub_module.cached_file is original
 
-        with (
-            _offline_config_fallback(name, "main"),
-            pytest.MonkeyPatch.context() as mp,
-            pytest.raises(OSError, match="Couldn't connect"),
-        ):
-            mp.setattr(
-                "transformers.configuration_utils.PreTrainedConfig.get_config_dict",
-                raising,
-            )
-            PreTrainedConfig.from_pretrained(name, local_files_only=True)
-
-    def test_reraises_when_tokenizer_config_absent(self, hf_cache) -> None:
-        from transformers import PreTrainedConfig
+    def test_noop_when_tokenizer_config_absent(self, hf_cache) -> None:
+        from transformers.utils import hub as hub_module
 
         name = "some-broken/repo"
         self._make_snapshot(
             hf_cache, name, with_config=False, with_tokenizer_config=False
         )
 
-        def raising(*args, **kwargs):
-            raise OSError("Couldn't connect")
+        original = hub_module.cached_file
+        with _offline_config_fallback(name, "main"):
+            # Not a tokenizer-only repo — context manager is a no-op.
+            assert hub_module.cached_file is original
 
-        with (
-            _offline_config_fallback(name, "main"),
-            pytest.MonkeyPatch.context() as mp,
-            pytest.raises(OSError, match="Couldn't connect"),
-        ):
-            mp.setattr(
-                "transformers.configuration_utils.PreTrainedConfig.get_config_dict",
-                raising,
-            )
-            PreTrainedConfig.from_pretrained(name, local_files_only=True)
+    def test_noop_when_snapshot_dir_none(self) -> None:
+        from transformers.utils import hub as hub_module
 
-    def test_reraises_for_non_oserror(self, hf_cache) -> None:
-        from transformers import PreTrainedConfig
+        # No snapshot exists for this repo — _get_revision_snapshot_dir returns None.
+        original = hub_module.cached_file
+        with _offline_config_fallback("not-cached/anywhere", "main"):
+            assert hub_module.cached_file is original
+
+    def test_reraises_for_non_oserror(self, hf_cache, monkeypatch) -> None:
+        from transformers.utils import hub as hub_module
 
         name = "hf-internal-testing/llama-tokenizer"
         self._make_snapshot(
@@ -296,52 +317,63 @@ class TestOfflineConfigFallback:
         def raising(*args, **kwargs):
             raise ValueError("schema mismatch")
 
+        monkeypatch.setattr(hub_module, "cached_file", raising)
+
         with (
             _offline_config_fallback(name, "main"),
-            pytest.MonkeyPatch.context() as mp,
             pytest.raises(ValueError, match="schema mismatch"),
         ):
-            mp.setattr(
-                "transformers.configuration_utils.PreTrainedConfig.get_config_dict",
-                raising,
-            )
-            PreTrainedConfig.from_pretrained(name, local_files_only=True)
+            hub_module.cached_file(name, "config.json")
 
-    def test_reraises_when_snapshot_dir_none(self, hf_cache) -> None:
-        from transformers import PreTrainedConfig
+    def test_restores_original_on_normal_exit(self, hf_cache, monkeypatch) -> None:
+        from transformers.utils import hub as hub_module
 
-        # No snapshot is created — _get_revision_snapshot_dir returns None.
-        name = "not-cached/anywhere"
+        name = "hf-internal-testing/llama-tokenizer"
+        self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+        sentinel = lambda *a, **kw: "sentinel"  # noqa: E731
+        monkeypatch.setattr(hub_module, "cached_file", sentinel)
 
-        def raising(*args, **kwargs):
-            raise OSError("Couldn't connect")
+        with _offline_config_fallback(name, "main"):
+            assert hub_module.cached_file is not sentinel
+        assert hub_module.cached_file is sentinel
 
-        with (
-            _offline_config_fallback(name, "main"),
-            pytest.MonkeyPatch.context() as mp,
-            pytest.raises(OSError, match="Couldn't connect"),
-        ):
-            mp.setattr(
-                "transformers.configuration_utils.PreTrainedConfig.get_config_dict",
-                raising,
-            )
-            PreTrainedConfig.from_pretrained(name, local_files_only=True)
+    def test_restores_original_on_exception(self, hf_cache, monkeypatch) -> None:
+        from transformers.utils import hub as hub_module
 
-    def test_restores_original_on_normal_exit(self, hf_cache) -> None:
-        from transformers import PreTrainedConfig
+        name = "hf-internal-testing/llama-tokenizer"
+        self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+        sentinel = lambda *a, **kw: "sentinel"  # noqa: E731
+        monkeypatch.setattr(hub_module, "cached_file", sentinel)
 
-        original = PreTrainedConfig.__dict__["from_pretrained"]
-        with _offline_config_fallback("anything", "main"):
-            assert PreTrainedConfig.__dict__["from_pretrained"] is not original
-        assert PreTrainedConfig.__dict__["from_pretrained"] is original
-
-    def test_restores_original_on_exception(self, hf_cache) -> None:
-        from transformers import PreTrainedConfig
-
-        original = PreTrainedConfig.__dict__["from_pretrained"]
         with (
             pytest.raises(RuntimeError, match="boom"),
-            _offline_config_fallback("anything", "main"),
+            _offline_config_fallback(name, "main"),
         ):
             raise RuntimeError("boom")
-        assert PreTrainedConfig.__dict__["from_pretrained"] is original
+        assert hub_module.cached_file is sentinel
+
+    def test_cleans_up_stub_dir_on_exit(self, hf_cache, monkeypatch) -> None:
+        from transformers.utils import hub as hub_module
+
+        name = "hf-internal-testing/llama-tokenizer"
+        self._make_snapshot(
+            hf_cache, name, with_config=False, with_tokenizer_config=True
+        )
+        monkeypatch.setattr(
+            hub_module,
+            "cached_file",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("x")),
+        )
+
+        with _offline_config_fallback(name, "main"):
+            path = Path(hub_module.cached_file(name, "config.json"))
+            assert path.is_file()
+            stub_dir = path.parent
+            assert stub_dir.is_dir()
+
+        # Temp dir is removed once the context manager exits.
+        assert not stub_dir.exists()

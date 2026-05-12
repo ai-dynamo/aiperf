@@ -137,42 +137,68 @@ def _offline_model_info_patch():
 
 @contextlib.contextmanager
 def _offline_config_fallback(name: str, revision: str):
-    """Make PreTrainedConfig.from_pretrained return an empty config for
-    tokenizer-only repos cached without a config.json.
+    """Provide a stub config.json for tokenizer-only HF repos during offline load.
 
-    Mirrors the online 404-fallthrough: when the snapshot has tokenizer_config.json
-    but no config.json, AutoTokenizer's offline fallback path raises a misleading
-    "couldn't connect" OSError. The patch swallows the OSError only when the
-    on-disk evidence matches a tokenizer-only repo, returning an empty
-    PreTrainedConfig so dispatch falls through to tokenizer_config.json.
+    Tokenizer-only repos (e.g. ``hf-internal-testing/llama-tokenizer``) ship no
+    config.json. Online, AutoTokenizer treats the 404 as a signal to fall
+    through to tokenizer_config.json. Offline, the missing file surfaces as a
+    "couldn't connect" OSError that AutoTokenizer can't recover from.
+
+    Patches transformers' ``cached_file`` resolver to hand back a synthetic
+    empty config.json path for the one lookup that needs it. The resolver's
+    contract — "return a local path or raise" — has been stable across
+    transformers versions, so this survives refactors that move
+    ``PreTrainedConfig.from_pretrained`` or change which exception it raises
+    on a missing entry.
     """
-    from transformers import PreTrainedConfig
+    import shutil
+    import tempfile
 
-    descriptor = PreTrainedConfig.__dict__["from_pretrained"]
-    original_func = descriptor.__func__
+    snapshot = _get_revision_snapshot_dir(name, revision)
+    if (
+        snapshot is None
+        or (snapshot / "config.json").exists()
+        or not (snapshot / "tokenizer_config.json").exists()
+    ):
+        yield
+        return
 
-    def patched(cls, *args, **kwargs):
+    try:
+        from transformers.utils import hub as hub_module
+    except ImportError:
+        yield
+        return
+
+    original = getattr(hub_module, "cached_file", None)
+    if original is None:
+        yield
+        return
+
+    stub_dir = Path(tempfile.mkdtemp(prefix="aiperf-offline-config-"))
+    stub_path = stub_dir / "config.json"
+    stub_path.write_text("{}")
+
+    def patched(path_or_repo_id, filename, *args, **kwargs):
+        if filename != "config.json":
+            return original(path_or_repo_id, filename, *args, **kwargs)
         try:
-            return original_func(cls, *args, **kwargs)
+            return original(path_or_repo_id, filename, *args, **kwargs)
         except OSError:
-            snapshot = _get_revision_snapshot_dir(name, revision)
-            if (
-                snapshot is not None
-                and not (snapshot / "config.json").exists()
-                and (snapshot / "tokenizer_config.json").exists()
-            ):
+            if (snapshot / "tokenizer_config.json").exists() and not (
+                snapshot / "config.json"
+            ).exists():
                 _logger.debug(
-                    f"No config.json for tokenizer-only repo '{name}'; "
-                    "returning empty PreTrainedConfig for offline dispatch"
+                    f"Returning stub config.json for tokenizer-only repo '{name}'"
                 )
-                return cls()
+                return str(stub_path)
             raise
 
-    PreTrainedConfig.from_pretrained = classmethod(patched)
+    hub_module.cached_file = patched
     try:
         yield
     finally:
-        PreTrainedConfig.from_pretrained = descriptor
+        hub_module.cached_file = original
+        shutil.rmtree(stub_dir, ignore_errors=True)
 
 
 def _find_hf_cache_aliases(name: str) -> list[Path]:
