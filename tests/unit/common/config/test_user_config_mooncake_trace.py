@@ -369,3 +369,36 @@ class TestTraceDatasetTimingDetection:
             f"Format-detection scanning must not emit per-line JSON parse "
             f"errors; got: {json_error_logs}"
         )
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_bare_scalar_line_does_not_raise_type_error(
+        self, mock_is_file, mock_exists
+    ):
+        """Regression: pretty-printed JSON arrays produce lines like ``62``
+        (trailing element). ``orjson.loads("62")`` returns an int; the
+        original code did ``"timestamp" in data`` directly, raising
+        ``TypeError: argument of type 'int' is not iterable``. The guard
+        must short-circuit on non-dict scalars and continue scanning.
+        """
+        mock_file_content = (
+            "{\n"
+            '  "id": "trace-x",\n'
+            '  "hash_ids": [\n'
+            "    0,\n"
+            "    1,\n"
+            "    62\n"
+            "  ]\n"
+            "}\n"
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/pretty.json",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            assert config._should_use_fixed_schedule_for_trace_dataset() is False
