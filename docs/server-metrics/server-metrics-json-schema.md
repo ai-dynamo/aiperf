@@ -146,7 +146,7 @@ Each metric entry has this structure:
 ```json
 "metrics": {
   "metric_name": {
-    "type": "gauge|counter|histogram",
+    "type": "gauge|counter|histogram|unknown",
     "description": "Metric description from HELP text",
     "unit": "seconds|tokens|requests|...",
     "series": [ ... ]
@@ -156,7 +156,7 @@ Each metric entry has this structure:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Prometheus metric type: [`gauge`](#gauge-metrics), [`counter`](#counter-metrics), or [`histogram`](#histogram-metrics) |
+| `type` | string | Prometheus metric type: [`gauge`](#gauge-metrics), [`counter`](#counter-metrics), [`histogram`](#histogram-metrics), or [`unknown`](#unknown-metrics) |
 | `description` | string | Human-readable description from Prometheus HELP text |
 | `unit` | string or null | Unit inferred from metric name suffix. See [Unit Inference](#unit-inference) for complete mapping of suffixes to unit values. |
 | `series` | array | Statistics for each unique endpoint + label combination |
@@ -312,6 +312,22 @@ Each gauge timeslice contains statistics for a fixed time window:
   "max": 15.0
 }
 ```
+
+---
+
+## Unknown Metrics
+
+Prometheus families declared `# TYPE foo untyped` — and families that ship with no `# TYPE` line at all, which the parser also classifies as untyped — appear in the export with `type: "unknown"`. node-exporter's `node_netstat_Icmp_*`, `node_netstat_Tcp_*`, and `node_netstat_IpExt_*` families are typical examples.
+
+AIPerf treats `unknown` as gauge-equivalent for storage and statistics: the series shape and stat fields are identical to a [Gauge](#gauge-metrics). The dedicated `type: "unknown"` tag is preserved (rather than flattened to `"gauge"`) so a real `gauge` and an exporter-untyped scalar remain distinguishable for downstream consumers — e.g., to flag that the exporter is explicitly *not* asserting monotonic or rate semantics.
+
+### Unknown Series Fields
+
+Identical to [Gauge Series Fields](#gauge-series-fields).
+
+### Unknown Stats Fields
+
+Identical to [Gauge Stats Fields](#gauge-stats-fields).
 
 ---
 
