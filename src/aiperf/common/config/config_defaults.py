@@ -180,6 +180,9 @@ class OutputDefaults:
     PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE = Path(
         "profile_export_aiperf_timeslices.json"
     )
+    PROFILE_EXPORT_AIPERF_ARCHETYPES_CSV_FILE = Path(
+        "profile_export_aiperf_archetypes.csv"
+    )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")

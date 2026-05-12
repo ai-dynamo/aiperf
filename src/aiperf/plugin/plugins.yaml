@@ -842,6 +842,14 @@ data_exporter:
       JSON exporter for timeslice metrics. Exports time-series metric data to JSON
       format for temporal analysis and visualization.
 
+  archetype_csv:
+    class: aiperf.exporters.archetype_metrics_csv_exporter:ArchetypeMetricsCsvExporter
+    description: |
+      CSV exporter for per-archetype metrics (media mix mode). Exports
+      per-request-type metric data in tidy/long format with an Archetype
+      column for downstream analysis with pandas/Tableau/etc.
+      Self-disables when no archetype metric results are present.
+
   accuracy_csv:
     class: aiperf.accuracy.accuracy_data_exporter:AccuracyDataExporter
     description: |

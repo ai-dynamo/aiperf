@@ -123,6 +123,9 @@ class OutputConfig(BaseConfig):
     _profile_export_timeslices_json_file: Path = (
         OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE
     )
+    _profile_export_archetypes_csv_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_AIPERF_ARCHETYPES_CSV_FILE
+    )
     _profile_export_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_JSONL_FILE
     _profile_export_raw_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_RAW_JSONL_FILE
     _profile_export_gpu_telemetry_jsonl_file: Path = (
@@ -170,6 +173,7 @@ class OutputConfig(BaseConfig):
             "_server_metrics.json",
             "_server_metrics.csv",
             "_gpu_telemetry.jsonl",
+            "_archetypes.csv",
             "_timeslices.csv",
             "_timeslices.json",
             "_raw.jsonl",
@@ -187,6 +191,7 @@ class OutputConfig(BaseConfig):
         self._profile_export_json_file = Path(f"{base_str}.json")
         self._profile_export_timeslices_csv_file = Path(f"{base_str}_timeslices.csv")
         self._profile_export_timeslices_json_file = Path(f"{base_str}_timeslices.json")
+        self._profile_export_archetypes_csv_file = Path(f"{base_str}_archetypes.csv")
         self._profile_export_jsonl_file = Path(f"{base_str}.jsonl")
         self._profile_export_raw_jsonl_file = Path(f"{base_str}_raw.jsonl")
         self._profile_export_gpu_telemetry_jsonl_file = Path(
@@ -221,6 +226,10 @@ class OutputConfig(BaseConfig):
     @property
     def profile_export_timeslices_json_file(self) -> Path:
         return self.artifact_directory / self._profile_export_timeslices_json_file
+
+    @property
+    def profile_export_archetypes_csv_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_archetypes_csv_file
 
     @property
     def profile_export_jsonl_file(self) -> Path:
