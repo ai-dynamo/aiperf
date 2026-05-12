@@ -65,7 +65,7 @@ NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agree
 
 You should first download and prepare the dataset using the following one liner:
 
-```
+```bash
 curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py | python3 -
 ```
 

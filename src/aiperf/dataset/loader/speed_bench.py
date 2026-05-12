@@ -94,13 +94,21 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         )
 
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
-        """Load multi-turn data from a JSONL file.
+        """Load SPEED-Bench multi-turn data from a JSONL file.
 
-        Each line represents a complete multi-turn conversation with its own
-        session_id and multiple turns.
+        Each line is mapped to a ``MultiTurn`` where ``session_id`` is taken
+        from the line's ``question_id``, and ``turns`` is built from the
+        ``messages`` array by converting each ``{"role", "content"}`` entry
+        into a ``SingleTurn(role=..., text=...)``.
+
+        When ``self.category`` is set, lines whose ``category`` field does not
+        match are skipped. If the filter eliminates every row, a warning is
+        emitted to surface a likely category/file mismatch rather than
+        silently returning an empty dataset.
 
         Returns:
-            A dictionary mapping session_id to list of MultiTurn objects.
+            A dictionary mapping session_id (the SPEED-Bench question_id) to
+            a list of MultiTurn objects.
         """
         data: dict[str, list[MultiTurn]] = defaultdict(list)
 
@@ -123,5 +131,14 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
                 )
 
                 data[multi_turn_data.session_id].append(multi_turn_data)
+
+        if self.category and not data:
+            self.warning(
+                lambda: (
+                    f"SPEED-Bench category filter {self.category!r} matched no rows "
+                    f"in {self.filename}. Verify the configured category exists in "
+                    f"this dataset."
+                )
+            )
 
         return data
