@@ -477,7 +477,14 @@ class MathGrader(BaseGrader):
         pred_stripped = strip_string(pred_raw)
         gold_stripped = strip_string(ground_truth)
 
-        if _HAS_SYMPY:
+        # The full ``math_equal`` path needs BOTH sympy (for parse_expr
+        # and ``_symbolic_equal``) and latex2sympy2-extended (for
+        # LaTeX-shaped expressions inside ``_sympy_parse``). Requiring
+        # both matches the contract the module docstring and the
+        # warning text already promise — a "sympy alone" middle state
+        # would silently regress LaTeX equivalence without telling
+        # users to install the missing package.
+        if _HAS_SYMPY and _HAS_LATEX2SYMPY:
             correct = _math_equal(pred_stripped, gold_stripped)
             mode = "math_equal"
         else:
