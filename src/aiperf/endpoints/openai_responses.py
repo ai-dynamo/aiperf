@@ -91,6 +91,7 @@ class ResponsesEndpoint(BaseEndpoint):
         if user_context_message:
             items.append(
                 {
+                    "type": "message",
                     "role": _DEFAULT_ROLE,
                     "content": user_context_message,
                 }
@@ -98,6 +99,7 @@ class ResponsesEndpoint(BaseEndpoint):
 
         for turn in turns:
             item: dict[str, Any] = {
+                "type": "message",
                 "role": turn.role or _DEFAULT_ROLE,
             }
             self._set_item_content(item, turn)
