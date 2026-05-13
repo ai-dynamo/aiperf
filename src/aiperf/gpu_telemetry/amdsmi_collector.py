@@ -89,6 +89,29 @@ def _numeric(value: Any) -> float | None:
     return None
 
 
+def _amdsmi_returns_celsius() -> bool:
+    """Whether the installed amdsmi binding returns temperatures in Celsius.
+
+    The AMDSMI C API documents temperatures as millidegrees Celsius, but the
+    Python binding started normalizing to Celsius in the ``26.x`` series
+    (ROCm ~6.3+). Older bindings return millidegrees. Gate on the major
+    version of ``amdsmi.__version__``.
+
+    If the version is missing or unparseable, assume modern (>= 26): every
+    currently-deployed binding we have validated against (Hotaisle MI300X
+    amdsmi 26.0.2, AAC1 MI355X amdsmi 26.2.1) is in that range, and over-
+    dividing a Celsius value would produce obviously-wrong sub-degree
+    readings that would be caught immediately.
+    """
+    if amdsmi is None:
+        return True
+    version = getattr(amdsmi, "__version__", "")
+    try:
+        return int(version.split(".", 1)[0]) >= 26
+    except (ValueError, AttributeError, IndexError):
+        return True
+
+
 def _is_throttled(value: Any) -> bool:
     """Decide whether an AMDSMI throttle_status value indicates active throttling.
 
@@ -411,11 +434,10 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
 
         EDGE is unsupported on Instinct GPUs.
 
-        The AMDSMI C API documents the temperature as millidegrees Celsius,
-        but recent Python bindings (>= ROCm 6.3 / amdsmi 26.x) return the
-        value already in Celsius. Older bindings return millidegrees. Detect
-        and normalize via a sanity check: any value > 200 is implausibly hot
-        for a GPU and is therefore in millidegrees.
+        Unit conversion is gated on ``amdsmi.__version__`` (see
+        :func:`_amdsmi_returns_celsius`): bindings ``< 26.x`` return
+        millidegrees Celsius and need /1000; ``>= 26.x`` already normalize
+        to Celsius.
         """
         for kind in ("JUNCTION", "HOTSPOT"):
             try:
@@ -429,7 +451,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             value = _numeric(temp)
             if value is None:
                 continue
-            if value > 200:  # millidegrees -> degrees
+            if not _amdsmi_returns_celsius():
                 value = value / 1000.0
             td.amd_temperature = value
             return

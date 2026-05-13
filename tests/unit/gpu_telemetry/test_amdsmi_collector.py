@@ -32,6 +32,9 @@ def _make_mock_amdsmi(num_gpus: int = 2) -> MagicMock:
         - ``energy_accumulator * counter_resolution`` is in µJ
     """
     m = MagicMock()
+    # Default to a modern (>= 26.x) binding so temperatures are returned in °C.
+    # Tests that want the legacy millidegree path override this explicitly.
+    m.__version__ = "26.0.2+39589fda"
     m.AmdSmiException = type("AmdSmiException", (Exception,), {})
     m.AmdSmiLibraryException = m.AmdSmiException
     m.AmdSmiMemoryType = SimpleNamespace(VRAM=0)
@@ -319,18 +322,56 @@ class TestCollection:
 
     @pytest.mark.asyncio
     async def test_temperature_normalized_when_returned_in_millidegrees(
-        self, initialized_collector, mock_amdsmi
+        self, patch_amdsmi
     ):
-        # Older AMDSMI bindings return temperature in millidegrees C. The
-        # collector applies a sanity normalization (>200 -> divide by 1000).
+        # Legacy AMDSMI bindings (< 26.x) return temperature in millidegrees C.
+        # The version gate routes those through /1000.
+        mock_amdsmi, AMDSMITelemetryCollector = patch_amdsmi
+        mock_amdsmi.__version__ = "25.5.0"
+
         def temp_mdeg(handle, kind, _metric):
             if kind == mock_amdsmi.AmdSmiTemperatureType.EDGE:
                 raise mock_amdsmi.AmdSmiException("EDGE not supported")
             return 67000  # 67°C reported as millidegrees
 
         mock_amdsmi.amdsmi_get_temp_metric.side_effect = temp_mdeg
+        c = AMDSMITelemetryCollector()
+        await c.initialize()
+        try:
+            records = await c._loop_to_thread_collect()
+        finally:
+            await c.stop()
+        assert records[0].telemetry_data.amd_temperature == 67.0
+
+    @pytest.mark.asyncio
+    async def test_temperature_passthrough_on_modern_binding(
+        self, initialized_collector
+    ):
+        # Default mock binding is 26.0.2 (modern), so JUNCTION's raw int 67
+        # passes through unchanged — no /1000 applied.
         records = await initialized_collector._loop_to_thread_collect()
         assert records[0].telemetry_data.amd_temperature == 67.0
+
+    @pytest.mark.asyncio
+    async def test_temperature_unparseable_version_assumes_modern(self, patch_amdsmi):
+        # If amdsmi.__version__ is missing or unparseable, default to "modern"
+        # (no /1000) since every currently-deployed binding is >= 26.x.
+        mock_amdsmi, AMDSMITelemetryCollector = patch_amdsmi
+        mock_amdsmi.__version__ = "garbage-not-a-version"
+
+        def temp_pass(handle, kind, _metric):
+            if kind == mock_amdsmi.AmdSmiTemperatureType.EDGE:
+                raise mock_amdsmi.AmdSmiException("EDGE not supported")
+            return 54  # already-Celsius
+
+        mock_amdsmi.amdsmi_get_temp_metric.side_effect = temp_pass
+        c = AMDSMITelemetryCollector()
+        await c.initialize()
+        try:
+            records = await c._loop_to_thread_collect()
+        finally:
+            await c.stop()
+        assert records[0].telemetry_data.amd_temperature == 54.0
 
     @pytest.mark.asyncio
     async def test_energy_falls_back_to_power_field_for_rocm6(
