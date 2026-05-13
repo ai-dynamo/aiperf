@@ -594,6 +594,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/post_processors/strategies/genai_semconv.py",
+      "_extract_host"
+    ],
+    [
+      "BLE001",
       "src/aiperf/post_processors/timeslice_metric_results_processor.py",
       "TimesliceMetricResultsProcessor.update_derived_metrics"
     ],
@@ -825,6 +830,11 @@
     [
       "C901",
       "src/aiperf/common/config/user_config.py",
+      "UserConfig._validate_mlflow_config"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/config/user_config.py",
       "UserConfig.validate_timing_mode"
     ],
     [
@@ -881,6 +891,11 @@
       "C901",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
       "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "C901",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
     ],
     [
       "C901",
@@ -956,11 +971,6 @@
       "C901",
       "src/aiperf/plot/dashboard/callbacks.py",
       "_generate_custom_single_run_plot"
-    ],
-    [
-      "C901",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "_generate_multirun_figure"
     ],
     [
       "C901",
@@ -1079,6 +1089,16 @@
     ],
     [
       "C901",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "C901",
+      "src/aiperf/records/records_manager.py",
+      "RecordsManager.__init__"
+    ],
+    [
+      "C901",
       "src/aiperf/records/records_manager.py",
       "RecordsManager._process_results"
     ],
@@ -1146,6 +1166,21 @@
       "D103",
       "src/aiperf/common/config/config_validators.py",
       "print_str_or_list"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/optional_dependencies.py",
+      "install_optional_dependency_hint"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/optional_dependencies.py",
+      "mlflow_dependency_message"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/optional_dependencies.py",
+      "otel_dependency_message"
     ],
     [
       "D103",
@@ -1359,6 +1394,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1416,6 +1456,11 @@
       "PLR0915",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
       "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
     ],
     [
       "PLR0915",
@@ -1526,6 +1571,11 @@
       "PLR0915",
       "src/aiperf/plot/handlers/single_run_handlers.py",
       "PercentileBandsHandler.create_plot"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "PLR0915",

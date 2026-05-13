@@ -733,6 +733,13 @@ results_processor:
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
 
+  otel_metrics_streamer:
+    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
+    description: |
+      Streams per-record metrics to a user-provided OpenTelemetry collector
+      with periodic export.
+      Enabled when --otel-url is configured.
+
   record_export:
     class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
     description: |
@@ -782,6 +789,13 @@ data_exporter:
     description: |
       JSON exporter for aggregated metrics. Exports benchmark results to JSON
       format with full metric details and structured data. Always loaded.
+
+  mlflow:
+    class: aiperf.exporters.mlflow_data_exporter:MLflowDataExporter
+    description: |
+      MLflow post-run exporter that uploads benchmark params, metrics, tags,
+      and generated artifacts (including plots) to an MLflow Tracking server.
+      Enabled when --mlflow-tracking-uri is configured.
 
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator

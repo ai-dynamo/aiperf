@@ -1778,3 +1778,124 @@ class MyUsageMetric(BaseRecordMetric[int]):
 ```
 
 ---
+
+## Timing Namespace (`aiperf.timing.*`)
+
+The `TimingResultsStrategy` emits phase-level timing snapshots as OTel counters and up-down-counters under the `aiperf.timing.*` namespace. These metrics track credit-phase progression in real time and are sourced from `CreditPhaseStats` fields.
+
+### Counters
+
+| Metric Name | OTel Instrument | Unit | Description | `CreditPhaseStats` Field | Requirement |
+|---|---|---|---|---|---|
+| `aiperf.timing.requests.sent` | Counter | `1` | Total requests dispatched in this phase | `requests_sent` | 13.2 |
+| `aiperf.timing.requests.completed` | Counter | `1` | Requests that received a complete response | `requests_completed` | 13.2 |
+| `aiperf.timing.requests.cancelled` | Counter | `1` | Requests cancelled before completion | `requests_cancelled` | 13.2 |
+| `aiperf.timing.requests.errors` | Counter | `1` | Requests that ended in error | `request_errors` | 13.2 |
+| `aiperf.timing.sessions.sent` | Counter | `1` | Sessions initiated in this phase | `sent_sessions` | 13.2 |
+| `aiperf.timing.sessions.completed` | Counter | `1` | Sessions that finished all turns | `completed_sessions` | 13.2 |
+| `aiperf.timing.sessions.cancelled` | Counter | `1` | Sessions cancelled before completion | `cancelled_sessions` | 13.2 |
+| `aiperf.timing.sessions.turns_total` | Counter | `1` | Cumulative session turns executed | `total_session_turns` | 13.2 |
+
+### Up-Down-Counters (Gauges)
+
+| Metric Name | OTel Instrument | Unit | Description | `CreditPhaseStats` Field | Requirement |
+|---|---|---|---|---|---|
+| `aiperf.timing.requests.in_flight` | UpDownCounter | `1` | Requests currently awaiting a response | `in_flight_requests` | 13.2 |
+| `aiperf.timing.sessions.in_flight` | UpDownCounter | `1` | Sessions with at least one turn in progress | `in_flight_sessions` | 13.2 |
+| `aiperf.timing.phase.timeout_triggered` | UpDownCounter | `1` | Whether the phase hard-timeout fired (0 or 1) | `timeout_triggered` | 13.2 |
+| `aiperf.timing.phase.grace_timeout_triggered` | UpDownCounter | `1` | Whether the grace-period timeout fired (0 or 1) | `grace_period_timeout_triggered` | 13.2 |
+| `aiperf.timing.phase.was_cancelled` | UpDownCounter | `1` | Whether the phase was user-cancelled (0 or 1) | `was_cancelled` | 13.2 |
+| `aiperf.timing.phase.elapsed_sec` | UpDownCounter | `s` | Wall-clock seconds elapsed in the phase | `requests_elapsed_time` | 13.2 |
+
+**Notes:**
+- All timing metrics carry the three GenAI spec Required attributes (`gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`) so they can be joined with spec-named request metrics in dashboards.
+- Counter metrics emit deltas (current - previous snapshot) and skip zero-delta updates.
+- Up-down-counter metrics emit the signed difference from the previous snapshot and skip near-zero (< 1e-9) deltas.
+
+---
+
+## OpenTelemetry GenAI Semantic Convention Mapping
+
+AIPerf translates its internal metric names onto the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/) so that downstream dashboards and alerting can consume spec-standard metric names directly.
+
+### Metric Name Rename Table
+
+| AIPerf Source | GenAI Spec Metric | Unit | Instrument |
+|---|---|---|---|
+| `request_latency` | `gen_ai.client.operation.duration` | s | Histogram |
+| `time_to_first_token` | `gen_ai.client.operation.time_to_first_chunk` | s | Histogram |
+| `inter_token_latency` | `gen_ai.client.operation.time_per_output_chunk` | s | Histogram |
+| `input_token_count` + `output_token_count` (merged) | `gen_ai.client.token.usage` with `gen_ai.token.type=input\|output` | {token} | Histogram |
+
+Duration metrics are converted from nanoseconds to seconds. Token counts use the identity conversion.
+
+### `gen_ai.operation.name` Mapping
+
+Derived from the AIPerf `endpoint.type` configuration value:
+
+| AIPerf `endpoint.type` | `gen_ai.operation.name` |
+|---|---|
+| `chat` | `chat` |
+| `completions` | `text_completion` |
+| `embeddings` | `embeddings` |
+| anything else | `chat` (fallback) |
+
+### `gen_ai.provider.name` Host Auto-Inference
+
+The provider attribute is resolved using the following precedence:
+
+1. Explicit `--gen-ai-provider` CLI override (highest priority)
+2. Host pattern inference from the endpoint URL (see table below)
+3. `_OTHER` fallback
+
+| URL Host Pattern | Provider Value |
+|---|---|
+| `api.openai.com` | `openai` |
+| `api.anthropic.com` | `anthropic` |
+| `api.deepseek.com` | `deepseek` |
+| `api.mistral.ai` | `mistral_ai` |
+| `api.cohere.ai` / `api.cohere.com` | `cohere` |
+| `api.x.ai` | `x_ai` |
+| `api.groq.com` | `groq` |
+| `api.perplexity.ai` | `perplexity` |
+| `generativelanguage.googleapis.com` | `gcp.gemini` |
+| `*-aiplatform.googleapis.com` | `gcp.vertex_ai` |
+| `bedrock-runtime.*.amazonaws.com` | `aws.bedrock` |
+| `*.openai.azure.com` | `azure.ai.openai` |
+| `*.services.ai.azure.com` | `azure.ai.inference` |
+| `*.ibm.com` (with Watsonx paths) | `ibm.watsonx.ai` |
+| anything else | `_OTHER` |
+
+### `error.type` Classification
+
+Error conditions on individual requests are classified into spec-standard `error.type` attribute values:
+
+| AIPerf Condition | `error.type` Value |
+|---|---|
+| asyncio/HTTP timeout | `timeout` |
+| HTTP 5xx response | `http_5xx` |
+| HTTP 4xx response | `http_4xx` |
+| JSON parse error | `parse_error` |
+| User-initiated cancel | `cancelled` |
+| anything else | `_OTHER` |
+
+The `error.type` attribute is only attached when an error is present; successful requests omit it entirely.
+
+### Timing Namespace and GenAI Spec Interoperability
+
+The `aiperf.timing.*` metrics retain AIPerf-specific names because the GenAI semantic convention specification has no equivalent phase-level timing metrics. However, these metrics receive the same Required attributes (`gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`) as the spec-named request metrics so that downstream systems can join across both namespaces for correlation and alerting.
+
+### Metrics NOT Emitted
+
+AIPerf is a client-side benchmarking tool and does **not** emit any server-side metrics:
+
+- No `gen_ai.server.*` metrics are produced.
+
+AIPerf also does **not** emit any opt-in GenAI events:
+
+- `gen_ai.input.messages`
+- `gen_ai.output.messages`
+- `gen_ai.system_instructions`
+- `gen_ai.tool.definitions`
+
+These events are excluded because AIPerf's purpose is performance measurement, not request/response content logging.

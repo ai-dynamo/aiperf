@@ -194,6 +194,28 @@ class OutputDefaults:
 
 
 @dataclass(frozen=True)
+class MLflowDefaults:
+    TRACKING_URI = None
+    EXPERIMENT = "aiperf"
+    RUN_NAME = None
+    TAGS = None
+    ARTIFACT_GLOBS = None
+    DEFAULT_ARTIFACT_GLOBS = (
+        "*.json",
+        "*.csv",
+        "*.jsonl",
+        "*.parquet",
+        "*_timeslices.*",
+        "**/*.png",
+        "**/*.jpg",
+        "**/*.jpeg",
+        "**/*.svg",
+        "**/*.html",
+    )
+    EXPORT_METADATA_FILE = Path("mlflow_export.json")
+
+
+@dataclass(frozen=True)
 class TokenizerDefaults:
     NAME = None
     REVISION = "main"
