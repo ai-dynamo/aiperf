@@ -38,7 +38,13 @@ from aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
-from aiperf_mock_server.tokens import TokenizedText, tokenize_request
+from aiperf_mock_server.request_recorder import get_global_recorder
+from aiperf_mock_server.tokens import (
+    TokenizedText,
+    _extract_osl_fingerprint,
+    _extract_request_content,
+    tokenize_request,
+)
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -401,9 +407,11 @@ def make_ctx(
     """
     model = getattr(request, "model", "unknown")
     tokenized = tokenize_request(request)
+    request_id = _create_request_id(request)
+    _maybe_record_request(request, endpoint, request_id, model)
 
     return RequestCtx(
-        request_id=_create_request_id(request),
+        request_id=request_id,
         model=model,
         tokenized=tokenized,
         usage=tokenized.create_usage(),
@@ -415,6 +423,30 @@ def make_ctx(
             isl=tokenized.prompt_token_count,
             osl=len(tokenized.tokens),
         ),
+    )
+
+
+def _maybe_record_request(
+    request: RequestT, endpoint: str, request_id: str, model: str
+) -> None:
+    """Tokenize and persist the request via the in-process recorder, if enabled.
+
+    Runs inline on the event loop. `--record-requests` forces `--workers=1`,
+    so there is exactly one producer and no locking is needed.
+    """
+    recorder = get_global_recorder()
+    if recorder is None:
+        return
+    text, _resolved_osl = _extract_request_content(request)
+    fingerprint = _extract_osl_fingerprint(request)
+    recorder.record(
+        ts=time.time(),
+        endpoint=endpoint,
+        request_id=request_id,
+        model=model,
+        text=text,
+        stream=getattr(request, "stream", None),
+        osl_fingerprint=fingerprint,
     )
 
 

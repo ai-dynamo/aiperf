@@ -20,6 +20,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 - [**Deterministic Responses**](#token-generation): Hash-based generation for identical outputs
 - [**Fast Mode**](#quick-start): Zero-latency mode (`--fast`) for integration testing
 - [**Corpus**](#corpus): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
+- [**Request Recording**](#request-recording): Per-request ISL + requested OSL capture with JSONL output and a shutdown summary
 
 ### Supported Endpoints
 
@@ -150,10 +151,16 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--tokenizer` | `Qwen/Qwen3-0.6B` | HuggingFace tokenizer for corpus |
+| `--tokenizer` | `Qwen/Qwen3-0.6B` | HuggingFace tokenizer for corpus (and for the recorder, when enabled) |
 | `--tokenizer-revision` | `main` | Tokenizer revision (branch, tag, or commit) |
 | `--tokenizer-trust-remote-code` | `false` | Trust remote code for custom tokenizers |
 | `--no-tokenizer` | `false` | Skip tokenizer, use character-based chunking (faster startup) |
+
+### Request Recording Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--record-requests` | `None` | Path to a JSONL file for per-request ISL + requested OSL capture. Presence of this flag enables recording mode, forces `--workers=1`, and requires a real tokenizer (incompatible with `--no-tokenizer`). |
 
 **Auto-Scaling GPU Metrics**
 
@@ -502,20 +509,116 @@ No CLI knob — this is always-on. Streaming success paths set a `_finished` fla
 - Single-process only: `--workers > 1` runs each worker with an independent scheduler (no cross-worker batching).
 - No KV-block accounting, no preemption, no swap. For those, see design C (deferred).
 
+## Request Recording
+
+Used to verify that an aiperf run actually generates the requested ISL / OSL distribution on the wire. When `--record-requests PATH` is set, the server tokenizes every incoming request inline with the configured `--tokenizer` and appends one JSONL record per request. On shutdown it writes a per-endpoint distribution summary to `<PATH>.summary.json` (and prints the same summary to stdout).
+
+```mermaid
+flowchart LR
+    subgraph client["client (aiperf, curl, ...)"]
+        REQ([HTTP POST])
+    end
+
+    subgraph uvicorn["uvicorn / FastAPI process (workers=1)"]
+        direction TB
+        handlers["handler<br/>chat / completions / TGI / embeddings / ..."]
+        mkctx["make_ctx()"]
+        resp([HTTP response])
+        handlers --> mkctx
+        mkctx -->|"tokenize_request<br/>(cheap ~4 char est.)"| resp
+
+        subgraph lifespan["lifespan"]
+            recorder["RequestRecorder<br/>open() at start,<br/>close() at shutdown"]
+            tok["Tokenizer.from_pretrained<br/>(same name as corpus)"]
+            stats["per-endpoint stats<br/>(ISL / OSL lists in process memory)"]
+            tok --> stats
+            recorder --- tok
+        end
+
+        mkctx -. "record()<br/>inline tokenize + write" .-> tok
+    end
+
+    REQ --> handlers
+
+    stats --> jsonl[("requests.jsonl<br/>one JSON / request, appended inline")]
+    recorder -. "close()<br/>flushes summary" .-> summary[("requests.jsonl.summary.json<br/>+ stdout table")]
+```
+
+**Properties:**
+
+- The recorder lives in the FastAPI lifespan; tokenization and the JSONL append both run on the event loop in `make_ctx`. Real HF `tokenizer.encode()` is fast (sub-ms for typical prompts), and `--workers=1` means there is exactly one producer — no locking, no queue, no subprocess.
+- The recorder reuses the configured `--tokenizer` rather than introducing a separate one, so ISL counts match whatever vocab the corpus is using.
+- `--record-requests` rejects `--no-tokenizer` at config validation time, since recording with no tokenizer is incoherent.
+- `--record-requests` forces `--workers=1` because per-request stats are kept in process memory and need a single producer to attribute cleanly to one output file.
+
+**Output format** — one JSON object per line, capturing the full OSL fingerprint the client sent (not just the resolved cap):
+
+```json
+{"ts": 1714000000.123, "request_id": "chatcmpl-...", "endpoint": "/v1/chat/completions",
+ "model": "Qwen/Qwen3-0.6B", "isl": 512,
+ "requested_osl": 256, "max_tokens": null, "max_completion_tokens": 256,
+ "min_tokens": null, "ignore_eos": false, "reasoning_effort": null,
+ "stream": true}
+```
+
+| Field | Meaning |
+|---|---|
+| `isl` | Real tokenized length of the assembled prompt (always populated). |
+| `requested_osl` | Resolved OSL cap: `max_completion_tokens or max_tokens` for chat, `max_tokens` for completions, `parameters.max_new_tokens` for TGI. `null` for embeddings/ranking/image retrieval. |
+| `max_tokens` / `max_completion_tokens` | The raw fields the client sent — useful to see which API name-space they used. TGI's `max_new_tokens` is recorded under `max_tokens` so the schema stays uniform. |
+| `min_tokens` | Floor on generated tokens (vllm/SGLang). |
+| `ignore_eos` | If `true`, server generates exactly `max_tokens`. |
+| `reasoning_effort` | `low`/`medium`/`high` for reasoning models — adds a reasoning budget on top of the main output. |
+| `stream` | Whether the request asked for streaming. |
+
+**Summary** — `<PATH>.summary.json` and stdout, per endpoint:
+
+```
+Request distribution summary (5000 requests):
+----------------------------------------------------------------------------------------
+  /v1/chat/completions              n=  4000  ISL mean= 1024.3 p50=  1019 p99=  1228  OSL mean=  256.1 p50=   256 p99=   307
+      min_tokens mean=    32.0 p50=    32
+      ignore_eos=true: 41
+      reasoning_effort: {'low': 100, 'medium': 250, 'high': 50}
+  /v1/embeddings                    n=  1000  ISL mean=  512.7 p50=   510 p99=   683  OSL n/a
+```
+
+For each endpoint the JSON file contains:
+- `count`, `streamed_count`, `ignore_eos_count`, `reasoning_effort_counts` (categorical tallies).
+- Quantile blocks (`min`, `max`, `mean`, `stdev`, `p50/p90/p95/p99`) for `isl`, `requested_osl`, and `min_tokens`. A block is `null` when no request set that field.
+
+Stats come from stdlib `statistics` — no numpy/pandas dependency.
+
+**Example end-to-end run:**
+
+```bash
+aiperf-mock-server --record-requests /tmp/req.jsonl --fast &
+aiperf profile \
+    --endpoint-type chat \
+    --url http://localhost:8000 \
+    --model Qwen/Qwen3-0.6B \
+    --random-range-ratio 0.2 --isl-mean 1024 --osl-mean 256 \
+    --request-count 200
+kill %1     # graceful shutdown: worker flushes JSONL + summary
+cat /tmp/req.jsonl.summary.json
+python -c "import pandas as pd; print(pd.read_json('/tmp/req.jsonl', lines=True).describe())"
+```
+
 ## Project Structure
 
 ```
 tests/aiperf_mock_server/
-├── __main__.py      # CLI entry point
-├── app.py           # FastAPI application and endpoints
-├── config.py        # Configuration (CLI, env vars)
-├── models.py        # Pydantic request/response models
-├── tokens.py        # Tokenization and generation
-├── utils.py         # Request context, streaming, latency
-├── metrics.py       # Prometheus metric definitions
-├── metrics_utils.py # Metric recording helpers
-├── dcgm_faker.py    # GPU telemetry simulation
-├── scheduler.py     # Step-based batched scheduler
+├── __main__.py             # CLI entry point
+├── app.py                  # FastAPI application and endpoints
+├── config.py               # Configuration (CLI, env vars)
+├── models.py               # Pydantic request/response models
+├── tokens.py               # Tokenization and generation
+├── utils.py                # Request context, streaming, latency
+├── request_recorder.py     # In-process per-request ISL/OSL recorder + summary
+├── metrics.py              # Prometheus metric definitions
+├── metrics_utils.py        # Metric recording helpers
+├── dcgm_faker.py           # GPU telemetry simulation
+├── scheduler.py            # Step-based batched scheduler
 ├── test_scheduler.py
 ├── test_scheduler_integration.py
 ├── test_robustness.py

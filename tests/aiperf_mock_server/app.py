@@ -53,6 +53,7 @@ from aiperf_mock_server.models import (
 from aiperf_mock_server.node_exporter_faker import (
     render_default as render_node_exporter,
 )
+from aiperf_mock_server.request_recorder import RequestRecorder, set_global_recorder
 from aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
 from aiperf_mock_server.utils import (
     RequestCtx,
@@ -136,11 +137,26 @@ async def lifespan(_: FastAPI):
             server_config.dcgm_num_gpus,
             server_config.dcgm_gpu_name,
         )
+
+    recorder: RequestRecorder | None = None
+    if server_config.record_requests is not None:
+        recorder = RequestRecorder(
+            path=server_config.record_requests,
+            tokenizer_name=server_config.tokenizer,
+            tokenizer_revision=server_config.tokenizer_revision,
+            trust_remote_code=server_config.tokenizer_trust_remote_code,
+        )
+        recorder.open()
+        set_global_recorder(recorder)
+
     await init_scheduler(server_config)
     try:
         yield
     finally:
         await shutdown_scheduler()
+        if recorder is not None:
+            set_global_recorder(None)
+            recorder.close()
 
 
 app = FastAPI(title="AIPerf Mock Server", version="2.0.0", lifespan=lifespan)

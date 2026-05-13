@@ -183,11 +183,12 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
 
     os.environ["AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD"] = "0"
 
+    no_tokenizer = kwargs.pop("no_tokenizer", True)
     process: SpawnProcess = mp_ctx.Process(
         target=aiperf_mock_server_serve,
         kwargs={
             "config": MockServerConfig(
-                host=host, port=port, no_tokenizer=True, **kwargs
+                host=host, port=port, no_tokenizer=no_tokenizer, **kwargs
             )
         },
         daemon=False,
