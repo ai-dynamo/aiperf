@@ -269,6 +269,14 @@ def _render_realtime_block(
             srv_parts.append(f"queue={running}r/{waiting}w")
         if "num_preemptions" in server_snapshot:
             srv_parts.append(f"preemptions={int(server_snapshot['num_preemptions'])}")
+        if "input_token_throughput_srv" in server_snapshot:
+            srv_parts.append(
+                f"tput_in_srv={int(round(server_snapshot['input_token_throughput_srv'])):,}/s"
+            )
+        if "output_token_throughput_srv" in server_snapshot:
+            srv_parts.append(
+                f"tput_out_srv={int(round(server_snapshot['output_token_throughput_srv'])):,}/s"
+            )
         if srv_parts:
             rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 

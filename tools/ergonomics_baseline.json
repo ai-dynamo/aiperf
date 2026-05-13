@@ -248,6 +248,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/server_metrics/accumulator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/server_metrics/export_stats.py",
       ""
     ],
@@ -975,6 +980,11 @@
       "function-size",
       "src/aiperf/server_metrics/accumulator.py",
       "ServerMetricsAccumulator._compute_endpoint_summaries"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/accumulator.py",
+      "ServerMetricsAccumulator.realtime_snapshot"
     ],
     [
       "function-size",
