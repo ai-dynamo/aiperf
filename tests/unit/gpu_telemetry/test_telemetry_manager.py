@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -1110,20 +1111,22 @@ class TestAmdsmiCollectorIntegration:
         mock_collector.collect_and_process_metrics.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_configure_amdsmi_collector_continues_when_baseline_fails(self):
-        # If the baseline scrape raises (transient amdsmi error, sensor
-        # hiccup, etc.) configure must still mark the collector enabled
-        # rather than abandon it — matching DCGM's "warn but don't fail"
-        # semantics. The user just loses one baseline sample; the periodic
-        # collection loop still runs and counter deltas degrade to the
-        # first-in-window-sample fallback.
+    async def test_configure_amdsmi_collector_continues_when_baseline_scrape_fails(
+        self,
+    ):
+        # If only the baseline scrape raises (transient sensor read error
+        # after a successful init), the collector is still usable — keep
+        # it enabled and just lose the reference sample. The periodic
+        # collection loop still runs; counter deltas degrade to the
+        # first-in-window-sample fallback for the first interval.
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 
         mock_collector = AsyncMock()
         mock_collector.is_url_reachable = AsyncMock(return_value=True)
+        mock_collector.initialize = AsyncMock()  # init succeeds
         mock_collector.collect_and_process_metrics = AsyncMock(
-            side_effect=RuntimeError("transient amdsmi error")
+            side_effect=RuntimeError("transient sensor read error")
         )
 
         MockCollectorClass = MagicMock(return_value=mock_collector)
@@ -1142,6 +1145,47 @@ class TestAmdsmiCollectorIntegration:
         assert call_args.enabled is True
         assert AMDSMI_SOURCE_IDENTIFIER in manager._collectors
         manager.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_configure_amdsmi_collector_disables_when_init_fails(self):
+        # AIPerfLifecycleMixin re-raises hook failures as
+        # ``asyncio.CancelledError`` (see test_amdsmi_collector.py
+        # ``test_init_failure_propagates_via_lifecycle``). The baseline path
+        # must catch that — letting it propagate would cancel the entire
+        # PROFILE_CONFIGURE flow rather than gracefully disabling telemetry.
+        # On init failure the collector is unusable, so it must be removed
+        # from ``_collectors`` and disabled status reported.
+        manager = self._create_test_manager()
+        manager.publish = AsyncMock()
+
+        mock_collector = AsyncMock()
+        mock_collector.is_url_reachable = AsyncMock(return_value=True)
+        mock_collector.initialize = AsyncMock(
+            side_effect=asyncio.CancelledError(
+                "Failed to initialize amdsmi: driver gone"
+            )
+        )
+
+        MockCollectorClass = MagicMock(return_value=mock_collector)
+        with patch(
+            "aiperf.plugin.plugins.get_class",
+            return_value=MockCollectorClass,
+        ):
+            configure_msg = ProfileConfigureCommand(
+                command_id="test", service_id="system_controller", config={}
+            )
+            # Must NOT propagate CancelledError out of configure.
+            await manager._profile_configure_command(configure_msg)
+
+        manager.publish.assert_called_once()
+        call_args = manager.publish.call_args[0][0]
+        assert isinstance(call_args, TelemetryStatusMessage)
+        assert call_args.enabled is False
+        assert "amdsmi initialization failed" in call_args.reason
+        assert AMDSMI_SOURCE_IDENTIFIER not in manager._collectors
+        assert "amdsmi_collector" not in manager._collector_id_to_url
+        # collect_and_process_metrics must NOT be invoked when init failed.
+        mock_collector.collect_and_process_metrics.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_configure_amdsmi_collector_no_gpus_found(self):
