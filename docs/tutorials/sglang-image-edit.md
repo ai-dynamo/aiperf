@@ -44,18 +44,13 @@ docker run --gpus all \
 ```
 
 > [!NOTE]
-> The following steps are to be performed _inside_ the Docker container.
-
-**Install the diffusion extras.** The base image does not include diffusion dependencies — see the [SGLang Diffusion installation guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md):
-```bash
-pip install -e "python[diffusion]"
-```
+> The following steps are to be performed _inside_ the Docker container. `lmsysorg/sglang:dev` ships the diffusion stack ready to run — no extra `pip install` step is needed for FLUX.2-Klein-4B.
 
 **Set the server arguments:**
 > [!WARNING]
 > These arguments set up FLUX.2-Klein-4B on a single GPU at port 30000.
 > Adjust the model path, GPU count, or port to match your environment.
-> See the [SGLang Multimodal Gen CLI](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md) for more details.
+> The flags below come from upstream SGLang multimodal_gen and may change over time — treat the [SGLang Multimodal Gen CLI](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md) as the source of truth if any flag here is rejected.
 ```bash
 SERVER_ARGS=( --model-path black-forest-labs/FLUX.2-klein-4B --num-gpus 1 --port 30000 --host 0.0.0.0 --warmup --enable-torch-compile )
 ```
@@ -115,12 +110,12 @@ aiperf profile \
 ### Image Edit Using an Input File
 For deterministic prompt + reference image sequences, use a JSONL input file. Each line must include both the prompt (`text`) and the reference image (`image`, a local path or URL) — the `image_edit` endpoint rejects turns without a reference image, and the `single_turn` loader does not synthesize one.
 
-**Create an input file** (replace the paths with real reference images you want to edit):
+**Create an input file** (replace the paths/URLs with real reference images you want to edit):
 ```bash
 cat > edit_prompts.jsonl << 'EOF'
 {"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}
 {"text": "Make the background a sunset", "image": "/path/to/ref2.png"}
-{"text": "Add snow to the trees", "image": "/path/to/ref3.png"}
+{"text": "Add snow to the trees", "image": "https://example.com/ref3.png"}
 EOF
 ```
 
