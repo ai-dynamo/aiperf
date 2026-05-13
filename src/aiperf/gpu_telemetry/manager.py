@@ -263,6 +263,21 @@ class GPUTelemetryManager(BaseComponentService):
                 self._collectors[AMDSMI_SOURCE_IDENTIFIER] = collector
                 self._collector_id_to_url[collector_id] = AMDSMI_SOURCE_IDENTIFIER
                 self.debug("GPU Telemetry: amdsmi collector configured successfully")
+
+                # Capture baseline metrics before profiling starts so counter
+                # deltas (amd_energy_consumption, amd_ecc_uncorrectable) are
+                # computed against a pre-profile reference rather than the
+                # first in-window sample. Mirrors DCGM Phase 2 pattern below.
+                self.info("GPU Telemetry: Capturing amdsmi baseline metrics...")
+                try:
+                    await collector.initialize()
+                    await collector.collect_and_process_metrics()
+                    self.debug("GPU Telemetry: Captured amdsmi baseline")
+                except Exception as e:  # noqa: BLE001 - baseline best-effort
+                    self.warning(
+                        f"GPU Telemetry: Failed to capture amdsmi baseline: {e}"
+                    )
+
                 await self._send_telemetry_status(
                     enabled=True,
                     reason=None,

@@ -1069,6 +1069,7 @@ class TestAmdsmiCollectorIntegration:
         manager.error = MagicMock()
         manager.warning = MagicMock()
         manager.debug = MagicMock()
+        manager.info = MagicMock()
         return manager
 
     @pytest.mark.asyncio
@@ -1100,6 +1101,47 @@ class TestAmdsmiCollectorIntegration:
         assert (
             manager._collector_id_to_url["amdsmi_collector"] == AMDSMI_SOURCE_IDENTIFIER
         )
+
+        # Baseline scrape: configure must call initialize() + one
+        # collect_and_process_metrics() so counter deltas
+        # (amd_energy_consumption, amd_ecc_uncorrectable) are computed
+        # against a pre-profile reference, not the first in-window sample.
+        mock_collector.initialize.assert_awaited_once()
+        mock_collector.collect_and_process_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_configure_amdsmi_collector_continues_when_baseline_fails(self):
+        # If the baseline scrape raises (transient amdsmi error, sensor
+        # hiccup, etc.) configure must still mark the collector enabled
+        # rather than abandon it — matching DCGM's "warn but don't fail"
+        # semantics. The user just loses one baseline sample; the periodic
+        # collection loop still runs and counter deltas degrade to the
+        # first-in-window-sample fallback.
+        manager = self._create_test_manager()
+        manager.publish = AsyncMock()
+
+        mock_collector = AsyncMock()
+        mock_collector.is_url_reachable = AsyncMock(return_value=True)
+        mock_collector.collect_and_process_metrics = AsyncMock(
+            side_effect=RuntimeError("transient amdsmi error")
+        )
+
+        MockCollectorClass = MagicMock(return_value=mock_collector)
+        with patch(
+            "aiperf.plugin.plugins.get_class",
+            return_value=MockCollectorClass,
+        ):
+            configure_msg = ProfileConfigureCommand(
+                command_id="test", service_id="system_controller", config={}
+            )
+            await manager._profile_configure_command(configure_msg)
+
+        manager.publish.assert_called_once()
+        call_args = manager.publish.call_args[0][0]
+        assert isinstance(call_args, TelemetryStatusMessage)
+        assert call_args.enabled is True
+        assert AMDSMI_SOURCE_IDENTIFIER in manager._collectors
+        manager.warning.assert_called()
 
     @pytest.mark.asyncio
     async def test_configure_amdsmi_collector_no_gpus_found(self):
