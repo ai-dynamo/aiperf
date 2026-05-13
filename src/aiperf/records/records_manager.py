@@ -98,9 +98,9 @@ _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
     ("itl", "inter_token_latency"),
     ("e2e", "request_latency"),
 )
-_PER_USER_TPUT_LABELS: tuple[tuple[str, str], ...] = (
-    ("tin", "prefill_throughput_per_user"),
-    ("tout", "output_token_throughput_per_user"),
+_INTERACTIVITY_LABEL: tuple[str, str] = (
+    "intvty",
+    "output_token_throughput_per_user",
 )
 _SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
     ("isl", "input_sequence_length"),
@@ -199,19 +199,19 @@ def _render_realtime_block(
             f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99}"
         )
 
-    # Per-user throughput percentiles — distribution of how fast each
-    # request's tokens flowed (tokens/sec/user). Aggregate tput_in/tput_out
-    # on line 1 are bandwidth; these rows show the spread per request, which
-    # is what users tail for tail-latency-equivalent throughput.
-    for label, tag in _PER_USER_TPUT_LABELS:
-        mr = by_tag.get(tag)
-        p50 = _format_int(getattr(mr, "p50", None))
-        p75 = _format_int(getattr(mr, "p75", None))
-        p95 = _format_int(getattr(mr, "p95", None))
-        p99 = _format_int(getattr(mr, "p99", None))
-        rows.append(
-            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (tok/s/user)"
-        )
+    # Interactivity = 1 / inter-token-latency per request, percentiled across
+    # requests. Characterizes the user-perceived decode speed; tail (low
+    # percentile) is the slowest-decoding user, head (high percentile) is the
+    # snappiest. Aggregate tput_in/tput_out on line 1 are bandwidth.
+    intvty_label, intvty_tag = _INTERACTIVITY_LABEL
+    mr = by_tag.get(intvty_tag)
+    p50 = _format_int(getattr(mr, "p50", None))
+    p75 = _format_int(getattr(mr, "p75", None))
+    p95 = _format_int(getattr(mr, "p95", None))
+    p99 = _format_int(getattr(mr, "p99", None))
+    rows.append(
+        f"{indent}{intvty_label:<6} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (1/tpot tok/s)"
+    )
 
     # Sequence-length distribution rows — useful for spotting long-tail
     # agentic prompts mid-run.  Reads the same MetricResults aggregator
