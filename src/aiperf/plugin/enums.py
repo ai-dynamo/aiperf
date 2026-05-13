@@ -75,7 +75,7 @@ TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", modul
 
 RecordProcessorTypeStr: TypeAlias = str
 RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordProcessorType", module=__name__)
-"""Dynamic enum for record processor. Example: RecordProcessorType.ACCURACY_RECORD, RecordProcessorType.METRIC_RECORD, RecordProcessorType.RAW_RECORD_WRITER"""
+"""Dynamic enum for record processor. Example: RecordProcessorType.ACCURACY_RECORD, RecordProcessorType.OUTPUTS_JSON, RecordProcessorType.RAW_RECORD_WRITER"""
 
 ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)

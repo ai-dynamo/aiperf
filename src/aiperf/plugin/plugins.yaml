@@ -700,6 +700,12 @@ record_processor:
       Accuracy record processor that grades LLM responses against ground truth
       for accuracy benchmarking. Self-disables when accuracy mode is off.
 
+  outputs_json:
+    class: aiperf.post_processors.outputs_json_record_processor:OutputsJsonRecordProcessor
+    description: |
+      Outputs JSON record processor that captures model response text per request.
+      Enabled when --export-outputs-json is set. Writes per-processor fragment files.
+
 # =============================================================================
 # Results Processors
 # =============================================================================
@@ -818,6 +824,12 @@ data_exporter:
     description: |
       CSV exporter for accuracy benchmarking results. Exports per-problem grading
       details for offline analysis. Self-disables when accuracy mode is off.
+
+  outputs_json:
+    class: aiperf.exporters.outputs_json_exporter:OutputsJsonExporter
+    description: |
+      Aggregates per-processor output fragment files and merges with metrics
+      into final outputs.json. Enabled when --export-outputs-json is set.
 
 # =============================================================================
 # Console Exporters

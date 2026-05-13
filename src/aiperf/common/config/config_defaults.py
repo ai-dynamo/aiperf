@@ -167,9 +167,11 @@ class TurnDelayDefaults:
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
+    OUTPUT_FRAGMENTS_FOLDER = Path("output_fragments")
     LOG_FOLDER = Path("logs")
     LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
+    OUTPUTS_JSON_FILE = Path("outputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
     PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE = Path(
