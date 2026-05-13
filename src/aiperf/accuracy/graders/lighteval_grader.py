@@ -148,7 +148,7 @@ class _LightevalBaseGrader(BaseGrader):
         """Run lighteval's metric.compute with crash-safety.
 
         lighteval can raise on malformed predictions (e.g. when its
-        sympy-backed extractor times out or hits an unparseable LaTeX
+        sympy-backed extractor times out or hits an unparsable LaTeX
         construct). We catch and report ``unparsed=True`` rather than
         crashing the record processor.
         """
@@ -156,7 +156,7 @@ class _LightevalBaseGrader(BaseGrader):
             doc = self._build_doc(ground_truth)
             response = ModelResponse(text=[response_text])
             return float(self._metric.compute(doc, response))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             _log.debug("lighteval grader exception: %s", exc, exc_info=True)
             return None
 

@@ -31,7 +31,6 @@ Reference: ``lighteval/tasks/tasks/lcb/main.py:CodegenMetric``
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -98,7 +97,7 @@ class CodeExecutionGrader(BaseGrader):
         """
         try:
             return str(extract_code(response_text) or "")
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
             _log.debug("extract_code raised: %s", exc, exc_info=True)
             return ""
 
@@ -115,7 +114,7 @@ class CodeExecutionGrader(BaseGrader):
 
         try:
             inputs, outputs, fn_name = _payload_to_test_cases(payload)
-        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        except (KeyError, ValueError, orjson.JSONDecodeError) as exc:
             _log.debug("LCB test-case payload malformed: %s", exc)
             return _grading_failure(
                 response_text, ground_truth, f"malformed test cases: {exc}"
@@ -125,13 +124,13 @@ class CodeExecutionGrader(BaseGrader):
         # problem with all its test cases bundled into a JSON string).
         evaluation_sample = [
             {
-                "input_output": json.dumps(
+                "input_output": orjson.dumps(
                     {
                         "inputs": inputs,
                         "outputs": outputs,
                         "fn_name": fn_name,
                     }
-                )
+                ).decode()
             }
         ]
         # ``generations`` is a list-of-lists: one sample, with one
@@ -147,7 +146,7 @@ class CodeExecutionGrader(BaseGrader):
                 k_list=list(_LCB_PASS_AT_K),
                 num_process_evaluate=_LCB_NUM_PROCESSES,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
             return _grading_failure(
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
@@ -183,8 +182,8 @@ def _payload_to_test_cases(
     private_raw = payload.get("private_test_cases", "")
     metadata_raw = payload.get("metadata", "")
 
-    public_cases = json.loads(public_raw) if public_raw else []
-    private_cases = json.loads(private_raw) if private_raw else []
+    public_cases = orjson.loads(public_raw) if public_raw else []
+    private_cases = orjson.loads(private_raw) if private_raw else []
     all_cases = public_cases + private_cases
     inputs = [tc["input"] for tc in all_cases]
     outputs = [tc["output"] for tc in all_cases]
@@ -192,7 +191,9 @@ def _payload_to_test_cases(
     fn_name: str | None = None
     if metadata_raw:
         meta = (
-            json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+            orjson.loads(metadata_raw)
+            if isinstance(metadata_raw, str)
+            else metadata_raw
         )
         if isinstance(meta, dict):
             fn_name = meta.get("func_name")

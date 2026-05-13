@@ -37,7 +37,7 @@ _UNIT_TEXTS_BASE: list[str] = [
     "mph",
     "kmph",
     "ft",
-    "m sqaure",
+    "m square",
     " m east",
     "sq m",
     "deg",

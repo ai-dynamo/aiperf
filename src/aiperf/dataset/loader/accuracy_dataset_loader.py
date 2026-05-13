@@ -29,6 +29,7 @@ from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.plugin.types import PluginError
 
 # Default max_tokens when a benchmark omits generation_size from metadata.
 # MMLU sets 5 (single-letter answer); long-form benchmarks should set
@@ -55,7 +56,7 @@ def _resolve_system_prompt(user_config: UserConfig) -> str | None:
         return None
     try:
         meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, benchmark)
-    except Exception:
+    except (KeyError, PluginError):
         return None
     default = meta.get("default_system_prompt")
     return default if default else None
