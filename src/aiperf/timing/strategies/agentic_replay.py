@@ -105,6 +105,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # running at PROFILING start).
         self._active_traces: set[str] = set()
         self._failed_warmup_traces: list[str] = []
+        self._warmup_completed_count: int = 0
+        self._warmup_total_count: int = 0
         # Track which x_correlation_ids correspond to trajectories in WARMUP
         # so that terminal failures can be attributed to a trace_id.
         self._warmup_correlation_to_trace: dict[str, str] = {}
@@ -180,9 +182,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     async def _execute_warmup(self) -> None:
         """Dispatch one credit per trajectory at turn ``k_i``."""
+        self._warmup_total_count = len(self.conversation_source.trajectories)
         self.info(
-            f"WARMUP execute: dispatching {len(self.conversation_source.trajectories)} "
-            f"trajectory credits"
+            f"WARMUP execute: dispatching {self._warmup_total_count} trajectory credits"
         )
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
@@ -270,6 +272,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         context-length error and removing them from the active pool.
         """
         if self.config.phase == CreditPhase.WARMUP:
+            self._warmup_completed_count += 1
+            self.info(
+                lambda c=credit: f"WARMUP {self._warmup_completed_count}/"
+                f"{self._warmup_total_count} returned "
+                f"[{'error' if error is not None else 'ok'}] "
+                f"(lane={self._correlation_to_lane.get(c.x_correlation_id, -1)}, "
+                f"trace_id={self._warmup_correlation_to_trace.get(c.x_correlation_id, '?')})"
+            )
             return
 
         terminal_overflow = (

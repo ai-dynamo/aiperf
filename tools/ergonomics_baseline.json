@@ -283,6 +283,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/transports/aiohttp_transport.py",
       ""
     ],
