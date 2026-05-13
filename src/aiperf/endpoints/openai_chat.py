@@ -200,21 +200,24 @@ class ChatEndpoint(BaseEndpoint):
         Default path (uuid_and_strip off, or image has no UUIDs):
         emit ``{"image_url": {"url": content}}`` and skip empty content.
 
-        With uuid_and_strip on AND the image carries UUIDs: emit
-        ``{"image_url": {"url": content}, "uuid": u}``. Non-empty content
-        ships bytes (first occurrence post-dedup); empty content signals
-        cache-served (load-time dedup stripped a repeat).
+        With uuid_and_strip on AND the image carries UUIDs: emit UUIDs inside
+        the OpenAI image_url object. Non-empty content ships
+        ``{"image_url": {"url": content, "uuid": u}}``. Empty content signals
+        cache-served (load-time dedup stripped a repeat) and ships
+        ``{"image_url": {"uuid": u}}``.
         """
         for image in turn.images:
             if uuid_and_strip and image.uuids:
                 for content, uuid in zip(image.contents, image.uuids, strict=True):
-                    message_content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": content},
-                            "uuid": uuid,
-                        }
-                    )
+                    image_url: dict[str, Any] = {}
+                    if content:
+                        image_url["url"] = content
+                    if uuid:
+                        image_url["uuid"] = uuid
+                    if image_url:
+                        message_content.append(
+                            {"type": "image_url", "image_url": image_url}
+                        )
             else:
                 for content in image.contents:
                     if not content:

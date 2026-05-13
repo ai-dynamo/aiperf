@@ -171,9 +171,9 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         First occurrence of each UUID keeps its content; subsequent occurrences
         get an empty string. The chat endpoint's `uuid-and-strip` wire logic
         recognizes empty content + known UUID and ships the cache-hit form
-        (`{"url": "", "uuid": "<u>"}`). Image.uuids length is validated equal
-        to contents length at model-construction time, so direct indexing is
-        safe.
+        (`{"uuid": "<u>"}` under the OpenAI `image_url` object). Image.uuids
+        length is validated equal to contents length at model-construction
+        time, so direct indexing is safe.
         """
         seen: set[str] = set()
         for turn in conversation.turns:

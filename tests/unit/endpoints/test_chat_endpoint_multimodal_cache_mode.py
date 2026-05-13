@@ -84,7 +84,7 @@ class TestUuidAndStripOff:
 
 
 class TestUuidAndStripOn:
-    """`uuid_and_strip=True`: emits `uuid` per part; empty content → strip wire shape."""
+    """`uuid_and_strip=True`: emits nested UUIDs; empty content → uuid-only."""
 
     def test_first_occurrence_ships_bytes_with_uuid(self):
         """Non-empty content (first occurrence post-dedup) → ship bytes + uuid."""
@@ -96,20 +96,18 @@ class TestUuidAndStripOn:
         parts = _image_parts(endpoint.format_payload(req))
         assert parts[0] == {
             "type": "image_url",
-            "image_url": {"url": "http://example.com/a.png"},
-            "uuid": "uuid-a",
+            "image_url": {"url": "http://example.com/a.png", "uuid": "uuid-a"},
         }
 
     def test_empty_content_with_uuid_ships_strip_wire_shape(self):
-        """Empty content (load-time dedup stripped bytes) → `{url:"", uuid}`."""
+        """Empty content (load-time dedup stripped bytes) → uuid-only image_url."""
         endpoint = ChatEndpoint(_make_endpoint(True))
         turn = _turn_with_images(contents=[""], uuids=["uuid-a"])
         req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
         parts = _image_parts(endpoint.format_payload(req))
         assert parts[0] == {
             "type": "image_url",
-            "image_url": {"url": ""},
-            "uuid": "uuid-a",
+            "image_url": {"uuid": "uuid-a"},
         }
 
     def test_sliding_window_pattern(self):
@@ -123,13 +121,28 @@ class TestUuidAndStripOn:
         req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
         parts = _image_parts(endpoint.format_payload(req))
         assert [p["image_url"] for p in parts] == [
-            {"url": ""},
-            {"url": ""},
-            {"url": ""},
-            {"url": ""},
-            {"url": "http://example.com/img6.png"},
+            {"uuid": "u2"},
+            {"uuid": "u3"},
+            {"uuid": "u4"},
+            {"uuid": "u5"},
+            {"url": "http://example.com/img6.png", "uuid": "u6"},
         ]
-        assert [p["uuid"] for p in parts] == ["u2", "u3", "u4", "u5", "u6"]
+
+    def test_empty_uuid_is_not_emitted(self):
+        """Empty UUID is treated as no UUID; URL-bearing image still ships."""
+        endpoint = ChatEndpoint(_make_endpoint(True))
+        turn = _turn_with_images(
+            contents=["http://example.com/a.png", ""],
+            uuids=["", ""],
+        )
+        req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
+        parts = _image_parts(endpoint.format_payload(req))
+        assert parts == [
+            {
+                "type": "image_url",
+                "image_url": {"url": "http://example.com/a.png"},
+            }
+        ]
 
 
 class TestRawMessagesBypass:
