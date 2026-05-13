@@ -55,6 +55,10 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Clear stale fragments from previous failed runs
+        for stale in output_dir.glob("output_fragments_*.jsonl"):
+            stale.unlink(missing_ok=True)
+
         safe_id = (
             (service_id or "processor")
             .replace("/", "_")
