@@ -75,7 +75,7 @@ TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", modul
 
 RecordProcessorTypeStr: TypeAlias = str
 RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordProcessorType", module=__name__)
-"""Dynamic enum for record processor. Example: RecordProcessorType.ACCURACY_RECORD, RecordProcessorType.METRIC_RECORD, RecordProcessorType.RAW_RECORD_WRITER"""
+"""Dynamic enum for record processor. Example: RecordProcessorType.ACCURACY_RECORD, RecordProcessorType.OUTPUTS_JSON, RecordProcessorType.RAW_RECORD_WRITER"""
 
 ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
@@ -91,7 +91,7 @@ AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "Accu
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)
-"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.SERVER_METRICS_CSV, DataExporterType.TIMESLICE_JSON"""
+"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.RAW_RECORD_AGGREGATOR, DataExporterType.TIMESLICE_JSON"""
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
