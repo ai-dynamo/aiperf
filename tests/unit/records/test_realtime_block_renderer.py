@@ -21,6 +21,8 @@ def _mr(
     *,
     avg: float | None = None,
     p50: float | None = None,
+    p75: float | None = None,
+    p90: float | None = None,
     p95: float | None = None,
     p99: float | None = None,
     unit: str = "ms",
@@ -31,6 +33,8 @@ def _mr(
         unit=unit,
         avg=avg,
         p50=p50,
+        p75=p75,
+        p90=p90,
         p95=p95,
         p99=p99,
     )
@@ -138,3 +142,49 @@ def test_render_zero_completed_returns_empty_string() -> None:
         prev_snapshot=None,
     )
     assert block == ""
+
+
+def test_render_seq_rows_show_isl_osl_percentiles() -> None:
+    metrics = _baseline_metrics() + [
+        _mr(
+            "input_sequence_length",
+            avg=178018,
+            p50=123952,
+            p75=245124,
+            p90=391085,
+            p99=720485,
+            unit="tokens",
+        ),
+        _mr(
+            "output_sequence_length",
+            avg=711,
+            p50=261,
+            p75=664,
+            p90=1614,
+            p99=7013,
+            unit="tokens",
+        ),
+    ]
+    block = _render_realtime_block(metrics, _phase_stats(), prev_snapshot=None)
+    # Comma-separated, four percentiles each, on their own labeled rows.
+    assert "isl  p50=123,952" in block
+    assert "p75=245,124" in block
+    assert "p90=391,085" in block
+    assert "p99=720,485 (tokens)" in block
+    assert "osl  p50=261" in block
+    assert "p75=664" in block
+    assert "p90=1,614" in block
+    assert "p99=7,013 (tokens)" in block
+    # The old avg-only row should not appear.
+    assert "isl_avg" not in block
+    assert "osl_avg" not in block
+
+
+def test_render_seq_rows_omitted_when_metrics_absent() -> None:
+    # _baseline_metrics() doesn't include ISL/OSL; their rows should be
+    # skipped entirely rather than rendered as a row of dashes.
+    block = _render_realtime_block(
+        _baseline_metrics(), _phase_stats(), prev_snapshot=None
+    )
+    assert "isl " not in block
+    assert "osl " not in block

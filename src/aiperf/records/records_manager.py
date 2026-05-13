@@ -98,9 +98,13 @@ _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
     ("itl", "inter_token_latency"),
     ("e2e", "request_latency"),
 )
-_PER_USER_TPUT_LABELS: tuple[tuple[str, str], ...] = (
-    ("tin", "prefill_throughput_per_user"),
-    ("tout", "output_token_throughput_per_user"),
+_INTERACTIVITY_LABEL: tuple[str, str] = (
+    "intvty",
+    "output_token_throughput_per_user",
+)
+_SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
+    ("isl", "input_sequence_length"),
+    ("osl", "output_sequence_length"),
 )
 _LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
 
@@ -195,31 +199,34 @@ def _render_realtime_block(
             f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99}"
         )
 
-    # Per-user throughput percentiles — distribution of how fast each
-    # request's tokens flowed (tokens/sec/user). Aggregate tput_in/tput_out
-    # on line 1 are bandwidth; these rows show the spread per request, which
-    # is what users tail for tail-latency-equivalent throughput.
-    for label, tag in _PER_USER_TPUT_LABELS:
+    # Interactivity = 1 / inter-token-latency per request, percentiled across
+    # requests. Characterizes the user-perceived decode speed; tail (low
+    # percentile) is the slowest-decoding user, head (high percentile) is the
+    # snappiest. Aggregate tput_in/tput_out on line 1 are bandwidth.
+    intvty_label, intvty_tag = _INTERACTIVITY_LABEL
+    mr = by_tag.get(intvty_tag)
+    p50 = _format_int(getattr(mr, "p50", None))
+    p75 = _format_int(getattr(mr, "p75", None))
+    p95 = _format_int(getattr(mr, "p95", None))
+    p99 = _format_int(getattr(mr, "p99", None))
+    rows.append(
+        f"{indent}{intvty_label:<6} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (1/tpot tok/s)"
+    )
+
+    # Sequence-length distribution rows — useful for spotting long-tail
+    # agentic prompts mid-run.  Reads the same MetricResults aggregator
+    # already publishes; no extra plumbing.
+    for label, tag in _SEQ_LENGTH_LABELS:
         mr = by_tag.get(tag)
         p50 = _format_int(getattr(mr, "p50", None))
         p75 = _format_int(getattr(mr, "p75", None))
-        p95 = _format_int(getattr(mr, "p95", None))
+        p90 = _format_int(getattr(mr, "p90", None))
         p99 = _format_int(getattr(mr, "p99", None))
+        if p50 == "-" and p75 == "-" and p90 == "-" and p99 == "-":
+            continue
         rows.append(
-            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (tok/s/user)"
+            f"{indent}{label:<4} p50={p50:<9} p75={p75:<9} p90={p90:<9} p99={p99} (tokens)"
         )
-
-    # Sequence-length distribution row — useful for spotting long-tail
-    # agentic prompts mid-run.  Reads the same MetricResults aggregator
-    # already publishes; no extra plumbing.
-    isl_mr = by_tag.get("input_sequence_length")
-    osl_mr = by_tag.get("output_sequence_length")
-    isl_avg = getattr(isl_mr, "avg", None)
-    osl_avg = getattr(osl_mr, "avg", None)
-    if isl_avg is not None or osl_avg is not None:
-        isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
-        osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
-        rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
 
     # Cumulative token totals — running counters, useful for spotting
     # whether the ratio of output:input tokens is matching the workload's
@@ -262,6 +269,14 @@ def _render_realtime_block(
             srv_parts.append(f"queue={running}r/{waiting}w")
         if "num_preemptions" in server_snapshot:
             srv_parts.append(f"preemptions={int(server_snapshot['num_preemptions'])}")
+        if "input_token_throughput_srv" in server_snapshot:
+            srv_parts.append(
+                f"tput_in_srv={int(round(server_snapshot['input_token_throughput_srv'])):,}/s"
+            )
+        if "output_token_throughput_srv" in server_snapshot:
+            srv_parts.append(
+                f"tput_out_srv={int(round(server_snapshot['output_token_throughput_srv'])):,}/s"
+            )
         if srv_parts:
             rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 

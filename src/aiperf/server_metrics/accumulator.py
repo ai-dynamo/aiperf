@@ -449,6 +449,19 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if preempt is not None:
             out["num_preemptions"] = preempt
 
+        # Server-side running-average token throughput — counter delta over
+        # the elapsed window between first and last sample. Equals what the
+        # server itself observed across all in-flight + completed requests
+        # (independent of aiperf's client-side accounting). Suppressed when
+        # the counters are absent so SGLang / non-vLLM servers don't show
+        # spurious zeroes.
+        in_rate = self._counter_rate(endpoints, "vllm:prompt_tokens_total")
+        if in_rate is not None:
+            out["input_token_throughput_srv"] = in_rate
+        out_rate = self._counter_rate(endpoints, "vllm:generation_tokens_total")
+        if out_rate is not None:
+            out["output_token_throughput_srv"] = out_rate
+
         return out
 
     @staticmethod
@@ -487,3 +500,32 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     v = float(vals[-1])
                     best = v if best is None else max(best, v)
         return best
+
+    @staticmethod
+    def _counter_rate(endpoints: list, metric_name: str) -> float | None:
+        """Sum (last - first) across endpoints divided by elapsed wall seconds.
+
+        Running-average rate for a Prometheus counter, in tokens/sec. Uses each
+        endpoint's first and last observed timestamps as the window so warmup
+        and post-stop samples are naturally excluded by the existing window
+        (this snapshot is realtime-only, so the data span equals the run-so-far
+        elapsed). Returns None if no endpoint observed the metric, or if every
+        endpoint has only one sample (no elapsed time to divide by).
+        """
+        total_delta = 0.0
+        max_elapsed_ns: float = 0.0
+        found = False
+        for ep in endpoints:
+            for key, entry in ep.metrics.items():
+                if key.name != metric_name:
+                    continue
+                vals = entry.data.values
+                ts = entry.data.timestamps
+                if len(vals) < 2 or len(ts) < 2:
+                    continue
+                total_delta += float(vals[-1] - vals[0])
+                max_elapsed_ns = max(max_elapsed_ns, float(ts[-1] - ts[0]))
+                found = True
+        if not found or max_elapsed_ns <= 0:
+            return None
+        return total_delta / (max_elapsed_ns / 1e9)
