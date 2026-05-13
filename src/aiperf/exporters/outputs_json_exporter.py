@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Aggregator that merges output fragments with metrics into final outputs.json."""
 
-import contextlib
-
 import aiofiles
 import orjson
 
@@ -76,7 +74,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             }
             records.append(entry)
 
-        records.sort(key=lambda r: r["session_num"])
+        records.sort(key=lambda r: (r["session_num"], r.get("turn_index") or 0))
 
         output = {
             "schema_version": "1.0",
@@ -132,5 +130,9 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         """Remove fragment files and directory."""
         for file in fragment_files:
             file.unlink(missing_ok=True)
-        with contextlib.suppress(OSError):
+        try:
             self._fragments_dir.rmdir()
+        except OSError:
+            self.debug(
+                f"Could not remove fragments directory (may not be empty): {self._fragments_dir}"
+            )
