@@ -20,6 +20,9 @@ def plot(
     dashboard: bool = False,
     host: str = "127.0.0.1",
     port: int = 8050,
+    mlflow_upload: bool = False,
+    mlflow_tracking_uri: str | None = None,
+    mlflow_run_id: str | None = None,
 ) -> None:
     """Generate visualizations from AIPerf profiling data.
 
@@ -41,6 +44,12 @@ def plot(
         # Show detailed error tracebacks
         aiperf plot --verbose
 
+        # Generate plots and upload them to the MLflow run from mlflow_export.json
+        aiperf plot --paths artifacts/my-run --mlflow-upload
+
+        # Generate plots and upload to an explicit MLflow run
+        aiperf plot --paths artifacts/my-run --mlflow-upload --mlflow-tracking-uri http://127.0.0.1:5000 --mlflow-run-id <run_id>
+
     Args:
         paths: Paths to profiling run directories. Defaults to ./artifacts if not specified.
         output: Directory to save generated plots. Defaults to <first_path>/plots if not specified.
@@ -50,6 +59,9 @@ def plot(
         dashboard: Launch interactive dashboard server instead of generating static PNGs.
         host: Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
         port: Port for dashboard server (only used with --dashboard). Defaults to 8050.
+        mlflow_upload: Upload generated PNG plot artifacts to an existing MLflow run. Mutually exclusive with --dashboard.
+        mlflow_tracking_uri: Optional MLflow tracking URI override for plot upload.
+        mlflow_run_id: Optional MLflow run id override for plot upload.
     """
     from aiperf.cli_utils import exit_on_error
 
@@ -65,4 +77,7 @@ def plot(
             dashboard=dashboard,
             host=host,
             port=port,
+            mlflow_upload=mlflow_upload,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            mlflow_run_id=mlflow_run_id,
         )

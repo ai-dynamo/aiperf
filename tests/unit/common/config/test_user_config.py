@@ -5,6 +5,7 @@ from unittest.mock import mock_open, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.config import (
     ConversationConfig,
@@ -544,6 +545,307 @@ class TestIsLocalhostUrl:
         """Test that unknown items mixed with valid items still raise an error."""
         with pytest.raises(ValueError, match="Invalid GPU telemetry item"):
             make_config(gpu_telemetry=["dashboard", "unknown_option"])
+
+
+# =============================================================================
+# OTel Streaming Configuration Tests
+# =============================================================================
+
+
+class TestOTelStreamingConfig:
+    """Tests for OTel streaming configuration parsing and validation."""
+
+    def test_disabled_by_default(self):
+        """OTel streaming is disabled when no collector URL is provided."""
+        config = make_config()
+        assert config.otel_collector_enabled is False
+        assert config.otel_metrics_url is None
+        assert config.otel_stream_metrics_enabled is True
+        assert config.otel_stream_timing_enabled is True
+
+    @pytest.mark.parametrize(
+        "otel_url,expected_url",
+        [
+            ("collector:4318", "http://collector:4318/v1/metrics"),
+            ("http://collector:4318", "http://collector:4318/v1/metrics"),
+            (
+                "http://collector:4318/v1/metrics",
+                "http://collector:4318/v1/metrics",
+            ),
+            ("https://collector:4318/otlp", "https://collector:4318/otlp/v1/metrics"),
+        ],
+    )
+    def test_url_normalization(self, otel_url: str, expected_url: str):
+        """Collector URL is normalized to an OTLP metrics endpoint."""
+        config = make_config(otel_url=otel_url)
+        assert config.otel_collector_enabled is True
+        assert config.otel_metrics_url == expected_url
+
+    @pytest.mark.parametrize("invalid_otel_url", ["", "   "])
+    def test_invalid_empty_url(self, invalid_otel_url: str):
+        """Empty collector URL is rejected."""
+        with pytest.raises(ValueError, match="--otel-url cannot be empty"):
+            make_config(otel_url=invalid_otel_url)
+
+    @pytest.mark.parametrize(
+        "invalid_otel_url",
+        ["ftp://collector:4318", "file://collector:4318"],
+    )
+    def test_invalid_otel_scheme(self, invalid_otel_url: str):
+        """Unsupported collector URL schemes are rejected."""
+        with pytest.raises(ValueError, match="Invalid --otel-url value"):
+            make_config(otel_url=invalid_otel_url)
+
+    def test_grpc_scheme_error_names_http_https(self):
+        """Rejecting grpc:// must tell the user http/https are the supported schemes.
+
+        Regression for the manual-verify checklist item B4 where users reach for
+        grpc://collector:4317 (the OTLP/gRPC default port) and need to know AIPerf
+        ships only the OTLP/HTTP exporter.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"[Oo]nly http and https schemes are supported.*'grpc'",
+        ):
+            make_config(otel_url="grpc://collector:4317")
+
+    @pytest.mark.parametrize(
+        "bare_port_url",
+        [
+            param("http://:4318", id="scheme-colon-port"),
+            param("https://:4318", id="https-scheme-colon-port"),
+        ],
+    )  # fmt: skip
+    def test_empty_hostname_is_rejected(self, bare_port_url: str):
+        """urlparse('http://:4318') has truthy netloc=':4318' but hostname=None.
+        The validator must require a non-empty hostname so bare-port URLs don't
+        slip through and create a malformed OTLP endpoint.
+        """
+        with pytest.raises(ValueError, match="Invalid --otel-url value"):
+            make_config(otel_url=bare_port_url)
+
+    @pytest.mark.parametrize(
+        "stream_value,metrics_enabled,timing_enabled",
+        [
+            ("metrics", True, False),
+            ("timing", False, True),
+            ("default", True, True),
+            (["metrics", "timing"], True, True),
+            (["metrics", "timing", "default"], True, True),
+        ],
+    )
+    def test_otel_stream_selection(
+        self,
+        stream_value: str | list[str],
+        metrics_enabled: bool,
+        timing_enabled: bool,
+    ):
+        """OTel stream selection parses into metrics/timing flags."""
+        config = make_config(
+            otel_url="collector:4318",
+            stream=stream_value,
+        )
+        assert config.otel_stream_metrics_enabled is metrics_enabled
+        assert config.otel_stream_timing_enabled is timing_enabled
+
+    @pytest.mark.parametrize(
+        "stream_value,error_pattern",
+        [
+            ("unknown", "Invalid --stream value"),
+            ("both", "Valid options are: metrics, timing, default"),
+            ("none", "Valid options are: metrics, timing, default"),
+            (["metrics", "bad"], "Invalid --stream value"),
+        ],
+    )
+    def test_otel_stream_invalid_values(
+        self, stream_value: str | list[str], error_pattern: str
+    ):
+        """Invalid OTel stream selections are rejected."""
+        with pytest.raises(ValueError, match=error_pattern):
+            make_config(
+                otel_url="collector:4318",
+                stream=stream_value,
+            )
+
+    def test_otel_stream_defaults_to_both_when_unset_with_otel_url(self):
+        """Omitting --stream keeps both domains enabled."""
+        config = make_config(otel_url="collector:4318")
+        assert config.otel_stream_metrics_enabled is True
+        assert config.otel_stream_timing_enabled is True
+
+    @pytest.mark.parametrize(
+        "resource_attrs,bad_token",
+        [
+            param(["team"], "team", id="missing-equals"),
+            param(["=prod"], "=prod", id="empty-key"),
+            param(["team="], "team=", id="empty-value"),
+            param(["env=prod,team"], "team", id="missing-equals-in-comma-list"),
+            param(["env=prod,=us-west"], "=us-west", id="empty-key-in-comma-list"),
+            param(["env=prod,team="], "team=", id="empty-value-in-comma-list"),
+        ],
+    )  # fmt: skip
+    def test_otel_resource_attributes_rejects_malformed_entries(
+        self, resource_attrs: list[str], bad_token: str
+    ):
+        """Regression: --otel-resource-attributes is documented as key=value,
+        but malformed entries were previously accepted silently — missing ``=``
+        was dropped, ``=prod`` emitted an empty key, and ``team=`` emitted an
+        empty value. Each must now raise a ValueError pinpointing the bad token.
+        """
+        with pytest.raises(ValueError, match=r"--otel-resource-attributes"):
+            make_config(
+                otel_url="collector:4318",
+                otel_resource_attributes=resource_attrs,
+            )
+
+    def test_otel_resource_attributes_accepts_well_formed_entries(self):
+        """Well-formed comma-separated and repeated entries still parse."""
+        config = make_config(
+            otel_url="collector:4318",
+            otel_resource_attributes=["team=inference", "env=prod,region=us-west-2"],
+        )
+        assert config.otel_custom_resource_attributes == {
+            "team": "inference",
+            "env": "prod",
+            "region": "us-west-2",
+        }
+
+    @pytest.mark.parametrize(
+        "secondary_kwargs",
+        [
+            param({"stream": "metrics"}, id="stream"),
+            param({"otel_resource_attributes": ["env=prod"]}, id="resource-attrs"),
+            param({"gen_ai_provider": "my-provider"}, id="gen-ai-provider"),
+        ],
+    )  # fmt: skip
+    def test_otel_secondary_flags_require_otel_url(
+        self, secondary_kwargs: dict[str, object]
+    ):
+        """--stream, --otel-resource-attributes, and --gen-ai-provider are
+        consumed only by the OTel pipeline. Setting any of them without
+        --otel-url is a silent no-op, so the validator rejects it.
+        Regression for --gen-ai-provider being silently ignored.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"--stream, --otel-resource-attributes, and --gen-ai-provider",
+        ):
+            make_config(**secondary_kwargs)
+
+
+class TestMLflowConfig:
+    """Tests for MLflow post-run export configuration parsing and validation."""
+
+    def test_disabled_by_default(self):
+        config = make_config()
+        assert config.mlflow_enabled is False
+        assert config.mlflow_tracking_uri is None
+
+    @pytest.mark.parametrize(
+        "tracking_uri,experiment,run_name",
+        [
+            ("http://localhost:5000", "aiperf", None),
+            (" https://mlflow.internal ", " perf-runs ", " nightly "),
+        ],
+    )
+    def test_mlflow_normalization(
+        self, tracking_uri: str, experiment: str, run_name: str | None
+    ):
+        config = make_config(
+            mlflow_tracking_uri=tracking_uri,
+            mlflow_experiment=experiment,
+            mlflow_run_name=run_name,
+        )
+        assert config.mlflow_enabled is True
+        assert config.mlflow_tracking_uri == tracking_uri.strip()
+        assert config.mlflow_experiment == experiment.strip()
+        if run_name is None:
+            assert config.mlflow_run_name is None
+        else:
+            assert config.mlflow_run_name == run_name.strip()
+
+    @pytest.mark.parametrize("invalid_uri", ["", "   "])
+    def test_mlflow_tracking_uri_cannot_be_empty(self, invalid_uri: str):
+        with pytest.raises(ValueError, match="--mlflow-tracking-uri cannot be empty"):
+            make_config(mlflow_tracking_uri=invalid_uri)
+
+    def test_mlflow_experiment_cannot_be_empty_when_enabled(self):
+        with pytest.raises(
+            ValueError,
+            match="--mlflow-experiment cannot be empty when --mlflow-tracking-uri is set",
+        ):
+            make_config(
+                mlflow_tracking_uri="http://localhost:5000",
+                mlflow_experiment="   ",
+            )
+
+    def test_mlflow_tags_parse_to_dict(self):
+        config = make_config(
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_tags="team:perf,env:ci",
+        )
+        assert config.mlflow_tags_dict == {"team": "perf", "env": "ci"}
+
+    def test_mlflow_artifact_glob_defaults(self):
+        config = make_config(mlflow_tracking_uri="http://localhost:5000")
+        assert config.mlflow_resolved_artifact_globs
+        assert "**/*.png" in config.mlflow_resolved_artifact_globs
+
+    def test_mlflow_artifact_glob_override(self):
+        config = make_config(
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_artifact_globs=["reports/*.json", "plots/*.png"],
+        )
+        assert config.mlflow_resolved_artifact_globs == [
+            "reports/*.json",
+            "plots/*.png",
+        ]
+
+    def test_mlflow_artifact_glob_entries_are_stripped(self):
+        config = make_config(
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_artifact_globs=[" reports/*.json ", " plots/*.png "],
+        )
+        assert config.mlflow_resolved_artifact_globs == [
+            "reports/*.json",
+            "plots/*.png",
+        ]
+
+    def test_mlflow_artifact_glob_empty_entry_is_rejected(self):
+        with pytest.raises(
+            ValueError, match="--mlflow-artifact-glob entries cannot be empty"
+        ):
+            make_config(
+                mlflow_tracking_uri="http://localhost:5000",
+                mlflow_artifact_globs=["reports/*.json", "   "],
+            )
+
+    def test_mlflow_tracking_uri_without_enable_flag_auto_enables(self):
+        config = make_config(mlflow_tracking_uri="http://localhost:5000")
+        assert config.mlflow_enabled is True
+        assert config.mlflow_tracking_uri == "http://localhost:5000"
+
+    @pytest.mark.parametrize(
+        "secondary_kwargs",
+        [
+            param({"mlflow_experiment": "pre-seeded-experiment"}, id="experiment"),
+            param({"mlflow_run_name": "my-run"}, id="run-name"),
+            param({"mlflow_tags": "team:perf"}, id="tags"),
+            param({"mlflow_artifact_globs": ["plots/*.png"]}, id="artifact-globs"),
+            param({"mlflow_parent_run_id": "parent-123"}, id="parent-run-id"),
+        ],
+    )  # fmt: skip
+    def test_mlflow_secondary_flags_require_tracking_uri(
+        self, secondary_kwargs: dict[str, object]
+    ):
+        """Secondary MLflow flags without --mlflow-tracking-uri are a silent no-op,
+        so the validator rejects them — mirrors the OTel secondary-flag behavior.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"require --mlflow-tracking-uri to be set",
+        ):
+            make_config(**secondary_kwargs)
 
 
 # =============================================================================

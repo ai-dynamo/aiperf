@@ -27,7 +27,7 @@ from aiperf.common.enums import (
     ModelSelectionStrategy,
     RequestContentType,
 )
-from aiperf.common.redact import REDACTED_VALUE
+from aiperf.common.redact import REDACTED_VALUE, redact_url
 from aiperf.plugin.enums import (
     EndpointType,
     TransportType,
@@ -412,3 +412,23 @@ class EndpointConfig(BaseConfig):
         if info.context and info.context.get("include_secrets"):
             return v
         return REDACTED_VALUE if v else v
+
+    @field_serializer("urls")
+    @classmethod
+    def _redact_urls(cls, v: list[str], info: SerializationInfo) -> list[str]:
+        """Strip userinfo (user:password@) from URLs during serialization.
+
+        ``profile_export_aiperf.json`` is written to the artifact directory and
+        uploaded as an MLflow run artifact (see ``MLflowDataExporter`` /
+        ``_collect_artifact_files``). Without this serializer, a URL like
+        ``http://alice:s3cret@host:8000`` round-trips verbatim into both the
+        on-disk export and the MLflow artifact tree.
+
+        The ``include_secrets`` context lets callers (runtime code that needs
+        to actually connect) bypass redaction; the HTTP client reads
+        ``endpoint.urls`` directly from the in-memory model, not from a
+        serialized form, so userinfo stays available where it's needed.
+        """
+        if info.context and info.context.get("include_secrets"):
+            return v
+        return [redact_url(url) for url in v]

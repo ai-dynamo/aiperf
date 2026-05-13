@@ -40,6 +40,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
@@ -55,6 +56,7 @@ from aiperf.common.models import (
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
+    CreditPhaseProgressMessage,
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
@@ -65,7 +67,11 @@ from aiperf.gpu_telemetry.protocols import (
 )
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ResultsProcessorType, UIType
-from aiperf.post_processors.protocols import ResultsProcessorProtocol
+from aiperf.post_processors.protocols import (
+    IS_BEST_EFFORT_ATTR,
+    FlushableResultsProcessorProtocol,
+    ResultsProcessorProtocol,
+)
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.server_metrics.protocols import (
@@ -135,6 +141,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._metric_state = ErrorTrackingState()
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
+        self._timing_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
         self._gpu_telemetry_processors: list[GPUTelemetryProcessorProtocol] = []  # fmt: skip
         self._server_metrics_processors: list[ServerMetricsProcessorProtocol] = []  # fmt: skip
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None  # fmt: skip
@@ -169,14 +176,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
                 else:
                     self._metric_results_processors.append(results_processor)
+                    if (
+                        entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER
+                        and self.user_config.otel_stream_timing_enabled
+                    ):
+                        self._timing_results_processors.append(results_processor)
 
                 self.debug(
                     f"Created results processor: {entry.name}: {results_processor.__class__.__name__}"
                 )
-            except PostProcessorDisabled:
-                self.debug(
-                    f"Results processor {entry.name} is disabled and will not be used"
-                )
+            except PostProcessorDisabled as e:
+                if entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER:
+                    self.info(
+                        f"OTel metrics streamer is disabled and will not be used: {e}"
+                    )
+                else:
+                    self.debug(
+                        f"Results processor {entry.name} is disabled and will not be used"
+                    )
             except Exception as e:
                 self.error(f"Failed to create results processor {entry.name}: {e}")
 
@@ -188,7 +205,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         if message.metadata.benchmark_phase != CreditPhase.PROFILING:
             self.debug(
-                lambda: f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
+                lambda: (
+                    f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
+                )
             )
             return
 
@@ -257,7 +276,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
         self.info(
-            lambda: f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
+            lambda: (
+                f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
+            )
         )
 
         self.info("Received all records, processing now...")
@@ -322,13 +343,99 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_results_to_results_processors(
         self, record_data: MetricRecordsData
     ) -> None:
-        """Send the results to each of the metric results processors."""
-        await asyncio.gather(
-            *[
-                results_processor.process_result(record_data)
-                for results_processor in self._metric_results_processors
-            ]
+        """Send the results to each of the metric results processors.
+
+        Telemetry-only processors (FlushableResultsProcessorProtocol, e.g. OTel
+        streaming) are best-effort: their exceptions are logged but do not fail
+        the run. All other processors propagate exceptions so data-pipeline
+        failures surface immediately.
+        """
+        if not self._metric_results_processors:
+            return
+
+        for results_processor in self._metric_results_processors:
+            try:
+                await results_processor.process_result(record_data)
+            except Exception as exc:  # noqa: BLE001 - telemetry processor failure must not crash the run
+                self.exception(
+                    "Failed to process metric record in "
+                    f"{results_processor.__class__.__name__}: {exc!r}"
+                )
+                # Processors with is_best_effort=True (streaming telemetry like
+                # OTel) swallow exceptions; all others re-raise to surface bugs.
+                # See ``post_processors.protocols.BestEffortMarker``.
+                if not getattr(results_processor, IS_BEST_EFFORT_ATTR, False):
+                    raise
+
+    async def _flush_metric_results_processors(self, force: bool = False) -> None:
+        """Flush any results processors that provide explicit flush support.
+
+        Mirrors the best-effort contract from ``_send_results_to_results_processors``:
+        flush failures on processors marked ``is_best_effort=True`` (e.g. OTel
+        streaming) are logged and swallowed; non-best-effort processors re-raise
+        so data-pipeline bugs surface. Today every ``FlushableResultsProcessorProtocol``
+        implementer is best-effort telemetry, but the explicit check keeps the
+        contract consistent with the per-record path if a future flushable
+        processor (e.g. a Parquet writer) is added.
+        """
+        flushable_processors = [
+            results_processor
+            for results_processor in self._metric_results_processors
+            if isinstance(results_processor, FlushableResultsProcessorProtocol)
+        ]
+        if not flushable_processors:
+            return
+
+        self.debug(
+            lambda: f"Flushing {len(flushable_processors)} metric results processors"
         )
+        results = await asyncio.gather(
+            *[processor.flush(force=force) for processor in flushable_processors],
+            return_exceptions=True,
+        )
+        for processor, result in zip(flushable_processors, results, strict=True):
+            if not isinstance(result, BaseException):
+                continue
+            self.exception(
+                f"Failed to flush metric results processor "
+                f"{processor.__class__.__name__}: {result!r}"
+            )
+            if not getattr(processor, IS_BEST_EFFORT_ATTR, False):
+                raise result
+
+    async def _send_timing_to_results_processors(
+        self, phase_stats: CreditPhaseStats
+    ) -> None:
+        """Send timing snapshots to timing-capable results processors.
+
+        Mirrors the best-effort contract from ``_send_results_to_results_processors``:
+        failures on processors marked ``is_best_effort=True`` are logged and
+        swallowed; non-best-effort failures re-raise. All timing processors
+        today are OTel streaming telemetry (best-effort), but the explicit
+        check keeps the behaviour predictable if a non-telemetry timing
+        processor is added later.
+        """
+        if not self._timing_results_processors:
+            return
+
+        results = await asyncio.gather(
+            *[
+                results_processor.process_result(phase_stats)
+                for results_processor in self._timing_results_processors
+            ],
+            return_exceptions=True,
+        )
+        for results_processor, result in zip(
+            self._timing_results_processors, results, strict=True
+        ):
+            if not isinstance(result, BaseException):
+                continue
+            self.exception(
+                "Failed to process timing snapshot in "
+                f"{results_processor.__class__.__name__}: {result!r}"
+            )
+            if not getattr(results_processor, IS_BEST_EFFORT_ATTR, False):
+                raise result
 
     async def _send_telemetry_to_results_processors(
         self, telemetry_records: list[TelemetryRecord]
@@ -389,7 +496,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
+        await self._send_timing_to_results_processors(phase_start_msg.stats)
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
+
+    @on_message(MessageType.CREDIT_PHASE_PROGRESS)
+    async def _on_credit_phase_progress(
+        self, message: CreditPhaseProgressMessage
+    ) -> None:
+        """Handle a credit phase progress message to track and stream live timing snapshots."""
+        self._records_tracker.update_phase_info(message.stats)
+        await self._send_timing_to_results_processors(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -401,6 +517,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
             )
         self._records_tracker.update_phase_info(message.stats)
+        await self._send_timing_to_results_processors(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(
@@ -408,13 +525,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
+        await self._send_timing_to_results_processors(message.stats)
         if message.stats.phase == CreditPhase.PROFILING:
             phase_stats = self._records_tracker.create_stats_for_phase(
                 message.stats.phase
             )
             # TODO
             self.info(
-                lambda: f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
+                lambda: (
+                    f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
+                )
             )
             self.notice(
                 f"All requests have completed, please wait for the results to be processed "
@@ -579,6 +699,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Process the results."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
+
+        await self._flush_metric_results_processors(force=True)
 
         # Debug: log processors being summarized
         self.debug(

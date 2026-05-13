@@ -700,6 +700,12 @@ record_processor:
       Accuracy record processor that grades LLM responses against ground truth
       for accuracy benchmarking. Self-disables when accuracy mode is off.
 
+  outputs_json:
+    class: aiperf.post_processors.outputs_json_record_processor:OutputsJsonRecordProcessor
+    description: |
+      Outputs JSON record processor that captures model response text per request.
+      Enabled when --export-outputs-json is set. Writes per-processor fragment files.
+
 # =============================================================================
 # Results Processors
 # =============================================================================
@@ -726,6 +732,13 @@ results_processor:
       Results processor that computes metrics from MetricType.DERIVED and
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
+
+  otel_metrics_streamer:
+    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
+    description: |
+      Streams per-record metrics to a user-provided OpenTelemetry collector
+      with periodic export.
+      Enabled when --otel-url is configured.
 
   record_export:
     class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
@@ -777,6 +790,13 @@ data_exporter:
       JSON exporter for aggregated metrics. Exports benchmark results to JSON
       format with full metric details and structured data. Always loaded.
 
+  mlflow:
+    class: aiperf.exporters.mlflow_data_exporter:MLflowDataExporter
+    description: |
+      MLflow post-run exporter that uploads benchmark params, metrics, tags,
+      and generated artifacts (including plots) to an MLflow Tracking server.
+      Enabled when --mlflow-tracking-uri is configured.
+
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
     description: |
@@ -818,6 +838,12 @@ data_exporter:
     description: |
       CSV exporter for accuracy benchmarking results. Exports per-problem grading
       details for offline analysis. Self-disables when accuracy mode is off.
+
+  outputs_json:
+    class: aiperf.exporters.outputs_json_exporter:OutputsJsonExporter
+    description: |
+      Aggregates per-processor output fragment files and merges with metrics
+      into final outputs.json. Enabled when --export-outputs-json is set.
 
 # =============================================================================
 # Console Exporters

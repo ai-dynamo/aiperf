@@ -104,6 +104,17 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.SHOW_TRACE_TIMING
 
+    export_outputs_json: Annotated[
+        bool,
+        Field(
+            description="Export per-request model responses to outputs.json for downstream post-processing.",
+        ),
+        CLIParameter(
+            name="--export-outputs-json",
+            group=Groups.OUTPUT,
+        ),
+    ] = False
+
     _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
     _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
     _profile_export_timeslices_csv_file: Path = (
@@ -129,6 +140,15 @@ class OutputConfig(BaseConfig):
     _server_metrics_export_parquet_file: Path = (
         OutputDefaults.SERVER_METRICS_EXPORT_PARQUET_FILE
     )
+
+    @model_validator(mode="after")
+    def validate_export_outputs_json(self) -> Self:
+        """Validate that export_outputs_json is compatible with the export level."""
+        if self.export_outputs_json and self.export_level == ExportLevel.SUMMARY:
+            raise ValueError(
+                "--export-outputs-json requires --export-level records or raw"
+            )
+        return self
 
     @model_validator(mode="after")
     def set_export_filenames(self) -> Self:
@@ -185,6 +205,10 @@ class OutputConfig(BaseConfig):
     @property
     def profile_export_csv_file(self) -> Path:
         return self.artifact_directory / self._profile_export_csv_file
+
+    @property
+    def outputs_json_file(self) -> Path:
+        return self.artifact_directory / OutputDefaults.OUTPUTS_JSON_FILE
 
     @property
     def profile_export_json_file(self) -> Path:

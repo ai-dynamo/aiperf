@@ -123,6 +123,25 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
 | `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. |
 
+## MLFLOW
+
+MLflow export configuration. Controls timeout behavior for post-run MLflow artifact uploads.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_MLFLOW_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run MLflow export operation. If the MLflow tracking server is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. |
+
+## OTEL
+
+OpenTelemetry metrics streaming configuration. Controls buffering and flush behavior for OTLP metric streaming.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OTEL_FLUSH_INTERVAL_SECONDS` | `2.0` | ≥ 0.1, ≤ 60.0 | Interval in seconds between periodic OTel metrics flushes |
+| `AIPERF_OTEL_MAX_BATCH_RECORDS` | `500` | ≥ 1, ≤ 1000000 | Maximum number of metric records to include in a single OTel flush |
+| `AIPERF_OTEL_MAX_BUFFERED_RECORDS` | `10000` | ≥ 1, ≤ 10000000 | Maximum number of buffered metric records before oldest records are dropped |
+| `AIPERF_OTEL_REQUEST_TIMEOUT_SECONDS` | `10.0` | ≥ 0.1, ≤ 300.0 | Timeout in seconds for OTel collector HTTP requests |
+
 ## RECORD
 
 Record processing and export configuration. Controls batch sizes, processor scaling, and progress reporting for record processing.

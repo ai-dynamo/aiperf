@@ -76,7 +76,15 @@ aiperf = "aiperf.cli:app"
 aiperf = "aiperf.plugin:plugins.yaml"
 
 [project.optional-dependencies]
+mlflow = [
+  "mlflow>=3.10.0,<4.0.0",
+]
+otel = [
+  "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
+  "opentelemetry-sdk>=1.24.0,<2.0.0",
+]
 dev = [
+  "aiperf[mlflow,otel]",
   "black>=25.1.0",
   "httpx>=0.27.0",
   "hypothesis>=6.0.0",
