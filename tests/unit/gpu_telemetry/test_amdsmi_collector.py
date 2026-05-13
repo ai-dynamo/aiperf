@@ -348,6 +348,21 @@ class TestCollection:
         assert records[0].telemetry_data.amd_energy_consumption == pytest.approx(15.3)
 
     @pytest.mark.asyncio
+    async def test_throttle_unset_when_sensors_unsupported(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # If amdsmi returns 'N/A' for both throttle signals, leave the field
+        # unset rather than emitting 0.0 — we cannot distinguish "supported and
+        # not throttled" from "sensor unsupported" in that case.
+        mock_amdsmi.amdsmi_get_gpu_metrics_info.side_effect = lambda h, *_: {
+            "throttle_status": "N/A",
+            "indep_throttle_status": "N/A",
+        }
+        records = await initialized_collector._loop_to_thread_collect()
+        for r in records:
+            assert r.telemetry_data.amd_throttle_status is None
+
+    @pytest.mark.asyncio
     async def test_throttle_handles_bool_int_and_na(
         self, initialized_collector, mock_amdsmi
     ):

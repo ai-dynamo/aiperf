@@ -22,12 +22,15 @@ if TYPE_CHECKING:
     import amdsmi
 else:
     # ``amdsmi`` ships with ROCm and is not pip-installable, so it may be
-    # absent on developer machines or CI runners without GPUs. Defer the
-    # import error to collector instantiation so module discovery (e.g.
-    # plugin enumeration, tests/unit/test_imports.py) does not fail.
+    # absent on developer machines or CI runners without GPUs. The wheel can
+    # also be installed without a working native libamd_smi.so (version
+    # mismatch, missing amdgpu driver), in which case the import raises
+    # OSError rather than ImportError. Defer either failure to collector
+    # instantiation so module discovery (plugin enumeration,
+    # tests/unit/test_imports.py) does not fail.
     try:
         import amdsmi
-    except ImportError:
+    except (ImportError, OSError):
         amdsmi = None  # type: ignore[assignment]
 
 from aiperf.common.environment import Environment
@@ -452,12 +455,17 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         counter. We surface the raw signal as a 0.0/1.0 gauge rather than
         synthesizing a duration client-side. ``throttle_status`` may be
         returned as ``bool``, ``int``, or the literal ``'N/A'`` string depending
-        on AMDSMI version and platform support; ``_is_throttled`` handles all
-        three shapes.
+        on AMDSMI version and platform support.
+
+        Leave ``amd_throttle_status`` unset (rather than 0.0) when neither
+        signal carries a real numeric/boolean value, so an unsupported sensor
+        is not silently mislabeled as "not throttled".
         """
         with contextlib.suppress(ExcType):
             m = amdsmi.amdsmi_get_gpu_metrics_info(handle)
-            throttled = _is_throttled(m.get("throttle_status")) or _is_throttled(
-                m.get("indep_throttle_status")
-            )
+            primary = m.get("throttle_status")
+            indep = m.get("indep_throttle_status")
+            if not any(isinstance(v, (bool, int, float)) for v in (primary, indep)):
+                return
+            throttled = _is_throttled(primary) or _is_throttled(indep)
             td.amd_throttle_status = 1.0 if throttled else 0.0

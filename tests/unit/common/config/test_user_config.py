@@ -341,11 +341,26 @@ class TestGPUTelemetryConfig:
         finally:
             sys.modules.pop("amdsmi", None)
 
+    def test_conflicting_local_collector_keywords_raise(self):
+        """Passing both `pynvml` and `amdsmi` raises rather than last-wins."""
+        sys.modules["amdsmi"] = type(sys)("amdsmi")
+        sys.modules["pynvml"] = type(sys)("pynvml")
+        try:
+            with pytest.raises(
+                ValidationError, match="Conflicting local GPU telemetry collectors"
+            ):
+                make_config(gpu_telemetry=["pynvml", "amdsmi"])
+        finally:
+            sys.modules.pop("amdsmi", None)
+            sys.modules.pop("pynvml", None)
+
     def test_amdsmi_with_dcgm_url_raises(self):
         """Combining --gpu-telemetry amdsmi with a DCGM URL raises a clear error."""
         sys.modules["amdsmi"] = type(sys)("amdsmi")
         try:
-            with pytest.raises(Exception, match="Cannot use amdsmi with DCGM URLs"):
+            with pytest.raises(
+                ValidationError, match="Cannot use amdsmi with DCGM URLs"
+            ):
                 make_config(gpu_telemetry=["amdsmi", "http://localhost:9400"])
         finally:
             sys.modules.pop("amdsmi", None)
@@ -361,7 +376,7 @@ class TestGPUTelemetryConfig:
 
         with (
             patch("aiperf.common.config.user_config.import_module", _raise),
-            pytest.raises(Exception, match="amdsmi package not installed"),
+            pytest.raises(ValidationError, match="amdsmi package not installed"),
         ):
             make_config(gpu_telemetry=["amdsmi"])
 
@@ -376,7 +391,7 @@ class TestGPUTelemetryConfig:
 
         with (
             patch("aiperf.common.config.user_config.import_module", _raise),
-            pytest.raises(Exception, match="amdsmi package not installed"),
+            pytest.raises(ValidationError, match="amdsmi package not installed"),
         ):
             make_config(gpu_telemetry=["amdsmi"])
 

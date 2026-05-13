@@ -864,7 +864,18 @@ class UserConfig(BaseConfig):
                 if not metrics_file.exists():
                     raise ValueError(f"GPU metrics file not found: {item}")
             elif lowered in _LOCAL_COLLECTOR_KEYWORDS:
-                collector_type = _LOCAL_COLLECTOR_KEYWORDS[lowered]
+                selected = _LOCAL_COLLECTOR_KEYWORDS[lowered]
+                if (
+                    collector_type in _LOCAL_ONLY_COLLECTORS
+                    and collector_type != selected
+                ):
+                    prior = _LOCAL_ONLY_COLLECTORS[collector_type]
+                    chosen = _LOCAL_ONLY_COLLECTORS[selected]
+                    raise ValueError(
+                        f"Conflicting local GPU telemetry collectors: "
+                        f"'{prior}' and '{chosen}'. Choose exactly one."
+                    )
+                collector_type = selected
                 _ensure_local_collector_importable(collector_type)
             elif item == "dashboard":
                 mode = GPUTelemetryMode.REALTIME_DASHBOARD
