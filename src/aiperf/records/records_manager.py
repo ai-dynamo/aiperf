@@ -102,6 +102,10 @@ _PER_USER_TPUT_LABELS: tuple[tuple[str, str], ...] = (
     ("tin", "prefill_throughput_per_user"),
     ("tout", "output_token_throughput_per_user"),
 )
+_SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
+    ("isl", "input_sequence_length"),
+    ("osl", "output_sequence_length"),
+)
 _LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
 
 
@@ -209,17 +213,20 @@ def _render_realtime_block(
             f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (tok/s/user)"
         )
 
-    # Sequence-length distribution row — useful for spotting long-tail
+    # Sequence-length distribution rows — useful for spotting long-tail
     # agentic prompts mid-run.  Reads the same MetricResults aggregator
     # already publishes; no extra plumbing.
-    isl_mr = by_tag.get("input_sequence_length")
-    osl_mr = by_tag.get("output_sequence_length")
-    isl_avg = getattr(isl_mr, "avg", None)
-    osl_avg = getattr(osl_mr, "avg", None)
-    if isl_avg is not None or osl_avg is not None:
-        isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
-        osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
-        rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
+    for label, tag in _SEQ_LENGTH_LABELS:
+        mr = by_tag.get(tag)
+        p50 = _format_int(getattr(mr, "p50", None))
+        p75 = _format_int(getattr(mr, "p75", None))
+        p90 = _format_int(getattr(mr, "p90", None))
+        p99 = _format_int(getattr(mr, "p99", None))
+        if p50 == "-" and p75 == "-" and p90 == "-" and p99 == "-":
+            continue
+        rows.append(
+            f"{indent}{label:<4} p50={p50:<9} p75={p75:<9} p90={p90:<9} p99={p99} (tokens)"
+        )
 
     # Cumulative token totals — running counters, useful for spotting
     # whether the ratio of output:input tokens is matching the workload's
