@@ -177,6 +177,12 @@ class GpuTelemetrySnapshot(AIPerfBaseModel):
     )
 
 
+def _last_valid(arr: np.ndarray) -> float | None:
+    """Return the last non-NaN value in ``arr``, or ``None`` if all NaN."""
+    mask = ~np.isnan(arr)
+    return float(arr[mask][-1]) if mask.any() else None
+
+
 class GpuMetricTimeSeries:
     """NumPy-backed columnar storage for GPU telemetry.
 
@@ -326,8 +332,11 @@ class GpuMetricTimeSeries:
             arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
-        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
-        std_dev = float(np.nanstd(arr, ddof=1)) if len(arr) > 1 else 0.0
+        # ddof=1 needs at least 2 *non-NaN* samples; otherwise nanstd
+        # divides by zero and emits a RuntimeWarning. Count valid samples,
+        # not total scrapes.
+        non_nan = int(np.count_nonzero(~np.isnan(arr)))
+        std_dev = float(np.nanstd(arr, ddof=1)) if non_nan > 1 else 0.0
 
         return MetricResult(
             tag=tag,
@@ -339,7 +348,12 @@ class GpuMetricTimeSeries:
             sum=float(np.nansum(arr)),
             std=std_dev,
             count=len(arr),
-            current=float(arr[-1]),
+            # ``current`` must be the most recent *valid* sample. Dynamic-
+            # schema metrics whose latest scrape didn't include this key
+            # would otherwise return NaN, which the realtime dashboard
+            # renders literally and which breaks change-detection
+            # (NaN != NaN, causing republish every interval).
+            current=_last_valid(arr),
             p1=p1,
             p5=p5,
             p10=p10,
@@ -447,18 +461,35 @@ class GpuMetricTimeSeries:
             raise NoMetricValue(f"No data in time range for metric '{metric_name}'")
 
         if is_counter:
-            # Counter: compute delta from baseline
-            reference_idx = self.get_reference_idx(time_filter)
-            reference_value = (
-                arr[reference_idx] if reference_idx is not None else filtered[0]
-            )
-            raw_delta = float(filtered[-1] - reference_value)
+            # Counter: compute delta from baseline using nearest valid
+            # (non-NaN) endpoints. A NaN baseline or NaN final sample
+            # would otherwise zero out a delta even when there was real
+            # counter movement among valid samples in between.
+            filtered_last = _last_valid(filtered)
+            if filtered_last is None:
+                raise NoMetricValue(
+                    f"No valid (non-NaN) samples in filtered range for "
+                    f"metric '{metric_name}'"
+                )
 
-            # If the reference sample is NaN (this metric arrived after the
-            # baseline scrape) raw_delta is NaN; treat as 0.0 ("no
-            # measurable change since baseline"). Otherwise clamp negative
-            # deltas to 0 to handle counter resets (e.g., DCGM restart).
-            delta = 0.0 if np.isnan(raw_delta) else max(raw_delta, 0.0)
+            reference_idx = self.get_reference_idx(time_filter)
+            reference_value: float | None
+            if reference_idx is not None:
+                # Walk back from the chosen reference index for the
+                # nearest non-NaN baseline sample.
+                reference_value = _last_valid(arr[: reference_idx + 1])
+            else:
+                reference_value = None
+
+            if reference_value is None:
+                # No pre-window baseline; fall back to first valid in-window
+                # sample (existing semantic: "delta from earliest available").
+                mask = ~np.isnan(filtered)
+                reference_value = float(filtered[mask][0])
+
+            # Clamp negative deltas to 0 to handle counter resets
+            # (e.g., DCGM restart).
+            delta = max(filtered_last - reference_value, 0.0)
 
             # Counters report a single delta value, not a distribution
             return MetricResult(
@@ -479,8 +510,11 @@ class GpuMetricTimeSeries:
             filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
-        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
-        std_dev = float(np.nanstd(filtered, ddof=1)) if len(filtered) > 1 else 0.0
+        # ddof=1 needs at least 2 *non-NaN* samples; otherwise nanstd
+        # divides by zero and emits a RuntimeWarning. Count valid samples,
+        # not total scrapes.
+        non_nan = int(np.count_nonzero(~np.isnan(filtered)))
+        std_dev = float(np.nanstd(filtered, ddof=1)) if non_nan > 1 else 0.0
 
         return MetricResult(
             tag=tag,

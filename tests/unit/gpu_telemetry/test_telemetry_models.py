@@ -685,23 +685,118 @@ class TestGpuMetricTimeSeries:
 
     def test_to_metric_result_filtered_counter_nan_baseline_clamps_to_zero(self):
         """A counter whose reference sample is NaN (the metric arrived after
-        the baseline scrape) must report delta = 0.0 — max(NaN, 0.0) = 0.0
-        thanks to NaN comparison semantics.
+        the baseline scrape) and that has *no* in-window movement falls back
+        to first-valid-in-window: delta = 0.0.
         """
         time_series = GpuMetricTimeSeries()
         # Baseline: only "a" is present.
         time_series.append_snapshot({"a": 10.0}, 1_000_000_000)
-        # In-window: "energy" arrives.
+        # In-window: "energy" arrives at the same value twice (no movement).
         time_series.append_snapshot({"a": 20.0, "energy": 100.0}, 2_500_000_000)
-        time_series.append_snapshot({"a": 30.0, "energy": 150.0}, 3_500_000_000)
+        time_series.append_snapshot({"a": 30.0, "energy": 100.0}, 3_500_000_000)
 
-        # Profile starts at 2_000_000_000; baseline reference = scrape 0 (NaN
-        # for "energy"), filtered = [100, 150].
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
         result = time_series.to_metric_result_filtered(
             "energy", "t", "h", "MJ", time_filter, is_counter=True
         )
+        # Reference = first valid in-window = 100; last valid in-window = 100.
         assert result.avg == 0.0
+
+    def test_counter_delta_walks_back_for_valid_baseline(self):
+        """If the chosen reference index is NaN but an earlier scrape had a
+        valid value, walk back to it instead of zeroing the delta.
+        """
+        time_series = GpuMetricTimeSeries()
+        # Two pre-window scrapes: scrape 0 has "energy", scrape 1 doesn't.
+        time_series.append_snapshot({"energy": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"a": 5.0}, 1_500_000_000)  # baseline NaN
+        # In-window: monotonic counter movement.
+        time_series.append_snapshot({"energy": 150.0}, 2_500_000_000)
+        time_series.append_snapshot({"energy": 200.0}, 3_500_000_000)
+
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
+        result = time_series.to_metric_result_filtered(
+            "energy", "t", "h", "MJ", time_filter, is_counter=True
+        )
+        # reference_idx = 1 (NaN); walk back to scrape 0 (= 100).
+        # filtered_last = 200. delta = 200 - 100 = 100.
+        assert result.avg == 100.0
+
+    def test_counter_delta_skips_nan_final_sample(self):
+        """If the last in-window sample is NaN but an earlier in-window scrape
+        had a valid value, use that as ``filtered_last``.
+        """
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"energy": 100.0}, 1_000_000_000)  # baseline
+        time_series.append_snapshot({"energy": 200.0}, 2_500_000_000)
+        time_series.append_snapshot({"a": 5.0}, 3_500_000_000)  # final NaN
+
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
+        result = time_series.to_metric_result_filtered(
+            "energy", "t", "h", "MJ", time_filter, is_counter=True
+        )
+        # reference = 100, filtered_last = 200 (not NaN). delta = 100.
+        assert result.avg == 100.0
+
+    def test_counter_delta_filtered_all_nan_raises(self):
+        """A filtered window with no valid samples raises NoMetricValue
+        rather than silently reporting delta=0 from the all-NaN reference.
+        """
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"energy": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"a": 5.0}, 2_500_000_000)
+        time_series.append_snapshot({"a": 6.0}, 3_500_000_000)
+
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
+        with pytest.raises(NoMetricValue, match="No valid"):
+            time_series.to_metric_result_filtered(
+                "energy", "t", "h", "MJ", time_filter, is_counter=True
+            )
+
+    def test_gauge_std_uses_non_nan_count_for_ddof_guard(self):
+        """3 scrapes, only 1 has the metric → std=0.0 instead of NaN+warning
+        (ddof=1 with one valid sample is degrees-of-freedom 0).
+        """
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"a": 1.0, "b": 50.0}, 1_000_000_000)
+        time_series.append_snapshot({"a": 2.0}, 2_000_000_000)
+        time_series.append_snapshot({"a": 3.0}, 3_000_000_000)
+
+        result = time_series.to_metric_result("b", "t", "h", "u")
+        assert result.std == 0.0
+
+        # Same check for the filtered path.
+        result_f = time_series.to_metric_result_filtered(
+            "b", "t", "h", "u", time_filter=None, is_counter=False
+        )
+        assert result_f.std == 0.0
+
+    def test_current_uses_last_non_nan_sample(self):
+        """``current`` should be the most recent *valid* sample so the
+        realtime dashboard doesn't display NaN (and so change-detection
+        doesn't republish every interval because NaN != NaN).
+        """
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot(
+            {"power": 100.0, "temperature": 50.0}, 1_000_000_000
+        )
+        time_series.append_snapshot({"power": 110.0}, 2_000_000_000)  # temp NaN
+        time_series.append_snapshot({"power": 120.0}, 3_000_000_000)  # temp NaN
+
+        result = time_series.to_metric_result("temperature", "t", "h", "C")
+        assert result.current == 50.0
+
+    def test_current_is_none_when_all_filtered_nan(self):
+        """If a metric is registered but never had a valid value, ``current``
+        is None rather than NaN. (The all-NaN guard raises NoMetricValue
+        before we get here, so this exercises the per-metric helper directly.)
+        """
+        from aiperf.common.models.telemetry_models import _last_valid
+
+        assert _last_valid(np.array([np.nan, np.nan, np.nan])) is None
+        assert _last_valid(np.array([1.0, np.nan, np.nan])) == 1.0
+        assert _last_valid(np.array([np.nan, 2.0, np.nan])) == 2.0
+        assert _last_valid(np.array([1.0, 2.0, 3.0])) == 3.0
 
 
 class TestGpuTelemetryData:
