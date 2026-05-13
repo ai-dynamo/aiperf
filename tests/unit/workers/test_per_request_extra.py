@@ -3,10 +3,13 @@
 
 """Tests for per-request extra payload merging in ChatEndpoint.format_payload."""
 
+from typing import Any
+
 import pytest
 from pytest import param
 
 from aiperf.common.models import Text, Turn
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -16,7 +19,9 @@ from tests.unit.endpoints.conftest import (
 )
 
 
-def _make_endpoint(global_extra=None):
+def _make_endpoint(
+    global_extra: list[tuple[str, Any]] | None = None,
+) -> tuple[ChatEndpoint, ModelEndpointInfo]:
     model_endpoint = create_model_endpoint(
         EndpointType.CHAT,
         extra=global_extra or [],
