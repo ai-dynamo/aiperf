@@ -53,7 +53,7 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 >
 > **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
 >
-> **amdsmi mode:** When using `--gpu-telemetry amdsmi`, DCGM endpoints are NOT used. Metrics are collected directly from local AMD GPUs via the amdsmi library. AMD GPUs report a slightly different metric set than NVIDIA: `mm_activity` is generally `'N/A'` on Instinct datacenter parts, so `encoder_utilization` / `decoder_utilization` are typically empty; `xid_errors` reflects ECC uncorrectable count; `power_violation` is accumulated client-side from `throttle_status` (microseconds spent throttled).
+> **amdsmi mode:** When using `--gpu-telemetry amdsmi`, DCGM endpoints are NOT used. Metrics are collected directly from local AMD GPUs via the amdsmi library and emitted under vendor-namespaced `amd_*` field names (`amd_power`, `amd_gfx_activity`, `amd_temperature`, etc.) rather than NVML-shaped names. On Instinct datacenter parts `amd_mm_activity` is generally absent (sensor returns `'N/A'`); `amd_throttle_status` is a 0.0/1.0 snapshot per scrape (amdsmi exposes a boolean state, not a duration counter).
 >
 > To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
 
@@ -459,17 +459,19 @@ aiperf profile \
 
 ### Metrics Collected via amdsmi
 
+AMD signals are emitted under their own vendor-namespaced field names (not aliased onto NVML-shaped names) because the underlying sensors do not always measure the same physical quantity (e.g. amdsmi `gfx_activity` and NVML `sm_utilization` sample at different scopes).
+
 | Metric | Source | Notes |
 |---|---|---|
-| `gpu_power_usage` (W) | `amdsmi_get_power_info().current_socket_power` | Already in W; no scaling. |
-| `energy_consumption` (MJ) | `amdsmi_get_energy_count()` | `accumulator * counter_resolution` (µJ) → MJ. |
-| `gpu_utilization` (%) | `amdsmi_get_gpu_activity().gfx_activity` | Mirrored to `sm_utilization` (no separate AMD analog). |
-| `mem_utilization` (%) | `amdsmi_get_gpu_activity().umc_activity` | UMC activity. |
-| `gpu_memory_used` (GB) | `amdsmi_get_gpu_memory_usage(VRAM)` | bytes → GB. |
-| `gpu_temperature` (°C) | `amdsmi_get_temp_metric(JUNCTION)` | Falls back to HOTSPOT. EDGE is unsupported on Instinct GPUs. |
-| `xid_errors` | `amdsmi_get_gpu_total_ecc_count().uncorrectable_count` | Closest analog to NVIDIA XID. |
-| `power_violation` (µs) | Accumulated from `throttle_status` between scrapes | AMD only exposes a boolean status; duration is computed client-side. |
-| `encoder_utilization`, `decoder_utilization`, `jpg_utilization` | (`mm_activity`) | Generally `'N/A'` on Instinct datacenter GPUs; fields will be empty. |
+| `amd_power` (W) | `amdsmi_get_power_info().current_socket_power` | Already in W; no scaling. Falls back to `average_socket_power` if `current_socket_power` is `'N/A'`. |
+| `amd_energy_consumption` (MJ) | `amdsmi_get_energy_count()` | `accumulator * counter_resolution` (µJ) → MJ. Cumulative counter — accumulator computes a delta against the pre-profile baseline. Reads `energy_accumulator` first; falls back to the older `power` field name on ROCm < 6.2. |
+| `amd_gfx_activity` (%) | `amdsmi_get_gpu_activity().gfx_activity` | Graphics engine activity. |
+| `amd_umc_activity` (%) | `amdsmi_get_gpu_activity().umc_activity` | Memory controller activity. |
+| `amd_mm_activity` (%) | `amdsmi_get_gpu_activity().mm_activity` | Multimedia engine activity. Generally `'N/A'` on Instinct datacenter GPUs — field will be absent rather than emitted as zero. |
+| `amd_memory_used` (GB) | `amdsmi_get_gpu_memory_usage(VRAM)` | bytes → GB. |
+| `amd_temperature` (°C) | `amdsmi_get_temp_metric(JUNCTION)` | Falls back to HOTSPOT. EDGE is unsupported on Instinct GPUs. Unit conversion is gated on `amdsmi.__version__` (≥ 26.x already returns Celsius; older bindings return millidegrees and are divided by 1000). |
+| `amd_ecc_uncorrectable` | `amdsmi_get_gpu_total_ecc_count().uncorrectable_count` | Cumulative uncorrectable ECC error count. Counter — accumulator computes a delta. |
+| `amd_throttle_status` | `amdsmi_get_gpu_metrics_info().throttle_status` (and `indep_throttle_status`) | 0.0/1.0 snapshot per scrape — 1.0 if any throttle indicator is active. amdsmi exposes a state (bool/bitfield), not a duration counter; a fraction-throttled summary can be derived from the average. Field is left absent when both signals return `'N/A'` (sensor unsupported), so "unsupported" is not silently reported as "not throttled". |
 
 ### Comparing DCGM vs pynvml vs amdsmi
 
@@ -478,8 +480,9 @@ aiperf profile \
 | Hardware | NVIDIA | NVIDIA | AMD ROCm |
 | Setup complexity | Requires container/service | `pip install nvidia-ml-py` | Ships with ROCm; install wheel from `/opt/rocm/share/amd_smi/` if missing |
 | Multi-node support | Yes (HTTP) | No (local) | No (local) |
-| Encoder/decoder util | Yes | Yes | No (Instinct GPUs report N/A) |
-| XID-style error reporting | Yes | No | ECC uncorrectable count |
+| Field naming | `gpu_*` (NVML-shaped) | `gpu_*` (NVML-shaped) | `amd_*` (vendor-namespaced) |
+| Encoder/decoder util | Yes | Yes | No (Instinct GPUs report `'N/A'`) |
+| Error reporting | XID errors | (none) | ECC uncorrectable count (`amd_ecc_uncorrectable`) |
 | SM-level utilization | Yes (DCGM_FI_PROF_SM_ACTIVE) | Yes (GPM API) | Aliased to `gfx_activity` |
 
 ---
