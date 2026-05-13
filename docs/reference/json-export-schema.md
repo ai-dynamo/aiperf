@@ -64,6 +64,33 @@ The current schema version is exported as the top-level `schema_version` field o
 |---|---|
 | `1.0` | Initial shape: `unit`, `avg`, `min`, `max`, `std`, `p1`–`p99`. |
 | `1.1` | Added `count` and `sum` to per-metric stats blocks. Backward-compatible for readers that ignore unknown fields; the new fields are present only on record-type metrics, omitted on derived/aggregate. |
+| `1.2` | Added top-level `archetypes` array for per-archetype metric breakdowns (media mix mode). Each entry has `archetype_name`, `archetype_weight`, and the same dynamic metric fields the top level uses. Absent when `input.media_mix` is unconfigured. |
+
+### Per-archetype breakdowns (schema 1.2)
+
+When the benchmark is configured with `input.media_mix`, the export gains an `archetypes` array alongside the existing top-level aggregate metrics:
+
+```jsonc
+{
+  "schema_version": "1.2",
+  "request_latency": { ... },        // aggregate (across all archetypes)
+  "archetypes": [
+    {
+      "archetype_name": "image-only",
+      "archetype_weight": 0.4,
+      "request_latency": { ... }     // metrics for just this archetype
+    },
+    {
+      "archetype_name": "video-only",
+      "archetype_weight": 0.6,
+      "request_latency": { ... }
+    }
+  ],
+  "input_config": { ... }
+}
+```
+
+`archetype_name` is the join key against `input_config.input.media_mix[]` if you need the full archetype config (profiles, dimensions, formats). Archetypes without an explicit `name` in YAML are auto-named `_archetype_0`, `_archetype_1`, etc. by the config validator, so the join key is always non-null and unique.
 
 ### Other JSON exports use independent schema versions
 
