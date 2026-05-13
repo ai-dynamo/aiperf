@@ -66,6 +66,49 @@ class TelemetryMetrics(AIPerfBaseModel):
         description="Throttling duration due to power constraints in microseconds",
     )
 
+    # AMD ROCm telemetry (collected by AMDSMITelemetryCollector). These mirror
+    # the amdsmi field names rather than being aliased onto NVML-shaped fields,
+    # because the underlying signals do not always measure the same physical
+    # quantity (e.g. gfx_activity vs sm_utilization sample differently).
+    amd_power: float | None = Field(
+        default=None, description="AMD GPU current socket power in W"
+    )
+    amd_energy_consumption: float | None = Field(
+        default=None,
+        description="AMD GPU cumulative energy consumption in MJ "
+        "(accumulator * counter_resolution)",
+    )
+    amd_gfx_activity: float | None = Field(
+        default=None,
+        description="AMD GPU graphics engine activity percentage (0-100)",
+    )
+    amd_umc_activity: float | None = Field(
+        default=None,
+        description="AMD GPU memory controller activity percentage (0-100)",
+    )
+    amd_mm_activity: float | None = Field(
+        default=None,
+        description="AMD GPU multimedia engine activity percentage (0-100). "
+        "Not supported on Instinct GPUs.",
+    )
+    amd_memory_used: float | None = Field(
+        default=None, description="AMD GPU VRAM used in GB"
+    )
+    amd_temperature: float | None = Field(
+        default=None,
+        description="AMD GPU temperature in °C (junction sensor preferred, "
+        "hotspot fallback)",
+    )
+    amd_ecc_uncorrectable: float | None = Field(
+        default=None,
+        description="AMD GPU cumulative uncorrectable ECC error count",
+    )
+    amd_throttle_status: float | None = Field(
+        default=None,
+        description="AMD GPU throttle status snapshot (1.0 if any throttle "
+        "indicator is active, 0.0 otherwise)",
+    )
+
 
 class GpuMetadata(AIPerfBaseModel):
     """Static metadata for a GPU that doesn't change over time.

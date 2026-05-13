@@ -5,7 +5,7 @@
 
 Tests use a mocked amdsmi module to verify collector behavior without requiring
 actual AMD ROCm GPU hardware. Empirically validated against MI300X (gfx942)
-and MI355X (gfx950) — see ``GpuDeviceState`` notes for AMDSMI quirks.
+and MI355X (gfx950) — see ``_AMDGpuDeviceState`` notes for AMDSMI quirks.
 """
 
 import asyncio
@@ -245,26 +245,32 @@ class TestCollection:
         records = await initialized_collector._loop_to_thread_collect()
         td0 = records[0].telemetry_data
 
-        # Power: passed through unscaled (W).
-        assert td0.gpu_power_usage == 287.0
+        # Power: passed through unscaled (W), under amd_* namespace.
+        assert td0.amd_power == 287.0
 
         # Energy: 41_797_534_008_632 ticks * 15.3 µJ/tick / 1e12 ≈ 639.5 MJ
-        assert td0.energy_consumption == pytest.approx(639.5, rel=1e-3)
+        assert td0.amd_energy_consumption == pytest.approx(639.5, rel=1e-3)
 
-        # Activity: 47% gfx mirrored to both gpu_utilization and sm_utilization.
-        assert td0.gpu_utilization == 47.0
-        assert td0.sm_utilization == 47.0
-        assert td0.mem_utilization == 0.0
+        # Activity: gfx/umc emitted under amd_* names; mm_activity is N/A on
+        # Instinct so amd_mm_activity stays unset (not duplicated to
+        # encoder/decoder fields).
+        assert td0.amd_gfx_activity == 47.0
+        assert td0.amd_umc_activity == 0.0
+        assert td0.amd_mm_activity is None
 
-        # mm_activity is N/A on Instinct -> encoder/decoder dropped.
+        # NVML-named fields must NOT be set by the AMD collector.
+        assert td0.gpu_utilization is None
+        assert td0.sm_utilization is None
+        assert td0.mem_utilization is None
         assert td0.encoder_utilization is None
         assert td0.decoder_utilization is None
+        assert td0.jpg_utilization is None
 
         # VRAM: 183_678_435_328 bytes -> ~183.68 GB
-        assert td0.gpu_memory_used == pytest.approx(183.68, rel=1e-3)
+        assert td0.amd_memory_used == pytest.approx(183.68, rel=1e-3)
 
         # Temperature: EDGE failed, JUNCTION returned 67.
-        assert td0.gpu_temperature == 67.0
+        assert td0.amd_temperature == 67.0
 
     @pytest.mark.asyncio
     async def test_collect_handles_partial_failure(
@@ -276,8 +282,8 @@ class TestCollection:
         )
         records = await initialized_collector._loop_to_thread_collect()
         td = records[0].telemetry_data
-        assert td.gpu_temperature is None
-        assert td.gpu_power_usage == 287.0  # unaffected
+        assert td.amd_temperature is None
+        assert td.amd_power == 287.0  # unaffected
 
     @pytest.mark.asyncio
     async def test_na_strings_become_none_not_strings(
@@ -290,17 +296,26 @@ class TestCollection:
         }
         records = await initialized_collector._loop_to_thread_collect()
         for r in records:
-            assert r.telemetry_data.gpu_power_usage is None
+            assert r.telemetry_data.amd_power is None
 
     @pytest.mark.asyncio
-    async def test_throttle_accumulates_across_collections(self, initialized_collector):
-        # GPU 0 is throttling; second collection should accumulate >0 µs.
+    async def test_throttle_status_is_snapshot_not_accumulation(
+        self, initialized_collector
+    ):
+        # AMDSMI exposes throttle_status as a state (bool/bitfield), not a
+        # duration counter. Surface the raw snapshot per scrape rather than
+        # synthesizing a duration client-side.
         records1 = await initialized_collector._loop_to_thread_collect()
         records2 = await initialized_collector._loop_to_thread_collect()
-        assert records1[0].telemetry_data.power_violation == 0.0
-        assert records2[0].telemetry_data.power_violation > 0.0
-        # GPU 1 is not throttling -> stays at 0.
-        assert records2[1].telemetry_data.power_violation == 0.0
+
+        # GPU 0 throttling (mock returns throttle_status=1) -> 1.0 every scrape.
+        assert records1[0].telemetry_data.amd_throttle_status == 1.0
+        assert records2[0].telemetry_data.amd_throttle_status == 1.0
+        # GPU 1 not throttling -> 0.0.
+        assert records1[1].telemetry_data.amd_throttle_status == 0.0
+        assert records2[1].telemetry_data.amd_throttle_status == 0.0
+        # The synthesized power_violation field is no longer populated.
+        assert records2[0].telemetry_data.power_violation is None
 
     @pytest.mark.asyncio
     async def test_temperature_normalized_when_returned_in_millidegrees(
@@ -315,7 +330,7 @@ class TestCollection:
 
         mock_amdsmi.amdsmi_get_temp_metric.side_effect = temp_mdeg
         records = await initialized_collector._loop_to_thread_collect()
-        assert records[0].telemetry_data.gpu_temperature == 67.0
+        assert records[0].telemetry_data.amd_temperature == 67.0
 
     @pytest.mark.asyncio
     async def test_energy_falls_back_to_power_field_for_rocm6(
@@ -330,7 +345,7 @@ class TestCollection:
         }
         records = await initialized_collector._loop_to_thread_collect()
         # 1e12 * 15.3 * 1e-12 = 15.3 MJ
-        assert records[0].telemetry_data.energy_consumption == pytest.approx(15.3)
+        assert records[0].telemetry_data.amd_energy_consumption == pytest.approx(15.3)
 
     @pytest.mark.asyncio
     async def test_throttle_handles_bool_int_and_na(
@@ -350,10 +365,15 @@ class TestCollection:
         assert _is_throttled(None) is False
 
     @pytest.mark.asyncio
-    async def test_xid_errors_uses_uncorrectable_count(self, initialized_collector):
+    async def test_ecc_uncorrectable_emitted_under_amd_namespace(
+        self, initialized_collector
+    ):
         records = await initialized_collector._loop_to_thread_collect()
-        assert records[0].telemetry_data.xid_errors == 0.0
-        assert records[1].telemetry_data.xid_errors == 2.0
+        assert records[0].telemetry_data.amd_ecc_uncorrectable == 0.0
+        assert records[1].telemetry_data.amd_ecc_uncorrectable == 2.0
+        # The synthesized xid_errors alias is no longer populated.
+        assert records[0].telemetry_data.xid_errors is None
+        assert records[1].telemetry_data.xid_errors is None
 
 
 # ---------------------------------------------------------------------------
