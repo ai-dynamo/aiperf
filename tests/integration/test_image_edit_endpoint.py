@@ -77,3 +77,4 @@ class TestImageEditEndpoint:
         )
         assert result.request_count == defaults.request_count
         assert result.json.request_latency is not None
+        assert result.json.request_throughput is not None

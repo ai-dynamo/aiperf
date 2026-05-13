@@ -46,6 +46,11 @@ docker run --gpus all \
 > [!NOTE]
 > > The following steps are to be performed _inside_ the Docker container.
 
+**Install the diffusion extras.** The base image does not include diffusion dependencies — see the [SGLang Diffusion installation guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md):
+```bash
+pip install -e "python[diffusion]"
+```
+
 **Set the server arguments:**
 > [!WARNING]
 > > These arguments set up FLUX.2-Klein-4B on a single GPU at port 30000.
@@ -92,19 +97,19 @@ aiperf profile \
 
 **Done!** This sends 50 requests to `http://localhost:30000/v1/images/edits` with multipart-encoded prompt + reference image, plus diffusion-specific extras (`size`, `num_inference_steps`, `guidance_scale`).
 
-**Sample Output (Successful Run):**
+**Sample Output (shape only — exact numbers will depend on your hardware):**
 ```
-                                   NVIDIA AIPerf | Image Edit Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
-┃                            Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃   std ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
-│              Request Latency (ms) │ 434.38 │ 220.95 │ 449.20 │ 447.47 │ 444.41 │ 440.54 │ 31.56 │
-│    Input Sequence Length (tokens) │ 550.00 │ 550.00 │ 550.00 │ 550.00 │ 550.00 │ 550.00 │  0.00 │
-│         Image Throughput (img/sec)│   2.33 │   2.23 │   4.53 │   3.56 │   2.31 │   2.27 │  0.32 │
-│           Image Latency (ms/image)│ 434.38 │ 220.95 │ 449.20 │ 447.47 │ 444.41 │ 440.54 │ 31.56 │
-│ Request Throughput (requests/sec) │   4.53 │      - │      - │      - │      - │      - │     - │
-│          Request Count (requests) │  50.00 │      - │      - │      - │      - │      - │     - │
-└───────────────────────────────────┴────────┴────────┴────────┴────────┴────────┴────────┴───────┘
+                                  NVIDIA AIPerf | Image Edit Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━┳━━━━━┳━━━━━┳━━━━━┳━━━━━┳━━━━━┓
+┃                            Metric ┃  avg ┃ min ┃ max ┃ p99 ┃ p90 ┃ p50 ┃ std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━╇━━━━━╇━━━━━╇━━━━━╇━━━━━╇━━━━━┩
+│              Request Latency (ms) │  ... │ ... │ ... │ ... │ ... │ ... │ ... │
+│    Input Sequence Length (tokens) │  ... │ ... │ ... │ ... │ ... │ ... │ ... │
+│     Image Throughput (images/sec) │  ... │ ... │ ... │ ... │ ... │ ... │ ... │
+│          Image Latency (ms/image) │  ... │ ... │ ... │ ... │ ... │ ... │ ... │
+│ Request Throughput (requests/sec) │  ... │ N/A │ N/A │ N/A │ N/A │ N/A │ N/A │
+│          Request Count (requests) │  ... │ N/A │ N/A │ N/A │ N/A │ N/A │ N/A │
+└───────────────────────────────────┴──────┴─────┴─────┴─────┴─────┴─────┴─────┘
 ```
 
 ### Image Edit Using an Input File
@@ -145,7 +150,7 @@ Image edit shares its metric set with image generation; both endpoints report im
 |---|---|
 | **Request Latency (ms)** | End-to-end time per request — from sending the multipart body to receiving the edited image. |
 | **Input Sequence Length (tokens)** | Token count of the prompt portion only; the reference image is uploaded separately as binary and does not contribute. |
-| **Image Throughput (img/sec)** | Number of edited images returned per second across all concurrent workers. |
+| **Image Throughput (images/sec)** | Number of edited images returned per second across all concurrent workers. |
 | **Image Latency (ms/image)** | Per-image latency; equals request latency when each request returns one image. |
 | **Request Throughput (requests/sec)** | Sustained request rate. |
 | **Request Count (requests)** | Total completed requests. |
