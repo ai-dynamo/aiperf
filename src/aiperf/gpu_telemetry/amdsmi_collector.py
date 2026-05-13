@@ -97,7 +97,7 @@ def _amdsmi_returns_celsius() -> bool:
     (ROCm ~6.3+). Older bindings return millidegrees. Gate on the major
     version of ``amdsmi.__version__``.
 
-    If the version is missing or unparseable, assume modern (>= 26): every
+    If the version is missing or unparsable, assume modern (>= 26): every
     currently-deployed binding we have validated against (Hotaisle MI300X
     amdsmi 26.0.2, AAC1 MI355X amdsmi 26.2.1) is in that range, and over-
     dividing a Celsius value would produce obviously-wrong sub-degree
@@ -240,6 +240,10 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             for gpu in (self._build_gpu_state(idx, h) for idx, h in enumerate(handles))
             if gpu is not None
         ]
+
+        if not self._gpus:
+            self._shutdown_sync()
+            raise RuntimeError("No AMD GPUs detected via amdsmi")
 
         self.info(f"AMDSMI initialized with {len(self._gpus)} GPU(s)")
 

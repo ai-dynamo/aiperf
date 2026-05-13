@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Constants for GPU telemetry collection (DCGM and pynvml)."""
+"""Constants for GPU telemetry collection (DCGM, pynvml, and amdsmi)."""
 
 from aiperf.common.enums import (
     EnergyMetricUnit,
@@ -52,6 +52,19 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("JPEG Utilization", "jpg_utilization", GenericMetricUnit.PERCENT),
     ("XID Errors", "xid_errors", GenericMetricUnit.COUNT),
     ("Power Violation", "power_violation", MetricTimeUnit.MICROSECONDS),
+    # AMD ROCm telemetry (collected by AMDSMITelemetryCollector). These mirror
+    # the amdsmi field names rather than NVML semantics, since the underlying
+    # signals do not always measure the same physical quantity. Registered here
+    # so accumulator/exporter/dashboard surface them end-to-end.
+    ("AMD GPU Power", "amd_power", PowerMetricUnit.WATT),
+    ("AMD Energy Consumption", "amd_energy_consumption", EnergyMetricUnit.MEGAJOULE),
+    ("AMD GFX Activity", "amd_gfx_activity", GenericMetricUnit.PERCENT),
+    ("AMD UMC Activity", "amd_umc_activity", GenericMetricUnit.PERCENT),
+    ("AMD MM Activity", "amd_mm_activity", GenericMetricUnit.PERCENT),
+    ("AMD GPU Memory Used", "amd_memory_used", MetricSizeUnit.GIGABYTES),
+    ("AMD GPU Temperature", "amd_temperature", TemperatureMetricUnit.CELSIUS),
+    ("AMD ECC Uncorrectable", "amd_ecc_uncorrectable", GenericMetricUnit.COUNT),
+    ("AMD Throttle Status", "amd_throttle_status", GenericMetricUnit.COUNT),
 ]
 
 # Metrics that are cumulative counters (need delta calculation).
@@ -61,6 +74,8 @@ GPU_TELEMETRY_COUNTER_METRICS: set[str] = {
     "energy_consumption",
     "xid_errors",
     "power_violation",
+    "amd_energy_consumption",
+    "amd_ecc_uncorrectable",
 }
 
 

@@ -326,10 +326,8 @@ class TestGPUTelemetryConfig:
         assert config.endpoint.streaming is True
         assert config.endpoint.model_names == ["test-model"]
 
-    def test_amdsmi_collector_selected_when_amdsmi_keyword_provided(self):
+    def test_amdsmi_collector_selected_when_amdsmi_keyword_provided(self) -> None:
         """`--gpu-telemetry amdsmi` selects the AMDSMI collector type."""
-        from aiperf.plugin.enums import GPUTelemetryCollectorType
-
         # Inject a fake amdsmi module so the import_module probe succeeds
         # without requiring ROCm installed on the test host.
         sys.modules["amdsmi"] = type(sys)("amdsmi")
@@ -341,7 +339,7 @@ class TestGPUTelemetryConfig:
         finally:
             sys.modules.pop("amdsmi", None)
 
-    def test_conflicting_local_collector_keywords_raise(self):
+    def test_conflicting_local_collector_keywords_raise(self) -> None:
         """Passing both `pynvml` and `amdsmi` raises rather than last-wins."""
         sys.modules["amdsmi"] = type(sys)("amdsmi")
         sys.modules["pynvml"] = type(sys)("pynvml")
@@ -354,7 +352,7 @@ class TestGPUTelemetryConfig:
             sys.modules.pop("amdsmi", None)
             sys.modules.pop("pynvml", None)
 
-    def test_amdsmi_with_dcgm_url_raises(self):
+    def test_amdsmi_with_dcgm_url_raises(self) -> None:
         """Combining --gpu-telemetry amdsmi with a DCGM URL raises a clear error."""
         sys.modules["amdsmi"] = type(sys)("amdsmi")
         try:
@@ -365,7 +363,7 @@ class TestGPUTelemetryConfig:
         finally:
             sys.modules.pop("amdsmi", None)
 
-    def test_amdsmi_missing_module_yields_install_hint(self):
+    def test_amdsmi_missing_module_yields_install_hint(self) -> None:
         """ImportError when probing amdsmi surfaces the install hint."""
         from importlib import import_module as _orig
 
@@ -380,7 +378,7 @@ class TestGPUTelemetryConfig:
         ):
             make_config(gpu_telemetry=["amdsmi"])
 
-    def test_amdsmi_native_lib_oserror_yields_install_hint(self):
+    def test_amdsmi_native_lib_oserror_yields_install_hint(self) -> None:
         """OSError (native lib failed to load) is caught and surfaces install hint."""
         from importlib import import_module as _orig
 

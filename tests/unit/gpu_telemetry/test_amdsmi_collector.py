@@ -228,6 +228,119 @@ class TestLifecycle:
         assert initialized_collector._initialized is False
         assert initialized_collector._gpus == []
 
+    @pytest.mark.asyncio
+    async def test_init_raises_when_no_gpus_enumerated(self, patch_amdsmi):
+        # _initialize_amdsmi must not silently leave the collector running with
+        # zero devices — that would emit no records and confuse the dashboard.
+        # AIPerfLifecycleMixin wraps the RuntimeError as CancelledError.
+        mock_amdsmi, AMDSMITelemetryCollector = patch_amdsmi
+        mock_amdsmi.amdsmi_get_processor_handles.return_value = []
+        c = AMDSMITelemetryCollector()
+        with pytest.raises(asyncio.CancelledError, match="No AMD GPUs detected"):
+            await c.initialize()
+        assert not c._initialized
+        assert c._gpus == []
+
+
+# ---------------------------------------------------------------------------
+# Config registration (regression guard for dynamo-ops finding on PR #908:
+# amd_* fields must appear in GPU_TELEMETRY_METRICS_CONFIG so the accumulator,
+# console exporter, dashboard, and CSV exports can surface them end-to-end.)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigRegistration:
+    def test_amd_fields_registered_in_metrics_config(self) -> None:
+        from aiperf.common.models.telemetry_models import TelemetryMetrics
+        from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
+
+        registered = {field for _, field, _ in GPU_TELEMETRY_METRICS_CONFIG}
+        amd_fields = {f for f in TelemetryMetrics.model_fields if f.startswith("amd_")}
+        missing = amd_fields - registered
+        assert not missing, (
+            f"amd_* fields on TelemetryMetrics not registered in "
+            f"GPU_TELEMETRY_METRICS_CONFIG (downstream accumulator will silently "
+            f"drop them): {sorted(missing)}"
+        )
+
+    def test_cumulative_amd_fields_marked_as_counters(self) -> None:
+        from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_COUNTER_METRICS
+
+        # These two AMD signals are cumulative across the device's lifetime;
+        # accumulator must compute deltas, not distribution stats.
+        assert "amd_energy_consumption" in GPU_TELEMETRY_COUNTER_METRICS
+        assert "amd_ecc_uncorrectable" in GPU_TELEMETRY_COUNTER_METRICS
+
+    def test_amd_metrics_flow_through_telemetry_hierarchy(self) -> None:
+        # End-to-end: feed two records with amd_* values into the same
+        # hierarchy the accumulator uses, then iterate the config the same
+        # way summarize() does and confirm every registered amd_* metric
+        # produces a MetricResult instead of a NoMetricValue.
+        from aiperf.common.exceptions import NoMetricValue
+        from aiperf.common.models.telemetry_models import (
+            TelemetryHierarchy,
+            TelemetryMetrics,
+            TelemetryRecord,
+        )
+        from aiperf.gpu_telemetry.constants import (
+            GPU_TELEMETRY_COUNTER_METRICS,
+            GPU_TELEMETRY_METRICS_CONFIG,
+        )
+
+        hierarchy = TelemetryHierarchy()
+        for ts, energy in ((1_000_000_000, 100.0), (2_000_000_000, 105.0)):
+            hierarchy.add_record(
+                TelemetryRecord(
+                    gpu_index=0,
+                    gpu_uuid="GPU-amd-test-0",
+                    gpu_model_name="AMD Instinct MI300X OAM",
+                    timestamp_ns=ts,
+                    dcgm_url="amdsmi://localhost",
+                    telemetry_data=TelemetryMetrics(
+                        amd_power=287.0,
+                        amd_energy_consumption=energy,
+                        amd_gfx_activity=47.0,
+                        amd_umc_activity=12.0,
+                        amd_memory_used=183.6,
+                        amd_temperature=54.0,
+                        amd_ecc_uncorrectable=0.0,
+                        amd_throttle_status=0.0,
+                        # amd_mm_activity left None on purpose (Instinct GPUs)
+                    ),
+                )
+            )
+
+        gpu_data = hierarchy.dcgm_endpoints["amdsmi://localhost"]["GPU-amd-test-0"]
+        seen = set()
+        for _display, field, unit_enum in GPU_TELEMETRY_METRICS_CONFIG:
+            if not field.startswith("amd_"):
+                continue
+            try:
+                result = gpu_data.get_metric_result(
+                    field,
+                    f"tag_{field}",
+                    f"header_{field}",
+                    unit_enum.value,
+                    is_counter=field in GPU_TELEMETRY_COUNTER_METRICS,
+                )
+            except NoMetricValue:
+                continue  # amd_mm_activity is intentionally absent
+            assert result.tag == f"tag_{field}"
+            assert result.unit == unit_enum.value
+            seen.add(field)
+
+        # Every amd_* field we populated should have flowed through.
+        assert seen >= {
+            "amd_power",
+            "amd_energy_consumption",
+            "amd_gfx_activity",
+            "amd_umc_activity",
+            "amd_memory_used",
+            "amd_temperature",
+            "amd_ecc_uncorrectable",
+            "amd_throttle_status",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Collection
@@ -353,8 +466,8 @@ class TestCollection:
         assert records[0].telemetry_data.amd_temperature == 67.0
 
     @pytest.mark.asyncio
-    async def test_temperature_unparseable_version_assumes_modern(self, patch_amdsmi):
-        # If amdsmi.__version__ is missing or unparseable, default to "modern"
+    async def test_temperature_unparsable_version_assumes_modern(self, patch_amdsmi):
+        # If amdsmi.__version__ is missing or unparsable, default to "modern"
         # (no /1000) since every currently-deployed binding is >= 26.x.
         mock_amdsmi, AMDSMITelemetryCollector = patch_amdsmi
         mock_amdsmi.__version__ = "garbage-not-a-version"
