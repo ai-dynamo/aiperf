@@ -148,11 +148,17 @@ _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@
 # Safety net for stray scheme-less URLs carrying userinfo (``user:pass@host``).
 # ``EndpointConfig.urls`` auto-prefixes scheme-less values, so users can write
 # ``--url user1:pass1@host1 user2:pass2@host2`` and ``consume_multiple=True``
-# means only the first value is caught by ``_URL_FLAG_PATTERN``. Gated on
-# whitespace/quote/start-of-string boundaries so only standalone CLI tokens
-# match — header values (which run through ``_CLI_SECRET_PATTERNS`` first)
-# and path-embedded ``@`` never match here.
+# means only the first value is caught by ``_URL_FLAG_PATTERN``. Applied only
+# to tokens inside a ``--url``/``-u`` consumption window (see
+# ``_redact_stray_bare_userinfo_after_url_flags``); a global sweep would eat
+# legitimate ``key:value@...`` tokens on non-URL flags like ``--header
+# X-User-Email:alice@example.com`` or ``--mlflow-tag owner:alice@acme.com``.
 _STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
+
+# Flag tokens that open a ``consume_multiple=True`` URL-value window. Only
+# these flags have the multi-value leak — ``--otel-url`` / ``--mlflow-tracking-uri``
+# take a single value and are already covered by ``_URL_FLAG_PATTERN``.
+_MULTI_VALUE_URL_FLAGS: frozenset[str] = frozenset({"--url", "-u"})
 
 
 def _redact_url_flag_match(match: re.Match[str]) -> str:
@@ -161,6 +167,50 @@ def _redact_url_flag_match(match: re.Match[str]) -> str:
     value = match.group(3)
     close_quote = match.group(4) or ""
     return f"{prefix}{open_quote}{redact_url(value)}{close_quote}"
+
+
+def _redact_stray_bare_userinfo_after_url_flags(cmd: str) -> str:
+    """Redact scheme-less ``user:pass@host`` tokens inside ``--url``/``-u`` windows.
+
+    A consume-multiple URL flag captures every subsequent positional token up
+    to the next ``--flag``/``-X`` or end of string. Only within that window do
+    we treat ``key:value@rest`` as a credential — outside it, such tokens are
+    legitimate (``--header X-User-Email:alice@example.com``,
+    ``--mlflow-tag owner:alice@acme.com``).
+
+    The first value of ``--url``/``-u`` is already redacted by
+    ``_URL_FLAG_PATTERN``; this pass handles 2nd+ values only.
+    """
+    # Split on whitespace runs but keep them so we can rejoin losslessly.
+    tokens = re.split(r"(\s+)", cmd)
+    out: list[str] = []
+    in_url_window = False
+    for token in tokens:
+        if not token:
+            out.append(token)
+            continue
+        if token.isspace():
+            out.append(token)
+            continue
+        if token in _MULTI_VALUE_URL_FLAGS:
+            in_url_window = True
+            out.append(token)
+            continue
+        # Any other flag closes the window (including ``--url=value`` which is
+        # a single-value form). Conservative: treat any ``-`` or ``--`` prefix
+        # as a new flag.
+        if (
+            token.startswith("-")
+            and len(token) >= 2
+            and (token.startswith("--") or token[1].isalpha())
+        ):
+            in_url_window = False
+            out.append(token)
+            continue
+        if in_url_window:
+            token = _STRAY_BARE_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", token)
+        out.append(token)
+    return "".join(out)
 
 
 def redact_cli_command(cmd: str) -> str:
@@ -175,16 +225,16 @@ def redact_cli_command(cmd: str) -> str:
       matcher — e.g. 2nd+ URL under ``--url u1 u2 u3`` (``consume_multiple=True``).
       Restricted to ``scheme://`` URLs, so non-URL args like ``--model foo@bar``
       pass through unchanged.
-    - Stray scheme-less bare ``user:pass@host`` tokens — same 2nd+-value leak
-      under ``--url``, but ``EndpointConfig.urls`` auto-prefixes ``http://``
-      for scheme-less values, so credentialed inputs never carry a scheme at
-      CLI time.
+    - Stray scheme-less bare ``user:pass@host`` tokens inside a ``--url``/``-u``
+      consumption window. Scoped to that window so benign ``key:value@...``
+      tokens on non-URL flags (``--header X-User-Email:alice@example.com``,
+      ``--mlflow-tag owner:alice@acme.com``) pass through untouched.
     """
     for pattern in _CLI_SECRET_PATTERNS:
         cmd = pattern.sub(rf"\1'{REDACTED_VALUE}'", cmd)
     cmd = _URL_FLAG_PATTERN.sub(_redact_url_flag_match, cmd)
     cmd = _STRAY_URL_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", cmd)
-    cmd = _STRAY_BARE_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", cmd)
+    cmd = _redact_stray_bare_userinfo_after_url_flags(cmd)
     return cmd
 
 

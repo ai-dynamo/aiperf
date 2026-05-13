@@ -1129,6 +1129,93 @@ class TestRedactCliCommandUrlFlags:
         """Non-userinfo URLs and unrelated args with `@` must pass through."""
         assert redact_cli_command(cmd) == cmd
 
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # --mlflow-tag: key:value pairs with `@` in value are legitimate MLflow tag
+            # metadata (owner/contact/email). They must NOT be eaten by the stray
+            # bare-userinfo safety net, because the safety net is only meaningful
+            # for 2nd+ values of `--url`/`-u` (consume_multiple=True).
+            param(
+                "aiperf profile --mlflow-tag owner:alice@acme.com",
+                id="mlflow-tag-email-value",
+            ),
+            param(
+                "aiperf profile --mlflow-tag contact:a@b",
+                id="mlflow-tag-short-email",
+            ),
+            param(
+                "aiperf profile --mlflow-tag region:us-east-1 owner:alice@acme.com",
+                id="mlflow-tag-multi-positional",
+            ),
+            # --header with a non-credential header whose value legitimately
+            # contains `@` (email, tracecontext, forwarded IPs). These headers
+            # are NOT in _SENSITIVE_HEADER_NAMES so the CLI secret patterns
+            # don't fire; the stray bare-userinfo pattern used to over-redact
+            # them. Must pass through unchanged.
+            param(
+                "aiperf profile --header X-User-Email:alice@acme.com",
+                id="header-email",
+            ),
+            param(
+                'aiperf profile --header "X-User-Email:alice@acme.com"',
+                id="header-email-double-quoted",
+            ),
+            param(
+                "aiperf profile --header 'X-User-Email:alice@acme.com'",
+                id="header-email-single-quoted",
+            ),
+            param(
+                "aiperf profile --header X-Trace-Parent:00-abc-def-01@span",
+                id="header-trace-parent",
+            ),
+            param(
+                "aiperf profile --header X-Forwarded-For:10.0.0.1@network",
+                id="header-forwarded",
+            ),
+            # --otel-resource-attributes uses `key=value` (not `:`) so not
+            # affected by the bare-userinfo pattern at all, but belt-and-suspenders.
+            param(
+                "aiperf profile --otel-url localhost:4318 "
+                "--otel-resource-attributes owner=alice@acme.com",
+                id="otel-resource-attributes-equals-email",
+            ),
+            # Typical combined CLI: URL has credentials (redacted), non-URL flags
+            # carry `@` values that must survive.
+            param(
+                "aiperf profile --model foo --url http://api.openai.com "
+                "--header X-User-Email:alice@acme.com "
+                "--mlflow-tag owner:alice@acme.com "
+                "--mlflow-tracking-uri http://mlflow.local:5000",
+                id="combined-cli-non-credential-at-preserved",
+            ),
+        ],
+    )  # fmt: skip
+    def test_non_url_flag_values_with_at_preserved(self, cmd: str):
+        """Regression for over-redaction of ``key:value@...`` on non-URL flags.
+
+        The stray bare-userinfo safety net catches 2nd+ values of
+        ``--url``/``-u`` (consume_multiple=True scheme-less leak). A global
+        sweep of that pattern used to eat legitimate ``key:value@...`` tokens
+        on ``--header`` / ``--mlflow-tag`` / ``--otel-resource-attributes``,
+        mangling email addresses, W3C trace contexts, forwarded IPs, and
+        MLflow contact tags. Scoped to the ``--url``/``-u`` consumption
+        window, so every one of these commands round-trips unchanged.
+        """
+        # For combined-cli, the URL credentials (if any) would be redacted but
+        # the non-URL `@` tokens must survive. Assert each preserved token.
+        result = redact_cli_command(cmd)
+        for must_keep in (
+            "alice@acme.com",
+            "a@b",
+            "01@span",
+            "10.0.0.1@network",
+        ):
+            if must_keep in cmd:
+                assert must_keep in result, (
+                    f"Value {must_keep!r} over-redacted in: {result}"
+                )
+
 
 # =============================================================================
 # EndpointConfig api_key protection
@@ -1164,6 +1251,74 @@ class TestEndpointConfigApiKeyProtected:
     def test_api_key_none_not_redacted(self):
         config = EndpointConfig(model_names=["gpt2"])
         assert config.model_dump()["api_key"] is None
+
+
+# =============================================================================
+# EndpointConfig.urls userinfo protection
+# =============================================================================
+
+
+class TestEndpointConfigUrlsProtected:
+    """Verify endpoint.urls strip userinfo during serialization.
+
+    ``profile_export_aiperf.json`` is written to disk and uploaded as an MLflow
+    run artifact. Without the ``_redact_urls`` field serializer, a URL like
+    ``http://alice:s3cret@host:8000`` leaks verbatim into both the on-disk
+    export and the artifact tree.
+    """
+
+    def test_userinfo_stripped_in_model_dump(self):
+        config = EndpointConfig(
+            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000/v1/chat"]
+        )
+        dumped_urls = config.model_dump()["urls"]
+        assert "s3cret" not in dumped_urls[0]
+        assert "alice" not in dumped_urls[0]
+        # Host/port/path survive.
+        assert "host:8000/v1/chat" in dumped_urls[0]
+        assert REDACTED_VALUE in dumped_urls[0]
+
+    def test_userinfo_stripped_in_json(self):
+        config = EndpointConfig(
+            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000"]
+        )
+        json_str = config.model_dump_json()
+        assert "s3cret" not in json_str
+        assert "alice:s3cret" not in json_str
+
+    def test_multiple_urls_each_redacted(self):
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            urls=[
+                "http://a:x@h1",
+                "http://b:y@h2",
+                "http://h3-no-userinfo",
+            ],
+        )
+        dumped_urls = config.model_dump()["urls"]
+        assert "a:x" not in dumped_urls[0]
+        assert "b:y" not in dumped_urls[1]
+        # URLs without userinfo pass through unchanged.
+        assert dumped_urls[2] == "http://h3-no-userinfo"
+
+    def test_urls_without_userinfo_unchanged(self):
+        config = EndpointConfig(model_names=["gpt2"], urls=["http://host:8000/v1"])
+        assert config.model_dump()["urls"] == ["http://host:8000/v1"]
+
+    def test_urls_preserved_with_include_secrets_context(self):
+        """Runtime callers that need the real URL can opt out of redaction."""
+        config = EndpointConfig(
+            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000"]
+        )
+        dumped = config.model_dump(context={"include_secrets": True})
+        assert "alice:s3cret" in dumped["urls"][0]
+
+    def test_urls_still_accessible_on_instance(self):
+        """Runtime code reads ``config.urls`` directly; redaction is only on serialization."""
+        config = EndpointConfig(
+            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000"]
+        )
+        assert "alice:s3cret@host:8000" in config.urls[0]
 
 
 # =============================================================================
