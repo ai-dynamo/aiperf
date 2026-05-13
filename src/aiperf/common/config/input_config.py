@@ -26,12 +26,7 @@ from aiperf.common.config.config_validators import (
 from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
-from aiperf.common.config.media_mix_config import (
-    MediaMixArchetype,
-    inflate_shorthand_archetypes,
-    is_shorthand_list,
-    normalize_media_mix_input,
-)
+from aiperf.common.config.media_mix_config import MediaMixArchetype
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
@@ -188,27 +183,6 @@ class InputConfig(BaseConfig):
                 "so per-archetype metrics group correctly."
             )
         return self
-
-    @model_validator(mode="before")
-    @classmethod
-    def inflate_media_mix_shorthand(cls, data: dict) -> dict:
-        """Parse and inflate shorthand media mix into full archetype dicts.
-
-        Runs before field validators so we can access sibling raw data (image, audio, video)
-        and convert shorthand to full archetypes that Pydantic can validate.
-        """
-        if not isinstance(data, dict):
-            return data
-
-        media_mix = normalize_media_mix_input(data.get("media_mix"))
-        if media_mix is None:
-            return data
-
-        if is_shorthand_list(media_mix):
-            data["media_mix"] = inflate_shorthand_archetypes(media_mix, data)
-        else:
-            data["media_mix"] = media_mix
-        return data
 
     extra: Annotated[
         Any,
@@ -419,12 +393,8 @@ class InputConfig(BaseConfig):
             default=None,
             description="Weighted request archetypes for mixed-modality benchmarking. "
             "Each archetype defines which modalities appear and with what properties. "
-            "CLI shorthand: 'image:0.6,video:0.2,audio:0.2'. "
-            "Full control via YAML config with per-modality profiles and per-archetype text overrides.",
-        ),
-        CLIParameter(
-            name=("--media-mix",),
-            group=Groups.INPUT,
+            "YAML-only — provide via --user-config-file. The structure supports per-modality "
+            "profiles and per-archetype text overrides; see docs/tutorials/media-mix.md.",
         ),
     ] = None
 

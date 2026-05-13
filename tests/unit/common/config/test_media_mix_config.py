@@ -10,61 +10,9 @@ from aiperf.common.config.media_mix_config import (
     ModalityEntry,
     TextOverrideConfig,
     VideoProfileConfig,
-    parse_media_mix,
 )
 from aiperf.common.config.prompt_config import InputTokensConfig, OutputTokensConfig
 from aiperf.common.enums import ImageFormat
-
-
-class TestParseMediaMix:
-    def test_parse_none_returns_none(self):
-        assert parse_media_mix(None) is None
-
-    def test_parse_list_passthrough(self):
-        data = [{"weight": 1.0, "modalities": []}]
-        assert parse_media_mix(data) is data
-
-    def test_parse_shorthand_string(self):
-        result = parse_media_mix("image:0.6,video:0.4")
-        assert len(result) == 2
-        assert result[0] == {"_shorthand": True, "modality": "image", "weight": 0.6}
-        assert result[1] == {"_shorthand": True, "modality": "video", "weight": 0.4}
-
-    def test_parse_shorthand_three_modalities(self):
-        result = parse_media_mix("image:0.5,audio:0.3,video:0.2")
-        assert len(result) == 3
-        assert result[0]["modality"] == "image"
-        assert result[1]["modality"] == "audio"
-        assert result[2]["modality"] == "video"
-
-    def test_parse_shorthand_with_spaces(self):
-        result = parse_media_mix("image : 0.6 , video : 0.4")
-        assert len(result) == 2
-        assert result[0]["weight"] == 0.6
-
-    def test_parse_shorthand_unknown_modality_raises(self):
-        with pytest.raises(ValueError, match="Unknown modality 'text'"):
-            parse_media_mix("text:0.5")
-
-    def test_parse_shorthand_invalid_weight_raises(self):
-        with pytest.raises(ValueError, match="Invalid weight"):
-            parse_media_mix("image:abc")
-
-    def test_parse_shorthand_zero_weight_raises(self):
-        with pytest.raises(ValueError, match="must be positive"):
-            parse_media_mix("image:0")
-
-    def test_parse_shorthand_negative_weight_raises(self):
-        with pytest.raises(ValueError, match="must be positive"):
-            parse_media_mix("image:-0.5")
-
-    def test_parse_shorthand_no_colon_raises(self):
-        with pytest.raises(ValueError, match="Expected 'modality:weight'"):
-            parse_media_mix("image")
-
-    def test_parse_shorthand_empty_raises(self):
-        with pytest.raises(ValueError, match="cannot be empty"):
-            parse_media_mix("")
 
 
 class TestImageProfileConfig:

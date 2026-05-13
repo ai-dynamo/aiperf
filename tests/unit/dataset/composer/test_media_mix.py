@@ -6,7 +6,6 @@ from aiperf.common.config import (
     AudioLengthConfig,
     ConversationConfig,
     EndpointConfig,
-    ImageConfig,
     ImageHeightConfig,
     ImageWidthConfig,
     InputConfig,
@@ -327,33 +326,3 @@ class TestSyntheticComposerMediaMix:
         composer = SyntheticDatasetComposer(config, mock_tokenizer)
         dataset = composer.create_dataset()
         assert len(dataset) == 2
-
-    def test_media_mix_shorthand_inflation(self, mock_tokenizer):
-        """Shorthand string should be inflated using sibling image config."""
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                conversation=ConversationConfig(num_dataset_entries=5),
-                prompt=PromptConfig(
-                    input_tokens=InputTokensConfig(mean=10, stddev=0),
-                ),
-                image=ImageConfig(
-                    batch_size=1,
-                    width=ImageWidthConfig(mean=10),
-                    height=ImageHeightConfig(mean=10),
-                ),
-                media_mix="image:1.0",
-            ),
-        )
-        # media_mix should be inflated to list of MediaMixArchetype
-        assert config.input.media_mix is not None
-        assert isinstance(config.input.media_mix[0], MediaMixArchetype)
-        assert config.input.media_mix[0].name == "image"
-
-        composer = SyntheticDatasetComposer(config, mock_tokenizer)
-        dataset = composer.create_dataset()
-        assert len(dataset) == 5
-
-        for conv in dataset:
-            for turn in conv.turns:
-                assert len(turn.images) == 1
