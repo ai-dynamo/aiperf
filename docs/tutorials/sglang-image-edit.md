@@ -44,7 +44,7 @@ docker run --gpus all \
 ```
 
 > [!NOTE]
-> > The following steps are to be performed _inside_ the Docker container.
+> The following steps are to be performed _inside_ the Docker container.
 
 **Install the diffusion extras.** The base image does not include diffusion dependencies — see the [SGLang Diffusion installation guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md):
 ```bash
@@ -53,9 +53,9 @@ pip install -e "python[diffusion]"
 
 **Set the server arguments:**
 > [!WARNING]
-> > These arguments set up FLUX.2-Klein-4B on a single GPU at port 30000.
-> > Adjust the model path, GPU count, or port to match your environment.
-> > See the [SGLang Multimodal Gen CLI](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md) for more details.
+> These arguments set up FLUX.2-Klein-4B on a single GPU at port 30000.
+> Adjust the model path, GPU count, or port to match your environment.
+> See the [SGLang Multimodal Gen CLI](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md) for more details.
 ```bash
 SERVER_ARGS=( --model-path black-forest-labs/FLUX.2-klein-4B --num-gpus 1 --port 30000 --host 0.0.0.0 --warmup --enable-torch-compile )
 ```
@@ -73,7 +73,7 @@ Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
 ## Running the benchmark (basic usage)
 
 > [!NOTE]
-> > The following steps are to be performed on your local machine (_outside_ the Docker container).
+> The following steps are to be performed on your local machine (_outside_ the Docker container).
 
 ### Image Edit Using Synthetic Reference Images
 The simplest path: AIPerf generates a synthetic reference image for every request and pairs it with a synthetic prompt. The mock image bytes are uploaded as the multipart `image` field — the server processes the request end-to-end just like a real one.
