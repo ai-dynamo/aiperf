@@ -250,7 +250,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.3-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.5-dev AS runtime
 
 # Include project license and asset attributions
 COPY LICENSE ATTRIBUTIONS.md /legal/
