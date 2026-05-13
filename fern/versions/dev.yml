@@ -130,6 +130,8 @@ navigation:
             path: ../pages-dev/tutorials/user-centric-timing.md
           - page: GPU Telemetry with AIPerf
             path: ../pages-dev/tutorials/gpu-telemetry.md
+          - page: OpenTelemetry MLflow Integration
+            path: ../pages-dev/tutorials/otel-mlflow.md
       - section: Configuration
         collapsed: true
         contents:

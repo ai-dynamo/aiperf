@@ -696,6 +696,31 @@ Display HTTP trace timing metrics in the console at the end of the benchmark. Sh
 Export per-request model responses to outputs.json for downstream post-processing.
 <br/>_Flag (no value required)_
 
+#### `--mlflow-tracking-uri` `<str>`
+
+MLflow Tracking Server URI used for post-run uploads (e.g., http://localhost:5000). When set, AIPerf uploads params, metrics, tags, and artifacts (including plots) to MLflow after profiling completes.
+
+#### `--mlflow-experiment` `<str>`
+
+MLflow experiment name for post-run uploads. Requires --mlflow-tracking-uri to be set.
+<br/>_Default: `aiperf`_
+
+#### `--mlflow-run-name` `<str>`
+
+Optional MLflow run name for post-run uploads. If omitted, AIPerf derives a name from benchmark metadata.
+
+#### `--mlflow-tag` `<list>`
+
+Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf) or as JSON string.
+
+#### `--mlflow-artifact-glob` `<list>`
+
+Optional artifact glob patterns for MLflow upload, relative to --output-artifact-dir. Can be specified multiple times. If not set, sensible defaults include exports and plot files.
+
+#### `--mlflow-parent-run-id` `<str>`
+
+Optional MLflow run id to attach this run to as a child (passed through to mlflow.start_run(parent_run_id=...)). Applied only when a new MLflow run is created; ignored on live-run reuse because MLflow pins the parent at creation time.
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -966,6 +991,22 @@ Enable GPU telemetry console display and optionally specify: (1) 'pynvml' to use
 
 Disable GPU telemetry collection entirely.
 
+#### `--otel-url` `<str>`
+
+Enable real-time metric streaming to an OpenTelemetry collector via OTLP. Requires the AIPerf otel extra (`aiperf[otel]`). Accepts one collector URL. The value can be a collector base URL or full OTLP metrics endpoint. If no path is specified, '/v1/metrics' is appended automatically. Examples: --otel-url localhost:4318 | --otel-url http://collector:4318.
+
+#### `--stream` `<list>`
+
+Select which AIPerf telemetry domains to stream over OTel. Valid values: 'metrics', 'timing', or 'default'. 'default' streams both metrics and timing domains. If omitted and --otel-url is set, default behavior is used. Examples: --stream metrics | --stream timing | --stream default | --stream metrics timing.
+
+#### `--otel-resource-attributes` `<list>`
+
+Custom OTel resource attributes as key=value pairs. Merged into the default resource attributes on every exported metric. Examples: --otel-resource-attributes team=inference | --otel-resource-attributes env=prod,region=us-west-2.
+
+#### `--gen-ai-provider` `<str>`
+
+Explicit value for the gen_ai.provider.name OTel attribute. When unset, AIPerf auto-infers from the endpoint URL host; falls back to '_OTHER' if no match. Example: --gen-ai-provider openai.
+
 ### Server Metrics
 
 #### `--server-metrics` `<list>`
@@ -1078,6 +1119,12 @@ aiperf plot --config my_plots.yaml
 
 # Show detailed error tracebacks
 aiperf plot --verbose
+
+# Generate plots and upload them to the MLflow run from mlflow_export.json
+aiperf plot --paths artifacts/my-run --mlflow-upload
+
+# Generate plots and upload to an explicit MLflow run
+aiperf plot --paths artifacts/my-run --mlflow-upload --mlflow-tracking-uri http://127.0.0.1:5000 --mlflow-run-id <run_id>
 ```
 
 #### `--paths`, `--empty-paths` `<list>`
@@ -1114,6 +1161,18 @@ Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.
 <br/>_Default: `8050`_
+
+#### `--mlflow-upload`, `--no-mlflow-upload`
+
+Upload generated PNG plot artifacts to an existing MLflow run. Mutually exclusive with --dashboard.
+
+#### `--mlflow-tracking-uri` `<str>`
+
+Optional MLflow tracking URI override for plot upload.
+
+#### `--mlflow-run-id` `<str>`
+
+Optional MLflow run id override for plot upload.
 
 <hr/>
 
