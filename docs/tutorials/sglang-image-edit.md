@@ -113,14 +113,14 @@ aiperf profile \
 ```
 
 ### Image Edit Using an Input File
-For deterministic prompt sequences, use a JSONL input file. The reference image is still synthetic — the prompt comes from each line.
+For deterministic prompt + reference image sequences, use a JSONL input file. Each line must include both the prompt (`text`) and the reference image (`image`, a local path or URL) — the `image_edit` endpoint rejects turns without a reference image, and the `single_turn` loader does not synthesize one.
 
-**Create an input file:**
+**Create an input file** (replace the paths with real reference images you want to edit):
 ```bash
 cat > edit_prompts.jsonl << 'EOF'
-{"text": "Convert this scene to a watercolor painting"}
-{"text": "Make the background a sunset"}
-{"text": "Add snow to the trees"}
+{"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}
+{"text": "Make the background a sunset", "image": "/path/to/ref2.png"}
+{"text": "Add snow to the trees", "image": "/path/to/ref3.png"}
 EOF
 ```
 
@@ -133,9 +133,6 @@ aiperf profile \
   --endpoint-type image_edit \
   --input-file edit_prompts.jsonl \
   --custom-dataset-type single_turn \
-  --image-batch-size 1 \
-  --image-width-mean 512 \
-  --image-height-mean 512 \
   --extra-inputs size:512x512 \
   --extra-inputs num_inference_steps:4 \
   --concurrency 1 \
@@ -170,9 +167,6 @@ aiperf profile \
   --endpoint-type image_edit \
   --input-file edit_prompts.jsonl \
   --custom-dataset-type single_turn \
-  --image-batch-size 1 \
-  --image-width-mean 512 \
-  --image-height-mean 512 \
   --extra-inputs size:512x512 \
   --extra-inputs num_inference_steps:4 \
   --concurrency 1 \
