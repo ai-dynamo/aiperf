@@ -6,6 +6,7 @@ from pydantic import Field
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
@@ -76,6 +77,9 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> None:
         """Extract response text and write an output fragment."""
+        if metadata.benchmark_phase != CreditPhase.PROFILING:
+            return
+
         parts: list[str] = []
         for resp in record.content_responses:
             if resp.data:
