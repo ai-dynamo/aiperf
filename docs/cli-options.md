@@ -691,6 +691,11 @@ Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_ex
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
 
+#### `--export-outputs-json`
+
+Export per-request model responses to outputs.json for downstream post-processing.
+<br/>_Flag (no value required)_
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
