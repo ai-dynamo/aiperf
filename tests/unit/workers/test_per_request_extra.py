@@ -72,7 +72,7 @@ class TestPerRequestExtraMerge:
         assert payload["nvext"] == {"priority": 99}
 
     def test_none_extra_does_not_break_payload(self):
-        """Turn with extra=None produces a valid payload without extra keys."""
+        """Turn with extra_body=None produces a valid payload without extra keys."""
         endpoint, model_endpoint = _make_endpoint()
         turn = Turn(texts=[Text(contents=["hello"])], extra_body=None)
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -138,7 +138,7 @@ class TestPerRequestExtraMerge:
         )
         turn = Turn(
             texts=[Text(contents=["hello"])],
-            extra={"per_req_key": "from_per_req"},
+            extra_body={"per_req_key": "from_per_req"},
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
