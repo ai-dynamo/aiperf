@@ -466,6 +466,25 @@ class TestCollection:
         assert records[0].telemetry_data.amd_temperature == 67.0
 
     @pytest.mark.asyncio
+    async def test_temperature_modern_binding_with_millideg_value_normalized(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # AMD's amdsmi 26.2.2 docs document the API as returning milliCelsius,
+        # even though every 26.x binding we have empirical access to returns
+        # Celsius. The version gate alone would mis-handle a system that
+        # matches the docs; the >200 sanity check on top guarantees we still
+        # report a sane temperature in either case. Default mock binding is
+        # 26.0.2 (modern) so the gate would otherwise skip the divide.
+        def temp_mdeg(handle, kind, _metric):
+            if kind == mock_amdsmi.AmdSmiTemperatureType.EDGE:
+                raise mock_amdsmi.AmdSmiException("EDGE not supported")
+            return 67000  # 67°C reported as millidegrees
+
+        mock_amdsmi.amdsmi_get_temp_metric.side_effect = temp_mdeg
+        records = await initialized_collector._loop_to_thread_collect()
+        assert records[0].telemetry_data.amd_temperature == 67.0
+
+    @pytest.mark.asyncio
     async def test_temperature_unparsable_version_assumes_modern(self, patch_amdsmi):
         # If amdsmi.__version__ is missing or unparsable, default to "modern"
         # (no /1000) since every currently-deployed binding is >= 26.x.

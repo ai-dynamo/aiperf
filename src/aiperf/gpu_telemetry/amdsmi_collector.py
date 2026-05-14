@@ -434,14 +434,14 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
     def _collect_temperature(
         handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
     ) -> None:
-        """Temperature: prefer JUNCTION (Instinct GPUs), fall back to HOTSPOT.
+        """Temperature: prefer JUNCTION, fall back to HOTSPOT (EDGE unsupported on Instinct).
 
-        EDGE is unsupported on Instinct GPUs.
-
-        Unit conversion is gated on ``amdsmi.__version__`` (see
-        :func:`_amdsmi_returns_celsius`): bindings ``< 26.x`` return
-        millidegrees Celsius and need /1000; ``>= 26.x`` already normalize
-        to Celsius.
+        Unit conversion: divide by 1000 if ``amdsmi.__version__ < 26`` OR the
+        raw value is implausibly high (> 200 °C). The version gate covers
+        bindings whose Python API returns millidegrees; the >200 sanity
+        check hedges against newer bindings whose docs still describe
+        millideg semantics (amdsmi 26.2.2 docs notwithstanding our
+        empirical Celsius observations on 26.0.2/26.2.1).
         """
         for kind in ("JUNCTION", "HOTSPOT"):
             try:
@@ -455,7 +455,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             value = _numeric(temp)
             if value is None:
                 continue
-            if not _amdsmi_returns_celsius():
+            if not _amdsmi_returns_celsius() or value > 200:
                 value = value / 1000.0
             td.amd_temperature = value
             return
