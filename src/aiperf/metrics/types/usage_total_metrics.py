@@ -8,7 +8,11 @@ summing each metric's value across every request in the benchmark run.
 """
 
 from aiperf.common.enums import MetricConsoleGroup
+from aiperf.common.enums.metric_enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
+from aiperf.metrics import BaseDerivedMetric
 from aiperf.metrics.derived_sum_metric import DerivedSumMetric
+from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.usage_cache_metrics import (
     UsagePromptCacheMissTokensMetric,
     UsagePromptCacheReadTokensMetric,
@@ -311,3 +315,48 @@ class TotalUsagePromptAudioSecondsMetric(
     short_header = "Total Usage Prompt Audio Sec"
     console_group = MetricConsoleGroup.USAGE
     display_order = 2040
+
+
+class OverallUsagePromptCacheReadPercentMetric(BaseDerivedMetric[float]):
+    """
+    Overall (run-aggregate) prompt cache-read percentage across all requests.
+
+    Token-volume-weighted: divides the summed cache-read tokens by the summed
+    prompt tokens across the whole benchmark. This differs from the
+    per-request `UsagePromptCacheReadPercentMetric` aggregate stats (which
+    average per-request percentages, treating small and large requests
+    equally) — the overall figure reflects the actual share of input tokens
+    the API served from cache.
+
+    Formula:
+        Overall Usage Prompt Cache Read % =
+            (Total Usage Prompt Cache Read Tokens / Total Usage Prompt Tokens) * 100
+    """
+
+    tag = "overall_usage_prompt_cache_read_pct"
+    header = "Overall Usage Prompt Cache Read %"
+    short_header = "Overall Cache Read %"
+    short_header_hide_unit = True
+    unit = GenericMetricUnit.PERCENT
+    flags = MetricFlags.LARGER_IS_BETTER
+    console_group = MetricConsoleGroup.USAGE
+    display_order = 2012
+    required_metrics = {
+        TotalUsagePromptCacheReadTokensMetric.tag,
+        TotalUsagePromptTokensMetric.tag,
+    }
+
+    def _derive_value(
+        self,
+        metric_results: MetricResultsDict,
+    ) -> float:
+        total_cache_read = metric_results.get_or_raise(
+            TotalUsagePromptCacheReadTokensMetric
+        )
+        total_prompt = metric_results.get_or_raise(TotalUsagePromptTokensMetric)
+        if total_prompt == 0:
+            raise NoMetricValue(
+                "Total usage prompt tokens is zero, "
+                "cannot calculate overall cache-read percentage."
+            )
+        return (total_cache_read / total_prompt) * 100.0

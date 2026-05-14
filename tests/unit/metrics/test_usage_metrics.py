@@ -8,7 +8,7 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
-from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.usage_cache_metrics import (
     UsagePromptCacheMissTokensMetric,
     UsagePromptCacheReadTokensMetric,
@@ -26,6 +26,7 @@ from aiperf.metrics.types.usage_metrics import (
     UsageRejectedPredictionTokensMetric,
 )
 from aiperf.metrics.types.usage_total_metrics import (
+    OverallUsagePromptCacheReadPercentMetric,
     TotalUsageAcceptedPredictionTokensMetric,
     TotalUsageCompletionAudioTokensMetric,
     TotalUsagePromptAudioSecondsMetric,
@@ -33,6 +34,7 @@ from aiperf.metrics.types.usage_total_metrics import (
     TotalUsagePromptCacheMissTokensMetric,
     TotalUsagePromptCacheReadTokensMetric,
     TotalUsagePromptCacheWriteTokensMetric,
+    TotalUsagePromptTokensMetric,
     TotalUsageReasoningTokensMetric,
     TotalUsageRejectedPredictionTokensMetric,
     TotalUsageToolUsePromptTokensMetric,
@@ -445,6 +447,41 @@ class TestUsagePromptCacheMissTokensMetric:
         assert UsagePromptCacheMissTokensMetric.missing_flags(
             MetricFlags.LARGER_IS_BETTER
         )
+
+
+class TestOverallUsagePromptCacheReadPercentMetric:
+    """Tests for OverallUsagePromptCacheReadPercentMetric (run-aggregate cache %)."""
+
+    def test_basic_overall_percentage(self):
+        metric_results = MetricResultsDict()
+        metric_results[TotalUsagePromptCacheReadTokensMetric.tag] = 250
+        metric_results[TotalUsagePromptTokensMetric.tag] = 1000
+        result = OverallUsagePromptCacheReadPercentMetric().derive_value(metric_results)
+        assert result == pytest.approx(25.0, rel=1e-9)
+
+    def test_zero_total_prompt_tokens_raises(self):
+        metric_results = MetricResultsDict()
+        metric_results[TotalUsagePromptCacheReadTokensMetric.tag] = 0
+        metric_results[TotalUsagePromptTokensMetric.tag] = 0
+        with pytest.raises(NoMetricValue):
+            OverallUsagePromptCacheReadPercentMetric().derive_value(metric_results)
+
+    def test_metadata(self):
+        assert (
+            OverallUsagePromptCacheReadPercentMetric.tag
+            == "overall_usage_prompt_cache_read_pct"
+        )
+        assert (
+            OverallUsagePromptCacheReadPercentMetric.console_group
+            == MetricConsoleGroup.USAGE
+        )
+        assert OverallUsagePromptCacheReadPercentMetric.has_flags(
+            MetricFlags.LARGER_IS_BETTER
+        )
+        assert OverallUsagePromptCacheReadPercentMetric.required_metrics == {
+            TotalUsagePromptCacheReadTokensMetric.tag,
+            TotalUsagePromptTokensMetric.tag,
+        }
 
 
 class TestUsageToolUsePromptTokensMetric:

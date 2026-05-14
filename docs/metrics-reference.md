@@ -65,6 +65,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Usage Total Tokens](#total-usage-total-tokens)
     - [Total Usage Reasoning Tokens](#total-usage-reasoning-tokens)
     - [Total Usage Prompt Cache Read Tokens](#total-usage-prompt-cache-read-tokens)
+    - [Overall Usage Prompt Cache Read %](#overall-usage-prompt-cache-read-)
     - [Total Usage Prompt Cache Write Tokens](#total-usage-prompt-cache-write-tokens)
     - [Total Usage Prompt Cache Miss Tokens](#total-usage-prompt-cache-miss-tokens)
     - [Total Usage Prompt Audio Tokens](#total-usage-prompt-audio-tokens)
@@ -976,6 +977,24 @@ total_usage_prompt_cache_read_tokens = sum(r.usage_prompt_cache_read_tokens for 
 
 **Notes:**
 - Aggregates server-reported cache-read prompt tokens across all requests (OpenAI `prompt_tokens_details.cached_tokens` or Anthropic top-level `cache_read_input_tokens`).
+
+---
+
+### Overall Usage Prompt Cache Read %
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Run-aggregate share of input tokens served from prompt cache, weighted by token volume. Computed from the run totals so a request with 10k prompt tokens contributes 100x as much weight as a request with 100 prompt tokens — the resulting number reflects the actual fraction of input tokens the API served from cache across the whole benchmark.
+
+**Formula:**
+```python
+overall_usage_prompt_cache_read_pct = (
+    total_usage_prompt_cache_read_tokens / total_usage_prompt_tokens
+) * 100
+```
+
+**Notes:**
+- No value is produced if `total_usage_prompt_tokens` is zero (e.g. all requests errored before reporting usage).
 
 ---
 
