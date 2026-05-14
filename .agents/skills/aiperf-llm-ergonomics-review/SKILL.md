@@ -47,7 +47,7 @@ Use this skill when:
 
 - A branch/PR is nearly ready to ship and mechanical checks pass.
 - The user asks for "an ergonomics review" / "an LLM readability review" / "review for agent-friendliness."
-- A refactor touches public API surface (exceptions, public functions, CLAUDE.md, docs/dev/patterns.md).
+- A refactor touches public API surface (exceptions, public functions, CLAUDE.md, anything under `docs/dev/patterns/`).
 - A new service, plugin category, or message type is added.
 
 Do NOT use this skill for:
@@ -97,13 +97,13 @@ If either mechanical check exits non-zero: **stop, report the failures, instruct
 
 ## Scope
 
-**Default:** all files modified on the current branch vs. `origin/main`. This intentionally includes agent-facing files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, `docs/dev/patterns.md`) so Axes 6 and 7 have something to review when a branch touches them.
+**Default:** all files modified on the current branch vs. `origin/main`. This intentionally includes agent-facing files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, and any page under `docs/dev/patterns/`) so Axes 6 and 7 have something to review when a branch touches them.
 
 **Per-axis applicability:**
 
 - Axes 1-5 apply to `src/aiperf/**.py` (and any other Python under review).
 - Axis 6 applies to the agent-facing convention files listed above.
-- Axis 7 applies to `docs/dev/patterns.md` plus any reference files it cites.
+- Axis 7 applies to every page under `docs/dev/patterns/` plus any reference files cited from those pages.
 
 If a given axis has no in-scope files on this branch, record "no in-scope files" under that axis in the report — do not skip it silently.
 
@@ -119,7 +119,7 @@ Inside the scope, only review code **added or modified on this branch**. Pre-exi
 
 Create one TaskCreate task per axis (7 tasks total). Work them in order. Do not batch findings across axes — keep each axis's output isolated so the final report is scannable.
 
-### Axis 1 — Error-message informativeness (R10 quality)
+### Axis 1 — Error-message informativeness
 
 **Research basis:** arxiv 2604.07502 *Beyond Human-Readable* §"compression paradox" — abbreviated error labels (e.g., `|E|PS|pf|`) cost agents MORE tokens than the verbose form (`"Payment failed for order #4521: insufficient funds"`) because the model must reconstruct the meaning. Mechanical checks only enforce a minimum word count; this axis enforces information content.
 
@@ -142,7 +142,7 @@ For every `raise <Cls>(...)` site added or modified:
 
 **For each finding, record:** file:line, current text, suggested rewrite (verbatim).
 
-### Axis 2 — Type-hint descriptiveness (R11 quality)
+### Axis 2 — Type-hint descriptiveness
 
 **Research basis:** arxiv 2504.09246 *Type-Constrained Code Generation with Language Models* — type constraints reduce LLM compilation errors by **>50%**. arxiv 2604.07502 frames types as "high-information tokens" and "compressed documentation the model interprets semantically." Mechanical ANN201 only enforces "a return type exists"; this axis enforces descriptiveness.
 
@@ -166,7 +166,7 @@ For every public function signature added or modified (skip private `_helpers`):
 
 **For each finding, record:** file:line, current signature, suggested signature (verbatim).
 
-### Axis 3 — Docstring example usefulness (R13 quality)
+### Axis 3 — Docstring example usefulness
 
 **Research basis:** Marmelab 2026 *Agent Experience* — "Include working usage examples in function docstrings with sample input/output." Agents are mimics: a docstring example is copied verbatim when they invoke the function. An example with real-looking identifiers beats prose every time. Mechanical D103 only enforces "docstring exists"; this axis enforces that the docstring teaches.
 
@@ -189,9 +189,9 @@ For every public function / class / service added or modified **that has a docst
 
 **Calibration:** do not require examples for every trivial method. Flag cases where an agent would likely misuse the API without one.
 
-**Note:** `D103` (in the ruff baseline) catches missing docstrings on public **functions**. It does NOT catch missing docstrings on modules (`D100`), classes (`D101`), methods (`D102`), or `__init__` (`D107`) — those rules are not enabled. So for public *classes* and *methods*, the absence of a docstring is also an Axis 3 finding (a method silently has no docstring and the mechanical tools didn't warn).
+**Scope clarification (this axis vs guardrails):** the skill frontmatter says "out of scope: anything the guardrails already catch." `D103` IS in the ruff baseline and DOES catch missing docstrings on public functions — so a function with no docstring at all is NOT an Axis 3 finding; the mechanical floor already caught it. What this axis owns is the *quality* of docstrings that exist on functions, PLUS the absence of docstrings on public *classes* (`D101`), *methods* (`D102`), and *`__init__`* (`D107`) — those ruff rules are NOT enabled in the project baseline, so the mechanical floor does not catch them. That's a deliberate gap this axis fills, not a contradiction.
 
-### Axis 4 — Naming disambiguation / synonym discoverability (R7 + R17)
+### Axis 4 — Naming disambiguation / synonym discoverability
 
 **Research basis:** Marmelab 2026 *Agent Experience* recommends incorporating domain synonyms in comments ("mention 'Client' and 'User' alongside 'Customer'") and instructing agents to "search for existing similar code before creating new methods." arxiv 2604.07502 explicitly argues for *strengthening*, not weakening, naming conventions — meaningful names are "compressed documentation the model interprets semantically." The mechanical duplicate-class-name check catches exact collisions; this axis catches the near-misses that cause agents to miss-find existing code and re-create it.
 
@@ -212,7 +212,7 @@ For every new class, public function, module path, or constant:
 
 **Cross-reference:** the duplicate-class-name check in `check_ergonomics.py` catches exact collisions. This axis catches the near-misses.
 
-### Axis 5 — Comment semantic density (R9 direct)
+### Axis 5 — Comment semantic density
 
 **Research basis:** arxiv 2604.07502 *Beyond Human-Readable* defines semantic density as "the ratio of meaningful information to total tokens" — the optimization target for agentic code is not token minimization but density. Restating-the-obvious comments carry near-zero information; comments that document a non-local constraint or a past bug carry high information. Project caveat: AIPerf's CLAUDE.md follows this principle (`"Comments only for 'why?' not 'what'"`) — the research and the local convention align here, not conflict.
 
@@ -234,7 +234,7 @@ For every comment added or modified:
 
 **Important:** comments are genuinely optional in AIPerf (CLAUDE.md rule). A clean diff with zero comment findings is a GOOD outcome for this axis. Resist the urge to manufacture findings.
 
-### Axis 6 — Convention explicitness (R15 quality)
+### Axis 6 — Convention explicitness
 
 **Research basis:** Stack Overflow 2026 *Building shared coding guidelines for AI* — "Coding guidelines for agents need to be more explicit, demonstrative of patterns, and obvious." Addy Osmani 2026 and Missing Semester MIT 2026 both recommend a canonical `CLAUDE.md` / `AGENTS.md` / `llms.txt` file that agents load on session start, because agents do NOT absorb tacit conventions from surrounding code reliably. Anthropic's *Effective Context Engineering* reinforces this: explicit documented conventions collapse session-bootstrap cost.
 
@@ -242,7 +242,7 @@ For every comment added or modified:
 
 For every new pattern introduced on this branch:
 
-- [ ] Is the pattern documented in at least one of the project's agent-facing files? (AIPerf: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, or `docs/dev/patterns.md`.)
+- [ ] Is the pattern documented in at least one of the project's agent-facing files? (AIPerf: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, or any page under `docs/dev/patterns/`.)
 - [ ] If the pattern has an invariant ("always call X after Y"; "never raise in an @on_message handler"), is the invariant documented somewhere an agent will find it (not just at one call site)?
 - [ ] If this pattern replaces an older one, is the replacement noted (and the old one either deleted or marked deprecated in the convention file)?
 
@@ -254,23 +254,23 @@ For every new pattern introduced on this branch:
 - One of `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, or `.cursor/rules/python.mdc` updated without the other three (AIPerf-specific four-file-sync violation).
 - Deprecated pattern still referenced as current in docs (research violation — agents will model after the stale doc).
 
-### Axis 7 — Reference-file exemplariness (R16 quality)
+### Axis 7 — Reference-file exemplariness
 
 **Research basis:** Stack Overflow 2026 — "Provide explicit examples of both correct and incorrect implementations and a reference file showing code that follows all guidelines." Marmelab 2026 — "Store technical documentation for external APIs/libraries alongside the codebase rather than relying on external resources." Agents grep for existing patterns before writing new code; if the file they find violates the rule it's supposed to teach, the agent copies the violation.
 
-`docs/dev/patterns.md` is AIPerf's canonical catalog of code patterns (CLI Command, Service, Model, Message, Plugin, Error Handling, Logging, etc.). Its code blocks are labeled with source file paths in leading comments — e.g., a block starting with `# aiperf/cli.py — register with lazy import strings` or `# cli_commands/kube/cancel.py` identifies the file as the reference implementation for that pattern slice. (Note: path prefixes are inconsistent — some include `aiperf/`, others start at `cli_commands/`; don't over-constrain the grep.)
+`docs/dev/patterns/` is AIPerf's canonical catalog of code patterns, one page per pattern (CLI Command, Service, Model, Message, Plugin, Error Handling, Logging, Testing, Console Exporter, Uncertainty Plot, Strategy Protocol, Drop-Oldest Fanout Queue). Each page's code blocks are labeled with source file paths in leading comments — both `# aiperf/...` and `# src/aiperf/...` forms appear (e.g., `# aiperf/cli_commands/profile.py` and `# src/aiperf/exporters/internal_metrics_console_exporter.py`). When resolving a reference, strip the comment prefix and try both `<path>` and `src/<path>` against the repo root.
 
 **Required checks:**
 
-- [ ] Extract the referenced paths with a permissive grep, e.g. `grep -nE '^# [a-z_/.]+\.py' docs/dev/patterns.md`. Manually strip the comment prefix to get file paths; resolve each against the repo root (try both `<path>` and `src/<path>`).
+- [ ] Extract the referenced paths with a permissive grep across every pattern page, e.g. `grep -rnE '^# [a-z_/.]+\.py' docs/dev/patterns/`. Manually strip the comment prefix to get file paths; resolve each against the repo root (try both `<path>` and `src/<path>`).
 - [ ] For each referenced path that is **also modified on this branch**:
-  - [ ] Does the modified file still exemplify the pattern as shown in `patterns.md`?
-  - [ ] Has the branch introduced a change that would make the example in `patterns.md` misleading or stale (e.g., renamed a function the snippet shows, removed a decorator it demonstrates, changed the import path)?
-- [ ] Is a new reference candidate missing from `patterns.md`? If this branch adds a genuinely exemplary implementation of a pattern (or the first instance of a new pattern), flag that `patterns.md` should be extended.
+  - [ ] Does the modified file still exemplify the pattern as shown in the relevant `docs/dev/patterns/<pattern>.md` page?
+  - [ ] Has the branch introduced a change that would make the example in the pattern page misleading or stale (e.g., renamed a function the snippet shows, removed a decorator it demonstrates, changed the import path)?
+- [ ] Is a new reference candidate missing from `docs/dev/patterns/`? If this branch adds a genuinely exemplary implementation of a pattern (or the first instance of a new pattern), flag that the relevant page (or a new page) should be extended.
 
 **Red flags (HIGH):**
 
-- `patterns.md` shows `aiperf/foo.py` demonstrating a pattern but this branch changed `foo.py` in a way that breaks the shown example.
+- A page under `docs/dev/patterns/` shows `aiperf/foo.py` demonstrating a pattern but this branch changed `foo.py` in a way that breaks the shown example.
 - Reference file now has entries in `tools/ruff_baseline.json` or `tools/ergonomics_baseline.json` (it's grandfathering violations of rules it's supposed to teach) — grep the baselines for the file path.
 - A narrow `# noqa: <RULE>` in the reference file is acceptable if accompanied by a comment explaining why (e.g., `# noqa: BLE001 - fault-tolerant telemetry`). An unexplained `# noqa` in a gold-standard file is a finding.
 
@@ -284,13 +284,19 @@ For every new pattern introduced on this branch:
 
 ## Output
 
-**File:** `artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md`
+**File:** `artifacts/ergonomics-<epoch>/REPORT.md`
 
-(Create the date dir if it doesn't exist. `branch-slug` is the current branch with `/` replaced by `-`.)
+Compute `EPOCH="$(date +%s)"` once at the start of the invocation and reuse. Same-day re-invocations get fresh `<epoch>` subdirectories — do NOT overwrite a previous run's directory. Drop a `meta.json` alongside `REPORT.md` recording branch, head SHA, base (`origin/main`), and the model used.
 
 Use a readable PR-comment style. Avoid wide finding tables; they are hard to
 read in GitHub comments. Keep the counts compact, then give one section per
 finding.
+
+Each finding ends with a collapsed `Prompt for AI Agents` block — this is a
+skill-local output convention, not a project-wide requirement. It exists so a
+downstream fixer agent can act on the finding without re-reading the diff.
+Other skills' findings don't need this; if you adapt this skill elsewhere, the
+block is optional.
 
 **Structure:**
 
@@ -399,7 +405,7 @@ HIGH-severity items first, grouped by file to minimize context switches for the 
 
 Before claiming complete:
 
-- [ ] Report written to `artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md`
+- [ ] Report written to `artifacts/ergonomics-<epoch>/REPORT.md`
 - [ ] All 7 axes are accounted for by a finding or the "Axes With No Findings" section
 - [ ] Every finding ends with a collapsed `Prompt for AI Agents` block with a fenced prompt after the suggested rewrite
 - [ ] Every HIGH-severity finding has a verbatim suggested rewrite
@@ -412,7 +418,7 @@ Report concisely to the user:
 
 ```text
 LLM-ergonomics review complete: <N> findings (H: <h>, M: <m>, L: <l>)
-Report: artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md
+Report: artifacts/ergonomics-<epoch>/REPORT.md
 Highest-priority: <one-line summary of the top HIGH finding>
 ```
 

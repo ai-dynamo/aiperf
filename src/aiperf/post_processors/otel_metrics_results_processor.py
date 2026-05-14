@@ -100,7 +100,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
     nor ``--mlflow-tracking-uri`` is set, or when the optional ``aiperf[otel]`` extra
     is missing.
 
-    See ``docs/dev/patterns.md#drop-oldest-fanout-queue`` for the queue back-pressure
+    See ``docs/dev/patterns/drop-oldest-fanout-queue.md`` for the queue back-pressure
     protocol.
     """
 

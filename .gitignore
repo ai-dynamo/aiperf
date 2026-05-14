@@ -38,10 +38,13 @@ src/aiperf/_build_info.py
 .agents/*
 !.agents/skills/
 
-# Claude Code - ignore user settings, keep agents and the skills symlink
+# Claude Code - keep agents, skills symlink, shared hooks, and shared settings.json;
+# ignore everything else (local settings, transient state)
 .claude/*
 !.claude/agents/
 !.claude/skills
+!.claude/hooks/
+!.claude/settings.json
 
 # Codex - ignore user settings
 .codex/*

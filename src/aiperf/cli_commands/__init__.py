@@ -3,5 +3,5 @@
 """CLI commands for AIPerf.
 
 One file per command, lazily loaded via import strings in ``aiperf.cli``.
-See ``docs/dev/patterns.md`` for the full CLI Command Pattern.
+See ``docs/dev/patterns/cli-command.md`` for the full CLI Command Pattern.
 """

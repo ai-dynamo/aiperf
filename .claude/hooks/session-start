@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# SessionStart hook: inject the aiperf skill body into every session context.
+# Mirrors the pattern superpowers uses to force-load using-superpowers.
+
+set -euo pipefail
+
+# Locate project root. Claude Code sets CLAUDE_PROJECT_DIR; Cursor sets CURSOR_PROJECT_DIR;
+# otherwise walk up from the script's own directory looking for the skill file.
+locate_project_root() {
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "${CLAUDE_PROJECT_DIR}/.claude/hooks/bootstrap.md" ]; then
+    printf '%s' "${CLAUDE_PROJECT_DIR}"
+    return 0
+  fi
+  if [ -n "${CURSOR_PROJECT_DIR:-}" ] && [ -f "${CURSOR_PROJECT_DIR}/.claude/hooks/bootstrap.md" ]; then
+    printf '%s' "${CURSOR_PROJECT_DIR}"
+    return 0
+  fi
+  local dir
+  dir="$(cd "$(dirname "$0")" && pwd)"
+  while [ "$dir" != "/" ]; do
+    if [ -f "${dir}/.claude/hooks/bootstrap.md" ]; then
+      printf '%s' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+PROJECT_ROOT="$(locate_project_root)" || { exit 0; }   # exit silently if not in an aiperf checkout
+BOOTSTRAP_PATH="${PROJECT_ROOT}/.claude/hooks/bootstrap.md"
+
+[ -r "$BOOTSTRAP_PATH" ] || exit 0
+
+bootstrap_content="$(cat "$BOOTSTRAP_PATH")"
+
+# Escape for JSON embedding. Single-pass bash parameter substitution per
+# special character — orders of magnitude faster than per-char loops.
+escape_for_json() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+aiperf_skill_escaped="$(escape_for_json "$bootstrap_content")"
+
+session_context="<EXTREMELY_IMPORTANT>\n${aiperf_skill_escaped}\n</EXTREMELY_IMPORTANT>"
+
+# Emit the format the current harness consumes. Claude Code reads
+# hookSpecificOutput.additionalContext; Cursor reads additional_context;
+# Copilot CLI / SDK-standard reads top-level additionalContext.
+if [ -n "${CURSOR_PROJECT_DIR:-}" ] && [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+
+exit 0

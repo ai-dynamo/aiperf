@@ -217,8 +217,34 @@ navigation:
     path: diagrams/metrics-flow.md
   - page: Mixins
     path: diagrams/mixins.md
-  - page: AIPerf Code Patterns
-    path: dev/patterns.md
+  - section: AIPerf Code Patterns
+    contents:
+      - page: Overview
+        path: dev/patterns/index.md
+      - page: CLI Command Pattern
+        path: dev/patterns/cli-command.md
+      - page: Service Pattern
+        path: dev/patterns/service.md
+      - page: Model Pattern
+        path: dev/patterns/model.md
+      - page: Message Pattern
+        path: dev/patterns/message.md
+      - page: Plugin System Pattern
+        path: dev/patterns/plugin-system.md
+      - page: Error Handling Pattern
+        path: dev/patterns/error-handling.md
+      - page: Logging Pattern
+        path: dev/patterns/logging.md
+      - page: Testing Pattern
+        path: dev/patterns/testing.md
+      - page: Console Exporter Pattern
+        path: dev/patterns/console-exporter.md
+      - page: Uncertainty Plot Pattern
+        path: dev/patterns/uncertainty-plot.md
+      - page: Strategy Protocol Pattern
+        path: dev/patterns/strategy-protocol.md
+      - page: Drop-Oldest Fanout Queue
+        path: dev/patterns/drop-oldest-fanout-queue.md
 
 - section: Troubleshooting
   collapsed: true

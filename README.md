@@ -203,7 +203,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 | [Tokenizer Auto-Detection](docs/reference/tokenizer-auto-detection.md) | Pre-flight tokenizer detection |
 | [Conversation Context Mode](docs/reference/conversation-context-mode.md) | How conversation history accumulates in multi-turn |
 | [Dataset Synthesis API](docs/api/synthesis.md) | Synthesis module API reference |
-| [Code Patterns](docs/dev/patterns.md) | Code examples for services, models, messages, plugins |
+| [Code Patterns](docs/dev/patterns/index.md) | Code examples for services, models, messages, plugins (one page per pattern) |
 | [Migrating from Genai-Perf](docs/migrating.md) | Migration guide and feature comparison |
 | [Design Proposals](https://github.com/ai-dynamo/enhancements) | Enhancement proposals and discussions |
 
