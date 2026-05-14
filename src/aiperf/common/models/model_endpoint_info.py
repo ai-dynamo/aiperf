@@ -128,7 +128,7 @@ class EndpointInfo(AIPerfBaseModel):
     )
     session_header: str | None = Field(
         default=None,
-        description="HTTP header name to use for the per-conversation session affinity identifier. "
+        description="HTTP header name to use for the per-session session affinity identifier. "
         "When set, replaces the default `X-Correlation-ID` header name with this value.",
     )
     collect_trace_chunks: bool = Field(
