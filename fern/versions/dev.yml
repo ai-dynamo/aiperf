@@ -39,6 +39,8 @@ navigation:
             path: ../pages-dev/tutorials/nim-image-retrieval.md
           - page: SGLang Image Generation
             path: ../pages-dev/tutorials/image-generation.md
+          - page: SGLang Image Edit
+            path: ../pages-dev/tutorials/sglang-image-edit.md
           - page: SGLang Video Generation
             path: ../pages-dev/tutorials/sglang-video-generation.md
           - page: Synthetic Video Generation
