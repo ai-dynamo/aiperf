@@ -187,7 +187,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """Cache overridden ISL/OSL so _finalize_turn picks them up via _set_max_tokens."""
         if resolved.output_tokens_mean is None:
             return
-        isl = resolved.input_tokens_mean or self.config.input.prompt.input_tokens.mean
+        isl = (
+            resolved.input_tokens_mean
+            if resolved.input_tokens_mean is not None
+            else self.config.input.prompt.input_tokens.mean
+        )
         self._turn_sequence_cache[id(turn)] = (isl, resolved.output_tokens_mean)
 
     def _generate_text_payloads_with_override(
