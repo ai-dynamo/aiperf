@@ -48,11 +48,6 @@
     ],
     [
       "file-size",
-      "src/aiperf/common/models/dataset_models.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/common/models/record_models.py",
       ""
     ],
