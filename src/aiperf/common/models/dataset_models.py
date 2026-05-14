@@ -221,9 +221,7 @@ class Turn(AIPerfBaseModel):
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
     extra: dict[str, Any] | None = Field(
-        default=None,
-        description="Per-request extra payload fields to merge into the HTTP request body after the global --extra-inputs. "
-        "Per-request values override global values for the same top-level key.",
+        default=None, description="Per-request extra payload fields merged after global --extra-inputs; per-request values override same top-level key."
     )
 
     def metadata(self) -> TurnMetadata:
