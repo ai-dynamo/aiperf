@@ -102,10 +102,6 @@ class ResponsesEndpoint(BaseEndpoint):
             "Use endpoint=chat for video turns, or remove the video content."
         )
 
-    # NOTE: Responses API does not support video input - ``_render_video_part``
-    # above raises ``NotImplementedError`` so misuse fails immediately at
-    # ``format_payload`` rather than producing an opaque server 4xx.
-
     # ------------------------------------------------------------------
     # raw_messages filtering on replay
     # ------------------------------------------------------------------
@@ -161,7 +157,9 @@ class ResponsesEndpoint(BaseEndpoint):
                         continue
                     messages.append(item)
                 continue
-            messages.append(self._render_turn_message(turn))
+            message = self._render_turn_message(turn)
+            message["type"] = "message"
+            messages.append(message)
         return messages
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
@@ -179,6 +177,7 @@ class ResponsesEndpoint(BaseEndpoint):
         if request_info.user_context_message:
             input_items.append(
                 {
+                    "type": "message",
                     "role": self.DEFAULT_TURN_ROLE,
                     "content": request_info.user_context_message,
                 }
