@@ -101,7 +101,8 @@ class MetricsJsonExporter(MetricsBaseExporter):
         weights = self._archetype_weights_by_name()
 
         blocks: list[ArchetypeData] = []
-        for archetype_name, metric_results in archetype_results.items():
+        for archetype_name in sorted(archetype_results.keys()):
+            metric_results = archetype_results[archetype_name]
             block = ArchetypeData(
                 archetype_name=archetype_name,
                 archetype_weight=weights.get(archetype_name),
