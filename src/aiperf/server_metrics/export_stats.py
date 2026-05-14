@@ -87,7 +87,7 @@ def compute_stats(
         42.47
     """
     match metric_type:
-        case PrometheusMetricType.GAUGE:
+        case PrometheusMetricType.GAUGE | PrometheusMetricType.UNKNOWN:
             return _compute_gauge_stats(
                 time_series,
                 time_filter,

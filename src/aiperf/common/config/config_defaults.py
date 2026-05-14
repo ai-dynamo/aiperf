@@ -168,9 +168,11 @@ class TurnDelayDefaults:
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
+    OUTPUT_FRAGMENTS_FOLDER = Path("output_fragments")
     LOG_FOLDER = Path("logs")
     LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
+    OUTPUTS_JSON_FILE = Path("outputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
     PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE = Path(
@@ -190,6 +192,28 @@ class OutputDefaults:
     EXPORT_HTTP_TRACE = False
     SHOW_TRACE_TIMING = False
     SLICE_DURATION = None
+
+
+@dataclass(frozen=True)
+class MLflowDefaults:
+    TRACKING_URI = None
+    EXPERIMENT = "aiperf"
+    RUN_NAME = None
+    TAGS = None
+    ARTIFACT_GLOBS = None
+    DEFAULT_ARTIFACT_GLOBS = (
+        "*.json",
+        "*.csv",
+        "*.jsonl",
+        "*.parquet",
+        "*_timeslices.*",
+        "**/*.png",
+        "**/*.jpg",
+        "**/*.jpeg",
+        "**/*.svg",
+        "**/*.html",
+    )
+    EXPORT_METADATA_FILE = Path("mlflow_export.json")
 
 
 @dataclass(frozen=True)

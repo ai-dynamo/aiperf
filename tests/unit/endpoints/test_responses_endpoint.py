@@ -178,6 +178,32 @@ class TestResponsesEndpoint:
         assert payload["input"][0]["content"] == "Background context here."
         assert payload["input"][1]["content"] == "Hello"
 
+    def test_format_payload_all_input_items_have_type_message(
+        self, endpoint, model_endpoint
+    ):
+        """Every input item carries type='message' so Dynamo and other strict
+        untagged-enum deserializers can disambiguate the variant."""
+        turn1 = Turn(texts=[Text(contents=["First"])], model="test-model")
+        turn2 = Turn(
+            texts=[Text(contents=["Describe"])],
+            images=[Image(contents=["data:image/png;base64,abc"])],
+            model="test-model",
+            role="assistant",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn1, turn2],
+            user_context_message="Background.",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert [item.get("type") for item in payload["input"]] == [
+            "message",
+            "message",
+            "message",
+        ]
+
     def test_format_payload_max_tokens_becomes_max_output_tokens(
         self, endpoint, model_endpoint
     ):
