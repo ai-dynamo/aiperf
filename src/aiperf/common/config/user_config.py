@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -106,6 +107,49 @@ def _normalize_otel_metrics_url(url: str) -> str:
 def _should_quote_arg(x: Any) -> bool:
     """Determine if the value should be quoted in the CLI command."""
     return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
+
+
+# CLI keyword -> collector type for local-only GPU telemetry collectors.
+_LOCAL_COLLECTOR_KEYWORDS: dict[str, GPUTelemetryCollectorType] = {
+    "pynvml": GPUTelemetryCollectorType.PYNVML,
+    "amdsmi": GPUTelemetryCollectorType.AMDSMI,
+}
+
+# Collector type -> human-readable name for warning/error messages.
+_LOCAL_ONLY_COLLECTORS: dict[GPUTelemetryCollectorType, str] = {
+    GPUTelemetryCollectorType.PYNVML: "pynvml",
+    GPUTelemetryCollectorType.AMDSMI: "amdsmi",
+}
+
+# Install hint surfaced when a local collector's Python bindings are missing.
+_LOCAL_COLLECTOR_INSTALL_HINTS: dict[GPUTelemetryCollectorType, str] = {
+    GPUTelemetryCollectorType.PYNVML: (
+        "pynvml package not installed. Install with: pip install nvidia-ml-py"
+    ),
+    GPUTelemetryCollectorType.AMDSMI: (
+        "amdsmi package not installed. The amdsmi Python bindings ship with "
+        "ROCm; install from /opt/rocm/share/amd_smi/amdsmi-*.whl or your "
+        "distro's amd-smi-lib package."
+    ),
+}
+
+
+def _ensure_local_collector_importable(
+    collector_type: GPUTelemetryCollectorType,
+) -> None:
+    """Verify that the Python bindings for a local collector are importable.
+
+    Catches broader than just ``ImportError``: amdsmi (and to a lesser extent
+    pynvml) can also raise ``OSError`` when the wheel is installed but the
+    underlying native library (libamd_smi, libnvidia-ml) is missing or fails
+    to load. Surface those failures with the same friendly install hint
+    instead of leaking an internal traceback.
+    """
+    module_name = _LOCAL_ONLY_COLLECTORS[collector_type]
+    try:
+        import_module(module_name)
+    except (ImportError, OSError) as e:
+        raise ValueError(_LOCAL_COLLECTOR_INSTALL_HINTS[collector_type]) from e
 
 
 class UserConfig(BaseConfig):
@@ -656,11 +700,12 @@ class UserConfig(BaseConfig):
             description=(
                 "Enable GPU telemetry console display and optionally specify: "
                 "(1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, "
-                "(2) 'dashboard' for realtime dashboard mode, "
-                "(3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
-                "(4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
+                "(2) 'amdsmi' to use local amdsmi library for AMD ROCm GPUs, "
+                "(3) 'dashboard' for realtime dashboard mode, "
+                "(4) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
+                "(5) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
                 "Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. "
-                "Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400"
+                "Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400"
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -783,41 +828,14 @@ class UserConfig(BaseConfig):
         if not self.gpu_telemetry:
             return self
 
-        mode = GPUTelemetryMode.SUMMARY
-        collector_type = GPUTelemetryCollectorType.DCGM
-        urls = []
-        metrics_file = None
+        mode, collector_type, urls, metrics_file = self._classify_gpu_telemetry_items(
+            self.gpu_telemetry
+        )
 
-        for item in self.gpu_telemetry:
-            # Check for CSV file (file extension heuristic)
-            if item.endswith(".csv"):
-                metrics_file = Path(item)
-                if not metrics_file.exists():
-                    raise ValueError(f"GPU metrics file not found: {item}")
-            # Check for pynvml collector type
-            elif item.lower() == "pynvml":
-                collector_type = GPUTelemetryCollectorType.PYNVML
-                try:
-                    import pynvml  # noqa: F401
-                except ImportError as e:
-                    raise ValueError(
-                        "pynvml package not installed. Install with: pip install nvidia-ml-py"
-                    ) from e
-            # Check for dashboard mode
-            elif item in ["dashboard"]:
-                mode = GPUTelemetryMode.REALTIME_DASHBOARD
-            # Check for URLs (only applicable for DCGM collector)
-            elif item.startswith("http") or ":" in item:
-                normalized_url = item if item.startswith("http") else f"http://{item}"
-                urls.append(normalized_url)
-            else:
-                raise ValueError(
-                    f"Invalid GPU telemetry item: {item}. Valid options are: 'pynvml', 'dashboard', '.csv' file, and URLs."
-                )
-
-        if collector_type == GPUTelemetryCollectorType.PYNVML and urls:
+        if collector_type in _LOCAL_ONLY_COLLECTORS and urls:
+            name = _LOCAL_ONLY_COLLECTORS[collector_type]
             raise ValueError(
-                "Cannot use pynvml with DCGM URLs. Use either 'pynvml' for local "
+                f"Cannot use {name} with DCGM URLs. Use either '{name}' for local "
                 "GPU monitoring or URLs for DCGM endpoints, not both."
             )
 
@@ -826,20 +844,68 @@ class UserConfig(BaseConfig):
         self._gpu_telemetry_urls = urls
         self._gpu_telemetry_metrics_file = metrics_file
 
-        # Warn if pynvml is used with non-localhost server URLs
-        if collector_type == GPUTelemetryCollectorType.PYNVML:
-            non_local_urls = [
-                url for url in self.endpoint.urls if not _is_localhost_url(url)
-            ]
-            if non_local_urls:
-                _logger.warning(
-                    f"Using pynvml for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
-                    "pynvml collects GPU metrics from the local machine only. "
-                    "If the inference server is running remotely, the GPU telemetry will not reflect "
-                    "the server's GPU usage. Consider using DCGM mode with the server's metrics endpoint instead."
-                )
-
+        self._warn_if_local_collector_with_remote_urls(collector_type)
         return self
+
+    @staticmethod
+    def _classify_gpu_telemetry_items(
+        items: list[str],
+    ) -> tuple[GPUTelemetryMode, GPUTelemetryCollectorType, list[str], Path | None]:
+        """Walk the ``--gpu-telemetry`` items and classify each one."""
+        mode = GPUTelemetryMode.SUMMARY
+        collector_type = GPUTelemetryCollectorType.DCGM
+        urls: list[str] = []
+        metrics_file: Path | None = None
+
+        for item in items:
+            lowered = item.lower()
+            if item.endswith(".csv"):
+                metrics_file = Path(item)
+                if not metrics_file.exists():
+                    raise ValueError(f"GPU metrics file not found: {item}")
+            elif lowered in _LOCAL_COLLECTOR_KEYWORDS:
+                selected = _LOCAL_COLLECTOR_KEYWORDS[lowered]
+                if (
+                    collector_type in _LOCAL_ONLY_COLLECTORS
+                    and collector_type != selected
+                ):
+                    prior = _LOCAL_ONLY_COLLECTORS[collector_type]
+                    chosen = _LOCAL_ONLY_COLLECTORS[selected]
+                    raise ValueError(
+                        f"Conflicting local GPU telemetry collectors: "
+                        f"'{prior}' and '{chosen}'. Choose exactly one."
+                    )
+                collector_type = selected
+                _ensure_local_collector_importable(collector_type)
+            elif item == "dashboard":
+                mode = GPUTelemetryMode.REALTIME_DASHBOARD
+            elif item.startswith("http") or ":" in item:
+                normalized_url = item if item.startswith("http") else f"http://{item}"
+                urls.append(normalized_url)
+            else:
+                raise ValueError(
+                    f"Invalid GPU telemetry item: {item}. Valid options are: "
+                    "'pynvml', 'amdsmi', 'dashboard', '.csv' file, and URLs."
+                )
+        return mode, collector_type, urls, metrics_file
+
+    def _warn_if_local_collector_with_remote_urls(
+        self, collector_type: GPUTelemetryCollectorType
+    ) -> None:
+        """Warn when a local-only collector is paired with non-localhost servers."""
+        if collector_type not in _LOCAL_ONLY_COLLECTORS:
+            return
+        name = _LOCAL_ONLY_COLLECTORS[collector_type]
+        non_local_urls = [
+            url for url in self.endpoint.urls if not _is_localhost_url(url)
+        ]
+        if non_local_urls:
+            _logger.warning(
+                f"Using {name} for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
+                f"{name} collects GPU metrics from the local machine only. "
+                "If the inference server is running remotely, the GPU telemetry will not reflect "
+                "the server's GPU usage. Consider using DCGM mode with the server's metrics endpoint instead."
+            )
 
     @property
     def gpu_telemetry_mode(self) -> GPUTelemetryMode:
