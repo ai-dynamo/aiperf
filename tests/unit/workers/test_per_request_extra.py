@@ -38,7 +38,7 @@ class TestPerRequestExtraMerge:
         endpoint, model_endpoint = _make_endpoint()
         turn = Turn(
             texts=[Text(contents=["hello"])],
-            extra={"nvext": {"priority": 1}},
+            extra_body={"nvext": {"priority": 1}},
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -63,7 +63,7 @@ class TestPerRequestExtraMerge:
         )
         turn = Turn(
             texts=[Text(contents=["hello"])],
-            extra={"nvext": {"priority": 99}},
+            extra_body={"nvext": {"priority": 99}},
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -74,7 +74,7 @@ class TestPerRequestExtraMerge:
     def test_none_extra_does_not_break_payload(self):
         """Turn with extra=None produces a valid payload without extra keys."""
         endpoint, model_endpoint = _make_endpoint()
-        turn = Turn(texts=[Text(contents=["hello"])], extra=None)
+        turn = Turn(texts=[Text(contents=["hello"])], extra_body=None)
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
@@ -124,7 +124,7 @@ class TestPerRequestExtraMerge:
     ):
         """Per-request extra has higher priority than global extra."""
         endpoint, model_endpoint = _make_endpoint(global_extra=global_extra)
-        turn = Turn(texts=[Text(contents=["hello"])], extra=per_request_extra)
+        turn = Turn(texts=[Text(contents=["hello"])], extra_body=per_request_extra)
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)

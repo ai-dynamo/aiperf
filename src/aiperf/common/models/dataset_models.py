@@ -220,10 +220,6 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
-    extra: dict[str, Any] | None = Field(
-        default=None, description="Per-request extra payload fields merged after global --extra-inputs; per-request values override same top-level key."
-    )
-
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
         return TurnMetadata(
@@ -281,7 +277,6 @@ class Turn(AIPerfBaseModel):
             prerequisites=list(self.prerequisites),
             branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
-            extra=dict(self.extra) if self.extra is not None else None,
         )
 
 
