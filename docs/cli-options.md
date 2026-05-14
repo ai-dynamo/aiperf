@@ -241,7 +241,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--session-header` `<str>`
 
-HTTP header name to use for the per-conversation session affinity identifier. When set, the stable per-conversation ID is sent under this header name instead of the default `X-Correlation-ID`. Useful when the inference server routes requests by a specific header (e.g., `--session-header X-Session-ID`).
+HTTP header name to use for the per-session affinity identifier. When set, the stable per-session ID is sent under this header name instead of the default `X-Correlation-ID`. Useful when the inference server routes requests by a specific header (e.g., `--session-header X-Session-ID`).
 
 #### `--input-file` `<str>`
 
