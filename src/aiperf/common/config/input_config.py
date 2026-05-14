@@ -101,6 +101,14 @@ class InputConfig(BaseConfig):
             raise ValueError(
                 "The --public-dataset and --custom-dataset-type options cannot be set together"
             )
+        if self.media_mix and (
+            self.public_dataset is not None or self.custom_dataset_type is not None
+        ):
+            raise ValueError(
+                "media_mix is only supported with synthetic datasets. "
+                "Remove --public-dataset / --custom-dataset-type or remove the "
+                "media_mix block from your config."
+            )
         return self
 
     @model_validator(mode="after")
