@@ -43,6 +43,11 @@ source venv/bin/activate
 pip install aiperf
 ```
 
+Optional integrations:
+- `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
+- `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming
+- `pip install "aiperf[mlflow,otel]"` installs both extras
+
 To run a simple benchmark against your Ollama server:
 
 ```bash
@@ -179,6 +184,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
+- [OTel + MLflow Live Telemetry](docs/tutorials/otel-mlflow.md) - Stream metrics to OTel and MLflow in real time
 - [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation

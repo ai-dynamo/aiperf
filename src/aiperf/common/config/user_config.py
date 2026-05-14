@@ -18,9 +18,14 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import (
     LoadGeneratorDefaults,
+    MLflowDefaults,
     ServerMetricsDefaults,
 )
-from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
+from aiperf.common.config.config_validators import (
+    coerce_value,
+    parse_str_or_dict_as_tuple_list,
+    parse_str_or_list,
+)
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.input_config import InputConfig
@@ -60,6 +65,44 @@ def _is_localhost_url(url: str) -> bool:
     return hostname.lower() in ("localhost", "127.0.0.1", "::1")
 
 
+def _normalize_otel_metrics_url(url: str) -> str:
+    """Normalize OTel collector URL to an OTLP metrics endpoint."""
+    from urllib.parse import urlparse, urlunparse
+
+    normalized_url = url.strip()
+    if not normalized_url:
+        raise ValueError("--otel-url cannot be empty.")
+
+    # Only auto-prefix host[:port] style values. Explicit schemes must be validated as-is.
+    if "://" not in normalized_url:
+        normalized_url = f"http://{normalized_url}"
+
+    parsed = urlparse(normalized_url)
+    # `urlparse("http://:4318")` yields netloc=":4318" but hostname=None —
+    # netloc truthiness alone is not enough. Require a non-empty hostname so
+    # bare-port values don't slip through and produce a malformed OTLP endpoint.
+    if not parsed.scheme or not parsed.netloc or not parsed.hostname:
+        raise ValueError(
+            f"Invalid --otel-url value: {url!r}. Expected host[:port] or a full URL."
+        )
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(
+            f"Invalid --otel-url value: {url!r}. "
+            f"Only http and https schemes are supported (got {parsed.scheme!r}). "
+            "OTLP/gRPC is not supported; use the OTLP/HTTP exporter endpoint."
+        )
+
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1/metrics"):
+        normalized_path = path
+    elif not path:
+        normalized_path = "/v1/metrics"
+    else:
+        normalized_path = f"{path}/v1/metrics"
+
+    return urlunparse(parsed._replace(path=normalized_path))
+
+
 def _should_quote_arg(x: Any) -> bool:
     """Determine if the value should be quoted in the CLI command."""
     return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
@@ -93,6 +136,8 @@ class UserConfig(BaseConfig):
             # Note: Use single quotes to avoid conflicts with double quotes in arguments.
             args = [f"'{x}'" if _should_quote_arg(x) else str(x) for x in args]
             cmd = " ".join(["aiperf", *args])
+            # redact_cli_command handles --api-key, sensitive headers, and URL-typed
+            # flags (--url, --otel-url, --mlflow-tracking-uri) in one pass.
             self.cli_command = redact_cli_command(cmd)
         return self
 
@@ -505,6 +550,106 @@ class UserConfig(BaseConfig):
         DisableCLI(reason="This is automatically generated at runtime"),
     ] = None
 
+    mlflow_tracking_uri: Annotated[
+        str | None,
+        Field(
+            default=MLflowDefaults.TRACKING_URI,
+            description=(
+                "MLflow Tracking Server URI used for post-run uploads "
+                "(e.g., http://localhost:5000). "
+                "When set, AIPerf uploads params, metrics, tags, and artifacts "
+                "(including plots) to MLflow after profiling completes."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-tracking-uri",),
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.TRACKING_URI
+
+    mlflow_experiment: Annotated[
+        str,
+        Field(
+            default=MLflowDefaults.EXPERIMENT,
+            description=(
+                "MLflow experiment name for post-run uploads. "
+                "Requires --mlflow-tracking-uri to be set."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-experiment",),
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.EXPERIMENT
+
+    mlflow_run_name: Annotated[
+        str | None,
+        Field(
+            default=MLflowDefaults.RUN_NAME,
+            description=(
+                "Optional MLflow run name for post-run uploads. "
+                "If omitted, AIPerf derives a name from benchmark metadata."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-run-name",),
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.RUN_NAME
+
+    mlflow_tags: Annotated[
+        list[tuple[str, str]] | None,
+        Field(
+            default=MLflowDefaults.TAGS,
+            description=(
+                "Additional MLflow run tags to attach on upload. "
+                "Specify as key:value pairs (e.g., --mlflow-tag team:perf) "
+                "or as JSON string."
+            ),
+        ),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
+        CLIParameter(
+            name=("--mlflow-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.TAGS
+
+    mlflow_artifact_globs: Annotated[
+        list[str] | None,
+        Field(
+            default=MLflowDefaults.ARTIFACT_GLOBS,
+            description=(
+                "Optional artifact glob patterns for MLflow upload, relative to "
+                "--output-artifact-dir. Can be specified multiple times. "
+                "If not set, sensible defaults include exports and plot files."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--mlflow-artifact-glob",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.ARTIFACT_GLOBS
+
+    mlflow_parent_run_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional MLflow run id to attach this run to as a child "
+                "(passed through to mlflow.start_run(parent_run_id=...)). "
+                "Applied only when a new MLflow run is created; ignored on "
+                "live-run reuse because MLflow pins the parent at creation time."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-parent-run-id",),
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
     gpu_telemetry: Annotated[
         list[str] | None,
         Field(
@@ -537,12 +682,91 @@ class UserConfig(BaseConfig):
         ),
     ] = False
 
+    otel_url: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Enable real-time metric streaming to an OpenTelemetry collector via OTLP. "
+                "Requires the AIPerf otel extra (`aiperf[otel]`). "
+                "Accepts one collector URL. "
+                "The value can be a collector base URL or full OTLP metrics endpoint. "
+                "If no path is specified, '/v1/metrics' is appended automatically. "
+                "Examples: --otel-url localhost:4318 | --otel-url http://collector:4318 "
+            ),
+        ),
+        CLIParameter(
+            name=("--otel-url",),
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
+    stream: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Select which AIPerf telemetry domains to stream over OTel. "
+                "Valid values: 'metrics', 'timing', or 'default'. "
+                "'default' streams both metrics and timing domains. "
+                "If omitted and --otel-url is set, default behavior is used. "
+                "Examples: --stream metrics | --stream timing | --stream default "
+                "| --stream metrics timing"
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--stream",),
+            consume_multiple=True,
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
+    otel_resource_attributes: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Custom OTel resource attributes as key=value pairs. "
+                "Merged into the default resource attributes on every exported metric. "
+                "Examples: --otel-resource-attributes team=inference "
+                "| --otel-resource-attributes env=prod,region=us-west-2"
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--otel-resource-attributes",),
+            consume_multiple=True,
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
+    gen_ai_provider: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit value for the gen_ai.provider.name OTel attribute. "
+                "When unset, AIPerf auto-infers from the endpoint URL host; "
+                "falls back to '_OTHER' if no match. "
+                "Example: --gen-ai-provider openai"
+            ),
+        ),
+        CLIParameter(
+            name=("--gen-ai-provider",),
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
     _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
     _gpu_telemetry_collector_type: GPUTelemetryCollectorType = (
         GPUTelemetryCollectorType.DCGM
     )
     _gpu_telemetry_urls: list[str] = []
     _gpu_telemetry_metrics_file: Path | None = None
+    _otel_metrics_url: str | None = None
+    _otel_stream_metrics_enabled: bool = True
+    _otel_stream_timing_enabled: bool = True
 
     @model_validator(mode="after")
     def _parse_gpu_telemetry_config(self) -> Self:
@@ -646,6 +870,217 @@ class UserConfig(BaseConfig):
     def gpu_telemetry_disabled(self) -> bool:
         """Check if GPU telemetry collection is disabled."""
         return self.no_gpu_telemetry
+
+    @model_validator(mode="after")
+    def _parse_otel_config(self) -> Self:
+        """Parse and normalize OTel collector URL configuration."""
+        valid_telemetry_values = {"metrics", "timing", "default"}
+        selected_values = [value.lower() for value in (self.stream or [])]
+
+        if not selected_values:
+            # Default behavior is to stream both domains when selection is omitted.
+            self._otel_stream_metrics_enabled = True
+            self._otel_stream_timing_enabled = True
+        else:
+            invalid_values = [
+                value
+                for value in selected_values
+                if value not in valid_telemetry_values
+            ]
+            if invalid_values:
+                raise ValueError(
+                    "Invalid --stream value(s): "
+                    + ", ".join(sorted(set(invalid_values)))
+                    + ". "
+                    "Valid options are: metrics, timing, default."
+                )
+            if "default" in selected_values:
+                # Default mode means stream both domains, even if combined with others.
+                self._otel_stream_metrics_enabled = True
+                self._otel_stream_timing_enabled = True
+            else:
+                self._otel_stream_metrics_enabled = "metrics" in selected_values
+                self._otel_stream_timing_enabled = "timing" in selected_values
+
+        if self.otel_url is None:
+            # Warn/reject if OTel secondary options set without --otel-url.
+            # gen_ai_provider is included because it is consumed only by the OTel
+            # GenAI-semconv strategy (see infer_provider_name in genai_semconv.py),
+            # so passing it without --otel-url is a silent no-op for the user.
+            has_otel_secondary = bool(
+                self.stream or self.otel_resource_attributes or self.gen_ai_provider
+            )
+            if has_otel_secondary:
+                raise ValueError(
+                    "--stream, --otel-resource-attributes, and --gen-ai-provider "
+                    "require --otel-url to be set."
+                )
+            self._otel_metrics_url = None
+            return self
+
+        self._otel_metrics_url = _normalize_otel_metrics_url(self.otel_url)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_otel_resource_attributes(self) -> Self:
+        """Reject malformed --otel-resource-attributes entries.
+
+        Each entry must be ``key=value``. Missing ``=``, empty key, and empty
+        value are rejected — silently dropping them or emitting empty keys/
+        values produces OTLP resource attributes that tools like the
+        Collector and MLflow reject or display as ``""``.
+        """
+        if not self.otel_resource_attributes:
+            return self
+        for item in self.otel_resource_attributes:
+            for pair in item.split(","):
+                pair = pair.strip()
+                if not pair:
+                    continue
+                if "=" not in pair:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "expected key=value."
+                    )
+                key, _, value = pair.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "key cannot be empty."
+                    )
+                if not value:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "value cannot be empty."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_mlflow_config(self) -> Self:
+        """Validate and normalize MLflow post-run upload configuration."""
+        if self.mlflow_artifact_globs is not None:
+            normalized_globs: list[str] = []
+            for glob in self.mlflow_artifact_globs:
+                normalized_glob = glob.strip()
+                if not normalized_glob:
+                    raise ValueError("--mlflow-artifact-glob entries cannot be empty.")
+                normalized_globs.append(normalized_glob)
+            self.mlflow_artifact_globs = normalized_globs
+
+        if self.mlflow_tracking_uri is None:
+            has_secondary = (
+                self.mlflow_experiment != MLflowDefaults.EXPERIMENT
+                or self.mlflow_run_name is not None
+                or self.mlflow_tags is not None
+                or self.mlflow_artifact_globs is not None
+                or self.mlflow_parent_run_id is not None
+            )
+            if has_secondary:
+                raise ValueError(
+                    "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
+                    "--mlflow-artifact-glob, and --mlflow-parent-run-id "
+                    "require --mlflow-tracking-uri to be set."
+                )
+            return self
+
+        tracking_uri = self.mlflow_tracking_uri.strip()
+        if not tracking_uri:
+            raise ValueError("--mlflow-tracking-uri cannot be empty.")
+        self.mlflow_tracking_uri = tracking_uri
+
+        if not self.mlflow_experiment.strip():
+            raise ValueError(
+                "--mlflow-experiment cannot be empty when --mlflow-tracking-uri is set."
+            )
+        self.mlflow_experiment = self.mlflow_experiment.strip()
+
+        if self.mlflow_run_name is not None:
+            run_name = self.mlflow_run_name.strip()
+            self.mlflow_run_name = run_name or None
+
+        return self
+
+    @property
+    def otel_metrics_url(self) -> str | None:
+        """Get the normalized OTLP/HTTP metrics endpoint URL."""
+        return self._otel_metrics_url
+
+    @property
+    def otel_collector_enabled(self) -> bool:
+        """Check if an OpenTelemetry collector sink is configured."""
+        return bool(self._otel_metrics_url)
+
+    @property
+    def otel_custom_resource_attributes(self) -> dict[str, str]:
+        """Parse --otel-resource-attributes into a dict of key=value pairs.
+
+        Pre-validated by ``_validate_otel_resource_attributes`` — malformed
+        entries raise there, so this accessor can assume well-formed input.
+        """
+        if not self.otel_resource_attributes:
+            return {}
+        attrs: dict[str, str] = {}
+        for item in self.otel_resource_attributes:
+            for pair in item.split(","):
+                pair = pair.strip()
+                if not pair:
+                    continue
+                key, _, value = pair.partition("=")
+                attrs[key.strip()] = value.strip()
+        return attrs
+
+    @property
+    def otel_stream_metrics_enabled(self) -> bool:
+        """Check if request-level metric telemetry is enabled for OTel streaming."""
+        return self._otel_stream_metrics_enabled
+
+    @property
+    def otel_stream_timing_enabled(self) -> bool:
+        """Check if phase-level timing telemetry is enabled for OTel streaming."""
+        return self._otel_stream_timing_enabled
+
+    @property
+    def gen_ai_provider_name(self) -> str:
+        """Resolved gen_ai.provider.name attribute value.
+
+        (a) explicit --gen-ai-provider override,
+        (b) auto-infer from endpoint URL host,
+        (c) literal '_OTHER'.
+
+        Plain ``@property`` (not cached) because ``UserConfig`` is a Pydantic
+        model without ``frozen=True``; caching the first access would go stale
+        if a test or caller later mutates ``gen_ai_provider`` or
+        ``endpoint.urls``. The inference runs a handful of small regexes and is
+        called once per OTel record attribute build — not worth the caching risk.
+        """
+        from aiperf.post_processors.strategies.genai_semconv import infer_provider_name
+
+        return infer_provider_name(self)
+
+    @property
+    def mlflow_enabled(self) -> bool:
+        """Check if MLflow post-run upload is enabled."""
+        return self.mlflow_tracking_uri is not None
+
+    @property
+    def mlflow_tags_dict(self) -> dict[str, str]:
+        """Get MLflow tags as a normalized dict[str, str]."""
+        tags: dict[str, str] = {}
+        for key, value in self.mlflow_tags or []:
+            key_str = str(key).strip()
+            if not key_str:
+                continue
+            tags[key_str] = str(value)
+        return tags
+
+    @property
+    def mlflow_resolved_artifact_globs(self) -> list[str] | tuple[str, ...]:
+        """Get explicit or default artifact glob patterns for MLflow upload."""
+        if self.mlflow_artifact_globs:
+            return self.mlflow_artifact_globs
+        return MLflowDefaults.DEFAULT_ARTIFACT_GLOBS
 
     server_metrics: Annotated[
         list[str] | None,

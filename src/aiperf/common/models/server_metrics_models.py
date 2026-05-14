@@ -586,6 +586,25 @@ class HistogramMetricData(BaseServerMetricData):
     )
 
 
+class UnknownMetricData(BaseServerMetricData):
+    """Server metric data for Prometheus `untyped` / UNKNOWN families.
+
+    Prometheus `# TYPE foo untyped` declarations carry scalar samples with the
+    same wire shape as a gauge (single `value`, no buckets/sum/count), but the
+    exporter is explicitly declining to commit to gauge or counter semantics.
+    AIPerf treats them as gauge-equivalent for storage and statistics, but
+    preserves the original `unknown` tag in the export so downstream consumers
+    can tell a real `gauge` apart from an exporter-untyped scalar.
+    """
+
+    type: PrometheusMetricType = PrometheusMetricType.UNKNOWN
+
+    series: list[GaugeSeries] = Field(
+        default_factory=list,
+        description="Statistics for each unique endpoint + label combination",
+    )
+
+
 class ServerMetricsExportData(AIPerfBaseModel):
     """Server metrics in hybrid format: keyed metrics with flat stats.
 
@@ -616,7 +635,10 @@ class ServerMetricsExportData(AIPerfBaseModel):
     metrics: SerializeAsAny[
         dict[
             str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
+            GaugeMetricData
+            | CounterMetricData
+            | HistogramMetricData
+            | UnknownMetricData,
         ]
     ] = Field(
         default_factory=dict,
@@ -644,7 +666,10 @@ class ServerMetricsEndpointSummary(AIPerfBaseModel):
     metrics: SerializeAsAny[
         dict[
             str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
+            GaugeMetricData
+            | CounterMetricData
+            | HistogramMetricData
+            | UnknownMetricData,
         ]
     ] = Field(
         default_factory=dict,
