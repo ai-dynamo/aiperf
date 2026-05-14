@@ -83,7 +83,7 @@ ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "Result
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
-"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.MATH, AccuracyGraderType.MULTIPLE_CHOICE"""
+"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.LIGHTEVAL_GPQA, AccuracyGraderType.MULTIPLE_CHOICE"""
 
 AccuracyBenchmarkTypeStr: TypeAlias = str
 AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "AccuracyBenchmarkType", module=__name__)

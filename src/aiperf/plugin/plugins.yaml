@@ -1076,8 +1076,6 @@ accuracy_grader:
     description: |
       Math grader that evaluates mathematical expressions for equivalence.
       Handles symbolic comparison, numeric tolerance, and expression normalization.
-    metadata:
-      is_implemented: false
 
   multiple_choice:
     class: aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader
@@ -1088,10 +1086,35 @@ accuracy_grader:
   code_execution:
     class: aiperf.accuracy.graders.code_execution:CodeExecutionGrader
     description: |
-      Code execution grader that runs generated code in a sandboxed environment
-      and compares output against expected results.
-    metadata:
-      is_implemented: false
+      Code execution grader for LiveCodeBench, backed by lighteval's
+      ``lcb_codegen_metric``. Extracts the model's code block, executes it
+      against public + private test cases in sandboxed subprocesses, and
+      reports pass@1. Requires the ``[accuracy]`` install.
+
+  lighteval_expr:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader
+    description: |
+      Lighteval ``expr_gold_metric`` — used by AIME24/AIME25. Wraps lighteval's
+      ``MultilingualExtractiveMatchMetric`` configured with
+      ``ExprExtractionConfig`` for gold and
+      ``(ExprExtractionConfig, LatexExtractionConfig(boxed_match_priority=0))``
+      for predictions, matching the trt-llm benchmark recipe's
+      ``acc_bench_lighteval.py`` definition.
+
+  lighteval_latex:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalLatexGrader
+    description: |
+      Lighteval ``latex_gold_metric`` — used by MATH-500. Same as
+      ``lighteval_expr`` but the gold extractor uses
+      ``LatexExtractionConfig`` since MATH-500 gold answers are LaTeX
+      snippets like ``\\frac{1}{3}``.
+
+  lighteval_gpqa:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalGPQAGrader
+    description: |
+      Lighteval ``gpqa_metric`` — used by GPQA-Diamond. Extracts via
+      ``IndicesExtractionConfig(prefix_for_extraction="NativeLetters")``
+      to find the chosen A/B/C/D letter in both gold and prediction.
 
 # =============================================================================
 # Accuracy Benchmarks
@@ -1113,11 +1136,15 @@ accuracy_benchmark:
     class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark
     description: |
       AIME (American Invitational Mathematics Examination) benchmark for
-      advanced high school mathematics problems.
+      advanced high school mathematics problems. Aligned with the trt-llm
+      benchmark recipe's DeepEval-backed AIME path: same dataset
+      (Maxwell-Jia/AIME_2024), same prompt template, same default n_shots
+      (8) and chain-of-thought (on), same default system prompt.
     metadata:
       default_grader: math
-      default_n_shots: 0
-      is_implemented: false
+      default_n_shots: 8
+      default_enable_cot: true
+      default_system_prompt: "Please reason step by step, and put your final answer within \\boxed{}."
 
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark

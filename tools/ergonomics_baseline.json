@@ -3,6 +3,11 @@
   "violations": [
     [
       "file-size",
+      "src/aiperf/accuracy/graders/math.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -235,6 +240,11 @@
       "file-size",
       "src/aiperf/workers/worker.py",
       ""
+    ],
+    [
+      "function-size",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
     ],
     [
       "function-size",

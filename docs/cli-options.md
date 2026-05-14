@@ -964,13 +964,13 @@ Number of few-shot examples to include in the prompt. 0 means zero-shot evaluati
 
 #### `--accuracy-enable-cot`
 
-Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.
+Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
 
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

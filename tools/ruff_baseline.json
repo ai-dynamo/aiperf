@@ -794,6 +794,16 @@
     ],
     [
       "C901",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
+    ],
+    [
+      "C901",
+      "src/aiperf/accuracy/graders/math.py",
+      "_math_equal"
+    ],
+    [
+      "C901",
       "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
@@ -1426,6 +1436,11 @@
       "PLR0912",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
       "ProgressDashboard.create_stats_table"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
     ],
     [
       "PLR0915",

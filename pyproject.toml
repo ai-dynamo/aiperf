@@ -97,6 +97,15 @@ dev = [
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
 ]
+accuracy = [
+    # latex2sympy2-extended is co-resolved with lighteval (which pins
+    # ==1.0.6 for its math-verify integration). 1.0.6 ships the same
+    # ``latex2sympy`` API our math grader uses, so we accept the older
+    # version as long as it satisfies our import.
+    "latex2sympy2-extended>=1.0.6",
+    "lighteval>=0.13.0",
+    "sympy>=1.14.0",
+]
 
 [dependency-groups]
 dev = [
