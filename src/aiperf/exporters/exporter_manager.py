@@ -59,6 +59,7 @@ class ExporterManager(AIPerfLoggerMixin):
 
     async def export_data(self) -> None:
         self.info("Exporting all records")
+        deferred_exporters: list[DataExporterProtocol] = []
 
         for exporter_entry, ExporterClass in plugins.iter_all(PluginType.DATA_EXPORTER):
             if exporter_entry.name == DataExporterType.SERVER_METRICS_PARQUET:
@@ -79,7 +80,22 @@ class ExporterManager(AIPerfLoggerMixin):
                 self.error(f"Error creating data exporter: {e!r}")
                 continue
 
+            # Deferred exporters run after all local exporters finish
+            # so their artifacts (JSON, CSV, etc.) are available for upload.
+            if getattr(exporter, "is_deferred", False):
+                deferred_exporters.append(exporter)
+                continue
+
             self.debug(f"Creating task for exporter: {exporter_entry.name}")
+            task = asyncio.create_task(exporter.export())
+            self._tasks.add(task)
+            task.add_done_callback(self._task_done_callback)
+
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
+        for exporter in deferred_exporters:
+            self.debug(f"Running deferred exporter: {exporter.__class__.__name__}")
             task = asyncio.create_task(exporter.export())
             self._tasks.add(task)
             task.add_done_callback(self._task_done_callback)

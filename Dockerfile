@@ -1,7 +1,7 @@
 # check=skip=UndefinedVar
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.13-slim-bookworm@sha256:061b6e52a07ab675f0e4a9428c5a8ee6bed996983427f4691f6bebf29c56d9dc AS base
+FROM python:3.13-slim-bookworm@sha256:386df64585134ba00b1d5e307acb1e72f33e9e87dbbb00aad9b8f24dbb51db72 AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -107,7 +107,7 @@ RUN mkdir -p /opt/licenses/dpkg \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
-ARG FFMPEG_VERSION=8.0.1
+ARG FFMPEG_VERSION=8.1.1
 RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cd ffmpeg-${FFMPEG_VERSION} \
@@ -250,7 +250,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.3-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.5-dev AS runtime
 
 # Include project license and asset attributions
 COPY LICENSE ATTRIBUTIONS.md /legal/

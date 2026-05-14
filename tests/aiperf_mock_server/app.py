@@ -50,6 +50,9 @@ from aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
+from aiperf_mock_server.node_exporter_faker import (
+    render_default as render_node_exporter,
+)
 from aiperf_mock_server.utils import (
     RequestCtx,
     make_ctx,
@@ -971,6 +974,18 @@ async def prometheus_metrics() -> Response:
     if server_start_time > 0:
         SERVER_UPTIME_SECONDS.set(time.time() - server_start_time)
     return metrics_response(AIPERF_MOCK_REGISTRY)
+
+
+@app.get("/node_exporter/metrics")
+async def node_exporter_metrics() -> Response:
+    """Fake node-exporter Prometheus metrics endpoint.
+
+    Emits an exposition body similar to a real node-exporter scrape, covering
+    every metric type AIPerf handles (gauge, counter, histogram, summary) plus
+    multiple `# TYPE foo untyped` families and one family with no `# TYPE`
+    declaration at all. Values drift per scrape so derived stats are non-zero.
+    """
+    return Response(content=render_node_exporter(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/vllm/metrics")

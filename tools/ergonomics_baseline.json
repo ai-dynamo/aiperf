@@ -3,6 +3,11 @@
   "violations": [
     [
       "file-size",
+      "src/aiperf/accuracy/graders/math.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -183,6 +188,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/post_processors/otel_metrics_results_processor.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/records_manager.py",
       ""
     ],
@@ -225,6 +240,11 @@
       "file-size",
       "src/aiperf/workers/worker.py",
       ""
+    ],
+    [
+      "function-size",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
     ],
     [
       "function-size",
@@ -325,6 +345,11 @@
       "function-size",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
       "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "function-size",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
     ],
     [
       "function-size",
@@ -750,6 +775,11 @@
       "function-size",
       "src/aiperf/plot/utils.py",
       "parse_server_metric_spec"
+    ],
+    [
+      "function-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "function-size",
@@ -1185,6 +1215,11 @@
       "nesting-depth",
       "src/aiperf/plugin/types.py",
       "PluginEntry.validate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "nesting-depth",
