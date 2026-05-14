@@ -110,6 +110,7 @@ accuracy = [
 [dependency-groups]
 dev = [
     "hypothesis>=6.152.4",
+    "pre-commit>=4.6.0",
 ]
 
 [tool.ruff]
@@ -202,4 +203,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
-ignore-words-list = "timeslice,timeslices"
+ignore-words-list = "timeslice,timeslices,optiona"
