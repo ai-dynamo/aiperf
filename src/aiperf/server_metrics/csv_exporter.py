@@ -181,12 +181,12 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
             if not metrics_by_type[PrometheusMetricType.GAUGE]:
                 del metrics_by_type[PrometheusMetricType.GAUGE]
 
-        # Write sections in order: gauge, unknown, counter, histogram
+        # Write sections in order: gauge, counter, histogram, unknown
         section_order = [
             PrometheusMetricType.GAUGE,
-            PrometheusMetricType.UNKNOWN,
             PrometheusMetricType.COUNTER,
             PrometheusMetricType.HISTOGRAM,
+            PrometheusMetricType.UNKNOWN,
         ]
         first_section = True
         for metric_type in section_order:

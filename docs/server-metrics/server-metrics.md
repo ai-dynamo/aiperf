@@ -341,7 +341,7 @@ jq '.metrics["vllm:e2e_request_latency_seconds"].series[0].stats.p99_estimate' s
 
 ### 3. CSV Export: `server_metrics_export.csv`
 
-Tabular export organized in five sections (separated by blank lines): **gauge**, **unknown**, **counter**, **histogram**, **info**. The **unknown** section holds families that the Prometheus server declared as `# TYPE foo untyped` (or with no `# TYPE` line at all); they use the same statistics columns as gauges.
+Tabular export organized in five sections (separated by blank lines): **gauge**, **counter**, **histogram**, **unknown**, **info**. The **unknown** section holds families that the Prometheus server declared as `# TYPE foo untyped` (or with no `# TYPE` line at all); they use the same statistics columns as gauges.
 
 - Labels expanded into individual columns for easy filtering/pivoting
 - Open directly in Excel/Sheets or load with pandas

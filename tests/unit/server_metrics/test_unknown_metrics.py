@@ -33,7 +33,15 @@ from aiperf_mock_server.node_exporter_faker import NodeExporterFaker
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.server_metrics_models import (
+    CounterMetricData,
+    CounterSeries,
+    CounterStats,
     GaugeMetricData,
+    GaugeSeries,
+    GaugeStats,
+    HistogramMetricData,
+    HistogramSeries,
+    HistogramStats,
     MetricFamily,
     MetricSample,
     ServerMetricsEndpointInfo,
@@ -327,6 +335,59 @@ class TestUnknownCsvSection:
         rows = [row for row in reader if row]
         joined = "\n".join(",".join(r) for r in rows)
         assert "node_netstat_Icmp_InErrors" in joined
+
+    def test_unknown_section_is_after_histogram(
+        self, minimal_user_config: UserConfig
+    ) -> None:
+        gauge = GaugeMetricData(description="Gauge metric")
+        gauge.series.append(GaugeSeries(stats=GaugeStats(avg=1.0)))
+        counter = CounterMetricData(description="Counter metric")
+        counter.series.append(CounterSeries(stats=CounterStats(total=1.0)))
+        histogram = HistogramMetricData(description="Histogram metric")
+        histogram.series.append(HistogramSeries(stats=HistogramStats(count=1)))
+        unknown = UnknownMetricData(description="Untyped metric")
+        unknown.series.append(GaugeSeries(stats=GaugeStats(avg=1.0)))
+        results = ServerMetricsResults(
+            endpoint_summaries={
+                "http://node-exporter:9100/metrics": ServerMetricsEndpointSummary(
+                    endpoint_url="http://node-exporter:9100/metrics",
+                    info=ServerMetricsEndpointInfo(
+                        total_fetches=1,
+                        first_fetch_ns=1,
+                        last_fetch_ns=2,
+                        avg_fetch_latency_ms=1.0,
+                        unique_updates=1,
+                        first_update_ns=1,
+                        last_update_ns=2,
+                        duration_seconds=0.001,
+                        avg_update_interval_ms=1.0,
+                        median_update_interval_ms=1.0,
+                    ),
+                    metrics={
+                        "gauge_metric": gauge,
+                        "counter_metric": counter,
+                        "histogram_metric": histogram,
+                        "unknown_metric": unknown,
+                    },
+                )
+            },
+            start_ns=0,
+            end_ns=10,
+            endpoints_configured=["http://node-exporter:9100/metrics"],
+            endpoints_successful=["http://node-exporter:9100/metrics"],
+            error_summary=[],
+        )
+        exporter_config = MagicMock()
+        exporter_config.server_metrics_results = results
+        exporter_config.user_config = minimal_user_config
+        exporter = ServerMetricsCsvExporter(exporter_config)
+
+        rows = [
+            row for row in csv.reader(io.StringIO(exporter._generate_content())) if row
+        ]
+        section_types = [row[1] for row in rows if row[0] == "node-exporter:9100"]
+
+        assert section_types == ["gauge", "counter", "histogram", "unknown"]
 
 
 # ============================================================================
