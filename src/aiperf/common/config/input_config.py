@@ -16,7 +16,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
@@ -396,6 +396,7 @@ class InputConfig(BaseConfig):
             "YAML-only — provide via --user-config-file. The structure supports per-modality "
             "profiles and per-archetype text overrides; see docs/tutorials/media-mix.md.",
         ),
+        DisableCLI(reason="media_mix is YAML-only; provide via --user-config-file"),
     ] = None
 
     audio: AudioConfig = AudioConfig()
