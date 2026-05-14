@@ -326,3 +326,31 @@ class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
 The mixin in ``src/aiperf/endpoints/response_mixin.py`` compiles an optional
 ``endpoint.extra.response_field`` JMESPath query at construction time, with
 auto-detect fallback when the query fails or no JSON body is present.
+
+## Per-turn `extra_body`
+
+Every endpoint formatter that builds a JSON request body shallow-merges
+`Turn.extra_body` into the wire body at the very end of payload
+construction, AFTER `model_endpoint.endpoint.extra`. User-supplied keys
+win on collision, matching the OpenAI SDK's `extra_body=` keyword.
+
+Coverage:
+
+- Single-turn formatters read `turn.extra_body` directly (where `turn`
+  is the consumed turn): `openai_completions`, `openai_embeddings` (and
+  `nim_embeddings`, which inherits `_build_payload`),
+  `openai_image_generation`, `openai_video_generation`,
+  `nim_image_retrieval`, `huggingface_generate`, `solido_rag`, and the
+  rankings family (`cohere_rankings`, `nim_rankings`, `hf_tei_rankings`)
+  via `BaseRankingsEndpoint`.
+- Multi-turn formatters use `self._latest_turn_attr(turns, "extra_body")`
+  so FORK-mode DAG children inherit a parent's `extra_body` when they
+  don't redeclare it: `openai_chat` (and `chat_embeddings`, which inherits),
+  `openai_responses`.
+
+`huggingface_generate` deliberately merges `extra_body` at the TOP level
+of the wire body (not nested under `parameters`), matching the OpenAI
+SDK's extra_body= semantics.
+
+`raw_endpoint` and `template_endpoint` intentionally skip this merge —
+they ship the user-authored body verbatim.

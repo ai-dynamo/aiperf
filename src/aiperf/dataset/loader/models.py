@@ -82,6 +82,10 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-turn extra fields shallow-merged into the request body at dispatch time, matching the OpenAI SDK's extra_body convention. Keys override formatter defaults on collision.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -270,6 +274,10 @@ class MooncakeTrace(AIPerfBaseModel):
     )
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"
+    )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-turn extra fields shallow-merged into the request body at dispatch time, matching the OpenAI SDK's extra_body convention. Keys override formatter defaults on collision.",
     )
 
     @model_validator(mode="after")

@@ -184,6 +184,17 @@ class TestSolidoEndpointFormatPayload:
         assert payload["query"] == ["Second"]
         assert payload["inference_model"] == "model2"
 
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges into the payload."""
+        turn = Turn(
+            texts=[Text(contents=["query"])],
+            extra_body={"vendor_top_k": 5},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_top_k"] == 5
+
 
 class TestSolidoEndpointParseResponse:
     """Tests for SolidoEndpoint parse_response functionality."""

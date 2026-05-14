@@ -104,6 +104,7 @@ def make_credit(
     turn_index: int = 0,
     num_turns: int = 1,
     phase: CreditPhase = CreditPhase.PROFILING,
+    agent_depth: int = 0,
 ) -> Credit:
     """Create a Credit for testing."""
     return Credit(
@@ -114,6 +115,7 @@ def make_credit(
         turn_index=turn_index,
         num_turns=num_turns,
         issued_at_ns=time.time_ns(),
+        agent_depth=agent_depth,
     )
 
 
@@ -177,6 +179,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
+            errored=False,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -191,6 +194,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
+            errored=False,
         )
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
@@ -399,12 +403,136 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled
+            credit.is_final_turn, cancelled, errored=False
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()
         else:
             mock_concurrency.release_prefill_slot.assert_not_called()
+
+
+class TestDagWorkPending:
+    """Pin the contract on ``_dag_work_pending``.
+
+    ``intercept`` runs at every ``agent_depth``, so the branch-id lookup
+    must run at every depth too — restricting it to ``agent_depth == 0``
+    let nested grandchildren be truncated when the final outstanding
+    credit at signal time happened to be a child whose own intercept was
+    about to spawn more work.
+    """
+
+    def test_returns_true_when_pending_work_in_flight(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert callback_handler._dag_work_pending(make_credit())
+
+    def test_returns_true_for_root_credit_with_branch_ids(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=["b0"])
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert callback_handler._dag_work_pending(make_credit(agent_depth=0))
+
+    def test_returns_true_for_child_credit_with_branch_ids(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        """Regression for the nested-DAG race: a child credit (agent_depth>0)
+        whose own turn declares branches must defer the all-credits-returned
+        event so ``intercept`` can spawn the grandchildren first.
+        """
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=["b1"])
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert callback_handler._dag_work_pending(make_credit(agent_depth=2))
+
+    def test_returns_false_when_no_branch_ids_and_no_pending_work(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=[])
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert not callback_handler._dag_work_pending(make_credit(agent_depth=1))
+
+
+class TestDagWorkPendingAdversarial:
+    """Hostile-input cases for ``_dag_work_pending``.
+
+    ``_count_and_release`` reaches this helper inside the no-await counter
+    section, so any exception or wrong answer here either deadlocks the
+    phase (false-positive defer that never resolves) or truncates DAG
+    work (false-negative signal that lets teardown win the race).
+    """
+
+    def test_returns_false_when_no_orchestrator_registered(self, callback_handler):
+        """Plain non-DAG runs never attach an orchestrator. The predictor
+        must short-circuit to False rather than dereferencing None — a
+        crash here would propagate through ``_count_and_release`` and
+        abort the credit-return callback for every credit."""
+        assert callback_handler._branch_orchestrator is None
+        assert not callback_handler._dag_work_pending(make_credit())
+
+    def test_pending_work_dominates_empty_branch_ids_at_any_depth(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        """``has_pending_branch_work=True`` is the in-flight signal. Even
+        if the current credit's own turn declares no branches, other
+        children are still draining — the event must defer."""
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=[])
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert callback_handler._dag_work_pending(make_credit(agent_depth=0))
+        assert callback_handler._dag_work_pending(make_credit(agent_depth=4))
+
+    def test_returns_false_when_get_branch_ids_raises(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        """``get_branch_ids`` walks orchestrator state that may be missing
+        for a credit issued on a transient session (e.g. a child whose
+        metadata was already cleaned up). A raise here MUST become a
+        False return, not a propagated exception — the credit-return
+        callback must keep running for every credit."""
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(
+            side_effect=KeyError("missing conv")
+        )
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert not callback_handler._dag_work_pending(make_credit(agent_depth=2))
+
+    def test_returns_true_for_very_deep_credit_with_branch_ids(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        """Depth has no semantic ceiling in the predictor — a credit at
+        ``agent_depth=42`` whose own turn declares branches still defers
+        signal. The old root-only guard would silently truncate this."""
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=["deep"])
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert callback_handler._dag_work_pending(make_credit(agent_depth=42))
+
+    def test_pending_work_short_circuits_before_get_branch_ids(
+        self, callback_handler, mock_branch_orchestrator
+    ):
+        """When the orchestrator already has work in flight, the
+        predictor must not bother walking ``get_branch_ids`` — that lookup
+        can be expensive on hot paths. Wired by short-circuit ordering."""
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+        mock_branch_orchestrator.get_branch_ids = MagicMock(
+            side_effect=AssertionError("must not be called")
+        )
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        assert callback_handler._dag_work_pending(make_credit(agent_depth=1))
+        mock_branch_orchestrator.get_branch_ids.assert_not_called()
 
 
 class TestDrainObserverWiring:
@@ -516,3 +644,69 @@ class TestDrainObserverWiring:
         callback()
 
         assert mock_progress.all_credits_returned_event.is_set()
+
+
+class TestAbortObserverWiring:
+    """``AIPERF_DAG_FAIL_FAST=true`` fires an abort observer from the
+    orchestrator's fail-fast handler; the callback handler must cancel
+    every active phase lifecycle so the strategy loop stops issuing new
+    wire credits. Without this, only the parent of the errored child was
+    aborted while unrelated roots kept firing — the budget ran out as
+    if FAIL_FAST were disabled.
+    """
+
+    def test_set_branch_orchestrator_registers_abort_observer(self, callback_handler):
+        """Attaching an orchestrator must register an abort callback;
+        detaching (set None) must clear it."""
+        orchestrator = MagicMock()
+        orchestrator.set_drain_observer = MagicMock()
+        orchestrator.set_abort_observer = MagicMock()
+
+        callback_handler.set_branch_orchestrator(orchestrator)
+        orchestrator.set_abort_observer.assert_called_once()
+        assert callable(orchestrator.set_abort_observer.call_args.args[0])
+
+        callback_handler.set_branch_orchestrator(None)
+        orchestrator.set_abort_observer.assert_called_with(None)
+
+    def test_abort_observer_cancels_lifecycle_and_signals_return_event(
+        self,
+        registered_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_branch_orchestrator,
+    ):
+        """Fail-fast fires the abort observer; the callback handler must
+        cancel the active phase's lifecycle (so LifecycleStopCondition
+        gates further issuance) and set ``all_credits_returned_event`` so
+        the phase runner unblocks rather than waiting for credits that
+        will never be issued.
+        """
+        mock_lifecycle.is_complete = False
+        mock_lifecycle.cancel = MagicMock()
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_abort_observer.call_args.args[0]
+        callback()
+
+        mock_lifecycle.cancel.assert_called_once_with()
+        assert mock_progress.all_credits_returned_event.is_set()
+
+    def test_abort_observer_skips_completed_phase_handlers(
+        self,
+        registered_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_branch_orchestrator,
+    ):
+        """A phase whose lifecycle is already complete must be skipped —
+        re-cancelling it would be wrong (the phase has already finalized).
+        """
+        mock_lifecycle.is_complete = True
+        mock_lifecycle.cancel = MagicMock()
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_abort_observer.call_args.args[0]
+        callback()
+
+        mock_lifecycle.cancel.assert_not_called()

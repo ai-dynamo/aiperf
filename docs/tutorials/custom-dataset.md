@@ -157,6 +157,20 @@ aiperf profile \
 
 The `output_length` field also works per-turn in multi_turn datasets.
 
+### Per-Request `extra_body`
+
+Send vendor-specific or sampling parameters per request via the `extra_body` field. The dict is shallow-merged into the top of the request body at dispatch, matching the OpenAI SDK's `extra_body=` keyword. Per-line keys win over `--extra-inputs`:
+
+```bash
+cat > prompts_with_extra.jsonl << 'EOF'
+{"text": "Brainstorm a haiku.", "extra_body": {"temperature": 1.2, "top_p": 0.9}}
+{"text": "Explain quantum computing.", "extra_body": {"temperature": 0.2, "seed": 42}}
+{"text": "Summarize ML.", "extra_body": {"min_tokens": 50, "ignore_eos": true}}
+EOF
+```
+
+The `extra_body` field also works per-turn in multi_turn datasets, where FORK-mode children inherit a parent turn's `extra_body` when they don't redeclare it.
+
 ---
 
 ## Multi-Turn Datasets
@@ -240,6 +254,7 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 - Each turn includes full conversation history
 - Turns execute sequentially within each conversation
 - Multiple conversations run concurrently (up to `--concurrency`)
+- Each turn supports `output_length` and `extra_body` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints)
 
 ---
 

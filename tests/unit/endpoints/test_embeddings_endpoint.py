@@ -174,3 +174,15 @@ class TestEmbeddingsEndpoint:
         payload = endpoint.format_payload(request_info)
 
         assert payload["input"] == [special_text]
+
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges into the payload."""
+        turn = Turn(
+            texts=[Text(contents=["hello"])],
+            extra_body={"vendor_top_k": 5, "input_type": "query"},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_top_k"] == 5
+        assert payload["input_type"] == "query"

@@ -142,7 +142,14 @@ class BranchOrchestrator(
             return
         conversations = getattr(dataset_meta, "conversations", None) or []
         for conv in conversations:
-            if getattr(conv, "agent_depth", 0) > 0 or not conv.turns:
+            # Filter primarily on ``is_root`` so SPAWN-mode children
+            # (``is_root=False`` but ``agent_depth=0`` by sampler semantics)
+            # are skipped. ``agent_depth > 0`` stays as a defensive belt for
+            # programmatic bypass that would otherwise dispatch a nested
+            # child's pre branch as if it were a root.
+            is_root = getattr(conv, "is_root", True)
+            agent_depth = getattr(conv, "agent_depth", 0)
+            if not is_root or agent_depth > 0 or not conv.turns:
                 continue
             turn0_branch_ids = set(conv.turns[0].branch_ids or [])
             for branch in conv.branches:
@@ -464,6 +471,13 @@ class BranchOrchestrator(
         self._descendant_counts.pop(parent, None)
         self._parent_locks.pop(parent, None)
         self._notify_drain()
+        # Honor the docs' "abort the whole run on first DAG child error"
+        # contract: tell the phase-side handler to cancel every active
+        # phase lifecycle so the strategy loop stops issuing new wire
+        # credits. Without this, only the parent of the errored child
+        # was aborted while other unrelated parents kept firing — the
+        # wire-request budget ran out as if FAIL_FAST were disabled.
+        self._notify_abort()
 
     def _release_slot(self, parent_x_correlation_id: str) -> None:
         """Release per-parent orchestration state once the DAG has drained."""
@@ -491,6 +505,7 @@ class BranchOrchestrator(
             return
         self._cleaning_up = True
         self._drain_observer = None
+        self._abort_observer = None
         self._log_stats()
         self._log_leaks()
         self._active_joins.clear()

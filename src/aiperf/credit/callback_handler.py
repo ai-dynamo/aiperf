@@ -106,9 +106,11 @@ class CreditCallbackHandler:
             and self._branch_orchestrator is not orchestrator
         ):
             self._branch_orchestrator.set_drain_observer(None)
+            self._branch_orchestrator.set_abort_observer(None)
         self._branch_orchestrator = orchestrator
         if orchestrator is not None:
             orchestrator.set_drain_observer(self._on_orchestrator_drain)
+            orchestrator.set_abort_observer(self._on_orchestrator_abort)
 
     def _on_orchestrator_drain(self) -> None:
         """Re-evaluate completion across every active phase handler.
@@ -122,6 +124,24 @@ class CreditCallbackHandler:
             if handler.lifecycle.is_complete:
                 continue
             self._maybe_signal_dag_completion(handler)
+
+    def _on_orchestrator_abort(self) -> None:
+        """Cancel every active phase on FAIL_FAST.
+
+        Fired by ``BranchOrchestrator._handle_child_errored_fail_fast``
+        after parent + orphan-sibling tear-down. Cancels each phase's
+        lifecycle so the strategy loop's next ``can_send_any_turn`` check
+        returns False and no further wire credits are issued. In-flight
+        credits drain naturally; the phase completes once they return.
+        Without this hook, only the parent of the errored child was
+        aborted while unrelated roots kept firing — the wire-request
+        budget ran out as if FAIL_FAST were disabled.
+        """
+        for handler in self._phase_handlers.values():
+            if handler.lifecycle.is_complete:
+                continue
+            handler.lifecycle.cancel()
+            handler.progress.all_credits_returned_event.set()
 
     def register_phase(
         self,
@@ -262,6 +282,7 @@ class CreditCallbackHandler:
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
+            errored=credit_return.error is not None,
         )
 
         # 2. Track prefill release if TTFT never arrived
@@ -287,17 +308,22 @@ class CreditCallbackHandler:
         """True iff the orchestrator has work in flight or will spawn on
         this credit return (so the all-credits-returned signal must defer
         until after ``intercept`` runs).
+
+        ``intercept`` runs at every ``agent_depth`` (nested DAGs are
+        supported), so the branch-id lookup must run at every depth too.
+        Restricting it to root credits previously let nested grandchildren
+        be truncated when their parent's return was the final outstanding
+        credit at that moment.
         """
         if self._branch_orchestrator is None:
             return False
         if self._branch_orchestrator.has_pending_branch_work():
             return True
-        if credit.agent_depth == 0:
-            try:
-                if self._branch_orchestrator.get_branch_ids(credit):
-                    return True
-            except Exception:  # noqa: BLE001
-                return False
+        try:
+            if self._branch_orchestrator.get_branch_ids(credit):
+                return True
+        except Exception:  # noqa: BLE001
+            return False
         return False
 
     def _maybe_signal_dag_completion(self, handler: PhaseCallbackContext) -> None:

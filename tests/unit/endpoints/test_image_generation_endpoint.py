@@ -147,6 +147,17 @@ class TestImageGenerationEndpoint:
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)
 
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges into the payload."""
+        turn = Turn(
+            texts=[Text(contents=["a cat"])],
+            extra_body={"vendor_quality": "hd"},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_quality"] == "hd"
+
     # ===== parse_response tests =====
 
     @pytest.mark.parametrize(

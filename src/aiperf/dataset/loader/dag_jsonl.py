@@ -248,7 +248,30 @@ class DagJsonlLoader(BaseFileLoader):
         self._conversations[sid] = Conversation(session_id=sid, turns=turns)
         self._inline_forks[sid] = inline_forks_per_turn
         self._inline_spawns[sid] = inline_spawns_per_turn
-        self._inline_pre_session_spawns[sid] = list(dag_conv.pre_session_spawns)
+        self._inline_pre_session_spawns[sid] = self._check_pre_session_duplicates(
+            sid, prefix, lineno, dag_conv.pre_session_spawns
+        )
+
+    @staticmethod
+    def _check_pre_session_duplicates(
+        sid: str, prefix: str, lineno: int, children: list[str]
+    ) -> list[str]:
+        """Reject duplicate child_conversation_ids in ``pre_session_spawns``.
+
+        Per-turn ``forks``/``spawns`` reject duplicates via
+        ``check_branch_duplicates`` because the orchestrator would otherwise
+        double-dispatch the same child and double-count its SPAWN_JOIN
+        gate. ``pre_session_spawns`` desugars into a single SPAWN branch
+        with the same dispatch semantics, so the same guarantee applies."""
+        seen: set[str] = set()
+        for child in children:
+            if child in seen:
+                raise DagLoadError(
+                    f"{prefix} line {lineno}: session '{sid}' duplicate "
+                    f"child_conversation_id '{child}' in pre_session_spawns"
+                )
+            seen.add(child)
+        return list(children)
 
     def _build_turn(self, t: DagTurn) -> Turn:
         return Turn(

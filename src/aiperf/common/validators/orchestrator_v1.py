@@ -83,12 +83,14 @@ def _check_pre_session_branch(
             f"'{branch.branch_id}': pre-session dispatch requires "
             f"SPAWN mode (FORK requires real parent session)"
         )
-    if getattr(conv, "agent_depth", 0) > 0:
+    is_root = getattr(conv, "is_root", True)
+    agent_depth = getattr(conv, "agent_depth", 0)
+    if not is_root or agent_depth > 0:
         raise NotImplementedError(
             f"conversation '{conv.conversation_id}' branch "
             f"'{branch.branch_id}': pre-session dispatch requires a "
-            f"root conversation (agent_depth=0), got "
-            f"agent_depth={getattr(conv, 'agent_depth', 0)}"
+            f"root conversation (is_root=True, agent_depth=0), got "
+            f"is_root={is_root} agent_depth={agent_depth}"
         )
     decl_idx = branch_declaration_turn.get(branch.branch_id)
     if decl_idx is None:

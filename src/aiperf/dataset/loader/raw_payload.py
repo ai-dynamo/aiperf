@@ -78,11 +78,12 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
     def _load_single_file(self, path: Path) -> dict[str, list[RawPayload]]:
         data: dict[str, list[RawPayload]] = defaultdict(list)
         with open(path, "rb") as f:
-            for raw_line in f:
+            for lineno, raw_line in enumerate(f, start=1):
                 line = raw_line.strip()
                 if not line:
                     continue
                 payload = orjson.loads(line)
+                _validate_payload_shape(path, lineno, payload)
                 session_id = self.session_id_generator.next()
                 data[session_id].append(RawPayload(payload=payload))
 
@@ -97,11 +98,13 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
             session_id = self.session_id_generator.next()
             payloads: list[RawPayload] = []
             with open(jsonl_file, "rb") as f:
-                for raw_line in f:
+                for lineno, raw_line in enumerate(f, start=1):
                     line = raw_line.strip()
                     if not line:
                         continue
-                    payloads.append(RawPayload(payload=orjson.loads(line)))
+                    payload = orjson.loads(line)
+                    _validate_payload_shape(jsonl_file, lineno, payload)
+                    payloads.append(RawPayload(payload=payload))
 
             if payloads:
                 data[session_id] = payloads
@@ -153,3 +156,24 @@ def _dir_has_raw_payload_jsonl(directory: Path) -> bool:
         except (orjson.JSONDecodeError, OSError):
             continue
     return False
+
+
+def _validate_payload_shape(path: Path, lineno: int, payload: object) -> None:
+    """Reject raw_payload lines that don't carry a ``messages`` array.
+
+    Without this, a stray JSON line like ``{"model": "x"}`` loads silently
+    and the failure only surfaces as an opaque server-side 4xx mid-run.
+    Fail at load time with the offending file + line so authoring
+    mistakes are caught before any wire request is issued.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"{path}:{lineno}: raw_payload line must be a JSON object, "
+            f"got {type(payload).__name__}"
+        )
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        raise ValueError(
+            f"{path}:{lineno}: raw_payload line missing required 'messages' "
+            f"array (got {type(messages).__name__})"
+        )

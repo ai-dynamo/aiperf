@@ -13,6 +13,19 @@ from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 
 
+def test_mooncake_trace_accepts_extra_body():
+    t = MooncakeTrace(
+        text_input="Hello",
+        extra_body={"vendor_top_k": 5, "ignore_eos": True},
+    )
+    assert t.extra_body == {"vendor_top_k": 5, "ignore_eos": True}
+
+
+def test_mooncake_trace_extra_body_defaults_to_none():
+    t = MooncakeTrace(text_input="Hello")
+    assert t.extra_body is None
+
+
 @pytest.fixture
 def default_user_config() -> UserConfig:
     return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
@@ -138,3 +151,31 @@ class TestMooncakeTraceLoaderPayload:
         )
         with pytest.raises(ValueError, match="payload.*messages|messages.*payload"):
             loader.convert_to_conversations(loader.load_dataset())
+
+    def test_extra_body_propagates_to_turn_in_payload_mode(
+        self,
+        tmp_path: Path,
+        default_user_config: UserConfig,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        with open(file, "wb") as f:
+            f.write(
+                orjson.dumps(
+                    {
+                        "timestamp": 0,
+                        "payload": {"prompt": "p", "max_tokens": 40},
+                        "extra_body": {"vendor_x": 1, "stream": False},
+                    }
+                )
+            )
+            f.write(b"\n")
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=file,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        turn = conversations[0].turns[0]
+        assert turn.extra_body == {"vendor_x": 1, "stream": False}

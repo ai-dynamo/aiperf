@@ -166,3 +166,15 @@ class TestCompletionsEndpoint:
             ValueError, match="Completions endpoint only supports one turn"
         ):
             endpoint.format_payload(request_info)
+
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        turn = Turn(
+            texts=[Text(contents=["hello"])],
+            extra_body={"vendor_top_k": 5, "stream": True},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_top_k"] == 5
+        # extra_body wins over formatter-built `stream` key (default streaming=False).
+        assert payload["stream"] is True

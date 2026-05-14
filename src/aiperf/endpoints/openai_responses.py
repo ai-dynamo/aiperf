@@ -185,40 +185,49 @@ class ResponsesEndpoint(BaseEndpoint):
             )
         input_items.extend(self.build_messages(turns))
 
-        # Conversation-level fields walk turns from the end. FORK-mode
-        # children whose final turn lacks max_tokens/model still inherit
-        # the parent's intent.
-        max_tokens = self._latest_turn_attr(turns, "max_tokens")
+        # Conversation-level fields walk turns from the end so FORK-mode
+        # children whose final turn lacks max_tokens/model/tools still
+        # inherit the parent's intent.
         model_name = self._latest_turn_attr(turns, "model")
+        extra_body = self._latest_turn_attr(turns, "extra_body")
 
         payload: dict[str, Any] = {
             "input": input_items,
             "model": model_name or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
-
-        if request_info.system_message:
-            payload["instructions"] = request_info.system_message
-
-        if max_tokens is not None:
-            payload["max_output_tokens"] = max_tokens
+        for key, value in (
+            ("instructions", request_info.system_message or None),
+            ("max_output_tokens", self._latest_turn_attr(turns, "max_tokens")),
+            ("tools", self._latest_turn_attr(turns, "raw_tools")),
+        ):
+            if value is not None:
+                payload[key] = value
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
+        if extra_body:
+            payload.update(extra_body)
 
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
-        ):
-            if "stream_options" not in payload or not isinstance(
-                payload["stream_options"], dict
-            ):
-                payload["stream_options"] = {"include_usage": True}
-            elif "include_usage" not in payload["stream_options"]:
-                payload["stream_options"]["include_usage"] = True
+        self._maybe_enable_usage_stream_options(payload, model_endpoint)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    @staticmethod
+    def _maybe_enable_usage_stream_options(
+        payload: dict[str, Any], model_endpoint: Any
+    ) -> None:
+        """Set ``stream_options.include_usage=True`` for streaming runs with
+        server-side token counts, preserving any caller-supplied mapping."""
+        ep = model_endpoint.endpoint
+        if not (ep.streaming and ep.use_server_token_count):
+            return
+        so = payload.get("stream_options")
+        if not isinstance(so, dict):
+            payload["stream_options"] = {"include_usage": True}
+        elif "include_usage" not in so:
+            so["include_usage"] = True
 
     def parse_response(
         self, response: InferenceServerResponse

@@ -66,12 +66,14 @@ def _mk_conv(
     turns: list[TurnMetadata],
     branches: list[ConversationBranchInfo],
     agent_depth: int = 0,
+    is_root: bool = True,
 ) -> ConversationMetadata:
     return ConversationMetadata(
         conversation_id=cid,
         turns=turns,
         branches=branches,
         agent_depth=agent_depth,
+        is_root=is_root,
     )
 
 
@@ -1479,3 +1481,116 @@ async def test_pre_session_child_runs_its_own_second_level_dag():
     )
     assert leaf_calls[0].kwargs["agent_depth"] == 2
     assert leaf_calls[0].kwargs["parent_correlation_id"] == "corr-middle"
+
+
+# ===========================================================================
+# Adversarial: pre-session root gate (is_root + agent_depth)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_pre_session_skips_when_both_belts_fail_simultaneously():
+    """Both ``is_root=False`` AND ``agent_depth>0`` at once must skip.
+
+    A loader bug or programmatic bypass could produce a conversation that
+    fails BOTH the sampler-style root check AND the structural depth
+    check at the same time. Either belt alone must skip; both failing
+    must also skip without raising.
+    """
+    pre_branch = ConversationBranchInfo(
+        branch_id="bad:pre",
+        child_conversation_ids=["early"],
+        mode=ConversationBranchMode.SPAWN,
+        dispatch_timing="pre",
+    )
+    bad = _mk_conv(
+        "bad",
+        [TurnMetadata(branch_ids=["bad:pre"]), TurnMetadata()],
+        [pre_branch],
+        agent_depth=3,
+        is_root=False,
+    )
+    early = _mk_conv("early", [TurnMetadata()], [])
+    cs = _mk_source([bad, early])
+    issuer = _mk_issuer()
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    await orch.dispatch_pre_session_branches()
+
+    cs.start_pre_session_child.assert_not_called()
+    issuer.dispatch_first_turn.assert_not_called()
+    assert orch.stats.children_spawned == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_session_dispatch_all_non_root_dataset_is_noop():
+    """A dataset entirely composed of non-root conversations (e.g. an
+    expanded children-only metadata snapshot used for re-validation)
+    must not fire any pre-session work at phase start.
+    """
+    pre_branch = ConversationBranchInfo(
+        branch_id="c1:pre",
+        child_conversation_ids=["target"],
+        mode=ConversationBranchMode.SPAWN,
+        dispatch_timing="pre",
+    )
+    c1 = _mk_conv(
+        "c1",
+        [TurnMetadata(branch_ids=["c1:pre"]), TurnMetadata()],
+        [pre_branch],
+        is_root=False,
+    )
+    c2 = _mk_conv("c2", [TurnMetadata()], [], is_root=False, agent_depth=2)
+    target = _mk_conv("target", [TurnMetadata()], [], is_root=False)
+    cs = _mk_source([c1, c2, target])
+    issuer = _mk_issuer()
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    await orch.dispatch_pre_session_branches()
+
+    cs.start_pre_session_child.assert_not_called()
+    issuer.dispatch_first_turn.assert_not_called()
+    assert not orch._pre_dispatched_branches
+
+
+@pytest.mark.asyncio
+async def test_pre_session_mixed_roots_only_root_pre_fires():
+    """A dataset mixing one root (with a pre branch) and several non-root
+    conversations (each with a pre branch authored on them, e.g. via a
+    bypass) must dispatch exactly the root's pre branch — nothing else.
+    """
+    root_branch = ConversationBranchInfo(
+        branch_id="root:pre",
+        child_conversation_ids=["child_a"],
+        mode=ConversationBranchMode.SPAWN,
+        dispatch_timing="pre",
+    )
+    rogue_branch = ConversationBranchInfo(
+        branch_id="rogue:pre",
+        child_conversation_ids=["child_b"],
+        mode=ConversationBranchMode.SPAWN,
+        dispatch_timing="pre",
+    )
+    root = _mk_conv(
+        "root",
+        [TurnMetadata(branch_ids=["root:pre"]), TurnMetadata()],
+        [root_branch],
+    )
+    rogue = _mk_conv(
+        "rogue",
+        [TurnMetadata(branch_ids=["rogue:pre"]), TurnMetadata()],
+        [rogue_branch],
+        is_root=False,
+    )
+    child_a = _mk_conv("child_a", [TurnMetadata()], [], is_root=False)
+    child_b = _mk_conv("child_b", [TurnMetadata()], [], is_root=False)
+    cs = _mk_source([root, rogue, child_a, child_b])
+    issuer = _mk_issuer()
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    await orch.dispatch_pre_session_branches()
+
+    cs.start_pre_session_child.assert_called_once_with("child_a")
+    cs.start_pre_session_child.assert_called_once()
+    assert ("root", "root:pre") in orch._pre_dispatched_branches
+    assert ("rogue", "rogue:pre") not in orch._pre_dispatched_branches

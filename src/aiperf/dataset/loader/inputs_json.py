@@ -57,6 +57,12 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
     def load_dataset(self) -> dict[str, list[InputsJsonSession]]:
         """Load the JSON file and parse each entry into InputsJsonSession.
 
+        Rejects duplicate ``session_id`` entries in ``data[]`` with an
+        index-rich error — otherwise the second entry would silently
+        overwrite the first and the user would lose authored turns with
+        no warning. Mirrors ``DagJsonlLoader``'s line-numbered duplicate
+        check.
+
         Returns:
             Dictionary of session_id -> [InputsJsonSession].
         """
@@ -65,11 +71,17 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
         data_list = content["data"]
 
         result: dict[str, list[InputsJsonSession]] = {}
-        for entry in data_list:
+        for idx, entry in enumerate(data_list):
             session = InputsJsonSession(
                 session_id=entry["session_id"],
                 payloads=entry["payloads"],
             )
+            if session.session_id in result:
+                raise ValueError(
+                    f"{path}: data[{idx}] duplicate session_id "
+                    f"'{session.session_id}' (already declared earlier in "
+                    f"the file); each session_id must be unique"
+                )
             result[session.session_id] = [session]
 
         self.info(

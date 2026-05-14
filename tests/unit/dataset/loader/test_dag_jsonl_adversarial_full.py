@@ -207,12 +207,15 @@ def test_pre_session_spawns_default_no_branch(tmp_path: Path):
     assert root.is_root is True
 
 
-def test_pre_session_spawns_transitive_chain_accepted(tmp_path: Path):
+def test_pre_session_spawns_transitive_chain_rejected(tmp_path: Path):
     """A's pre_session_spawns includes B; B's pre_session_spawns includes C.
 
-    Loader currently accepts the chain (no transitive ban). Document this
-    so a future pre-session orchestrator can decide whether to honor
-    transitively or refuse.
+    A pre-session branch attached to a non-root conversation would fire
+    at phase start (before its parent's session exists) and bypass the
+    intended DAG topology. ``validate_for_orchestrator_v1`` now rejects
+    via ``is_root`` rather than the looser ``agent_depth > 0`` check —
+    SPAWN children keep ``agent_depth == 0`` but carry ``is_root=False``,
+    so the agent-depth predicate missed this case.
     """
     path = _write(
         tmp_path,
@@ -233,14 +236,8 @@ def test_pre_session_spawns_transitive_chain_accepted(tmp_path: Path):
             },
         ],
     )
-    convs = DagJsonlLoader(filename=path).load()
-    by_id = {c.session_id: c for c in convs}
-    assert any(b.branch_id == "A:pre" for b in by_id["A"].branches)
-    assert any(b.branch_id == "B:pre" for b in by_id["B"].branches)
-    # B becomes non-root because A:pre references it.
-    assert by_id["A"].is_root is True
-    assert by_id["B"].is_root is False
-    assert by_id["C"].is_root is False
+    with pytest.raises(NotImplementedError, match="requires a root conversation"):
+        DagJsonlLoader(filename=path).load()
 
 
 def test_pre_session_spawns_cycle_rejected(tmp_path: Path):

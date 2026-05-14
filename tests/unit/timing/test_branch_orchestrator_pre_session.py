@@ -38,12 +38,14 @@ def _mk_conv(
     turns: list[TurnMetadata],
     branches: list[ConversationBranchInfo],
     agent_depth: int = 0,
+    is_root: bool = True,
 ) -> ConversationMetadata:
     return ConversationMetadata(
         conversation_id=cid,
         turns=turns,
         branches=branches,
         agent_depth=agent_depth,
+        is_root=is_root,
     )
 
 
@@ -244,6 +246,41 @@ async def test_cleanup_clears_pre_dispatched_set():
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
     await orch.dispatch_pre_session_branches()
     assert orch._pre_dispatched_branches
+
+
+@pytest.mark.asyncio
+async def test_pre_session_skips_spawn_children_with_is_root_false():
+    """SPAWN children intentionally keep ``agent_depth == 0`` while carrying
+    ``is_root=False``. The dispatch path must filter on ``is_root`` so a
+    SPAWN child's own pre-session branches are NOT fired at phase start as
+    if the child were an independent root (which would add unauthored
+    requests and break trace topology).
+    """
+    pre_branch = ConversationBranchInfo(
+        branch_id="spawn_child:pre",
+        child_conversation_ids=["grandchild"],
+        mode=ConversationBranchMode.SPAWN,
+        dispatch_timing="pre",
+    )
+    # SPAWN child: keeps agent_depth=0 but is_root=False.
+    spawn_child = _mk_conv(
+        "spawn_child",
+        [TurnMetadata(branch_ids=["spawn_child:pre"]), TurnMetadata()],
+        [pre_branch],
+        agent_depth=0,
+        is_root=False,
+    )
+    grandchild = _mk_conv("grandchild", [TurnMetadata()], [])
+    cs = _mk_source([spawn_child, grandchild])
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    await orch.dispatch_pre_session_branches()
+
+    cs.start_pre_session_child.assert_not_called()
+    issuer.dispatch_first_turn.assert_not_called()
+    assert not orch._pre_dispatched_branches
 
     orch.cleanup()
     assert not orch._pre_dispatched_branches

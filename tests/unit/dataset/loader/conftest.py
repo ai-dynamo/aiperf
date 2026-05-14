@@ -4,6 +4,7 @@
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -66,6 +67,16 @@ def create_user_config_and_composer(mock_tokenizer_cls):
 def default_user_config() -> UserConfig:
     """Create a default UserConfig for testing."""
     return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+
+
+@pytest.fixture
+def mock_prompt_generator():
+    """Create a mock prompt generator for loader tests."""
+    generator = Mock()
+    generator.generate.return_value = "Generated prompt text"
+    generator._decoded_cache = {}
+    generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+    return generator
 
 
 @pytest.fixture
