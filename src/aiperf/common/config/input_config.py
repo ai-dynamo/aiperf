@@ -196,8 +196,8 @@ class InputConfig(BaseConfig):
     session_header: Annotated[
         str | None,
         Field(
-            description="HTTP header name to use for the per-conversation session affinity identifier. "
-            "When set, the stable per-conversation ID is sent under this header name instead of the default "
+            description="HTTP header name to use for the per-session session affinity identifier. "
+            "When set, the stable per-session ID is sent under this header name instead of the default "
             "`X-Correlation-ID`. Useful when the inference server routes requests by a specific header "
             "(e.g., `--session-header X-Session-ID`).",
         ),
