@@ -41,13 +41,16 @@ class ConsoleArchetypeMetricsExporter(ConsoleMetricsExporter):
             return
 
         weights = self._archetype_weights_by_name()
+        total_weight = sum(weights.values()) or None
         tables = []
         for archetype_name in sorted(archetype_results.keys()):
             records = archetype_results[archetype_name]
             visible = [r for r in records if self._should_show(r)]
             if not visible:
                 continue
-            title = self._archetype_title(archetype_name, weights.get(archetype_name))
+            title = self._archetype_title(
+                archetype_name, weights.get(archetype_name), total_weight
+            )
             tables.append(self._build_table(title, visible))
 
         if not tables:
@@ -55,15 +58,21 @@ class ConsoleArchetypeMetricsExporter(ConsoleMetricsExporter):
         renderable: RenderableType = tables[0] if len(tables) == 1 else Group(*tables)
         self._print_renderable(console, renderable)
 
-    def _archetype_title(self, archetype_name: str, weight: float | None) -> str:
+    def _archetype_title(
+        self,
+        archetype_name: str,
+        weight: float | None,
+        total_weight: float | None,
+    ) -> str:
         """Build a per-archetype table title that mirrors the aggregate title shape."""
         from aiperf.plugin import plugins
 
         endpoint_metadata = plugins.get_endpoint_metadata(self._endpoint_type)
         prefix = f"NVIDIA AIPerf | {endpoint_metadata.metrics_title}: {archetype_name}"
-        if weight is None:
+        if weight is None or not total_weight:
             return prefix
-        return f"{prefix} ({weight * 100:.0f}% of traffic)"
+        share = (weight / total_weight) * 100
+        return f"{prefix} ({share:.0f}% of traffic)"
 
     def _archetype_weights_by_name(self) -> dict[str, float]:
         media_mix = self._user_config.input.media_mix or []
