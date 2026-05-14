@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,6 +30,7 @@ from aiperf.credit.messages import (
 )
 from aiperf.plugin.enums import TimingMode
 from aiperf.records.records_manager import RecordsManager
+from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 from tests.harness import mock_plugin
 
@@ -530,6 +532,82 @@ class TestRecordsManagerTimingDispatch:
             CreditPhase.PROFILING
         )
         assert observed_branch_stats == [branch_stats]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "event_order",
+        [
+            ("phase_complete", "metric_record", "credits_complete"),
+            ("phase_complete", "credits_complete", "metric_record"),
+            ("metric_record", "phase_complete", "credits_complete"),
+            ("metric_record", "credits_complete", "phase_complete"),
+            ("credits_complete", "phase_complete", "metric_record"),
+            ("credits_complete", "metric_record", "phase_complete"),
+        ],
+    )
+    async def test_finalization_runs_once_for_all_terminal_event_orders(
+        self, event_order: tuple[str, str, str]
+    ) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        phase_complete = CreditPhaseCompleteMessage(
+            service_id="timing-manager",
+            stats=_create_credit_phase_stats().model_copy(
+                update={"final_requests_completed": 1}
+            ),
+        )
+        credits_complete = CreditsCompleteMessage(service_id="timing-manager")
+        metric_record = _metric_records_message()
+
+        for event in event_order:
+            if event == "phase_complete":
+                await manager._on_credit_phase_complete(phase_complete)
+            elif event == "credits_complete":
+                await manager._on_credits_complete(credits_complete)
+            else:
+                await manager._on_metric_records(metric_record)
+
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
+    async def test_finalization_runs_when_final_record_arrives_during_phase_complete_timing_fanout(
+        self,
+    ) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        timing_fanout_started = asyncio.Event()
+        release_timing_fanout = asyncio.Event()
+
+        async def _block_timing_fanout(stats: CreditPhaseStats) -> None:
+            timing_fanout_started.set()
+            await release_timing_fanout.wait()
+
+        manager._send_timing_to_results_processors = AsyncMock(
+            side_effect=_block_timing_fanout
+        )
+        phase_complete_task = asyncio.create_task(
+            manager._on_credit_phase_complete(
+                CreditPhaseCompleteMessage(
+                    service_id="timing-manager",
+                    stats=_create_credit_phase_stats().model_copy(
+                        update={"final_requests_completed": 1}
+                    ),
+                )
+            )
+        )
+        await timing_fanout_started.wait()
+
+        await manager._on_metric_records(_metric_records_message())
+        manager._handle_all_records_received.assert_not_awaited()
+
+        release_timing_fanout.set()
+        await phase_complete_task
+
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
 
     @pytest.mark.asyncio
     async def test_send_timing_to_results_processors_ignores_empty_processor_list(
