@@ -173,6 +173,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NIM image retrieval models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
+- [SGLang Image Edit](docs/tutorials/sglang-image-edit.md) - Benchmark OpenAI-compatible image-to-image (image edit) endpoints
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
