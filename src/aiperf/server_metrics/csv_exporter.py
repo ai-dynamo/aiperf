@@ -41,10 +41,10 @@ HISTOGRAM_STAT_KEYS = [
 
 STAT_KEYS_MAP = {
     PrometheusMetricType.GAUGE: GAUGE_STAT_KEYS,
+    PrometheusMetricType.UNKNOWN: GAUGE_STAT_KEYS,
     PrometheusMetricType.COUNTER: COUNTER_STAT_KEYS,
     PrometheusMetricType.HISTOGRAM: HISTOGRAM_STAT_KEYS,
 }
-
 
 __all__ = ["ServerMetricsCsvExporter"]
 
@@ -181,14 +181,14 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
             if not metrics_by_type[PrometheusMetricType.GAUGE]:
                 del metrics_by_type[PrometheusMetricType.GAUGE]
 
-        # Write sections in order: gauge, counter, histogram
+        # Write sections in order: gauge, counter, histogram, unknown
         section_order = [
             PrometheusMetricType.GAUGE,
             PrometheusMetricType.COUNTER,
             PrometheusMetricType.HISTOGRAM,
+            PrometheusMetricType.UNKNOWN,
         ]
         first_section = True
-
         for metric_type in section_order:
             if metric_type not in metrics_by_type:
                 continue
