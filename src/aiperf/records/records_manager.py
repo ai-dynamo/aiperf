@@ -149,6 +149,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # value for a specific phase. Used by analyzer paths that need
         # warmup vs profiling separation.
         self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
+        self._complete_credit_phases: set[CreditPhase] = set()
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -235,12 +236,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 record_data.metadata.benchmark_phase, record_data.error
             )
 
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            record_data.metadata.benchmark_phase
-        ):
-            await self._handle_all_records_received(
-                record_data.metadata.benchmark_phase
+        phase = record_data.metadata.benchmark_phase
+        if (
+            phase in self._complete_credit_phases
+            and self._records_tracker.check_and_set_all_records_received_for_phase(
+                phase
             )
+        ):
+            await self._handle_all_records_received(phase)
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
@@ -540,6 +543,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
         await self._send_timing_to_results_processors(message.stats)
+        self._complete_credit_phases.add(message.stats.phase)
         # Capture per-phase BranchStats for any phase that publishes them.
         if message.branch_stats is not None:
             self._phase_branch_stats[message.stats.phase] = message.branch_stats
@@ -585,10 +589,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.info(
             "All credits complete, please wait for the results to be processed..."
         )
-        # This check is to prevent a race condition where the records manager processes
-        # all records before the timing manager has sent the final completed count.
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            CreditPhase.PROFILING
+        if (
+            CreditPhase.PROFILING in self._complete_credit_phases
+            and self._records_tracker.check_and_set_all_records_received_for_phase(
+                CreditPhase.PROFILING
+            )
         ):
             await self._handle_all_records_received(CreditPhase.PROFILING)
 
