@@ -175,6 +175,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
+- [Media Mix](docs/tutorials/media-mix.md) - Mixed-modality benchmarks with weighted request archetypes and per-archetype metrics
 
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis

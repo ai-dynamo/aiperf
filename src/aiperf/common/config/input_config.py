@@ -16,7 +16,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
@@ -26,6 +26,7 @@ from aiperf.common.config.config_validators import (
 from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
+from aiperf.common.config.media_mix_config import MediaMixArchetype
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
@@ -100,6 +101,14 @@ class InputConfig(BaseConfig):
             raise ValueError(
                 "The --public-dataset and --custom-dataset-type options cannot be set together"
             )
+        if self.media_mix and (
+            self.public_dataset is not None or self.custom_dataset_type is not None
+        ):
+            raise ValueError(
+                "media_mix is only supported with synthetic datasets. "
+                "Remove --public-dataset / --custom-dataset-type or remove the "
+                "media_mix block from your config."
+            )
         return self
 
     @model_validator(mode="after")
@@ -155,6 +164,32 @@ class InputConfig(BaseConfig):
                         "Use a per-record metric instead (e.g., 'inter_token_latency', 'time_to_first_token')."
                     )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_media_mix_archetype_names(self) -> Self:
+        """Ensure each archetype has a unique non-None name.
+
+        Auto-assigns synthetic `_archetype_{i}` names to archetypes where
+        `name` is None, then rejects any remaining duplicates. The per-archetype
+        metrics processor uses `name` as a dict key, so collisions would cause
+        records from distinct archetype configs to silently merge into one bucket.
+        """
+        if not self.media_mix:
+            return self
+
+        for i, archetype in enumerate(self.media_mix):
+            if archetype.name is None:
+                archetype.name = f"_archetype_{i}"
+
+        names = [a.name for a in self.media_mix]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"Duplicate archetype names: {duplicates}. "
+                "Each archetype's `name` must be unique within `media_mix` "
+                "so per-archetype metrics group correctly."
+            )
         return self
 
     extra: Annotated[
@@ -359,6 +394,18 @@ class InputConfig(BaseConfig):
             group=Groups.INPUT,
         ),
     ] = InputDefaults.GOODPUT
+
+    media_mix: Annotated[
+        list[MediaMixArchetype] | None,
+        Field(
+            default=None,
+            description="Weighted request archetypes for mixed-modality benchmarking. "
+            "Each archetype defines which modalities appear and with what properties. "
+            "YAML-only — provide via --user-config-file. The structure supports per-modality "
+            "profiles and per-archetype text overrides; see docs/tutorials/media-mix.md.",
+        ),
+        DisableCLI(reason="media_mix is YAML-only; provide via --user-config-file"),
+    ] = None
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()

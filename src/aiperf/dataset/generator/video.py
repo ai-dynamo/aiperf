@@ -29,11 +29,12 @@ class VideoGenerator(BaseGenerator):
     and returned as base64 encoded strings.
     """
 
-    def __init__(self, config: VideoConfig, **kwargs):
+    def __init__(self, config: VideoConfig, rng_namespace: str = "", **kwargs):
         super().__init__(**kwargs)
         self.config = config
-        self._audio_rng = rng.derive("dataset.video.audio")
-        self._noise_rng = rng.derive("dataset.video.noise")
+        ns = f".{rng_namespace}" if rng_namespace else ""
+        self._audio_rng = rng.derive(f"dataset.video{ns}.audio")
+        self._noise_rng = rng.derive(f"dataset.video{ns}.noise")
 
     def _check_ffmpeg_availability(self) -> bool:
         """Check if FFmpeg binary is available in the system."""

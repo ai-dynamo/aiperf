@@ -765,6 +765,15 @@ results_processor:
       time slices, enabling time-series analysis of benchmark performance.
       Enabled when timeslice config is set.
 
+  archetype:
+    class: aiperf.post_processors.archetype_metric_results_processor:ArchetypeMetricResultsProcessor
+    description: |
+      Per-archetype results processor for media mix benchmarks. Groups
+      records by archetype_name (set by SyntheticDatasetComposer) and
+      computes metrics independently for each archetype, producing
+      diagnostic per-request-type breakdowns alongside the aggregate
+      metrics. Self-disables when media_mix is not configured.
+
   accuracy_results:
     class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
     description: |
@@ -833,6 +842,14 @@ data_exporter:
       JSON exporter for timeslice metrics. Exports time-series metric data to JSON
       format for temporal analysis and visualization.
 
+  archetype_csv:
+    class: aiperf.exporters.archetype_metrics_csv_exporter:ArchetypeMetricsCsvExporter
+    description: |
+      CSV exporter for per-archetype metrics (media mix mode). Exports
+      per-request-type metric data in tidy/long format with an Archetype
+      column for downstream analysis with pandas/Tableau/etc.
+      Self-disables when no archetype metric results are present.
+
   accuracy_csv:
     class: aiperf.accuracy.accuracy_data_exporter:AccuracyDataExporter
     description: |
@@ -887,6 +904,14 @@ console_exporter:
     description: |
       Console exporter for primary benchmark metrics. Displays formatted metric
       tables to stdout for user-facing results. Always loaded.
+
+  archetype_metrics:
+    class: aiperf.exporters.console_archetype_metrics_exporter:ConsoleArchetypeMetricsExporter
+    description: |
+      Console exporter for per-archetype metrics (media mix mode). Renders one
+      Rich table per archetype with the same column set as the aggregate
+      ConsoleMetricsExporter. Self-disables when archetype data is absent so
+      non-media-mix benchmarks see no behavioral change.
 
   telemetry:
     class: aiperf.exporters.gpu_telemetry_console_exporter:GPUTelemetryConsoleExporter

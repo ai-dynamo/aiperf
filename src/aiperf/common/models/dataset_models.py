@@ -167,6 +167,11 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    archetype_name: str | None = Field(
+        default=None,
+        description="Name of the media mix archetype that produced this turn (if any). "
+        "Used to group per-archetype metrics during reporting. None when media mix is not in use.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -219,6 +224,7 @@ class Turn(AIPerfBaseModel):
                 for vid in self.videos
             ],
             audio_duration_seconds=self.audio_duration_seconds,
+            archetype_name=self.archetype_name,
         )
 
 

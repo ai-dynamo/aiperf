@@ -20,7 +20,7 @@ Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Parameter Sweep](#parameter-sweep) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Parameter Sweep](#parameter-sweep) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service) • [Parameters](#parameters)
 
 ### [`plot`](#aiperf-plot)
 
@@ -112,11 +112,17 @@ aiperf profile --model your_model --url localhost:8000 --public-dataset sharegpt
 
 # Goodput measurement with SLOs
 aiperf profile --model your_model --url localhost:8000 --goodput "request_latency:250 inter_token_latency:10"
+
+# YAML configuration (required for media mix and other complex setups)
+aiperf profile --user-config-file media-mix.yaml
+
+# YAML baseline with CLI overrides for global fields
+aiperf profile --user-config-file media-mix.yaml --model your_model --url localhost:8000
 ```
 
 ### Endpoint
 
-#### `-m`, `--model-names`, `--model` `<list>` _(Required)_
+#### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
 
@@ -1095,6 +1101,12 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 #### `--api-host` `<str>`
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
+
+### Parameters
+
+#### `--user-config-file` `<str>`
+
+Path to a user configuration file (JSON or YAML). When set, the file's values become the baseline UserConfig and individual CLI flags override the file for global fields (same scope, last-write wins). Per-archetype overrides inside media_mix are never affected by CLI flags — they live at a finer scope than any CLI flag can express. Falls back to the AIPERF_CONFIG_USER_FILE env var.
 
 <hr/>
 

@@ -47,14 +47,15 @@ class AudioGenerator(BaseGenerator):
     parameters to ensure compatibility with chosen formats.
     """
 
-    def __init__(self, config: AudioConfig, **kwargs):
+    def __init__(self, config: AudioConfig, rng_namespace: str = "", **kwargs):
         super().__init__(**kwargs)
         self.config = config
 
         # Separate RNGs for independent concerns
-        self._duration_rng = rng.derive("dataset.audio.duration")
-        self._format_rng = rng.derive("dataset.audio.format")
-        self._data_rng = rng.derive("dataset.audio.data")
+        ns = f".{rng_namespace}" if rng_namespace else ""
+        self._duration_rng = rng.derive(f"dataset.audio{ns}.duration")
+        self._format_rng = rng.derive(f"dataset.audio{ns}.format")
+        self._data_rng = rng.derive(f"dataset.audio{ns}.data")
 
     def _validate_sampling_rate(
         self, sampling_rate_hz: int, audio_format: AudioFormat

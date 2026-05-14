@@ -196,7 +196,7 @@ class TestMetricsJsonExporter:
 
         # Schema bump landed
         assert raw["schema_version"] == JsonExportData.SCHEMA_VERSION
-        assert JsonExportData.SCHEMA_VERSION == "1.1"
+        assert JsonExportData.SCHEMA_VERSION == "1.2"
 
         # Record metric: count and sum are present
         assert raw["request_latency"]["count"] == 100
@@ -210,6 +210,154 @@ class TestMetricsJsonExporter:
         # Aggregate: same rule
         assert "count" not in raw["request_count"]
         assert raw["request_count"]["avg"] == 20.0
+
+    @pytest.mark.asyncio
+    async def test_archetypes_array_populated_when_media_mix_active(
+        self, mock_user_config
+    ):
+        """When archetype_metric_results is present, the JSON export includes an
+        `archetypes` array with one ArchetypeData block per archetype, each
+        carrying name+weight identity plus dynamic metric fields."""
+        from aiperf.common.config.image_config import (
+            ImageHeightConfig,
+            ImageWidthConfig,
+        )
+        from aiperf.common.config.media_mix_config import (
+            ImageProfileConfig,
+            MediaMixArchetype,
+            ModalityEntry,
+        )
+
+        records = [
+            MetricResult(
+                tag="request_latency",
+                header="Request Latency",
+                unit="ms",
+                avg=42.0,
+                count=10,
+                sum=420.0,
+            ),
+        ]
+        archetype_metric_results = {
+            "image-only": [
+                MetricResult(
+                    tag="request_latency",
+                    header="Request Latency",
+                    unit="ms",
+                    avg=30.0,
+                    count=4,
+                    sum=120.0,
+                ),
+            ],
+            "video-only": [
+                MetricResult(
+                    tag="request_latency",
+                    header="Request Latency",
+                    unit="ms",
+                    avg=60.0,
+                    count=6,
+                    sum=360.0,
+                ),
+            ],
+        }
+
+        def _archetype(name: str, weight: float) -> MediaMixArchetype:
+            return MediaMixArchetype(
+                weight=weight,
+                name=name,
+                modalities=[
+                    ModalityEntry(
+                        modality="image",
+                        profiles=[
+                            ImageProfileConfig(
+                                weight=1.0,
+                                width=ImageWidthConfig(mean=64),
+                                height=ImageHeightConfig(mean=64),
+                            )
+                        ],
+                    )
+                ],
+            )
+
+        mock_user_config.input.media_mix = [
+            _archetype("image-only", 0.4),
+            _archetype("video-only", 0.6),
+        ]
+
+        class _Results:
+            def __init__(self, recs, archetype_results):
+                self._records = recs
+                self.archetype_metric_results = archetype_results
+                self.start_ns = None
+                self.end_ns = None
+                self.was_cancelled = False
+                self.error_summary: list = []
+
+            @property
+            def records(self):
+                return self._records
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+            exporter_config = ExporterConfig(
+                results=_Results(records, archetype_metric_results),
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                raw = json.load(f)
+
+        assert raw["schema_version"] == "1.2"
+        assert "archetypes" in raw
+        assert len(raw["archetypes"]) == 2
+
+        by_name = {a["archetype_name"]: a for a in raw["archetypes"]}
+        assert by_name["image-only"]["archetype_weight"] == 0.4
+        assert by_name["image-only"]["request_latency"]["avg"] == 30.0
+        assert by_name["image-only"]["request_latency"]["count"] == 4
+        assert by_name["video-only"]["archetype_weight"] == 0.6
+        assert by_name["video-only"]["request_latency"]["avg"] == 60.0
+
+    @pytest.mark.asyncio
+    async def test_archetypes_array_absent_when_no_media_mix(self, mock_user_config):
+        """No media_mix configured -> JSON export omits the archetypes array
+        entirely (exclude_none rule) so existing tooling sees identical output."""
+
+        class _Results:
+            def __init__(self):
+                self.start_ns = None
+                self.end_ns = None
+                self.archetype_metric_results = None
+                self.was_cancelled = False
+                self.error_summary: list = []
+
+            @property
+            def records(self):
+                return []
+
+        assert mock_user_config.input.media_mix is None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+            exporter_config = ExporterConfig(
+                results=_Results(),
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                raw = json.load(f)
+
+        assert "archetypes" not in raw
 
     def test_metrics_json_exporter_inherits_from_base(self, mock_user_config):
         """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""

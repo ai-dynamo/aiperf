@@ -644,3 +644,40 @@ class TestRecordsManagerInitialization:
             "OTel metrics streamer is disabled and will not be used" in message
             for message in info_messages
         )
+
+
+class TestRecordsManagerDispatchByResultKind:
+    """RecordsManager routes processor summarize() output by processor.result_kind
+    rather than by the Python type of the return value (which would collide
+    between timeslice's dict[int, ...] and archetype's dict[str, ...])."""
+
+    def test_metric_results_processor_declares_records_kind(self):
+        from aiperf.post_processors.metric_results_processor import (
+            MetricResultsProcessor,
+        )
+
+        assert MetricResultsProcessor.result_kind == "records"
+
+    def test_timeslice_processor_declares_timeslice_kind(self):
+        from aiperf.post_processors.timeslice_metric_results_processor import (
+            TimesliceMetricResultsProcessor,
+        )
+
+        assert TimesliceMetricResultsProcessor.result_kind == "timeslice"
+
+    def test_subclass_inherits_kind_until_overridden(self):
+        """Confirm subclasses get the base 'records' kind unless they override.
+
+        Guards against a hypothetical future processor inheriting from
+        MetricResultsProcessor and accidentally being labeled 'records' when
+        the author meant for it to have its own discriminator.
+        """
+        from aiperf.post_processors.metric_results_processor import (
+            MetricResultsProcessor,
+        )
+
+        class MyCustomProcessor(MetricResultsProcessor):
+            result_kind = "custom"
+
+        assert MyCustomProcessor.result_kind == "custom"
+        assert MetricResultsProcessor.result_kind == "records"

@@ -574,6 +574,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/post_processors/archetype_metric_results_processor.py",
+      "ArchetypeMetricResultsProcessor.update_derived_metrics"
+    ],
+    [
+      "BLE001",
       "src/aiperf/post_processors/metric_record_processor.py",
       "MetricRecordProcessor.process_record"
     ],

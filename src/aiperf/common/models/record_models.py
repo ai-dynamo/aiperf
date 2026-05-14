@@ -163,6 +163,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    archetype_name: str | None = Field(
+        default=None,
+        description="Name of the media mix archetype that produced this record's turn (if any). "
+        "Used to group per-archetype metrics during reporting. None when media mix is not in use.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -174,6 +179,13 @@ class ProfileResults(AIPerfBaseModel):
     timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
         default=None,
         description="The timeslice metric results of the profile (if using timeslice mode)",
+    )
+    archetype_metric_results: dict[str, list[MetricResult]] | None = Field(
+        default=None,
+        description="Per-archetype metric results (if using media mix mode). "
+        "Keys are MediaMixArchetype.name values; each value is the same "
+        "list[MetricResult] shape as the aggregate `records` field but "
+        "computed from only the records belonging to that archetype.",
     )
     total_expected: int | None = Field(
         default=None,

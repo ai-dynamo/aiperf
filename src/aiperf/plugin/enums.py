@@ -79,7 +79,7 @@ RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordPr
 
 ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
-"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.OTEL_METRICS_STREAMER, ResultsProcessorType.TIMESLICE"""
+"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.METRIC_RESULTS, ResultsProcessorType.OTEL_METRICS_STREAMER, ResultsProcessorType.TIMESLICE"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
@@ -95,7 +95,7 @@ DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterTy
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
-"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.INTERNAL_METRICS, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
+"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.HTTP_TRACE, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
 
 UITypeStr: TypeAlias = str
 UIType = plugins.create_enum(PluginType.UI, "UIType", module=__name__)

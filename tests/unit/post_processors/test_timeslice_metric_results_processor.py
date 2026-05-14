@@ -46,25 +46,25 @@ class TestTimesliceMetricResultsProcessor:
         assert processor._slice_duration_ns == 1.0 * NANOS_PER_SECOND
 
     @pytest.mark.asyncio
-    async def test_get_instances_map_requires_request_start_ns(
+    async def test_get_instances_map_requires_record_metadata(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test that get_instances_map raises ValueError when request_start_ns is None."""
+        """Test that get_instances_map raises ValueError when record_metadata is None."""
         mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
 
-        with pytest.raises(ValueError, match="must be passed a request_start_ns"):
+        with pytest.raises(ValueError, match="must be passed a record_metadata"):
             await processor.get_instances_map(None)
 
     @pytest.mark.asyncio
-    async def test_get_results_requires_request_start_ns(
+    async def test_get_results_requires_record_metadata(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test that get_results raises ValueError when request_start_ns is None."""
+        """Test that get_results raises ValueError when record_metadata is None."""
         mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
 
-        with pytest.raises(ValueError, match="must be passed a request_start_ns"):
+        with pytest.raises(ValueError, match="must be passed a record_metadata"):
             await processor.get_results(None)
 
     @pytest.mark.asyncio
@@ -361,11 +361,19 @@ class TestTimesliceMetricResultsProcessor:
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
 
         # Get instances for two different timestamps in different timeslices
-        request_start_ns_1 = int(0.5 * NANOS_PER_SECOND)
-        request_start_ns_2 = int(1.5 * NANOS_PER_SECOND)
+        metadata_1 = create_metric_records_message(
+            x_request_id="t1",
+            request_start_ns=int(0.5 * NANOS_PER_SECOND),
+            results=[],
+        ).metadata
+        metadata_2 = create_metric_records_message(
+            x_request_id="t2",
+            request_start_ns=int(1.5 * NANOS_PER_SECOND),
+            results=[],
+        ).metadata
 
-        instances_map_0 = await processor.get_instances_map(request_start_ns_1)
-        instances_map_1 = await processor.get_instances_map(request_start_ns_2)
+        instances_map_0 = await processor.get_instances_map(metadata_1)
+        instances_map_1 = await processor.get_instances_map(metadata_2)
 
         # Verify they are different instances
         assert instances_map_0 is not instances_map_1
