@@ -192,7 +192,8 @@ class TestImageGenerator:
     def test_generate_with_random_format(self):
         """Test generate method when format is random (random selection)."""
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=2),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.RANDOM,
             source=ImageSource.NOISE,
@@ -207,7 +208,8 @@ class TestImageGenerator:
         from aiperf.common import random_generator as rng
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=2),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.PNG,
             source=ImageSource.NOISE,
@@ -266,7 +268,8 @@ class TestImageGenerator:
     def test_generate_integration_with_real_image(self):
         """Integration test with noise mode producing a decodable image."""
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=2),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.PNG,
             source=ImageSource.NOISE,
@@ -316,7 +319,8 @@ class TestImageGenerator:
     ):
         """Test generate method with various dimension configurations."""
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
+            batch_size=1,
+            width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
             height=ImageHeightConfig(mean=height_mean, stddev=height_stddev),
             format=ImageFormat.PNG,
             source=ImageSource.NOISE,
@@ -336,7 +340,8 @@ class TestImageGenerator:
         from aiperf.common import random_generator as rng
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=2),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.PNG,
             source=ImageSource.NOISE,
@@ -357,7 +362,8 @@ class TestImageGeneratorNoiseMode:
     @pytest.fixture
     def noise_config(self):
         return ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
             source=ImageSource.NOISE,
@@ -405,7 +411,8 @@ class TestImageGeneratorCustomDirectory:
         img.save(tmp_path / "test.png")
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
             source=tmp_path,
@@ -422,7 +429,8 @@ class TestImageGeneratorCustomDirectory:
         (tmp_path / "subdir").mkdir()
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
             source=tmp_path,
@@ -437,7 +445,8 @@ class TestImageGeneratorCustomDirectory:
         (tmp_path / "notes.txt").write_text("hello")
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=tmp_path,
         )
@@ -446,7 +455,8 @@ class TestImageGeneratorCustomDirectory:
 
     def test_custom_directory_not_found_raises(self):
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=Path("/nonexistent/dir"),
         )
@@ -458,7 +468,8 @@ class TestImageGeneratorCustomDirectory:
         file_path.write_text("hello")
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=file_path,
         )
@@ -470,7 +481,8 @@ class TestImageGeneratorCustomDirectory:
         empty_dir.mkdir()
 
         config = ImageConfig(
-            batch_size=1, width=ImageWidthConfig(mean=10, stddev=0),
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=empty_dir,
         )
