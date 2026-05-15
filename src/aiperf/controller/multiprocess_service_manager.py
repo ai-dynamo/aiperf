@@ -4,7 +4,6 @@ import asyncio
 import multiprocessing
 import uuid
 from multiprocessing import Process
-from multiprocessing.context import ForkProcess, SpawnProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,7 +20,7 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | SpawnProcess | ForkProcess | None = Field(default=None)
+    process: Process | None = Field(default=None)
     service_type: ServiceTypeT = Field(
         ...,
         description="Type of service running in the process",

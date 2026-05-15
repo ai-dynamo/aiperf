@@ -500,7 +500,7 @@ class TestRunValidate:
     @pytest.mark.parametrize(
         ("registry_errors", "expected_strings"),
         [
-            param({}, ["All checks passed", "✓"], id="all pass"),
+            param({}, ["All checks passed", "OK"], id="all pass"),
             param(
                 {"endpoint": [("broken_type", "Module not found")]},
                 ["Class paths", "broken_type", "Module not found", "Validation failed"],

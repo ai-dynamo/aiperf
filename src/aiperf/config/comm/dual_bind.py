@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 from typing_extensions import Self
 
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
+from aiperf.config.comm.ipc import _build_socket_address
 from aiperf.plugin.enums import CommunicationBackend
 
 
@@ -61,10 +62,8 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     enable_capture: bool = Field(default=False, description="Enable capture socket")
 
     def _ipc_addr(self, endpoint: str) -> str:
-        """Build an IPC address for the given endpoint."""
-        if self.ipc_path is None:
-            raise ValueError("IPC path is required for dual-bind transport")
-        return f"ipc://{self.ipc_path / self.name}_{endpoint}.ipc"
+        """Build an address for the given endpoint (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.ipc_path, f"{self.name}_{endpoint}.ipc")
 
     def _tcp_addr(self, port: int) -> str:
         """Build a TCP address for the given port (bind-side)."""
@@ -228,13 +227,13 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
     )
 
     def _ipc_addr(self, name: str) -> str:
-        """Build an IPC address for the given endpoint name."""
+        """Build an address for the given endpoint (ipc:// on POSIX, tcp:// on Windows)."""
         if not self.ipc_path:
             raise ValueError(
                 f"Dual-bind IPC address for endpoint {name!r} requires comm.ipc_path; "
                 "set comm.ipc_path or configure controller_host for TCP addresses."
             )
-        return f"ipc://{self.ipc_path / name}.ipc"
+        return _build_socket_address(self.ipc_path, f"{name}.ipc")
 
     @property
     def records_push_pull_address(self) -> str:
