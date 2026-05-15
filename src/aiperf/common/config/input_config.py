@@ -193,6 +193,20 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.HEADERS
 
+    session_header: Annotated[
+        str | None,
+        Field(
+            description="HTTP header name to use for the per-session affinity identifier. "
+            "When set, the stable per-session ID is sent under this header name instead of the default "
+            "`X-Correlation-ID`. Useful when the inference server routes requests by a specific header "
+            "(e.g., `--session-header X-Session-ID`).",
+        ),
+        CLIParameter(
+            name=("--session-header",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
     file: Annotated[
         Any,
         Field(
