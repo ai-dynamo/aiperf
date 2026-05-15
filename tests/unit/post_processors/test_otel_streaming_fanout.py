@@ -353,6 +353,11 @@ def test_run_fanout_invalid_payload_logs_warning_and_continues(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    import logging
+
+    caplog.set_level(
+        logging.WARNING, logger="aiperf.post_processors.otel_streaming_fanout"
+    )
     otel_state: dict[str, Any] = {}
     install_fake_otel_modules(monkeypatch, otel_state)
 
