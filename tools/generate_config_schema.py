@@ -971,6 +971,21 @@ class ConfigSchemaGenerator(Generator):
     def _add_distribution_shorthand_forms(self, schema: dict) -> None:
         """Add distribution shorthands accepted by distribution validators."""
         defs = schema.get("$defs", {})
+        self._extend_any_of(
+            defs.get("FixedDistribution"),
+            [
+                {
+                    "type": "string",
+                    "pattern": JINJA2_TEMPLATE_PATTERN,
+                    "description": "Jinja2 template resolving to a fixed distribution value.",
+                },
+                {
+                    "type": "string",
+                    "pattern": ENV_VAR_PATTERN,
+                    "description": "Environment variable resolving to a fixed distribution value.",
+                },
+            ],
+        )
         type_values = {
             "FixedDistribution": "fixed",
             "NormalDistribution": "normal",

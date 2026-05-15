@@ -6391,6 +6391,16 @@
       "description": "Returns a constant value on every sample. Scalars coerce to this. Can be a number (interpreted as a fixed value) or {value} object.",
       "anyOf": [
         {
+          "type": "string",
+          "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+          "description": "Environment variable resolving to a fixed distribution value."
+        },
+        {
+          "type": "string",
+          "pattern": ".*\\{\\{.*\\}\\}.*",
+          "description": "Jinja2 template resolving to a fixed distribution value."
+        },
+        {
           "additionalProperties": false,
           "description": "Returns a constant value on every sample. Scalars coerce to this.",
           "properties": {

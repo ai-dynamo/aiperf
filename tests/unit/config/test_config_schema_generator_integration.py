@@ -295,6 +295,20 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
             id="env-var-numeric-field",
         ),
         pytest.param(
+            {"AIPERF_TEST_ISL": "512"},
+            _minimal_benchmark_config(
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "prompts": {"isl": "${AIPERF_TEST_ISL}", "osl": 128},
+                    }
+                ]
+            ),
+            id="env-var-distribution-scalar-field",
+        ),
+        pytest.param(
             {},
             {
                 **_minimal_benchmark_config(

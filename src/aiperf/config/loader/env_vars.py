@@ -18,6 +18,7 @@ from aiperf.config.loader.errors import (
 # Regex pattern for environment variable substitution
 # Matches: ${VAR} or ${VAR:default}
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
+WHOLE_ENV_VAR_PATTERN = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}$")
 
 # Matches an unterminated ${ ... opener (no closing '}' before end-of-string or newline).
 # Used to surface ``${UNTERMINATED_VAR_NAME`` as a load-time error rather than
@@ -72,10 +73,27 @@ def substitute_env_vars(
         return value
 
 
+def _coerce_scalar_string(value: str) -> bool | int | float | str:
+    """Coerce env-var-only substitutions using the same scalar rules as Jinja."""
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+
 def _substitute_string(
     text: str,
     file_path: Path | str | None = None,
-) -> str:
+) -> bool | int | float | str:
     """
     Substitute environment variables in a single string.
 
@@ -116,4 +134,6 @@ def _substitute_string(
             f"escape the literal as '$${{'.",
             file_path=file_path,
         )
+    if WHOLE_ENV_VAR_PATTERN.fullmatch(text):
+        return _coerce_scalar_string(substituted)
     return substituted
