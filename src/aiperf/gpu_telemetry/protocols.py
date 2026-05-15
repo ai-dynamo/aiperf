@@ -71,10 +71,11 @@ class GPUTelemetryCollectorProtocol(Protocol):
     def validate_environment(cls) -> None:
         """Raise RuntimeError if this collector cannot run on the current host.
 
-        Called during ``UserConfig`` validation for local collectors before the
-        benchmark starts so missing native bindings or required system libraries
-        produce a friendly CLI error rather than a runtime traceback. Remote
-        collectors (e.g. DCGM) implement this as a no-op.
+        Called during :class:`GpuTelemetryConfig` validation for local
+        collectors before the benchmark starts so missing native bindings
+        or required system libraries produce a friendly CLI error rather
+        than a runtime traceback. Remote collectors (e.g. DCGM) implement
+        this as a no-op.
         """
         ...
 
