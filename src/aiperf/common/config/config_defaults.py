@@ -35,7 +35,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.CHAT
     STREAMING = False
-    URL = "localhost:8000"
+    URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
     API_KEY = None
@@ -60,6 +60,7 @@ class InputDefaults:
     HEADERS = []
     FILE = None
     FIXED_SCHEDULE = False
+    DISABLE_AUTO_FIXED_SCHEDULE = False
     FIXED_SCHEDULE_AUTO_OFFSET = False
     FIXED_SCHEDULE_START_OFFSET = None
     FIXED_SCHEDULE_END_OFFSET = None
@@ -130,9 +131,11 @@ class TurnDelayDefaults:
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
+    OUTPUT_FRAGMENTS_FOLDER = Path("output_fragments")
     LOG_FOLDER = Path("logs")
     LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
+    OUTPUTS_JSON_FILE = Path("outputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
     PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE = Path(
@@ -152,6 +155,28 @@ class OutputDefaults:
     EXPORT_HTTP_TRACE = False
     SHOW_TRACE_TIMING = False
     SLICE_DURATION = None
+
+
+@dataclass(frozen=True)
+class MLflowDefaults:
+    TRACKING_URI = None
+    EXPERIMENT = "aiperf"
+    RUN_NAME = None
+    TAGS = None
+    ARTIFACT_GLOBS = None
+    DEFAULT_ARTIFACT_GLOBS = (
+        "*.json",
+        "*.csv",
+        "*.jsonl",
+        "*.parquet",
+        "*_timeslices.*",
+        "**/*.png",
+        "**/*.jpg",
+        "**/*.jpeg",
+        "**/*.svg",
+        "**/*.html",
+    )
+    EXPORT_METADATA_FILE = Path("mlflow_export.json")
 
 
 @dataclass(frozen=True)

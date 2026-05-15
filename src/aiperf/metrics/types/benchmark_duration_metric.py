@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricTimeUnit
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
@@ -24,7 +24,8 @@ class BenchmarkDurationMetric(BaseDerivedMetric[int]):
     short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.SECONDS
-    flags = MetricFlags.NO_CONSOLE
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.NONE
     required_metrics = {
         MinRequestTimestampMetric.tag,
         MaxResponseTimestampMetric.tag,

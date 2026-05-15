@@ -188,3 +188,82 @@ class TestAccuracyDatasetLoaderRawMessages:
         assert turn.raw_messages is not None
         assert turn.raw_messages[0] == {"role": "system", "content": "Be concise."}
         assert turn.raw_messages[1] == {"role": "user", "content": "What is 2+2?"}
+
+
+class TestDefaultSystemPromptResolution:
+    """Per-benchmark ``default_system_prompt`` metadata injection.
+
+    The trt-llm AIME recipe sets a ``Please reason step by step, and
+    put your final answer within \\boxed{}.`` system prompt via its
+    ``aime_test.json``. We mirror that by reading
+    ``default_system_prompt`` from plugin metadata when the user
+    hasn't passed ``--accuracy-system-prompt``. Documented in
+    ``docs/accuracy/accuracy-benchmarking.md`` so users see what
+    aiperf injects on their behalf.
+    """
+
+    def test_user_override_wins_over_metadata_default(self) -> None:
+        loader = AccuracyDatasetLoader(
+            user_config=_make_user_config(system_prompt="user-supplied")
+        )
+        problem = _make_problem()
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.plugins.get_metadata",
+            return_value={"default_system_prompt": "metadata-default"},
+        ):
+            conversations = loader._convert_to_conversations([problem])
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages is not None
+        assert turn.raw_messages[0] == {
+            "role": "system",
+            "content": "user-supplied",
+        }
+
+    def test_metadata_default_used_when_user_unset(self) -> None:
+        loader = AccuracyDatasetLoader(
+            user_config=_make_user_config(system_prompt=None)
+        )
+        problem = _make_problem()
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.plugins.get_metadata",
+            return_value={
+                "default_system_prompt": "Please reason step by step, "
+                "and put your final answer within \\boxed{}."
+            },
+        ):
+            conversations = loader._convert_to_conversations([problem])
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages is not None
+        assert turn.raw_messages[0]["role"] == "system"
+        assert "reason step by step" in turn.raw_messages[0]["content"]
+
+    def test_no_system_prompt_when_neither_set(self) -> None:
+        loader = AccuracyDatasetLoader(
+            user_config=_make_user_config(system_prompt=None)
+        )
+        problem = _make_problem()
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.plugins.get_metadata",
+            return_value={},
+        ):
+            conversations = loader._convert_to_conversations([problem])
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages is not None
+        roles = [m["role"] for m in turn.raw_messages]
+        assert "system" not in roles
+
+    def test_empty_string_metadata_default_treated_as_none(self) -> None:
+        """Empty-string metadata default is dropped (not injected as a
+        zero-length system message)."""
+        loader = AccuracyDatasetLoader(
+            user_config=_make_user_config(system_prompt=None)
+        )
+        problem = _make_problem()
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.plugins.get_metadata",
+            return_value={"default_system_prompt": ""},
+        ):
+            conversations = loader._convert_to_conversations([problem])
+        turn = conversations[0].turns[0]
+        roles = [m["role"] for m in turn.raw_messages]
+        assert "system" not in roles

@@ -43,6 +43,11 @@ source venv/bin/activate
 pip install aiperf
 ```
 
+Optional integrations:
+- `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
+- `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming
+- `pip install "aiperf[mlflow,otel]"` installs both extras
+
 To run a simple benchmark against your Ollama server:
 
 ```bash
@@ -158,6 +163,8 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
+- [Raw Payload Replay](docs/tutorials/raw-payload-replay.md) - Verbatim JSONL payload replay (single file or directory)
+- [Inputs JSON Replay](docs/tutorials/inputs-json-replay.md) - Verbatim multi-turn replay of AIPerf inputs.json artifacts
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
 ### Endpoint Types
@@ -168,6 +175,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NIM image retrieval models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
+- [SGLang Image Edit](docs/tutorials/sglang-image-edit.md) - Benchmark OpenAI-compatible image-to-image (image edit) endpoints
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
@@ -179,6 +187,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
+- [OTel + MLflow Live Telemetry](docs/tutorials/otel-mlflow.md) - Stream metrics to OTel and MLflow in real time
 - [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation

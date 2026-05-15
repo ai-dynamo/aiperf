@@ -11,8 +11,6 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
     ParsedResponse,
-    ReasoningResponseData,
-    RequestRecord,
     SSEMessage,
     TextResponseData,
 )
@@ -41,94 +39,6 @@ async def mock_worker(
     await worker.start()
     yield worker
     await worker.stop()
-
-
-@pytest.mark.asyncio
-class TestWorker:
-    async def test_process_response(
-        self, monkeypatch, mock_worker, sample_request_record
-    ):
-        """Ensure process_response extracts text correctly from RequestRecord."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=TextResponseData(text="Hello, world!"),
-        )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(sample_request_record)
-        assert turn.texts[0].contents == ["Hello, world!"]
-
-    async def test_process_response_empty(
-        self, monkeypatch, mock_worker, sample_request_record
-    ):
-        """Ensure process_response handles empty responses correctly."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=TextResponseData(text=""),
-        )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(sample_request_record)
-        assert turn is None
-
-    async def test_process_response_reasoning_extracts_content(
-        self, monkeypatch, mock_worker
-    ):
-        """Ensure process_response extracts content from reasoning responses."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=ReasoningResponseData(
-                reasoning="Let me think...",
-                content="The answer is 42.",
-            ),
-        )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(RequestRecord())
-        assert turn.texts[0].contents == ["The answer is 42."]
-
-    async def test_process_response_reasoning_only_returns_none(
-        self, monkeypatch, mock_worker
-    ):
-        """Ensure process_response returns None for reasoning-only responses (no content)."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=ReasoningResponseData(
-                reasoning="Let me think about this...",
-                content=None,
-            ),
-        )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(RequestRecord())
-        assert turn is None
-
-    async def test_process_response_mixed_reasoning_and_text_combines_content(
-        self, monkeypatch, mock_worker
-    ):
-        """Ensure process_response combines text and reasoning content."""
-        mock_parsed_responses = [
-            ParsedResponse(
-                perf_ns=0,
-                data=TextResponseData(text="Hello"),
-            ),
-            ParsedResponse(
-                perf_ns=1,
-                data=ReasoningResponseData(
-                    reasoning="Thinking...",
-                    content="World",
-                ),
-            ),
-        ]
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=mock_parsed_responses)
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(RequestRecord())
-        assert turn.texts[0].contents == ["HelloWorld"]
 
 
 # --- FirstToken Callback Test Helpers ---

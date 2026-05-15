@@ -17,6 +17,7 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.messages import (
     CommandMessage,
+    DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
     ProfileCancelCommand,
     ProfileConfigureCommand,
@@ -60,6 +61,8 @@ class TimingManager(BaseComponentService):
         )
 
         self._dataset_configured_event = asyncio.Event()
+        self._dataset_failed_event = asyncio.Event()
+        self._dataset_failure_reason: str | None = None
         self._dataset_metadata: DatasetMetadata | None = None
 
         # StickyCreditRouter handles everything: routing, sending, returns,
@@ -88,16 +91,36 @@ class TimingManager(BaseComponentService):
         self._dataset_metadata = message.metadata
         self._dataset_configured_event.set()
 
+    @on_message(MessageType.DATASET_CONFIGURATION_FAILED)
+    async def _on_dataset_configuration_failed(
+        self, message: DatasetConfigurationFailedNotification
+    ) -> None:
+        """Abort the dataset-config wait when DatasetManager reports a failure.
+
+        Without this, _profile_configure_command would block on
+        _dataset_configured_event for the full DATASET.CONFIGURATION_TIMEOUT
+        (300s default) even though the SystemController has already seen the
+        CommandErrorResponse from DatasetManager and is trying to abort.
+        """
+        self.error(
+            f"Received dataset configuration failed notification from "
+            f"{message.service_id}: {message.error}"
+        )
+        self._dataset_failure_reason = message.error
+        self._dataset_failed_event.set()
+
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
     ) -> None:
         """Create and configure phase orchestrator."""
         self.info("Waiting for dataset to be configured before configuring timing")
-        await asyncio.wait_for(
-            self._dataset_configured_event.wait(),
-            timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
-        )
+        await self._wait_for_dataset_or_failure()
+
+        if self._dataset_failed_event.is_set():
+            raise InvalidStateError(
+                f"Dataset configuration failed: {self._dataset_failure_reason}"
+            )
 
         if not self._dataset_metadata:
             raise InvalidStateError("Dataset metadata is not available")
@@ -112,6 +135,33 @@ class TimingManager(BaseComponentService):
             dataset_metadata=self._dataset_metadata,
         )
         await self._phase_orchestrator.initialize()
+
+    async def _wait_for_dataset_or_failure(self) -> None:
+        """Wait for either the dataset-configured or dataset-failed event.
+
+        Returns as soon as either event fires. Raises asyncio.TimeoutError
+        on the existing 300s envelope (preserving prior behavior for the
+        case where neither event ever arrives).
+        """
+        configured_task = asyncio.create_task(self._dataset_configured_event.wait())
+        failed_task = asyncio.create_task(self._dataset_failed_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {configured_task, failed_task},
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                raise asyncio.TimeoutError(
+                    f"timed out waiting for dataset configuration after "
+                    f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; check "
+                    f"dataset-manager logs and consider raising "
+                    f"AIPERF_DATASET_CONFIGURATION_TIMEOUT"
+                )
+        finally:
+            for task in (configured_task, failed_task):
+                if not task.done():
+                    task.cancel()
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, _message: CommandMessage) -> None:

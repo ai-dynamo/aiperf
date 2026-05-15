@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
@@ -192,7 +192,7 @@ class TestUsagePromptTokensDiffMetric:
         """Test that UsagePromptTokensDiffMetric has correct metadata."""
         assert UsagePromptTokensDiffMetric.tag == "usage_prompt_tokens_diff_pct"
         assert UsagePromptTokensDiffMetric.has_flags(MetricFlags.TOKENIZES_INPUT_ONLY)
-        assert UsagePromptTokensDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert UsagePromptTokensDiffMetric.console_group == MetricConsoleGroup.NONE
         assert UsagePromptTokensDiffMetric.missing_flags(MetricFlags.EXPERIMENTAL)
 
 
@@ -277,7 +277,7 @@ class TestUsageCompletionTokensDiffMetric:
         assert UsageCompletionTokensDiffMetric.has_flags(
             MetricFlags.PRODUCES_TOKENS_ONLY
         )
-        assert UsageCompletionTokensDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert UsageCompletionTokensDiffMetric.console_group == MetricConsoleGroup.NONE
         assert UsageCompletionTokensDiffMetric.missing_flags(MetricFlags.EXPERIMENTAL)
 
 
@@ -363,7 +363,7 @@ class TestUsageReasoningTokensDiffMetric:
             MetricFlags.PRODUCES_TOKENS_ONLY
         )
         assert UsageReasoningTokensDiffMetric.has_flags(MetricFlags.SUPPORTS_REASONING)
-        assert UsageReasoningTokensDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert UsageReasoningTokensDiffMetric.console_group == MetricConsoleGroup.NONE
         assert UsageReasoningTokensDiffMetric.missing_flags(MetricFlags.EXPERIMENTAL)
 
 

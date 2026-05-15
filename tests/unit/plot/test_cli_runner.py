@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.plot.cli_runner import run_plot_controller
+from aiperf.common.config import MLflowDefaults
+from aiperf.plot.cli_runner import (
+    _resolve_mlflow_upload_target,
+    _upload_generated_plots_to_mlflow,
+    run_plot_controller,
+)
 from aiperf.plot.constants import PlotMode, PlotTheme
 
 
@@ -324,3 +329,221 @@ class TestRunPlotController:
                 output=str(tmp_path / "output"),
                 theme="invalid_theme",
             )
+
+    @patch("aiperf.plot.cli_runner._upload_generated_plots_to_mlflow")
+    @patch("aiperf.plot.cli_runner.PlotController")
+    def test_mlflow_upload_invoked_only_when_enabled(
+        self,
+        mock_controller_class: MagicMock,
+        mock_upload: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Test generated plots are uploaded to MLflow only with --mlflow-upload."""
+        output_dir = tmp_path / "output"
+        run_dir = tmp_path / "run1"
+        mock_controller = MagicMock()
+        mock_controller.run.return_value = [output_dir / "ttft_over_time.png"]
+        mock_controller_class.return_value = mock_controller
+
+        run_plot_controller(
+            paths=[str(run_dir)],
+            output=str(output_dir),
+            mlflow_upload=True,
+            mlflow_tracking_uri="http://mlflow:5000",
+            mlflow_run_id="run-123",
+        )
+
+        mock_upload.assert_called_once_with(
+            generated_files=[output_dir / "ttft_over_time.png"],
+            input_paths=[run_dir],
+            output_dir=output_dir,
+            tracking_uri="http://mlflow:5000",
+            run_id="run-123",
+        )
+
+    @patch("aiperf.plot.cli_runner.PlotController")
+    def test_mlflow_upload_rejected_in_dashboard_mode(
+        self,
+        mock_controller_class: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Test --mlflow-upload cannot be combined with --dashboard."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            run_plot_controller(
+                paths=[str(tmp_path / "run1")],
+                output=str(tmp_path / "output"),
+                dashboard=True,
+                mlflow_upload=True,
+            )
+        mock_controller_class.assert_not_called()
+
+    @patch("aiperf.plot.cli_runner.PlotController")
+    def test_plot_dashboard_and_mlflow_upload_rejected_before_startup(
+        self,
+        mock_controller_class: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Test --dashboard and --mlflow-upload raises ValueError before PlotController is constructed."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            run_plot_controller(
+                paths=[str(tmp_path / "run1")],
+                output=str(tmp_path / "output"),
+                dashboard=True,
+                mlflow_upload=True,
+            )
+        mock_controller_class.assert_not_called()
+
+
+class TestResolveMlflowUploadTarget:
+    def test_resolves_tracking_and_run_from_metadata(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text(
+            '{"tracking_uri":"http://mlflow:5000","run_id":"run-abc"}',
+            encoding="utf-8",
+        )
+
+        tracking_uri, run_id = _resolve_mlflow_upload_target(
+            input_paths=[run_dir],
+            tracking_uri=None,
+            run_id=None,
+        )
+
+        assert tracking_uri == "http://mlflow:5000"
+        assert run_id == "run-abc"
+
+    def test_requires_single_path(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="exactly one run path"):
+            _resolve_mlflow_upload_target(
+                input_paths=[tmp_path / "run1", tmp_path / "run2"],
+                tracking_uri="http://mlflow:5000",
+                run_id="run-123",
+            )
+
+    def test_rejects_non_object_metadata(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text('["not-an-object"]', encoding="utf-8")
+
+        with pytest.raises(
+            ValueError, match="expected JSON object for MLflow metadata"
+        ):
+            _resolve_mlflow_upload_target(
+                input_paths=[run_dir],
+                tracking_uri=None,
+                run_id=None,
+            )
+
+    def test_rejects_malformed_metadata_json(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text("{invalid-json", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="failed to decode"):
+            _resolve_mlflow_upload_target(
+                input_paths=[run_dir],
+                tracking_uri=None,
+                run_id=None,
+            )
+
+    def test_rejects_redacted_fallback_tracking_uri(self, tmp_path: Path) -> None:
+        """When the on-disk tracking URI has userinfo redacted (e.g. postgresql://
+        <redacted>@db/mlflow), the plot command cannot authenticate with it, so
+        surface a clear error asking the user to pass --mlflow-tracking-uri."""
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text(
+            '{"tracking_uri":"postgresql://<redacted>@db:5432/mlflow","run_id":"run-xyz"}',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="redacted credentials"):
+            _resolve_mlflow_upload_target(
+                input_paths=[run_dir],
+                tracking_uri=None,
+                run_id=None,
+            )
+
+    def test_accepts_explicit_tracking_uri_when_on_disk_redacted(
+        self, tmp_path: Path
+    ) -> None:
+        """User-provided --mlflow-tracking-uri overrides the on-disk redacted value."""
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir(parents=True)
+        metadata_file = run_dir / MLflowDefaults.EXPORT_METADATA_FILE
+        metadata_file.write_text(
+            '{"tracking_uri":"postgresql://<redacted>@db:5432/mlflow","run_id":"run-xyz"}',
+            encoding="utf-8",
+        )
+
+        tracking_uri, run_id = _resolve_mlflow_upload_target(
+            input_paths=[run_dir],
+            tracking_uri="postgresql://u:p@db:5432/mlflow",
+            run_id=None,
+        )
+        assert tracking_uri == "postgresql://u:p@db:5432/mlflow"
+        assert run_id == "run-xyz"
+
+
+class TestUploadGeneratedPlotsToMlflow:
+    @patch("aiperf.plot.cli_runner.MLflowDataExporter.upload_artifacts_to_run")
+    def test_skips_upload_when_no_generated_files(
+        self,
+        mock_upload: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        _upload_generated_plots_to_mlflow(
+            generated_files=[],
+            input_paths=[tmp_path / "run1"],
+            output_dir=tmp_path / "plots",
+            tracking_uri="http://mlflow:5000",
+            run_id="run-123",
+        )
+
+        mock_upload.assert_not_called()
+        captured = capsys.readouterr()
+        assert "No plots were generated; skipping MLflow plot upload." in captured.out
+
+    @patch("aiperf.plot.cli_runner.MLflowDataExporter.upload_artifacts_to_run")
+    @patch("aiperf.plot.cli_runner._resolve_mlflow_upload_target")
+    def test_uploads_and_prints_summary(
+        self,
+        mock_resolve_target: MagicMock,
+        mock_upload: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        output_dir = tmp_path / "plots"
+        generated_files = [
+            output_dir / "ttft_over_time.png",
+            output_dir / "ttft_p99.png",
+        ]
+        mock_resolve_target.return_value = ("http://mlflow:5000", "run-123")
+        mock_upload.return_value = ["ttft_over_time.png", "ttft_p99.png"]
+
+        _upload_generated_plots_to_mlflow(
+            generated_files=generated_files,
+            input_paths=[tmp_path / "run1"],
+            output_dir=output_dir,
+            tracking_uri=None,
+            run_id=None,
+        )
+
+        mock_resolve_target.assert_called_once_with(
+            input_paths=[tmp_path / "run1"],
+            tracking_uri=None,
+            run_id=None,
+        )
+        mock_upload.assert_called_once_with(
+            tracking_uri="http://mlflow:5000",
+            run_id="run-123",
+            artifact_directory=output_dir,
+            artifact_files=generated_files,
+        )
+        captured = capsys.readouterr()
+        assert "Uploaded 2 plot artifacts to MLflow run run-123." in captured.out

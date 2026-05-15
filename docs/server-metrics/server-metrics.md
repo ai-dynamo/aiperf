@@ -341,7 +341,7 @@ jq '.metrics["vllm:e2e_request_latency_seconds"].series[0].stats.p99_estimate' s
 
 ### 3. CSV Export: `server_metrics_export.csv`
 
-Tabular export organized in four sections (separated by blank lines): **gauge**, **counter**, **histogram**, **info**.
+Tabular export organized in five sections (separated by blank lines): **gauge**, **counter**, **histogram**, **unknown**, **info**. The **unknown** section holds families that the Prometheus server declared as `# TYPE foo untyped` (or with no `# TYPE` line at all); they use the same statistics columns as gauges.
 
 - Labels expanded into individual columns for easy filtering/pivoting
 - Open directly in Excel/Sheets or load with pandas
@@ -364,7 +364,7 @@ Raw time-series data with delta calculations applied. Uses a normalized schema (
 |--------|------|-------------|
 | `endpoint_url` | string | Source Prometheus endpoint |
 | `metric_name` | string | Metric name |
-| `metric_type` | string | `gauge`, `counter`, or `histogram` |
+| `metric_type` | string | `gauge`, `unknown`, `counter`, or `histogram` |
 | `timestamp_ns` | int64 | Collection timestamp (nanoseconds) |
 | `value` | float64 | Gauge/counter value (delta for counters) |
 | `sum`, `count` | float64 | Histogram sum/count deltas |

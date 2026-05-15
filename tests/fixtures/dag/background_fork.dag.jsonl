@@ -1,0 +1,2 @@
+{"session_id":"root","turns":[{"messages":[{"role":"system","content":"You are a careful assistant."},{"role":"user","content":"Plan a response."}],"max_tokens":15,"forks":[{"child":"side","background":true}]},{"messages":[{"role":"user","content":"Continue conversation while side runs."}],"max_tokens":15},{"messages":[{"role":"user","content":"Final answer."}],"max_tokens":15}]}
+{"session_id":"side","turns":[{"messages":[{"role":"user","content":"Side-agent task."}],"max_tokens":15},{"messages":[{"role":"user","content":"Side-agent followup."}],"max_tokens":15}]}

@@ -624,27 +624,73 @@ class TemperatureMetricUnit(BaseMetricUnit):
         return self.info.long_name
 
 
+class MetricConsoleGroup(CaseInsensitiveStrEnum):
+    """Defines the console display group for a metric.
+
+    Replaces the legacy `MetricFlags.NO_CONSOLE` flag with a richer grouping mechanism:
+    - `NONE` is the equivalent of `NO_CONSOLE` (the metric is excluded from the console output).
+    - `DEFAULT` places the metric in the standard console table.
+    - Additional values (`USAGE`, `CACHE`, `PREDICTION`, `AUDIO`, `REASONING`, ...) allow
+      grouping related metrics into separate console sections.
+
+    Set as a class attribute on a `BaseMetric` subclass:
+
+        class UsagePromptTokensMetric(BaseRecordMetric[int]):
+            tag = "usage_prompt_tokens"
+            unit = GenericMetricUnit.TOKENS
+            console_group = MetricConsoleGroup.USAGE  # render in the Usage table
+
+        class BenchmarkDurationMetric(BaseDerivedMetric[int]):
+            tag = "benchmark_duration"
+            console_group = MetricConsoleGroup.NONE   # hidden from console
+    """
+
+    NONE = "none"
+    """The metric is not displayed in the console output, but is still exported to files."""
+
+    DEFAULT = "default"
+    """The metric is displayed in the standard console metrics table."""
+
+    USAGE = "usage"
+    """API-reported usage token metrics (prompt, completion, total, etc.)."""
+
+    CACHE = "cache"
+    """Cache-related token metrics (e.g. prompt cache hits)."""
+
+    PREDICTION = "prediction"
+    """Speculative prediction token metrics (e.g. accepted/rejected prediction tokens)."""
+
+    AUDIO = "audio"
+    """Audio token metrics."""
+
+    REASONING = "reasoning"
+    """Reasoning token metrics."""
+
+
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.
     These flags are intended to be an easy way to group metrics, or turn on/off certain features.
 
     Note that the flags are a bitmask, so they can be combined using the bitwise OR operator (`|`).
-    For example, to create a flag that is both `STREAMING_ONLY` and `NO_CONSOLE`, you can do:
+    For example, to create a flag that is both `STREAMING_ONLY` and `INTERNAL`, you can do:
     ```python
-    MetricFlags.STREAMING_ONLY | MetricFlags.NO_CONSOLE
+    MetricFlags.STREAMING_ONLY | MetricFlags.INTERNAL
     ```
 
     To check if a metric has a flag, you can use the `has_flags` method.
-    For example, to check if a metric has both the `STREAMING_ONLY` and `NO_CONSOLE` flags, you can do:
+    For example, to check if a metric has both the `STREAMING_ONLY` and `INTERNAL` flags, you can do:
     ```python
-    metric.has_flags(MetricFlags.STREAMING_ONLY | MetricFlags.NO_CONSOLE)
+    metric.has_flags(MetricFlags.STREAMING_ONLY | MetricFlags.INTERNAL)
     ```
 
     To check if a metric does not have a flag(s), you can use the `missing_flags` method.
-    For example, to check if a metric does not have either the `STREAMING_ONLY` or `NO_CONSOLE` flags, you can do:
+    For example, to check if a metric does not have either the `STREAMING_ONLY` or `INTERNAL` flags, you can do:
     ```python
-    metric.missing_flags(MetricFlags.STREAMING_ONLY | MetricFlags.NO_CONSOLE)
+    metric.missing_flags(MetricFlags.STREAMING_ONLY | MetricFlags.INTERNAL)
     ```
+
+    To control whether and where a metric appears in the console output, use the
+    `console_group` class attribute on the metric (a `MetricConsoleGroup` value).
     """
 
     # NOTE: The flags are a bitmask, so they must be powers of 2 (or a combination thereof).
@@ -661,9 +707,6 @@ class MetricFlags(Flag):
 
     PRODUCES_TOKENS_ONLY = 1 << 2
     """Metrics that are only applicable when profiling an endpoint that produces tokens."""
-
-    NO_CONSOLE = 1 << 3
-    """Metrics that should not be displayed in the console output, but still exported to files."""
 
     LARGER_IS_BETTER = 1 << 4
     """Metrics that are better when the value is larger. By default, it is assumed that metrics are

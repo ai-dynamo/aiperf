@@ -41,6 +41,8 @@ navigation:
       path: tutorials/nim-image-retrieval.md
     - page: SGLang Image Generation
       path: tutorials/image-generation.md
+    - page: SGLang Image Edit
+      path: tutorials/sglang-image-edit.md
     - page: SGLang Video Generation
       path: tutorials/sglang-video-generation.md
     - page: Synthetic Video Generation
@@ -82,6 +84,10 @@ navigation:
       path: tutorials/burst-gpt-trace.md
     - page: Replay SageMaker Data Capture Traces
       path: tutorials/sagemaker-data-capture.md
+    - page: Raw Payload Replay
+      path: tutorials/raw-payload-replay.md
+    - page: Inputs JSON Replay
+      path: tutorials/inputs-json-replay.md
     - page: Multi-Turn Conversations
       path: tutorials/multi-turn.md
     - page: Sequence Length Distributions for Advanced Benchmarking
@@ -132,6 +138,8 @@ navigation:
       path: tutorials/user-centric-timing.md
     - page: GPU Telemetry with AIPerf
       path: tutorials/gpu-telemetry.md
+    - page: OpenTelemetry MLflow Integration
+      path: tutorials/otel-mlflow.md
   - section: Configuration
     collapsed: true
     contents:
@@ -149,6 +157,8 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+  - page: Conversation DAG Benchmarks
+    path: benchmark-modes/dag.md
 
 - section: Accuracy
   collapsed: true
@@ -173,6 +183,8 @@ navigation:
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
+  - page: Vendor Usage Field Reference
+    path: reference/vendor-usage-fields.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
 

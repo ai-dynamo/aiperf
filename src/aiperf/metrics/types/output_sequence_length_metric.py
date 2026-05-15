@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.enums import GenericMetricUnit, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
@@ -66,8 +66,5 @@ class TotalOutputSequenceLengthMetric(
     header = "Total Output Sequence Length"
     short_header = "Total OSL"
     short_header_hide_unit = True
-    flags = (
-        MetricFlags.PRODUCES_TOKENS_ONLY
-        | MetricFlags.LARGER_IS_BETTER
-        | MetricFlags.NO_CONSOLE
-    )
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
+    console_group = MetricConsoleGroup.NONE

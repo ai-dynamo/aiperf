@@ -181,6 +181,35 @@ def test_with_mock_plugin():
 
 **Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset.
 
+## Console Exporter Pattern
+
+Console exporters subclass `ConsoleMetricsExporter` and configure rendering via class attributes — no method overrides required for the common case. The base class handles filtering, grouping, table construction, and printing; subclasses just declare what to show and when to run.
+
+```python
+# src/aiperf/exporters/internal_metrics_console_exporter.py — gated single-table
+class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
+    """Console exporter for INTERNAL framework metrics, gated on dev mode."""
+
+    title = "[yellow]NVIDIA AIPerf | Internal Metrics[/yellow]"
+    require_flags = MetricFlags.INTERNAL    # records must have this flag
+    exclude_flags = MetricFlags.ERROR_ONLY  # records with this flag are hidden
+    console_groups = None                   # single combined table; ignore groups
+
+    def _check_enabled(self, exporter_config: ExporterConfig) -> None:
+        if not (Environment.DEV.MODE and Environment.DEV.SHOW_INTERNAL_METRICS):
+            raise ConsoleExporterDisabled("Internal metrics are not enabled, ...")
+```
+
+| Class attribute  | Type                                     | Purpose                                                                                  |
+|------------------|------------------------------------------|------------------------------------------------------------------------------------------|
+| `title`          | `str | None`                             | Static title; `None` derives from endpoint metadata.                                     |
+| `require_flags`  | `MetricFlags`                            | Records must have ALL of these. Default `MetricFlags.NONE` (no requirement).             |
+| `exclude_flags`  | `MetricFlags`                            | Records with ANY of these are hidden. Default `ERROR_ONLY | INTERNAL | EXPERIMENTAL`.    |
+| `console_groups` | `tuple[MetricConsoleGroup, ...] | None`  | Groups to include, in render order. `None` disables group filtering (single table).      |
+| `split_by_group` | `bool`                                   | `True` → one table per non-empty group. `False` → single combined table.                 |
+
+Override `_check_enabled(self, exporter_config)` to raise `ConsoleExporterDisabled` when the exporter shouldn’t run (env var, user-config flag, dev mode). The base class no-ops (always-enabled). The flag-driven sibling exporters (`ConsoleInternalMetricsExporter`, `ConsoleExperimentalMetricsExporter`, `HttpTraceConsoleExporter`) follow this pattern verbatim — copy one of them as a starting point.
+
 ## Uncertainty Plot Pattern
 
 The latency-throughput uncertainty plot uses a one-data-contract, three-renderers architecture.
@@ -266,3 +295,217 @@ cov = np.array([[4.0, 1.0], [1.0, 9.0]])
 vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=0.95)
 # Returns list of (x, y) tuples forming a closed polygon
 ```
+
+## Validator Pattern
+
+Per-feature load-time validators (e.g. `BranchOrchestrator` v1) run from the
+end of dataset loaders. Unsupported constructs raise ``NotImplementedError``
+with a ``<loc>: <reason>`` prefix where ``<loc>`` identifies the offending
+conversation/turn so misconfigurations surface before any credit is issued:
+
+```python
+# src/aiperf/common/validators/orchestrator_v1.py - gate convention
+raise NotImplementedError(
+    f"conversation '{conv.conversation_id}' turn {idx}: "
+    f"prerequisite kind '{prereq.kind}' not supported by v1 orchestrator"
+)
+```
+
+## Endpoint Mixin Pattern
+
+Reusable response-parsing behavior lives in mixins applied to endpoint classes:
+
+```python
+# src/aiperf/endpoints/raw_endpoint.py - composing a mixin
+class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs: Any) -> None:
+        super().__init__(model_endpoint, **kwargs)
+        self._init_response_parser()
+```
+
+The mixin in ``src/aiperf/endpoints/response_mixin.py`` compiles an optional
+``endpoint.extra.response_field`` JMESPath query at construction time, with
+auto-detect fallback when the query fails or no JSON body is present.
+
+## Per-turn dataset `extra`
+
+Custom dataset rows use `extra` for non-native request-body fields. Loaders map that user-facing field into internal `Turn.extra_body`. Every endpoint formatter that builds a JSON request body shallow-merges `Turn.extra_body` into the wire body at the very end of payload construction, AFTER `model_endpoint.endpoint.extra`. The merge is shallow `dict.update`; user-provided keys win on collision.
+
+**Rules new formatters and loaders must follow:**
+
+- **Dispatch-turn scoping.** Endpoint formatters read `turn.extra_body`, `turn.max_tokens`, and `turn.model` from `request_info.turns[-1]` only. Parent turns earlier in the conversation history must never leak these request-control fields into a child payload, so DAG/FORK children stay clean of parent vendor knobs, limits, or model overrides.
+- **Tools-as-system-prompt.** Only `raw_tools` walks `request_info.turns` from the end via `BaseEndpoint._latest_turn_attr`. Tool definitions behave like a system prompt and persist across a multi-turn or FORK conversation when the dispatching turn does not redeclare them.
+- **Dataset user-facing field is `extra`.** Custom dataset row schemas (`SingleTurn`, inner `MultiTurn` turns, `MooncakeTrace`, `DagTurn`) declare a per-turn `extra: dict[str, Any] | None`. Loaders translate `row.extra` into `Turn.extra_body` at construction time. `DagTurn` uses Pydantic's `extra="forbid"` so a typo'd `extra_body` is rejected at load time; the other dataset schemas are `extra="allow"` so an unrecognized `extra_body` is silently ignored — author the supported field instead.
+
+Coverage:
+
+- Chat-style formatters with full history flattening (`openai_chat`, `chat_embeddings` via inheritance, `openai_responses`).
+- Single-turn formatters (`openai_completions`, `openai_embeddings` and `nim_embeddings`, `openai_image_generation`, `openai_video_generation`, `openai_image_edit`, `nim_image_retrieval`, `huggingface_generate`, `solido_rag`, the rankings family via `BaseRankingsEndpoint`, and `template_endpoint`).
+
+`huggingface_generate` deliberately merges `extra_body` at the TOP level of the wire body (not nested under `parameters`).
+
+`openai_image_edit` filters reserved keys (`prompt`, `image`, `url`, `mask`) out of both endpoint extras and `extra_body` to protect the multipart upload contract.
+
+`raw_endpoint` intentionally skips this merge — it ships the user-authored `Turn.raw_payload` verbatim.
+
+## Strategy Protocol Pattern
+
+The OTel results processor uses a strategy protocol to dispatch incoming data
+to specialised handlers. Each strategy declares what data it supports and
+processes matching records independently:
+
+```python
+from typing import Protocol, runtime_checkable
+
+from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.models import CreditPhaseStats
+
+OTelResultData = MetricRecordsData | CreditPhaseStats
+
+
+@runtime_checkable
+class OTelResultsStrategyProtocol(Protocol):
+    """Public extension point for new streamed OTel result domains.
+
+    A strategy owns exactly one ``OTelResultData`` variant and emits its
+    telemetry via ``OTelStrategyContextProtocol``. Strategies MUST NOT touch
+    OTel instruments, the fanout queue, or the MLflow client directly — the
+    context owns instrument lifecycle and cross-strategy state so fanout
+    stays consistent across strategies.
+    """
+
+    def supports(self, record_data: OTelResultData) -> bool:
+        """Return True iff ``record_data`` is the variant this strategy consumes.
+
+        Implementations use ``isinstance`` against a single concrete type —
+        strategies are mutually exclusive by record type.
+        """
+        ...
+
+    async def process(self, record_data: OTelResultData) -> None:
+        """Emit telemetry for ``record_data`` without blocking the hot path.
+
+        Instrument access goes through the context's ``get_or_create_*``
+        factories, which enqueue fanout events rather than touching the OTel
+        SDK inline. Raising is permitted; the processor is best-effort, so
+        the records manager logs and swallows the failure.
+        """
+        ...
+```
+
+Concrete strategies accept a context object at construction time and implement
+the two-method interface:
+
+```python
+from aiperf.post_processors.strategies.core import (
+    OTelResultData,
+    OTelResultsStrategyProtocol,
+    OTelStrategyContextProtocol,
+)
+
+
+class MetricResultsStrategy(OTelResultsStrategyProtocol):
+    """Streams per-request metric records as histogram observations."""
+
+    def __init__(self, context: OTelStrategyContextProtocol) -> None:
+        self._context = context
+
+    def supports(self, record_data: OTelResultData) -> bool:
+        return isinstance(record_data, MetricRecordsData)
+
+    async def process(self, record_data: OTelResultData) -> None:
+        # Emit histogram observations for each metric in the record.
+        ...
+
+
+class TimingResultsStrategy(OTelResultsStrategyProtocol):
+    """Streams phase-level timing snapshots using counters and gauges."""
+
+    def __init__(self, context: OTelStrategyContextProtocol) -> None:
+        self._context = context
+
+    def supports(self, record_data: OTelResultData) -> bool:
+        return isinstance(record_data, CreditPhaseStats)
+
+    async def process(self, record_data: OTelResultData) -> None:
+        # Emit counter deltas and gauge snapshots for timing data.
+        ...
+```
+
+The processor iterates registered strategies on each incoming record:
+
+```python
+for strategy in self._strategies:
+    if strategy.supports(record_data):
+        await strategy.process(record_data)
+```
+
+**Conventions:**
+- One strategy class per file under `post_processors/strategies/`.
+- `supports()` uses `isinstance` checks — no dynamic dispatch tables.
+- `OTelStrategyContextProtocol` exposes instrument factories (`get_or_create_histogram`, etc.) so strategies never construct OTel instruments directly.
+
+## Drop-Oldest Fanout Queue
+
+`OTelMetricsResultsProcessor` fans out metric events to a dedicated child
+process via a bounded `multiprocessing.Queue`. The queue uses drop-oldest
+semantics so the hot path (the main benchmark loop) is never blocked by a slow
+downstream consumer.
+
+```mermaid
+flowchart LR
+    A[Hot-path service] -->|put_nowait| Q[multiprocessing.Queue<br/>maxsize=MAX_BUFFERED_RECORDS]
+    Q -->|get| B[Fanout process<br/>OTel + MLflow]
+    A -.->|on Full: drop oldest, retry once| Q
+```
+
+**Queue sizing:**
+
+```python
+import multiprocessing as mp
+from aiperf.common.config import Environment
+
+event_queue = mp.Queue(maxsize=Environment.OTEL.MAX_BUFFERED_RECORDS)  # default 10 000
+```
+
+**Backpressure algorithm:**
+
+1. Attempt `queue.put_nowait(event)`.
+2. On `queue.Full`, call `queue.get_nowait()` to discard the oldest event.
+3. Retry `queue.put_nowait(event)` once.
+4. If the retry also fails, increment `_fanout_dropped_events` and log at
+   thresholds (1, 100, 1 000 drops).
+
+```python
+from queue import Empty, Full
+
+def _queue_fanout_event(self, event_type: str, payload: dict[str, Any]) -> None:
+    """Enqueue streaming event for the fanout process without blocking the event loop."""
+    if self._fanout_queue is None:
+        return
+
+    event = {"type": event_type, "payload": payload}
+    try:
+        self._fanout_queue.put_nowait(event)
+        self._fanout_sent_events += 1
+    except Full:
+        if self._drop_oldest_fanout_event():
+            try:
+                self._fanout_queue.put_nowait(event)
+                self._fanout_sent_events += 1
+                return
+            except Full:
+                pass
+        self._record_fanout_drop(
+            "OTel fanout queue remained full; dropping newest event"
+        )
+    except Exception as exc:
+        self.warning(f"Failed to enqueue OTel fanout event: {exc!r}")
+```
+
+**Design rationale:**
+- The benchmark hot path must never block on telemetry I/O.
+- Dropping the oldest event (rather than the newest) preserves the most recent
+  state, which is more useful for live dashboards.
+- The counter `_fanout_dropped_events` is reported at shutdown so operators can
+  tune `AIPERF_OTEL_MAX_BUFFERED_RECORDS` if drops are frequent.

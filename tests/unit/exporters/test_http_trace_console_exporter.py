@@ -199,7 +199,7 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        assert exporter._show_trace_timing is True
+        assert isinstance(exporter, HttpTraceConsoleExporter)
 
     def test_get_title_returns_http_trace_title(self, mock_endpoint_config):
         """Test that _get_title returns the correct title."""

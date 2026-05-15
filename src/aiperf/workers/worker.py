@@ -7,7 +7,12 @@ import uuid
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import BYTES_PER_MIB
-from aiperf.common.enums import CommAddress, CommandType, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    ConversationBranchMode,
+    MessageType,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import NotInitializedError
@@ -35,12 +40,9 @@ from aiperf.common.models import (
     ErrorDetails,
     ModelEndpointInfo,
     ProcessHealth,
-    ReasoningResponseData,
     RequestInfo,
     RequestRecord,
     SSEMessage,
-    Text,
-    Turn,
     WorkerTaskStats,
 )
 from aiperf.common.protocols import (
@@ -462,6 +464,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     credit_context.credit.num_turns,
                     url_index=credit_context.credit.url_index,
                 )
+                self._pin_parent_if_fork_child(credit, x_correlation_id)
+                self._seed_from_parent_if_fork_child(credit, x_correlation_id)
 
             session.advance_turn(credit_context.credit.turn_index)
 
@@ -483,7 +487,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 credit_context.error = record.error
 
             if session.should_store_response() and (
-                resp_turn := await self._process_response(record)
+                resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
             ):
                 session.store_response(resp_turn)
 
@@ -497,7 +501,76 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         finally:
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
-                self.session_manager.evict(x_correlation_id)
+                self._release_and_evict_for_terminal(credit, x_correlation_id)
+
+    def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
+        """FORK child seed: pin the parent so its session stays resident in
+        the cache until every FORK child has joined. FORK children
+        sticky-route to the parent's worker, so the parent's session
+        lives on this same SessionManager.
+        """
+        if (
+            credit.parent_correlation_id is None
+            or credit.branch_mode != ConversationBranchMode.FORK
+        ):
+            return
+        try:
+            self.session_manager.pin_for_fork_child(credit.parent_correlation_id)
+        except KeyError:
+            # Parent already evicted — child arrived too late to pin; let
+            # the request proceed without seed context rather than failing.
+            self.warning(
+                f"FORK child {x_correlation_id!r} arrived after parent "
+                f"{credit.parent_correlation_id!r} was evicted; not pinning"
+            )
+
+    def _seed_from_parent_if_fork_child(
+        self, credit: Credit, x_correlation_id: str
+    ) -> None:
+        """Copy the parent session's accumulated ``turn_list`` into the
+        freshly-created FORK child session.
+
+        Companion to ``_pin_parent_if_fork_child``: pinning keeps the
+        parent resident, this seeds the child with the parent's context
+        so the request-builder prepends parent prompt + captured
+        responses before the child's own messages. SPAWN-mode children
+        skip this — fresh-context is the whole point of SPAWN.
+        """
+        if (
+            credit.parent_correlation_id is None
+            or credit.branch_mode != ConversationBranchMode.FORK
+        ):
+            return
+        self.session_manager.seed_from_parent(
+            x_correlation_id, credit.parent_correlation_id
+        )
+
+    def _release_and_evict_for_terminal(
+        self, credit: Credit, x_correlation_id: str
+    ) -> None:
+        """Release the parent pin (if FORK child) then evict this session.
+
+        FORK parents whose terminal turn declared forks (``has_forks``)
+        defer eviction: children arrive on the orchestrator's intercept
+        path AFTER this credit return runs, so ``evict_if_unpinned``
+        cannot find any pin to honor here. Setting ``pending_fork_eviction``
+        signals ``release_fork_child`` to auto-evict the moment the last
+        child joins.
+
+        Non-FORK and non-parent sessions evict immediately.
+        """
+        if (
+            credit.parent_correlation_id is not None
+            and credit.branch_mode == ConversationBranchMode.FORK
+        ):
+            self.session_manager.release_fork_child(credit.parent_correlation_id)
+        cur_session = self.session_manager.get(x_correlation_id)
+        if cur_session is not None and cur_session.is_fork_parent:
+            if credit.has_forks:
+                cur_session.pending_fork_eviction = True
+            self.session_manager.evict_if_unpinned(x_correlation_id)
+        else:
+            self.session_manager.evict(x_correlation_id)
 
     def _create_request_info(
         self,
@@ -542,6 +615,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
@@ -619,40 +694,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             raise ValueError(f"Failed to retrieve conversation response: {error}")
 
         return conversation_response.conversation
-
-    async def _process_response(self, record: RequestRecord) -> Turn | None:
-        """Extract assistant response from RequestRecord and convert to Turn for session.
-
-        Flow:
-        1. Use endpoint to parse responses into structured data
-        2. Extract text content from all responses
-        3. If text present: Create Turn with role="assistant"
-        4. If no text: Return None (error response or no content)
-
-        Args:
-            record: RequestRecord with raw responses from inference server
-
-        Returns:
-            Turn object for storing in session, or None if no content
-        """
-        resp = self.inference_client.endpoint.extract_response_data(record)
-        # Skip reasoning responses in multi-turn conversations
-        output_texts = []
-        for response in resp:
-            if not response.data:
-                continue
-            if isinstance(response.data, ReasoningResponseData):
-                if response.data.content:
-                    output_texts.append(response.data.content)
-            else:
-                output_texts.append(response.data.get_text())
-        resp_text = "".join(output_texts)
-
-        return (
-            Turn(role="assistant", texts=[Text(contents=[resp_text])])
-            if resp_text
-            else None
-        )
 
     async def _send_inference_result_message(self, record: RequestRecord) -> None:
         """Send RequestRecord to RecordProcessor for metric calculation.

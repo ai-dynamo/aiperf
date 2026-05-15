@@ -21,9 +21,12 @@ If you're using **any other inference backend**, you'll need to set up DCGM sepa
 ### Path 3: Local GPU Monitoring (pynvml)
 If you want **simple local GPU monitoring without DCGM**, use `--gpu-telemetry pynvml`. This uses NVIDIA's nvidia-ml-py Python library (commonly known as pynvml) to collect metrics directly from the GPU driver. No HTTP endpoints or additional containers required.
 
+### Path 4: AMD ROCm GPUs (amdsmi)
+If you're benchmarking against an inference server running on **AMD ROCm GPUs** (Instinct MI300X, MI355X, etc.), use `--gpu-telemetry amdsmi`. This uses the `amdsmi` Python bindings shipped with ROCm to collect metrics directly from the AMD driver. No HTTP endpoints required. Install the bindings via `pip install /opt/rocm/share/amd_smi/amdsmi-*.whl` if not already present (they ship with ROCm).
+
 ## Prerequisites
 
-- NVIDIA GPU with CUDA support
+- NVIDIA GPU with CUDA support, **or** AMD GPU with ROCm 6.x/7.x
 - Docker installed and configured
 
 ## Understanding GPU Telemetry in AIPerf
@@ -42,12 +45,15 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 | **Custom metrics** | `aiperf profile --model MODEL ... --gpu-telemetry custom_gpu_metrics.csv` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom metrics from CSV](#customizing-displayed-metrics) | ✅ Yes | ❌ No | ✅ Yes |
 | **pynvml mode** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml` | Local GPUs via pynvml library ([see pynvml section](#3-using-pynvml-local-gpu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
 | **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
+| **amdsmi mode** | `aiperf profile --model MODEL ... --gpu-telemetry amdsmi` | Local AMD ROCm GPUs via amdsmi library | ✅ Yes | ❌ No | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
 > [!WARNING]
 > **DCGM mode (default):** The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are always attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
 >
 > **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
+>
+> **amdsmi mode:** When using `--gpu-telemetry amdsmi`, DCGM endpoints are NOT used. Metrics are collected directly from local AMD GPUs via the amdsmi library and emitted under vendor-namespaced `amd_*` field names (`amd_power`, `amd_gfx_activity`, `amd_temperature`, etc.) rather than NVML-shaped names. On Instinct datacenter parts `amd_mm_activity` is generally absent (sensor returns `'N/A'`); `amd_throttle_status` is a 0.0/1.0 snapshot per scrape (amdsmi exposes a boolean state, not a duration counter).
 >
 > To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
 
@@ -428,6 +434,56 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 | Metrics granularity | High (profiling-level metrics) | Standard (driver-level metrics) |
 | Kubernetes integration | Native with dcgm-exporter | Not applicable |
 | XID error reporting | Yes | No |
+
+---
+
+## 4. Using amdsmi (Local AMD ROCm GPU Monitoring)
+
+For inference workloads on **AMD Instinct GPUs** (MI300X, MI355X, etc.), use `--gpu-telemetry amdsmi`. This collects metrics directly from local AMD GPUs via the `amdsmi` Python library shipped with ROCm.
+
+### When to Use amdsmi
+
+- Benchmarking against vLLM-ROCm, SGLang-ROCm, TGI, or any ROCm-backed inference server running on the same machine as AIPerf.
+- Local single-node monitoring with no need for HTTP exporters.
+
+### Run AIPerf with amdsmi
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --url http://localhost:8000 \
+    --concurrency 16 --request-count 200 \
+    --gpu-telemetry amdsmi
+```
+
+### Metrics Collected via amdsmi
+
+AMD signals are emitted under their own vendor-namespaced field names (not aliased onto NVML-shaped names) because the underlying sensors do not always measure the same physical quantity (e.g. amdsmi `gfx_activity` and NVML `sm_utilization` sample at different scopes).
+
+| Metric | Source | Notes |
+|---|---|---|
+| `amd_power` (W) | `amdsmi_get_power_info().current_socket_power` | Already in W; no scaling. Falls back to `average_socket_power` if `current_socket_power` is `'N/A'`. |
+| `amd_energy_consumption` (MJ) | `amdsmi_get_energy_count()` | `accumulator * counter_resolution` (µJ) → MJ. Cumulative counter — accumulator computes a delta against the pre-profile baseline. Reads `energy_accumulator` first; falls back to the older `power` field name on ROCm < 6.2. |
+| `amd_gfx_activity` (%) | `amdsmi_get_gpu_activity().gfx_activity` | Graphics engine activity. |
+| `amd_umc_activity` (%) | `amdsmi_get_gpu_activity().umc_activity` | Memory controller activity. |
+| `amd_mm_activity` (%) | `amdsmi_get_gpu_activity().mm_activity` | Multimedia engine activity. Generally `'N/A'` on Instinct datacenter GPUs — field will be absent rather than emitted as zero. |
+| `amd_memory_used` (GB) | `amdsmi_get_gpu_memory_usage(VRAM)` | bytes → GB. |
+| `amd_temperature` (°C) | `amdsmi_get_temp_metric(JUNCTION)` | Falls back to HOTSPOT. EDGE is unsupported on Instinct GPUs. Unit conversion is gated on `amdsmi.__version__` (≥ 26.x already returns Celsius; older bindings return millidegrees and are divided by 1000). |
+| `amd_ecc_uncorrectable` | `amdsmi_get_gpu_total_ecc_count().uncorrectable_count` | Cumulative uncorrectable ECC error count. Counter — accumulator computes a delta. |
+| `amd_throttle_status` | `amdsmi_get_gpu_metrics_info().throttle_status` (and `indep_throttle_status`) | 0.0/1.0 snapshot per scrape — 1.0 if any throttle indicator is active. amdsmi exposes a state (bool/bitfield), not a duration counter; a fraction-throttled summary can be derived from the average. Field is left absent when both signals return `'N/A'` (sensor unsupported), so "unsupported" is not silently reported as "not throttled". |
+
+### Comparing DCGM vs pynvml vs amdsmi
+
+| Feature | DCGM | pynvml | amdsmi |
+|---|---|---|---|
+| Hardware | NVIDIA | NVIDIA | AMD ROCm |
+| Setup complexity | Requires container/service | `pip install nvidia-ml-py` | Ships with ROCm; install wheel from `/opt/rocm/share/amd_smi/` if missing |
+| Multi-node support | Yes (HTTP) | No (local) | No (local) |
+| Field naming | `gpu_*` (NVML-shaped) | `gpu_*` (NVML-shaped) | `amd_*` (vendor-namespaced) |
+| Encoder/decoder util | Yes | Yes | No (Instinct GPUs report `'N/A'`) |
+| Error reporting | XID errors | (none) | ECC uncorrectable count (`amd_ecc_uncorrectable`) |
+| SM-level utilization | Yes (DCGM_FI_PROF_SM_ACTIVE) | Yes (GPM API) | Aliased to `gfx_activity` |
 
 ---
 

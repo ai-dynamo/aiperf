@@ -24,6 +24,13 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+# Limit glibc malloc arenas to avoid heap-corruption SIGABRT and OOM-killed
+# xdist workers under heavy `-n auto` load. Each component_integration test
+# runs aiperf in-process with full Pydantic / msgspec / tokenizer imports,
+# so the default 8×NCPU arenas per worker × 24 workers blows out RAM. The
+# integration conftest carries the same setting (gotcha 2026-04-21).
+os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+
 import pytest
 
 from aiperf.cli import app

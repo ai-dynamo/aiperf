@@ -1,0 +1,3 @@
+{"session_id":"r","turns":[{"messages":[{"role":"user","content":"r0"}],"max_tokens":15,"forks":[{"child":"side","background":true}]},{"messages":[{"role":"user","content":"r1"}],"max_tokens":15,"spawns":["sync"]},{"messages":[{"role":"user","content":"r2"}],"max_tokens":15}]}
+{"session_id":"side","turns":[{"messages":[{"role":"user","content":"side0"}],"max_tokens":15},{"messages":[{"role":"user","content":"side1"}],"max_tokens":15}]}
+{"session_id":"sync","turns":[{"messages":[{"role":"user","content":"sync"}],"max_tokens":15}]}

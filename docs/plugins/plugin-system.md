@@ -372,6 +372,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
 | `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
+| `image_edit` | `ImageEditEndpoint` | OpenAI Image Edit (image-to-image) API; multipart upload of reference image + prompt to `/v1/images/edits`. Compatible with SGLang FLUX.2 unified diffusion serving. |
 | `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |

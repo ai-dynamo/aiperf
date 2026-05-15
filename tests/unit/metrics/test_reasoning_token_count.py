@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.reasoning_token_count import (
@@ -64,7 +64,7 @@ class TestReasoningTokenCountMetric:
         """Test that ReasoningTokenCountMetric has correct metadata"""
         assert ReasoningTokenCountMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
         assert ReasoningTokenCountMetric.has_flags(MetricFlags.SUPPORTS_REASONING)
-        assert ReasoningTokenCountMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert ReasoningTokenCountMetric.console_group == MetricConsoleGroup.NONE
         assert ReasoningTokenCountMetric.missing_flags(MetricFlags.INTERNAL)
 
 
@@ -92,6 +92,6 @@ class TestTotalReasoningTokensMetric:
         """Test that TotalReasoningTokensMetric has correct metadata and does not inherit SUPPORTS_REASONING"""
         assert TotalReasoningTokensMetric.tag == "total_reasoning_tokens"
         assert TotalReasoningTokensMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert TotalReasoningTokensMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert TotalReasoningTokensMetric.console_group == MetricConsoleGroup.NONE
         assert TotalReasoningTokensMetric.missing_flags(MetricFlags.SUPPORTS_REASONING)
         assert TotalReasoningTokensMetric.missing_flags(MetricFlags.INTERNAL)

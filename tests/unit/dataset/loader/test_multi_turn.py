@@ -635,3 +635,28 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert len(conversations[1].turns) == 1
         assert conversations[0].turns[0].texts[0].contents == ["First"]
         assert conversations[1].turns[0].texts[0].contents == ["Second"]
+
+
+def test_multi_turn_loader_propagates_per_inner_turn_extra(
+    tmp_path, default_user_config
+):
+    path = tmp_path / "multi.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "turns": [
+                    {"text": "Hello", "extra": {"vendor_a": 1}},
+                    {"text": "Hi", "extra": {"vendor_b": 2}},
+                    {"text": "Bye"},
+                ],
+            }
+        )
+        + "\n"
+    )
+    loader = MultiTurnDatasetLoader(filename=path, user_config=default_user_config)
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+    turns = conversations[0].turns
+    assert turns[0].extra_body == {"vendor_a": 1}
+    assert turns[1].extra_body == {"vendor_b": 2}
+    assert turns[2].extra_body is None

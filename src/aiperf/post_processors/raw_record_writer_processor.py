@@ -5,6 +5,7 @@
 import contextlib
 
 import aiofiles
+import orjson
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
@@ -18,7 +19,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RawRecordInfo,
 )
-from aiperf.common.models.record_models import RequestInfo
+from aiperf.common.models.record_models import RecordContext, RequestInfo
 from aiperf.common.redact import redact_headers
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.plugin import plugins
@@ -85,11 +86,25 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     ) -> RawRecordInfo:
         """Build the export record for a single record."""
 
-        # Use existing request_info if available, otherwise create minimal one
-        request_info = record.request.request_info
-        if request_info is None:
+        # The record arrives carrying a slim ``RecordContext`` (down-cast on
+        # the worker side by ``inference_client._enrich_request_record``); the
+        # transport-only ``model_endpoint`` was stripped to save ZMQ bytes.
+        # Re-attach the locally-known ``model_endpoint`` so the endpoint
+        # plugin's ``format_payload`` has what it needs.
+        ctx = record.request.request_info
+        if ctx is not None:
+            ctx_fields = {
+                k: v
+                for k, v in ctx.model_dump().items()
+                if k in RecordContext.model_fields
+            }
+            request_info = RequestInfo(
+                **ctx_fields,
+                model_endpoint=self._model_endpoint,
+            )
+        else:
             # Fallback for records without complete request_info
-            # This should rarely happen after proper request_info propagation
+            # (extremely rare; would indicate an upstream bug).
             request_info = RequestInfo(
                 model_endpoint=self._model_endpoint,
                 turns=record.request.turns,
@@ -101,7 +116,11 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
                 conversation_id=metadata.conversation_id or "",
             )
 
-        payload = self._endpoint.format_payload(request_info)
+        payload = (
+            orjson.loads(request_info.payload_bytes)
+            if request_info.payload_bytes is not None
+            else self._endpoint.format_payload(request_info)
+        )
         return RawRecordInfo(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,
