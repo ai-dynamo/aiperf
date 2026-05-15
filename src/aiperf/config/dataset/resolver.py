@@ -97,17 +97,26 @@ class DatasetResolver:
             raise FileNotFoundError(f"Dataset '{name}' file not found: {resolved}")
         acc.paths[name] = resolved
 
-        # 2. Detect dataset type from explicit format or via can_load
+        # 2. Detect dataset type from explicit format or via can_load.
+        # Pydantic defaults ``format`` to SINGLE_TURN, so a falsy check isn't
+        # enough — when the user didn't *explicitly* set format, fall back to
+        # structural detection so loaders like sagemaker_data_capture (whose
+        # JSONL doesn't look like single-turn) are recognized here the same
+        # way the composer recognizes them at load time.
         fmt = ds.format  # type: ignore[attr-defined]
+        fields_set = getattr(ds, "model_fields_set", set())
         first_record = None
-        dataset_type = format_map.get(str(fmt)) if fmt else None
+        explicit_format = "format" in fields_set
+        dataset_type = format_map.get(str(fmt)) if explicit_format and fmt else None
         if dataset_type is None:
             dataset_type, first_record = self._detect_type(str(resolved))
 
         if dataset_type is not None:
             acc.types[name] = dataset_type
             acc.sampling[name] = self._resolve_sampling(ds, dataset_type)
-            acc.has_timing[name] = self._check_timing_data(str(resolved), first_record)
+            acc.has_timing[name] = self._check_timing_data(
+                str(resolved), first_record, dataset_type
+            )
 
         # 3. Count records and sessions (for validation and fixed_schedule)
         if not resolved.is_dir():
@@ -265,12 +274,23 @@ class DatasetResolver:
         return detected, data
 
     @staticmethod
-    def _check_timing_data(file_path: str, first_record: dict | None) -> bool:
-        """Check whether the first record has timestamp or delay fields.
+    def _check_timing_data(
+        file_path: str,
+        first_record: dict | None,
+        dataset_type: object | None = None,
+    ) -> bool:
+        """Check whether the first record carries timing information.
 
-        Inspects the actual data rather than assuming from dataset type,
-        because trace formats like mooncake may omit timing fields.
+        Most trace formats expose ``timestamp`` or ``delay`` at the top level,
+        but sagemaker_data_capture nests its timing under
+        ``eventMetadata.inferenceTime``. We branch per-loader so fixed_schedule
+        validation accepts every format whose loader actually produces timing.
         """
+        from aiperf.plugin.enums import CustomDatasetType
+
+        if dataset_type == CustomDatasetType.SAGEMAKER_DATA_CAPTURE:
+            return True
+
         record = first_record
         if record is None:
             from pathlib import Path
