@@ -951,10 +951,13 @@ Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. 
 
 OTLP/HTTP metrics endpoint URL.
 
-#### `--stream` `<str>`
+#### `--stream` `<list>`
 
-Select which live telemetry domains to stream: metrics, timing, both, or none.
-<br/>_Default: `default`_
+Select which AIPerf telemetry domains to stream over OTel. Valid values: 'metrics', 'timing', or 'default'. 'default' streams both metrics and timing. Examples: --stream metrics | --stream timing | --stream metrics timing.
+
+#### `--otel-resource-attributes` `<list>`
+
+Custom OTel resource attributes as key=value pairs. Merged into the default resource attributes on every exported metric.
 
 #### `--gen-ai-provider` `<str>`
 
@@ -972,17 +975,17 @@ MLflow experiment name.
 
 MLflow run name.
 
-#### `--mlflow-tags` `<str>`
+#### `--mlflow-tag` `<list>`
 
-Comma-separated MLflow tags.
+Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf) or as JSON string.
 
 #### `--mlflow-parent-run-id` `<str>`
 
 Optional MLflow parent run ID.
 
-#### `--mlflow-artifact-globs` `<list>`
+#### `--mlflow-artifact-glob` `<list>`
 
-Artifact glob overrides for MLflow upload.
+Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
 ### HTTP Trace
 
@@ -1017,13 +1020,13 @@ Specify which output formats to generate for server metrics. Multiple formats ca
 | `json` | _default_ | Export aggregated statistics in JSON hybrid format with metrics keyed by name. Best for: Programmatic access, CI/CD pipelines, automated analysis. |
 | `csv` | _default_ | Export aggregated statistics in CSV tabular format organized by metric type. Best for: Spreadsheet analysis, Excel/Google Sheets, pandas DataFrames. |
 | `jsonl` |  | Export raw time-series records in line-delimited JSON format. Best for: Time-series analysis, debugging, visualizing metric evolution. Warning: Can generate very large files for long-running benchmarks. |
-| `parquet` | _default_ | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
+| `parquet` |  | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
 
 ### GPU Telemetry
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml' or 'amdsmi' to use a local GPU library instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
@@ -1290,17 +1293,16 @@ Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accur
 
 #### `--accuracy-tasks` `<list>`
 
-Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.
+Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). Accepts comma-separated values (e.g. abstract_algebra,anatomy) or repeated flags. If not set, all tasks are included.
 
 #### `--accuracy-n-shots` `<int>`
 
-Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.
-<br/>_Constraints: ≥ 0, ≤ 8_
-<br/>_Default: `0`_
+Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
+<br/>_Constraints: ≥ 0, ≤ 32_
 
 #### `--accuracy-enable-cot`
 
-Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.
+Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
 
 #### `--accuracy-grader` `<str>`
@@ -2259,10 +2261,13 @@ Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. 
 
 OTLP/HTTP metrics endpoint URL.
 
-#### `--stream` `<str>`
+#### `--stream` `<list>`
 
-Select which live telemetry domains to stream: metrics, timing, both, or none.
-<br/>_Default: `default`_
+Select which AIPerf telemetry domains to stream over OTel. Valid values: 'metrics', 'timing', or 'default'. 'default' streams both metrics and timing. Examples: --stream metrics | --stream timing | --stream metrics timing.
+
+#### `--otel-resource-attributes` `<list>`
+
+Custom OTel resource attributes as key=value pairs. Merged into the default resource attributes on every exported metric.
 
 #### `--gen-ai-provider` `<str>`
 
@@ -2280,17 +2285,17 @@ MLflow experiment name.
 
 MLflow run name.
 
-#### `--mlflow-tags` `<str>`
+#### `--mlflow-tag` `<list>`
 
-Comma-separated MLflow tags.
+Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf) or as JSON string.
 
 #### `--mlflow-parent-run-id` `<str>`
 
 Optional MLflow parent run ID.
 
-#### `--mlflow-artifact-globs` `<list>`
+#### `--mlflow-artifact-glob` `<list>`
 
-Artifact glob overrides for MLflow upload.
+Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
 ### HTTP Trace
 
@@ -2325,13 +2330,13 @@ Specify which output formats to generate for server metrics. Multiple formats ca
 | `json` | _default_ | Export aggregated statistics in JSON hybrid format with metrics keyed by name. Best for: Programmatic access, CI/CD pipelines, automated analysis. |
 | `csv` | _default_ | Export aggregated statistics in CSV tabular format organized by metric type. Best for: Spreadsheet analysis, Excel/Google Sheets, pandas DataFrames. |
 | `jsonl` |  | Export raw time-series records in line-delimited JSON format. Best for: Time-series analysis, debugging, visualizing metric evolution. Warning: Can generate very large files for long-running benchmarks. |
-| `parquet` | _default_ | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
+| `parquet` |  | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
 
 ### GPU Telemetry
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml' or 'amdsmi' to use a local GPU library instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
@@ -2598,17 +2603,16 @@ Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accur
 
 #### `--accuracy-tasks` `<list>`
 
-Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.
+Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). Accepts comma-separated values (e.g. abstract_algebra,anatomy) or repeated flags. If not set, all tasks are included.
 
 #### `--accuracy-n-shots` `<int>`
 
-Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.
-<br/>_Constraints: ≥ 0, ≤ 8_
-<br/>_Default: `0`_
+Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
+<br/>_Constraints: ≥ 0, ≤ 32_
 
 #### `--accuracy-enable-cot`
 
-Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.
+Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
 
 #### `--accuracy-grader` `<str>`

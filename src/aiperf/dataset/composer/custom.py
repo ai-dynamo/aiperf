@@ -111,6 +111,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             DatasetFormat.RANDOM_POOL: CustomDatasetType.RANDOM_POOL,
             DatasetFormat.BAILIAN_TRACE: CustomDatasetType.BAILIAN_TRACE,
             DatasetFormat.BURST_GPT_TRACE: CustomDatasetType.BURST_GPT_TRACE,
+            DatasetFormat.DAG_JSONL: CustomDatasetType.DAG_JSONL,
             DatasetFormat.SAGEMAKER_DATA_CAPTURE: CustomDatasetType.SAGEMAKER_DATA_CAPTURE,
         }[fmt]
 

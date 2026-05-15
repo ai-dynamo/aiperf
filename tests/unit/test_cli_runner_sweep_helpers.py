@@ -59,7 +59,12 @@ def _result(
         success=success,
         summary_metrics={
             "request_throughput": JsonMetricResult(
-                unit="requests/sec", avg=throughput, min=throughput, max=throughput
+                unit="requests/sec",
+                avg=throughput,
+                min=throughput,
+                max=throughput,
+                count=10,
+                sum=throughput * 10,
             ),
             "time_to_first_token": JsonMetricResult(
                 unit="ms", avg=ttft_p99 - 5, p99=ttft_p99, min=ttft_p99, max=ttft_p99
@@ -99,6 +104,12 @@ async def test_aggregate_sweep_and_export_two_variations_one_trial(tmp_path, log
     for entry in data["per_combination_metrics"]:
         for metric in entry["metrics"].values():
             assert metric["std"] == 0.0
+    # Schema 1.1 fields propagate through the single-trial projection.
+    rt_stats = next(
+        e["metrics"]["request_throughput"] for e in data["per_combination_metrics"]
+    )
+    assert rt_stats["count"] == 10
+    assert rt_stats["sum"] > 0
 
 
 @pytest.mark.asyncio

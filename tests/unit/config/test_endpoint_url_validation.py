@@ -22,11 +22,6 @@ from aiperf.config.endpoint import EndpointConfig
     ("url", "expected_fragment"),
     [
         param(":18765", "missing scheme or host", id="hostless-port-only"),
-        param(
-            "localhost:18765",
-            "missing scheme or host",
-            id="no-scheme-localhost",
-        ),
         param("/path/only", "missing scheme or host", id="path-only"),
         param("ftp://host:21", "unsupported scheme", id="ftp-scheme"),
     ],
@@ -37,6 +32,12 @@ def test_endpoint_config_rejects_invalid_urls(url: str, expected_fragment: str) 
         EndpointConfig(urls=[url])
     assert expected_fragment in str(exc_info.value)
     assert repr(url) in str(exc_info.value)
+
+
+def test_endpoint_config_normalizes_schemeless_localhost() -> None:
+    """``localhost:18765`` is normalized to ``http://localhost:18765``."""
+    cfg = EndpointConfig(urls=["localhost:18765"])
+    assert cfg.urls == ["http://localhost:18765"]
 
 
 @pytest.mark.parametrize(

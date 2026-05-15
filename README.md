@@ -208,7 +208,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 | [Environment Variables](docs/environment-variables.md) | All `AIPERF_*` configuration variables |
 | [Plugin System](docs/plugins/plugin-system.md) | Plugin architecture, 25+ categories, creation guide |
 | [Creating Plugins](docs/plugins/creating-your-first-plugin.md) | Step-by-step plugin tutorial |
-| [Accuracy Benchmarks](docs/accuracy/accuracy_stubs.md) | Accuracy evaluation stubs and datasets |
+| [Accuracy Benchmarks](docs/accuracy/accuracy-benchmarking.md) | Accuracy evaluation against MMLU, AIME, and other benchmarks |
 | [Benchmark Modes](docs/benchmark-modes/trace-replay.md) | Trace replay and timing modes |
 | [Server Metrics](docs/server-metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
 | [Tokenizer Auto-Detection](docs/reference/tokenizer-auto-detection.md) | Pre-flight tokenizer detection |

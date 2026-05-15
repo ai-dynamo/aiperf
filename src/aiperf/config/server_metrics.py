@@ -139,7 +139,6 @@ class ServerMetricsConfig(BaseConfig):
             default_factory=lambda: [
                 ServerMetricsFormat.JSON,
                 ServerMetricsFormat.CSV,
-                ServerMetricsFormat.PARQUET,
             ],
             description="Export formats for scraped metrics. "
             "Options: json, csv, parquet, jsonl.",

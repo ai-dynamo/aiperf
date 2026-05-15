@@ -177,6 +177,14 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
     """Translate ``--server-metrics`` flags into the server-metrics dict."""
     from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 
+    if (
+        "no_server_metrics" in cli.model_fields_set
+        and "server_metrics" in cli.model_fields_set
+    ):
+        raise ValueError(
+            "Cannot use both --no-server-metrics and --server-metrics together. "
+            "Use only one or the other."
+        )
     if cli.no_server_metrics:
         return {"enabled": False}
     sm_urls = [
@@ -233,6 +241,54 @@ def _normalize_otel_metrics_url(url: str) -> str:
     return urlunparse(parsed._replace(path=normalized_path))
 
 
+def _parse_otel_resource_attributes(items: list[str] | None) -> dict[str, str]:
+    if not items:
+        return {}
+    attrs: dict[str, str] = {}
+    for item in items:
+        for pair in item.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            if "=" not in pair:
+                raise ValueError(
+                    f"Invalid --otel-resource-attributes entry {pair!r}: expected key=value."
+                )
+            key, _, value = pair.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                raise ValueError(
+                    f"Invalid --otel-resource-attributes entry {pair!r}: key cannot be empty."
+                )
+            if not value:
+                raise ValueError(
+                    f"Invalid --otel-resource-attributes entry {pair!r}: value cannot be empty."
+                )
+            attrs[key] = value
+    return attrs
+
+
+def _resolve_stream_domains(value: Any) -> tuple[bool, bool]:
+    """Resolve ``--stream`` into (stream_metrics_enabled, stream_timing_enabled)."""
+    domains = value or []
+    if isinstance(domains, str):
+        domains = [domains]
+    allowed = {"default", "metrics", "timing", "none"}
+    invalid = [d for d in domains if d not in allowed]
+    if invalid:
+        raise ValueError(
+            f"Invalid --stream value(s) {invalid!r}. Allowed: {sorted(allowed)}."
+        )
+    if "none" in domains:
+        return False, False
+    wants_default = not domains or "default" in domains
+    return (
+        wants_default or "metrics" in domains,
+        wants_default or "timing" in domains,
+    )
+
+
 def build_otel(cli: CLIConfig) -> dict[str, Any]:
     """Translate OTel CLI flags into the first-class OTel config dict."""
     otel: dict[str, Any] = {}
@@ -247,6 +303,8 @@ def build_otel(cli: CLIConfig) -> dict[str, Any]:
         offenders: list[str] = []
         if "stream" in cli_set:
             offenders.append("--stream")
+        if "otel_resource_attributes" in cli_set:
+            offenders.append("--otel-resource-attributes")
         if "gen_ai_provider" in cli_set:
             offenders.append("--gen-ai-provider")
         if offenders:
@@ -256,8 +314,13 @@ def build_otel(cli: CLIConfig) -> dict[str, Any]:
             )
 
     if "stream" in cli_set:
-        otel["stream_metrics_enabled"] = cli.stream in ("default", "metrics")
-        otel["stream_timing_enabled"] = cli.stream in ("default", "timing")
+        metrics_enabled, timing_enabled = _resolve_stream_domains(cli.stream)
+        otel["stream_metrics_enabled"] = metrics_enabled
+        otel["stream_timing_enabled"] = timing_enabled
+    if "otel_resource_attributes" in cli_set:
+        otel["custom_resource_attributes"] = _parse_otel_resource_attributes(
+            cli.otel_resource_attributes
+        )
     if "gen_ai_provider" in cli_set:
         otel["gen_ai_provider"] = cli.gen_ai_provider
     return otel

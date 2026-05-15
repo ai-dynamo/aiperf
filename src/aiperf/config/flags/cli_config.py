@@ -89,7 +89,6 @@ from aiperf.plugin.enums import (
 _DEFAULT_SERVER_METRICS_FORMATS: list[ServerMetricsFormat] = [
     ServerMetricsFormat.JSON,
     ServerMetricsFormat.CSV,
-    ServerMetricsFormat.PARQUET,
 ]
 
 
@@ -2061,12 +2060,40 @@ class CLIConfig(BaseConfig):
     ] = None
 
     stream: Annotated[
-        Literal["default", "metrics", "timing", "none"],
+        list[str] | None,
         Field(
-            description="Select which live telemetry domains to stream: metrics, timing, both, or none."
+            default=None,
+            description=(
+                "Select which AIPerf telemetry domains to stream over OTel. "
+                "Valid values: 'metrics', 'timing', or 'default'. "
+                "'default' streams both metrics and timing. "
+                "Examples: --stream metrics | --stream timing | --stream metrics timing"
+            ),
         ),
-        CLIParameter(name=("--stream",), group=Groups.OUTPUT),
-    ] = "default"
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--stream",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
+    otel_resource_attributes: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Custom OTel resource attributes as key=value pairs. "
+                "Merged into the default resource attributes on every exported metric."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--otel-resource-attributes",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
 
     gen_ai_provider: Annotated[
         str | None,
@@ -2093,9 +2120,21 @@ class CLIConfig(BaseConfig):
     ] = None
 
     mlflow_tags: Annotated[
-        str | None,
-        Field(default=None, description="Comma-separated MLflow tags."),
-        CLIParameter(name=("--mlflow-tags",), group=Groups.OUTPUT),
+        list[tuple[str, Any]] | None,
+        Field(
+            default=None,
+            description=(
+                "Additional MLflow run tags to attach on upload. "
+                "Specify as key:value pairs (e.g., --mlflow-tag team:perf) "
+                "or as JSON string."
+            ),
+        ),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
+        CLIParameter(
+            name=("--mlflow-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
     ] = None
 
     mlflow_parent_run_id: Annotated[
@@ -2106,10 +2145,16 @@ class CLIConfig(BaseConfig):
 
     mlflow_artifact_globs: Annotated[
         list[str] | None,
-        Field(default=None, description="Artifact glob overrides for MLflow upload."),
+        Field(
+            default=None,
+            description=(
+                "Artifact glob overrides for MLflow upload. "
+                "Can be specified multiple times or as a comma-separated list."
+            ),
+        ),
         BeforeValidator(parse_str_or_list),
         CLIParameter(
-            name=("--mlflow-artifact-globs",),
+            name=("--mlflow-artifact-glob",),
             consume_multiple=True,
             group=Groups.OUTPUT,
         ),
@@ -2202,12 +2247,12 @@ class CLIConfig(BaseConfig):
         Field(
             description=(
                 "Enable GPU telemetry console display and optionally specify: "
-                "(1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, "
+                "(1) 'pynvml' or 'amdsmi' to use a local GPU library instead of DCGM HTTP endpoints, "
                 "(2) 'dashboard' for realtime dashboard mode, "
                 "(3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
                 "(4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
                 "Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. "
-                "Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400"
+                "Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400"
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -3189,9 +3234,11 @@ class CLIConfig(BaseConfig):
 
     accuracy_tasks: Annotated[
         list[str] | None,
+        BeforeValidator(parse_str_or_list),
         Field(
             description="Specific tasks or subtasks within the benchmark to evaluate "
-            "(e.g., specific MMLU subjects). If not set, all tasks are included.",
+            "(e.g., specific MMLU subjects). Accepts comma-separated values "
+            "(e.g. abstract_algebra,anatomy) or repeated flags. If not set, all tasks are included.",
         ),
         CLIParameter(
             name=("--accuracy-tasks",),
@@ -3200,30 +3247,31 @@ class CLIConfig(BaseConfig):
     ] = None
 
     accuracy_n_shots: Annotated[
-        int,
+        int | None,
         Field(
             ge=0,
-            le=8,
+            le=32,
             description="Number of few-shot examples to include in the prompt. "
-            "0 means zero-shot evaluation. Maximum 8.",
+            "0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.",
         ),
         CLIParameter(
             name=("--accuracy-n-shots",),
             group=Groups.ACCURACY,
         ),
-    ] = 0
+    ] = None
 
     accuracy_enable_cot: Annotated[
-        bool,
+        bool | None,
         Field(
             description="Enable chain-of-thought prompting for accuracy evaluation. "
-            "Adds reasoning instructions to the prompt.",
+            "Adds reasoning instructions to the prompt. Defaults to the benchmark's "
+            "``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).",
         ),
         CLIParameter(
             name=("--accuracy-enable-cot",),
             group=Groups.ACCURACY,
         ),
-    ] = False
+    ] = None
 
     accuracy_grader: Annotated[
         AccuracyGraderType | None,

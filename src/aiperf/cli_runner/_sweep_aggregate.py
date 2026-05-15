@@ -230,6 +230,12 @@ def _json_metric_to_stats(metric: Any) -> dict[str, Any]:
         v = getattr(metric, pct_field, None)
         if v is not None:
             out[pct_field] = v
+    # Carry through schema-1.1 size fields when present so downstream
+    # readers see the same shape as profile_export_aiperf.json.
+    for size_field in ("count", "sum"):
+        v = getattr(metric, size_field, None)
+        if v is not None:
+            out[size_field] = v
     return out
 
 

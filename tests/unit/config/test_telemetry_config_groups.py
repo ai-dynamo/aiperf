@@ -43,7 +43,9 @@ def test_benchmark_otel_and_mlflow_groups_load_without_flat_forwarders() -> None
                 tracking_uri: http://localhost:5000
                 experiment: my-experiment
                 run_name: my-run
-                tags: "team:perf"
+                tags:
+                  team: perf
+                  env: ci
                 parent_run_id: null
                 artifact_globs:
                   - "*.json"
@@ -62,7 +64,8 @@ def test_benchmark_otel_and_mlflow_groups_load_without_flat_forwarders() -> None
     assert benchmark.mlflow.tracking_uri == "http://localhost:5000"
     assert benchmark.mlflow.experiment == "my-experiment"
     assert benchmark.mlflow.run_name == "my-run"
-    assert benchmark.mlflow.tags_dict == {"team": "perf"}
+    assert benchmark.mlflow.tags == {"team": "perf", "env": "ci"}
+    assert benchmark.mlflow.tags_dict == {"team": "perf", "env": "ci"}
     assert benchmark.mlflow.parent_run_id is None
     assert benchmark.mlflow.resolved_artifact_globs == ["*.json", "*.csv"]
 
@@ -95,6 +98,9 @@ def test_cli_telemetry_flags_populate_first_class_groups() -> None:
             otel_url="http://localhost:4318",
             stream="timing",
             gen_ai_provider="vllm",
+            accuracy_benchmark="mmlu",
+            accuracy_tasks="abstract_algebra,anatomy",
+            accuracy_n_shots=16,
             mlflow_tracking_uri="http://localhost:5000",
             mlflow_experiment="my-experiment",
             mlflow_run_name="my-run",
@@ -109,6 +115,8 @@ def test_cli_telemetry_flags_populate_first_class_groups() -> None:
     assert benchmark.otel.stream_metrics_enabled is False
     assert benchmark.otel.stream_timing_enabled is True
     assert benchmark.otel.gen_ai_provider == "vllm"
+    assert benchmark.accuracy.tasks == ["abstract_algebra", "anatomy"]
+    assert benchmark.accuracy.n_shots == 16
     assert benchmark.mlflow.tracking_uri == "http://localhost:5000"
     assert benchmark.mlflow.experiment == "my-experiment"
     assert benchmark.mlflow.run_name == "my-run"

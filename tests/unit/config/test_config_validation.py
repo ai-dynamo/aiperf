@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 
+import orjson
 import pytest
 from pydantic import ValidationError
 
@@ -407,7 +409,20 @@ class TestEndpointBoundaryValidation:
 # =============================================================================
 
 
+def test_generated_schema_includes_otel_and_mlflow_sections():
+    schema_path = Path("src/aiperf/config/schema/aiperf-config.schema.json")
+    schema = orjson.loads(schema_path.read_bytes())
+    benchmark_props = schema["$defs"]["BenchmarkConfig"]["properties"]
+    assert "otel" in benchmark_props
+    assert "mlflow" in benchmark_props
+
+
 class TestRequestContentTypeValidation:
+    def test_image_edit_is_in_generated_schema_endpoint_enum(self):
+        schema_path = Path("src/aiperf/config/schema/aiperf-config.schema.json")
+        schema = orjson.loads(schema_path.read_bytes())
+        assert "image_edit" in schema["$defs"]["EndpointType"]["enum"]
+
     def test_image_edit_defaults_to_multipart(self):
         endpoint = EndpointConfig(
             urls=["http://localhost:8000/v1/images/edits"],

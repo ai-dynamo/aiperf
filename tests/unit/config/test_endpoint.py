@@ -28,7 +28,18 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
+from aiperf.config.endpoint import EndpointConfig, EndpointDefaults
 from aiperf.plugin.enums import EndpointType, TransportType
+
+
+def test_endpoint_config_normalizes_schemeless_urls() -> None:
+    endpoint = EndpointConfig(urls=["localhost:8000"])
+    assert endpoint.urls == ["http://localhost:8000"]
+
+
+def test_endpoint_config_timeout_uses_endpoint_default() -> None:
+    endpoint = EndpointConfig(urls=["http://localhost:8000"])
+    assert endpoint.timeout == EndpointDefaults.TIMEOUT
 
 
 def _make_model_endpoint(

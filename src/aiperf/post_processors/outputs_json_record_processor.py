@@ -11,7 +11,7 @@ from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.config.artifacts import OutputDefaults
-from aiperf.config.config import BenchmarkConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class OutputFragment(AIPerfBaseModel):
@@ -43,10 +43,10 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
     def __init__(
         self,
         service_id: str | None,
-        cfg: BenchmarkConfig,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        self.cfg = cfg
+        self.cfg = run.cfg
 
         if not self.cfg.artifacts.export_outputs_json:
             raise PostProcessorDisabled(
@@ -54,7 +54,8 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
             )
 
         output_dir = (
-            cfg.artifacts.artifact_directory / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+            self.cfg.artifacts.artifact_directory
+            / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -73,7 +74,7 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
             output_file=output_file,
             batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
             service_id=service_id,
-            cfg=cfg,
+            cfg=self.cfg,
             **kwargs,
         )
 

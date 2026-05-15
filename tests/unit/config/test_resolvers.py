@@ -415,6 +415,14 @@ class TestDatasetResolver:
         with pytest.raises(FileNotFoundError, match="Dataset 'main' file not found"):
             DatasetResolver().resolve(run)
 
+    def test_format_map_includes_dag_jsonl(self):
+        from aiperf.plugin.enums import CustomDatasetType
+
+        assert (
+            DatasetResolver._build_format_map()["dag_jsonl"]
+            == CustomDatasetType.DAG_JSONL
+        )
+
     def test_counts_dag_roots_for_dag_jsonl(self, tmp_path):
         """Forking datasets (dag_jsonl) should populate dataset_root_count.
 

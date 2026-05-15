@@ -14,6 +14,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import (
+    AfterValidator,
     ConfigDict,
     Field,
     field_serializer,
@@ -27,6 +28,7 @@ from aiperf.common.enums import (
     RequestContentType,
 )
 from aiperf.config.base import BaseConfig
+from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
     TransportType,
@@ -109,9 +111,11 @@ class EndpointConfig(BaseConfig):
             min_length=1,
             description="List of server URLs to benchmark. "
             "Requests distributed according to url_strategy. "
+            "URLs without a scheme have ``http://`` prepended automatically. "
             "Example: ['http://localhost:8000/v1/chat/completions']",
             json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
+        AfterValidator(normalize_http_urls),
     ]
 
     @field_serializer("urls")
@@ -179,7 +183,7 @@ class EndpointConfig(BaseConfig):
         float,
         Field(
             ge=0.0,
-            default=600.0,
+            default=EndpointDefaults.TIMEOUT,
             description="Request timeout in seconds (0 = no timeout). "
             "Requests exceeding this duration are marked as failed. "
             "Should exceed expected max response time.",

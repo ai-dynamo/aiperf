@@ -343,6 +343,28 @@ class TestExplicitCustomDatasetType:
     silently picked single_turn, dropping the user's choice.
     """
 
+    def test_dag_jsonl_routes_to_dag_loader(self, tmp_path, mock_tokenizer):
+        from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader
+
+        jsonl = tmp_path / "dag.jsonl"
+        jsonl.write_text(
+            '{"session_id": "root", "turns": [{"messages": [{"role": "user", "content": "hi"}]}]}\n'
+        )
+
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+            custom_dataset_type=CustomDatasetType.DAG_JSONL,
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+
+        assert composer._explicit_format() == CustomDatasetType.DAG_JSONL
+
+        composer.create_dataset()
+        assert isinstance(composer.loader, DagJsonlLoader)
+
     def test_random_pool_routes_to_random_pool_loader(self, tmp_path, mock_tokenizer):
         """`--custom-dataset-type random-pool` must produce a RandomPoolDatasetLoader."""
         from aiperf.config.flags.cli_config import CLIConfig

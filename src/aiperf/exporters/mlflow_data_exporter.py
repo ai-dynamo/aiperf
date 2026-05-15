@@ -329,7 +329,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
     # MLflow. The exporter skips fields that are None, so listing a superset is
     # safe — metrics that don't produce a given percentile simply omit it. Keep
     # in sync with JsonMetricResult in common/models/export_models.py.
-    _STAT_FIELDS = ("avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max", "std")  # fmt: skip
+    _STAT_FIELDS = ("avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max", "std", "count", "sum")  # fmt: skip
 
     def _build_metric_payload(self) -> dict[str, float]:
         payload: dict[str, float] = {}

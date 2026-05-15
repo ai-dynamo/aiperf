@@ -207,6 +207,7 @@ class DatasetResolver:
             str(DatasetFormat.RANDOM_POOL): CustomDatasetType.RANDOM_POOL,
             str(DatasetFormat.BAILIAN_TRACE): CustomDatasetType.BAILIAN_TRACE,
             str(DatasetFormat.BURST_GPT_TRACE): CustomDatasetType.BURST_GPT_TRACE,
+            str(DatasetFormat.DAG_JSONL): CustomDatasetType.DAG_JSONL,
             str(
                 DatasetFormat.SAGEMAKER_DATA_CAPTURE
             ): CustomDatasetType.SAGEMAKER_DATA_CAPTURE,

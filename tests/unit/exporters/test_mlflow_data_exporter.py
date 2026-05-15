@@ -182,6 +182,8 @@ def sample_results() -> ProfileResults:
                 header="Request Throughput",
                 unit="req/s",
                 avg=42.5,
+                count=10,
+                sum=425.0,
             ),
             MetricResult(
                 tag="time_to_first_token",
@@ -267,6 +269,8 @@ class TestMLflowDataExporter:
 
         metric_map = {metric.key: metric.value for metric in batch["metrics"]}
         assert metric_map["request_throughput"] == 42.5
+        assert metric_map["request_throughput.count"] == 10.0
+        assert metric_map["request_throughput.sum"] == 425.0
         assert metric_map["aiperf.completed_requests"] == 10.0
         assert metric_map["aiperf.total_expected_requests"] == 12.0
         assert "time_to_first_token" not in metric_map

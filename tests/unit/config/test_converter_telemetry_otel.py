@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import pytest
 
+from aiperf.common.enums import ServerMetricsFormat
 from aiperf.config.flags._converter_telemetry import (
     _normalize_otel_metrics_url,
     build_otel,
+    build_server_metrics,
 )
 from aiperf.config.flags.cli_config import CLIConfig
 
@@ -29,6 +31,22 @@ def _make_cli(**overrides) -> CLIConfig:
     }
     base.update(overrides)
     return CLIConfig(**base)
+
+
+class TestServerMetricsCliParity:
+    def test_default_formats_match_origin_main_json_csv(self):
+        cli = _make_cli()
+        assert cli.server_metrics_formats == [
+            ServerMetricsFormat.JSON,
+            ServerMetricsFormat.CSV,
+        ]
+
+    def test_no_server_metrics_with_server_metrics_raises(self):
+        cli = _make_cli(no_server_metrics=True, server_metrics=["localhost:9400"])
+        with pytest.raises(
+            ValueError, match="Cannot use both --no-server-metrics and --server-metrics"
+        ):
+            build_server_metrics(cli)
 
 
 class TestOtelUrlNormalization:
@@ -105,10 +123,49 @@ class TestStreamAndGenAiProviderRequireOtelUrl:
         assert otel["stream_metrics_enabled"] is True
         assert otel["stream_timing_enabled"] is False
 
+    def test_otel_url_unblocks_repeated_stream_domains(self):
+        cli = _make_cli(otel_url="collector:4318", stream=["metrics", "timing"])
+        otel = build_otel(cli)
+        assert otel["stream_metrics_enabled"] is True
+        assert otel["stream_timing_enabled"] is True
+
     def test_otel_url_unblocks_gen_ai_provider(self):
         cli = _make_cli(otel_url="collector:4318", gen_ai_provider="openai")
         otel = build_otel(cli)
         assert otel["gen_ai_provider"] == "openai"
+
+    def test_resource_attributes_without_otel_url_raises(self):
+        cli = _make_cli(otel_resource_attributes=["team=inference"])
+        with pytest.raises(ValueError, match="--otel-resource-attributes.*--otel-url"):
+            build_otel(cli)
+
+    def test_otel_url_unblocks_resource_attributes(self):
+        cli = _make_cli(
+            otel_url="collector:4318",
+            otel_resource_attributes=["team=inference", "env=prod,region=us-west-2"],
+        )
+        otel = build_otel(cli)
+        assert otel["custom_resource_attributes"] == {
+            "team": "inference",
+            "env": "prod",
+            "region": "us-west-2",
+        }
+
+    @pytest.mark.parametrize(
+        "resource_attrs",
+        [
+            ["missing_equals"],
+            ["=missing-key"],
+            ["missing-value="],
+        ],
+    )
+    def test_resource_attributes_reject_malformed_entries(self, resource_attrs):
+        cli = _make_cli(
+            otel_url="collector:4318",
+            otel_resource_attributes=resource_attrs,
+        )
+        with pytest.raises(ValueError, match="--otel-resource-attributes"):
+            build_otel(cli)
 
     def test_no_otel_flags_returns_empty_dict(self):
         cli = _make_cli()

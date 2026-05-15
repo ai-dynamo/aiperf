@@ -36,7 +36,7 @@ class TestSecondaryFlagsRequireTrackingUri:
         [
             ("mlflow_experiment", "my-experiment"),
             ("mlflow_run_name", "my-run"),
-            ("mlflow_tags", "team:perf"),
+            ("mlflow_tags", [("team", "perf")]),
             ("mlflow_parent_run_id", "parent-123"),
             ("mlflow_artifact_globs", ["*.json"]),
         ],
@@ -75,6 +75,11 @@ class TestEmptyStringRejection:
         )
         with pytest.raises(ValueError, match="--mlflow-experiment cannot be empty"):
             build_mlflow(cli)
+
+    def test_artifact_glob_cli_flag_is_singular(self):
+        field = CLIConfig.model_fields["mlflow_artifact_globs"]
+        param_names = field.metadata[-1].name
+        assert param_names == ("--mlflow-artifact-glob",)
 
     def test_empty_artifact_glob_entry_raises(self):
         cli = _make_cli(
@@ -137,7 +142,7 @@ class TestSuccessPaths:
             mlflow_tracking_uri="http://mlflow:5000",
             mlflow_experiment="bench",
             mlflow_run_name="run-1",
-            mlflow_tags="team:perf",
+            mlflow_tags=[("team", "perf")],
             mlflow_parent_run_id="parent-1",
             mlflow_artifact_globs=["*.json"],
         )
@@ -145,6 +150,6 @@ class TestSuccessPaths:
         assert out["tracking_uri"] == "http://mlflow:5000"
         assert out["experiment"] == "bench"
         assert out["run_name"] == "run-1"
-        assert out["tags"] == "team:perf"
+        assert out["tags"] == [("team", "perf")]
         assert out["parent_run_id"] == "parent-1"
         assert out["artifact_globs"] == ["*.json"]

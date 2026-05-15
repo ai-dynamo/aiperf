@@ -48,7 +48,19 @@ class TestOutputsJsonRecordProcessorDisabled:
         with pytest.raises(PostProcessorDisabled):
             OutputsJsonRecordProcessor(
                 service_id="processor-1",
-                cfg=config,
+                run=MagicMock(cfg=config),
+            )
+
+    def test_disabled_accepts_plugin_loader_run_argument(self, tmp_path: Path) -> None:
+        """Raises PostProcessorDisabled when instantiated through the plugin loader contract."""
+        config = _make_config(tmp_path, export_outputs_json=False)
+        run = MagicMock()
+        run.cfg = config
+
+        with pytest.raises(PostProcessorDisabled):
+            OutputsJsonRecordProcessor(
+                run=run,
+                service_id="processor-1",
             )
 
 
@@ -78,7 +90,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            cfg=config,
+            run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -110,7 +122,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            cfg=config,
+            run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -144,7 +156,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            cfg=config,
+            run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)

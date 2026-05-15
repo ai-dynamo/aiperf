@@ -979,6 +979,30 @@
           "$ref": "#/$defs/ServerMetricsConfig",
           "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
         },
+        "otel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OTelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OpenTelemetry metrics streaming configuration. When metrics_url is set, AIPerf exports metrics and timing records over OTLP/HTTP."
+        },
+        "mlflow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MLflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MLflow tracking and artifact-upload configuration. When tracking_uri is set, AIPerf uploads summary metrics, tags, and artifacts after the run."
+        },
         "runtime": {
           "$ref": "#/$defs/RuntimeConfig",
           "description": "Runtime configuration for worker processes and inter-process communication."
@@ -2405,6 +2429,7 @@
         "embeddings",
         "hf_tei_rankings",
         "huggingface_generate",
+        "image_edit",
         "image_generation",
         "video_generation",
         "image_retrieval",
@@ -3865,6 +3890,135 @@
         "name"
       ],
       "title": "ModelItem",
+      "type": "object"
+    },
+    "MLflowConfig": {
+      "additionalProperties": false,
+      "description": "MLflow tracking and artifact-upload configuration.",
+      "properties": {
+        "tracking_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MLflow tracking URI."
+        },
+        "experiment": {
+          "default": "aiperf",
+          "description": "MLflow experiment name.",
+          "type": "string"
+        },
+        "run_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MLflow run name."
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Additional MLflow run tags to attach on upload."
+        },
+        "parent_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional MLflow parent run ID."
+        },
+        "artifact_globs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Artifact glob overrides for MLflow upload."
+        }
+      },
+      "title": "MLflowConfig",
+      "type": "object"
+    },
+    "OTelConfig": {
+      "additionalProperties": false,
+      "description": "OpenTelemetry metrics streaming configuration.",
+      "properties": {
+        "metrics_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OTLP/HTTP metrics endpoint URL."
+        },
+        "stream_metrics_enabled": {
+          "default": true,
+          "description": "Stream metric records to OTel.",
+          "type": "boolean"
+        },
+        "stream_timing_enabled": {
+          "default": true,
+          "description": "Stream timing records to OTel.",
+          "type": "boolean"
+        },
+        "custom_resource_attributes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Custom OTel resource attributes.",
+          "type": "object"
+        },
+        "gen_ai_provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "GenAI semantic convention provider override."
+        }
+      },
+      "title": "OTelConfig",
       "type": "object"
     },
     "ModelSelectionStrategy": {

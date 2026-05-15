@@ -170,7 +170,7 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots | Notes |
 |---|-------|------|------------|----------------|-----------------|-------|
 | 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 | **IMPLEMENTED in PR #815** — canonical reference for new benchmarks. Downloads via HuggingFace datasets, handles few-shot formatting and CoT. |
-| 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 | **IMPLEMENTED.** Loads `Maxwell-Jia/AIME_2024`, instructs the model to wrap its final integer in `\boxed{}`, supports few-shot priming and chain-of-thought. |
+| 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 8 | **IMPLEMENTED.** Loads `Maxwell-Jia/AIME_2024`, instructs the model to wrap its final integer in `\boxed{}`, supports few-shot priming and chain-of-thought. `default_enable_cot=true`. |
 
 ### Still Stubbed
 
