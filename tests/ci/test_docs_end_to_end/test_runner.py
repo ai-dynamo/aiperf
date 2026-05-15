@@ -96,13 +96,13 @@ class EndToEndTestRunner:
         subprocess.run(
             "docker stop $(docker ps -q) 2>/dev/null || true",
             shell=True,
-            capture_artifacts=True,
+            capture_output=True,
             timeout=30,
         )
         subprocess.run(
             "docker container prune -f",
             shell=True,
-            capture_artifacts=True,
+            capture_output=True,
             timeout=10,
         )
 
@@ -203,7 +203,7 @@ class EndToEndTestRunner:
         run_command = f"docker run -d --name {container_name} -e HF_TOKEN {fixtures_mount} --network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
 
         result = subprocess.run(
-            run_command, shell=True, capture_artifacts=True, text=True, timeout=60
+            run_command, shell=True, capture_output=True, text=True, timeout=60
         )
 
         if result.returncode != 0:
@@ -218,7 +218,7 @@ class EndToEndTestRunner:
         verify_result = subprocess.run(
             f"docker exec {container_name} aiperf --version",
             shell=True,
-            capture_artifacts=True,
+            capture_output=True,
             text=True,
             timeout=30,
         )
@@ -448,11 +448,11 @@ class EndToEndTestRunner:
         subprocess.run(
             stop_cmd,
             shell=True,
-            capture_artifacts=True,
+            capture_output=True,
             timeout=30,
         )
         subprocess.run(
-            "docker container prune -f", shell=True, capture_artifacts=True, timeout=10
+            "docker container prune -f", shell=True, capture_output=True, timeout=10
         )
         logger.info(
             "All server containers stopped, aiperf container preserved for next test"
