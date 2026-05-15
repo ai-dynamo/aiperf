@@ -4,9 +4,8 @@
 
 Expert-mode entry point under the SearchPlanner ABC. Selected via
 ``--search-planner optuna``; the underlying sampler (``gp`` / ``tpe`` /
-``botorch``) is selected via ``--optuna-sampler``. Lives behind the
-``[optuna]`` extra so users opting into the monotonic / smooth-isotonic
-1D planners don't pay the dep cost.
+``botorch``) is selected via ``--optuna-sampler``. Optuna core is a default
+dependency; the BoTorch/Torch stack remains optional.
 
 Constraint handling: SLA filters are passed to the sampler as a
 ``constraints_func`` that reads observations off ``trial.user_attrs``
@@ -95,7 +94,7 @@ def _build_terminator(mode: str) -> tuple[Any | None, str | None]:
     Ishibashi 2023).
 
     Lazy import: ``optuna.terminator`` ships in core, but importing it
-    early would defeat the [optuna]-extra gating in ``__init__``.
+    early would make planner construction pay the terminator import cost.
     """
     if mode == "none":
         return None, None
@@ -114,29 +113,31 @@ class OptunaSearchPlanner(SearchPlanner):
     """Optuna-backed adaptive outer-loop planner (expert mode).
 
     Default sampler when ``--optuna-sampler`` is unset: ``botorch``
-    (see :attr:`AdaptiveSearchSweep.optuna_sampler` — drives a Gaussian-
-    process surrogate with LogEI acquisition single-objective, and is
-    required for multi-objective Pareto BO; needs ``torch`` and
-    ``optuna-integration`` installed). ``--optuna-sampler tpe`` selects
-    ``TPESampler`` (Optuna 3.0+ native constraints, dep-light — ships
-    with Optuna core, no extra install). ``--optuna-sampler gp`` selects
-    ``GPSampler`` (Optuna's native GP-EI with inequality constraints in
-    Optuna 4.2+) but requires ``torch`` to be installed separately.
+    (see :attr:`AdaptiveSearchSweep.optuna_sampler`) — the preferred GP path.
+    If that implicit default cannot import the optional BoTorch stack, the
+    planner warns and falls back to Optuna's core ``TPESampler``. Explicit
+    ``--optuna-sampler botorch`` requests raise instead. ``--optuna-sampler gp``
+    selects Optuna's native GP-EI and requires ``torch``.
 
-    Lives behind the ``[optuna]`` extra (``uv pip install -e '.[optuna]'``).
     The :class:`BayesianSearchPlanner` curated preset subclasses this
-    class and locks ``optuna_sampler=botorch`` plus the qLogNEI /
-    qLogNEHVI acquisition; users who don't want to choose sampler /
+    class and tries ``optuna_sampler=botorch`` plus the qLogNEI /
+    qLogNEHVI acquisition before falling back to TPE; users who don't want to choose sampler /
     acquisition should pick ``--search-planner bayesian`` instead.
     """
 
-    def __init__(self, base_config: BenchmarkConfig, cfg: AdaptiveSearchSweep) -> None:
+    def __init__(
+        self,
+        base_config: BenchmarkConfig,
+        cfg: AdaptiveSearchSweep,
+        *,
+        allow_implicit_botorch_fallback: bool | None = None,
+    ) -> None:
         try:
             import optuna
         except ImportError as e:
             raise ImportError(
-                "Optuna planner requires the 'optuna' extra: "
-                "`uv pip install -e '.[optuna]'`. "
+                "Optuna planner requires the core `optuna` dependency. "
+                "Install or resync AIPerf dependencies with `make first-time-setup`. "
                 f"Underlying import error: {e}"
             ) from e
 
@@ -160,7 +161,19 @@ class OptunaSearchPlanner(SearchPlanner):
         self._warned_nan: bool = False
         self._qnehvi_installed: bool = False
 
-        sampler = build_sampler(cfg)
+        sampler_cfg = cfg
+        if allow_implicit_botorch_fallback is None:
+            allow_implicit_botorch_fallback = (
+                "optuna_sampler" not in cfg.model_fields_set
+            )
+        try:
+            sampler = build_sampler(sampler_cfg)
+        except ImportError as exc:
+            if cfg.optuna_sampler != "botorch" or not allow_implicit_botorch_fallback:
+                raise
+            sampler_cfg = self._fallback_to_tpe_after_botorch_import_error(cfg, exc)
+            sampler = build_sampler(sampler_cfg)
+        self._cfg = sampler_cfg
         directions = [
             "maximize"
             if obj.direction == OptimizationDirection.MAXIMIZE
@@ -347,6 +360,26 @@ class OptunaSearchPlanner(SearchPlanner):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _fallback_to_tpe_after_botorch_import_error(
+        self, cfg: AdaptiveSearchSweep, exc: ImportError
+    ) -> AdaptiveSearchSweep:
+        fallback_cfg = cfg.model_copy(
+            update={
+                "optuna_sampler": "tpe",
+                "optuna_acquisition": None,
+            }
+        )
+        message = (
+            "Implicit optuna_sampler='botorch' could not initialize because the "
+            "optional BoTorch stack is unavailable; falling back to "
+            "optuna_sampler='tpe'. Install aiperf[botorch] to enable "
+            "BoTorch-backed optimization. Underlying import error: "
+            f"{exc}"
+        )
+        logger.warning("%s", message)
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
+        return fallback_cfg
 
     def _populate_user_attrs(self, trial: Any, results: list[RunResult]) -> bool:
         """Write per-SLA averaged observations onto ``trial.user_attrs``.

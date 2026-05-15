@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for testing AIPerf post processors."""
 
+import sys
+import types
 from contextlib import asynccontextmanager
+from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 from unittest.mock import Mock
 
 import pytest
@@ -60,6 +63,211 @@ from tests.unit.conftest import (
 )
 
 T = TypeVar("T", bound=AIPerfLifecycleMixin)
+
+
+def install_fake_otel_modules(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    """Install a fake opentelemetry module tree into sys.modules."""
+    state = state if state is not None else {}
+
+    def _add_module(name: str, *, package: bool = True) -> types.ModuleType:
+        module = types.ModuleType(name)
+        if package:
+            module.__path__ = []  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, name, module)
+        return module
+
+    opentelemetry = _add_module("opentelemetry")
+    exporter = _add_module("opentelemetry.exporter")
+    otlp = _add_module("opentelemetry.exporter.otlp")
+    proto = _add_module("opentelemetry.exporter.otlp.proto")
+    http = _add_module("opentelemetry.exporter.otlp.proto.http")
+    metric_exporter = _add_module(
+        "opentelemetry.exporter.otlp.proto.http.metric_exporter", package=False
+    )
+    sdk = _add_module("opentelemetry.sdk")
+    sdk_metrics = _add_module("opentelemetry.sdk.metrics")
+    sdk_metrics_export = _add_module("opentelemetry.sdk.metrics.export", package=False)
+    sdk_resources = _add_module("opentelemetry.sdk.resources", package=False)
+
+    opentelemetry.exporter = exporter
+    exporter.otlp = otlp
+    otlp.proto = proto
+    proto.http = http
+    http.metric_exporter = metric_exporter
+
+    opentelemetry.sdk = sdk
+    sdk.metrics = sdk_metrics
+    sdk.resources = sdk_resources
+    sdk_metrics.export = sdk_metrics_export
+
+    class FakeMetricExportResult(Enum):
+        SUCCESS = "success"
+        FAILURE = "failure"
+
+    class FakeMetricExporter:
+        def __init__(self) -> None:
+            self.export_calls: list[object] = []
+            self.force_flush_calls: list[int] = []
+            self.shutdown_calls = 0
+
+        def export(
+            self, metrics_data: object, timeout_millis: float = 10000, **kwargs: object
+        ) -> FakeMetricExportResult:
+            self.export_calls.append((metrics_data, timeout_millis, kwargs))
+            return FakeMetricExportResult.SUCCESS
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            return True
+
+        def shutdown(self, timeout_millis: float = 30000, **kwargs: object) -> None:
+            self.shutdown_calls += 1
+
+    class FakeOTLPMetricExporter(FakeMetricExporter):
+        instances: ClassVar[list["FakeOTLPMetricExporter"]] = []
+
+        def __init__(self, endpoint: str, timeout: float) -> None:
+            super().__init__()
+            self.endpoint = endpoint
+            self.timeout = timeout
+            self.export_result = FakeMetricExportResult.SUCCESS
+            self.force_flush_result = True
+            FakeOTLPMetricExporter.instances.append(self)
+            state["exporter_endpoint"] = endpoint
+            state["exporter_timeout"] = timeout
+
+        def export(
+            self, metrics_data: object, timeout_millis: float = 10000, **kwargs: object
+        ) -> FakeMetricExportResult:
+            self.export_calls.append((metrics_data, timeout_millis, kwargs))
+            return self.export_result
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            return self.force_flush_result
+
+    class FakeHistogram:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.records: list[tuple[float, dict[str, object]]] = []
+
+        def record(self, value: float, attributes: dict[str, object]) -> None:
+            self.records.append((value, attributes))
+
+    class FakeCounter:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.adds: list[tuple[float, dict[str, object]]] = []
+
+        def add(self, value: float, attributes: dict[str, object]) -> None:
+            self.adds.append((value, attributes))
+
+    class FakeUpDownCounter:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.adds: list[tuple[float, dict[str, object]]] = []
+
+        def add(self, value: float, attributes: dict[str, object]) -> None:
+            self.adds.append((value, attributes))
+
+    class FakeMeter:
+        def __init__(self) -> None:
+            self.histograms: dict[str, FakeHistogram] = {}
+            self.counters: dict[str, FakeCounter] = {}
+            self.up_down_counters: dict[str, FakeUpDownCounter] = {}
+
+        def create_histogram(
+            self, name: str, unit: str, description: str
+        ) -> FakeHistogram:
+            histogram = FakeHistogram(name)
+            self.histograms[name] = histogram
+            return histogram
+
+        def create_counter(self, name: str, unit: str, description: str) -> FakeCounter:
+            counter = FakeCounter(name)
+            self.counters[name] = counter
+            return counter
+
+        def create_up_down_counter(
+            self, name: str, unit: str, description: str
+        ) -> FakeUpDownCounter:
+            up_down_counter = FakeUpDownCounter(name)
+            self.up_down_counters[name] = up_down_counter
+            return up_down_counter
+
+    class FakeMeterProvider:
+        instances: ClassVar[list["FakeMeterProvider"]] = []
+
+        def __init__(self, resource: object, metric_readers: list[object]) -> None:
+            self.resource = resource
+            self.metric_readers = metric_readers
+            self.meter = FakeMeter()
+            self.force_flush_calls: list[int] = []
+            self.shutdown_calls = 0
+            FakeMeterProvider.instances.append(self)
+            state["resource"] = resource
+            state["metric_readers"] = metric_readers
+            state["meter"] = self.meter
+            state["force_flush_calls"] = self.force_flush_calls
+            state["shutdown_calls"] = self.shutdown_calls
+
+        def get_meter(self, name: str) -> FakeMeter:
+            self.meter_name = name
+            state["meter_name"] = name
+            return self.meter
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            state["force_flush_calls"] = self.force_flush_calls
+            return True
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            state["shutdown_calls"] = self.shutdown_calls
+
+    class FakePeriodicExportingMetricReader:
+        instances: ClassVar[list["FakePeriodicExportingMetricReader"]] = []
+
+        def __init__(
+            self,
+            exporter: object,
+            export_interval_millis: int,
+            export_timeout_millis: int,
+        ) -> None:
+            self.exporter = exporter
+            self.export_interval_millis = export_interval_millis
+            self.export_timeout_millis = export_timeout_millis
+            FakePeriodicExportingMetricReader.instances.append(self)
+            state["reader_export_interval_millis"] = export_interval_millis
+            state["reader_export_timeout_millis"] = export_timeout_millis
+            state["reader_exporter"] = exporter
+
+    class FakeResource:
+        @staticmethod
+        def create(attributes: dict[str, str]) -> dict[str, dict[str, str]]:
+            return {"attributes": attributes}
+
+    metric_exporter.OTLPMetricExporter = FakeOTLPMetricExporter
+    sdk_metrics.MeterProvider = FakeMeterProvider
+    sdk_metrics_export.MetricExporter = FakeMetricExporter
+    sdk_metrics_export.MetricExportResult = FakeMetricExportResult
+    sdk_metrics_export.PeriodicExportingMetricReader = FakePeriodicExportingMetricReader
+    sdk_resources.Resource = FakeResource
+
+    return {
+        "MetricExportResult": FakeMetricExportResult,
+        "OTLPMetricExporter": FakeOTLPMetricExporter,
+        "MeterProvider": FakeMeterProvider,
+        "Reader": FakePeriodicExportingMetricReader,
+    }
+
+
+@pytest.fixture
+def fake_otel(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    return install_fake_otel_modules(monkeypatch)
 
 
 @asynccontextmanager

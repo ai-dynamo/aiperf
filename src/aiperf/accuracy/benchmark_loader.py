@@ -27,14 +27,19 @@ async def load_benchmark_problems(run: BenchmarkRun) -> list[BenchmarkProblem]:
         )
     benchmark_cls = plugins.get_class(PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark)
 
+    meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark)
+
     n_shots = acc_cfg.n_shots
     if n_shots is None:
-        meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark)
         n_shots = meta.get("default_n_shots", 0)
+
+    enable_cot = acc_cfg.enable_cot
+    if enable_cot is None:
+        enable_cot = bool(meta.get("default_enable_cot", False))
 
     benchmark = benchmark_cls(run=run)
     return await benchmark.load_problems(
         tasks=acc_cfg.tasks,
         n_shots=n_shots,
-        enable_cot=acc_cfg.enable_cot,
+        enable_cot=enable_cot,
     )

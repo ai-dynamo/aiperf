@@ -47,7 +47,7 @@ def has_systemd_run() -> bool:
     try:
         result = subprocess.run(
             [binary, "--user", "--scope", "--quiet", "true"],
-            capture_output=True,
+            capture_artifacts=True,
             timeout=2,
             check=False,
         )

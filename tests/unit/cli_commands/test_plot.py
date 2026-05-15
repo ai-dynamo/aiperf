@@ -18,6 +18,9 @@ def test_plot_passes_paths_and_output_by_keyword(monkeypatch) -> None:
         dashboard: bool = False,
         host: str = "127.0.0.1",
         port: int = 8050,
+        mlflow_upload: bool = False,
+        mlflow_tracking_uri: str | None = None,
+        mlflow_run_id: str | None = None,
     ) -> None:
         calls.append(
             {
@@ -29,6 +32,9 @@ def test_plot_passes_paths_and_output_by_keyword(monkeypatch) -> None:
                 "dashboard": dashboard,
                 "host": host,
                 "port": port,
+                "mlflow_upload": mlflow_upload,
+                "mlflow_tracking_uri": mlflow_tracking_uri,
+                "mlflow_run_id": mlflow_run_id,
             }
         )
 
@@ -57,5 +63,8 @@ def test_plot_passes_paths_and_output_by_keyword(monkeypatch) -> None:
             "dashboard": False,
             "host": "127.0.0.1",
             "port": 8051,
+            "mlflow_upload": False,
+            "mlflow_tracking_uri": None,
+            "mlflow_run_id": None,
         }
     ]

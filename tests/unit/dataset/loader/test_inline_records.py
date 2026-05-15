@@ -174,7 +174,7 @@ def _make_mock_prompt_generator() -> Mock:
     generator._decoded_cache = {}
     generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
     # No resolved_name attribute on the inner tokenizer mock — fall through
-    # to UserConfig.tokenizer / model name.
+    # to BenchmarkConfig.tokenizer / model name.
     generator.tokenizer = Mock(spec=[])
     return generator
 

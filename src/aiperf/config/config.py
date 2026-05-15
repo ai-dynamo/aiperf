@@ -41,6 +41,8 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.artifacts import (
     ArtifactsConfig,
     GpuTelemetryConfig,
+    MLflowConfig,
+    OTelConfig,
     ServerMetricsConfig,
 )
 from aiperf.config.base import BaseConfig
@@ -290,6 +292,22 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             "Collects operational metrics (queue depth, KV cache, batch sizes) "
             "from inference server Prometheus endpoints. "
             "Enabled by default. Set enabled: false to disable.",
+        ),
+    ]
+
+    otel: Annotated[
+        OTelConfig,
+        Field(
+            default_factory=OTelConfig,
+            description="OpenTelemetry metrics streaming configuration.",
+        ),
+    ]
+
+    mlflow: Annotated[
+        MLflowConfig,
+        Field(
+            default_factory=MLflowConfig,
+            description="MLflow tracking and artifact-upload configuration.",
         ),
     ]
 

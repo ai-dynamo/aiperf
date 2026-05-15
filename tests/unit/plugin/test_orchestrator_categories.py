@@ -42,12 +42,12 @@ def test_search_planner_metadata_shape():
         supports_categorical=False,
         requires_initial_samples=5,
         compatible_objective_directions=["maximize", "minimize"],
-        requires_extras=["optuna"],
+        requires_extras=["botorch"],
     )
     assert md.supports_continuous is True
     assert md.supports_categorical is False
     assert md.requires_initial_samples == 5
-    assert md.requires_extras == ["optuna"]
+    assert md.requires_extras == ["botorch"]
 
 
 def test_convergence_criterion_plugin_lookup_by_name():
@@ -96,7 +96,7 @@ def test_search_planner_metadata_typed_access():
     """SearchPlannerMetadata is reachable via the per-category typed helper."""
     md = get_search_planner_metadata("bayesian")
     assert isinstance(md, SearchPlannerMetadata)
-    assert md.requires_extras == ["optuna"]
+    assert md.requires_extras == []
     assert md.supports_continuous is True
     assert md.supports_discrete is True
     assert md.requires_initial_samples == 5

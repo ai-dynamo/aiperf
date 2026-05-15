@@ -36,7 +36,7 @@ def run_command_with_timeout(
         result = subprocess.run(
             command,
             shell=True,
-            capture_output=capture_output,
+            capture_artifacts=capture_output,
             text=True,
             timeout=timeout,
         )
@@ -117,7 +117,7 @@ def docker_container_exists(container_name: str) -> bool:
         result = subprocess.run(
             f"docker ps -aq --filter name={container_name}",
             shell=True,
-            capture_output=True,
+            capture_artifacts=True,
             text=True,
             timeout=5,
         )
@@ -133,7 +133,7 @@ def docker_stop_and_remove(container_name: str, timeout: int = 10) -> bool:
         stop_result = subprocess.run(
             f"docker stop {container_name}",
             shell=True,
-            capture_output=True,
+            capture_artifacts=True,
             text=True,
             timeout=timeout,
         )
@@ -142,7 +142,7 @@ def docker_stop_and_remove(container_name: str, timeout: int = 10) -> bool:
         rm_result = subprocess.run(
             f"docker rm {container_name}",
             shell=True,
-            capture_output=True,
+            capture_artifacts=True,
             text=True,
             timeout=5,
         )
@@ -178,7 +178,7 @@ def get_container_id_by_filter(filter_criteria: str) -> str | None:
         result = subprocess.run(
             f"docker ps --filter {filter_criteria} --format '{{{{.ID}}}}'",
             shell=True,
-            capture_output=True,
+            capture_artifacts=True,
             text=True,
             timeout=5,
         )
@@ -202,7 +202,7 @@ def cleanup_docker_resources(force: bool = False) -> None:
             commands.extend(["docker volume prune -f", "docker system prune -f"])
 
         for cmd in commands:
-            subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
+            subprocess.run(cmd, shell=True, capture_artifacts=True, timeout=10)
 
     except Exception as e:
         logger.debug(f"Docker cleanup had some issues: {e}")
@@ -214,7 +214,7 @@ def get_all_container_ids() -> set[str]:
         result = subprocess.run(
             "docker ps -aq",
             shell=True,
-            capture_output=True,
+            capture_artifacts=True,
             text=True,
             timeout=5,
         )
@@ -246,11 +246,11 @@ def force_cleanup_containers(container_ids: set[str]) -> None:
         cleanup_cmd = (
             f"echo '{container_list}' | xargs -r docker rm -f 2>/dev/null || true"
         )
-        subprocess.run(cleanup_cmd, shell=True, capture_output=True, timeout=30)
+        subprocess.run(cleanup_cmd, shell=True, capture_artifacts=True, timeout=30)
 
         # Final prune to clean up dangling resources
         subprocess.run(
-            "docker container prune -f", shell=True, capture_output=True, timeout=10
+            "docker container prune -f", shell=True, capture_artifacts=True, timeout=10
         )
 
         logger.info("Force cleanup completed successfully")

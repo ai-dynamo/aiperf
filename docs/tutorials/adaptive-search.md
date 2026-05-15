@@ -169,7 +169,7 @@ If you want both — find the best, then characterize around it — run BO first
 
 - **Single-objective is the default; multi-objective is opt-in.** The `--search-metric` / `--search-direction` CLI shape produces a length-1 `objectives` list. To opt into Pareto BO across two-or-more metrics, supply an explicit `objectives:` list in YAML (or use a multi-objective recipe) and pick a multi-objective acquisition (`--optuna-acquisition qlognehvi`); see [Going multi-objective](#going-multi-objective) below.
 - **Numeric dimensions only.** `:int` and `:real`. Categorical dimensions (e.g. swap between two model variants) are not supported.
-- **Optional `[optuna]` extra.** The planner is behind an extras gate so the base install stays slim. Install with `uv pip install -e ".[optuna]"` (or the equivalent for your packaging path) — the extra pulls in `optuna`, `optuna-integration`, `botorch>=0.10`, `gpytorch`, and `torch`. Both the `--search-planner=bayesian` curated preset and `--search-planner=optuna` expert mode use this same extra.
+- **Optional BoTorch extra.** Optuna is installed by default and the planners prefer BoTorch when it is available. Install `uv pip install -e ".[botorch]"` for qLogNEI / qLogNEHVI behavior; if the implicit BoTorch default is unavailable, AIPerf warns and falls back to TPE. Explicit `--optuna-sampler botorch` still raises when the optional stack is missing.
 
 For the explicit list of remaining limitations (including MORBO-style high-dimensional Pareto BO and heteroscedastic noise priors), see [What this implementation isn't](../sweeping/bayesian-optimization.md#what-this-implementation-isnt).
 
@@ -194,7 +194,7 @@ The CLI shorthand (`--search-metric` / `--search-direction`) only emits a length
 - A YAML config with an explicit `objectives:` list (this section), or
 - A multi-objective search recipe registered under the `search_recipe` plugin category (no built-in multi-objective recipe ships yet; the existing recipes — `max-throughput-ttft-sla`, `pareto-sweep`, etc. — are single-objective with optional `sla_filters`).
 
-The `[optuna]` install extra is required: `qlognehvi` needs `botorch>=0.10` and `optuna>=4.x`, both pulled in by the extra.
+The `botorch` install extra is required for qLogNEHVI: `uv pip install -e ".[botorch]"` pulls in `optuna-integration`, `botorch>=0.10`, `gpytorch`, and `torch`.
 
 ### The config
 
@@ -368,5 +368,5 @@ You can also check `feasible_count` in `best_trials`. With `outcome_constraints`
 
 - [Bayesian Optimization](../sweeping/bayesian-optimization.md) — full reference for both single- and multi-objective BO: flag reference, acquisition / sampler / reference-point semantics, the `Objective.threshold` vs `OutcomeConstraint` vs `sla_filters` distinction, reference-point auto-derivation, hypervolume-based stopping, and the qLogNEHVI acquisition.
 - [Search Recipes](../sweeping/search-recipes.md) — registered single-objective recipes (`max-throughput-ttft-sla`, `pareto-sweep`, etc.) and when to reach for one instead of writing a YAML config from scratch.
-- [Sweep Troubleshooting](../troubleshooting/sweeps.md) — common configuration errors (acquisition / objective-count mismatches, `n_initial_points >= max_iterations`, missing `[optuna]` extra) and how to fix them.
+- [Sweep Troubleshooting](../troubleshooting/sweeps.md) — common configuration errors (acquisition / objective-count mismatches, `n_initial_points >= max_iterations`, missing optional BoTorch extra) and how to fix them.
 - [Search History API](../api/search-history.md) — full `search_history.json` schema, including the `best_trials` Pareto-front shape, `feasible_count` semantics, and convergence reasons.

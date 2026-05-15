@@ -325,9 +325,10 @@ class AdaptiveSearchSweep(_SweepBase):
         Field(
             min_length=1,
             description=(
-                "What to optimize. Length-1 = single-objective BO; length-N = "
-                "multi-objective Pareto BO (requires --optuna-sampler botorch "
-                "with a multi-objective acquisition like qlognehvi)."
+                "What to optimize. Length-1 = single-objective search; length-N = "
+                "multi-objective search. BoTorch-backed Pareto BO requires "
+                "--optuna-sampler botorch with a multi-objective acquisition like "
+                "qlognehvi."
             ),
         ),
     ]
@@ -398,13 +399,13 @@ class AdaptiveSearchSweep(_SweepBase):
         Field(
             default="botorch",
             description=(
-                "Optuna sampler when planner=optuna. Default ``botorch`` "
-                "drives a Gaussian-process surrogate with LogEI acquisition "
-                "(single-objective; see ``optuna_acquisition`` to override) "
-                "and is required for multi-objective Pareto BO. ``tpe`` is "
-                "the parallel-friendly Tree-Parzen estimator; pick it for "
-                "high-dim categorical spaces where GP fits are expensive. "
-                "``gp`` is Optuna's pure-GP sampler without BoTorch."
+                "Optuna sampler when planner=optuna. Default ``botorch`` is the "
+                "preferred Gaussian-process qLogNEI/qLogNEHVI path and requires "
+                "the optional ``botorch`` extra; when this default is implicit and "
+                "the optional stack is unavailable, the planner warns and falls "
+                "back to ``tpe``. ``tpe`` is the dep-light Tree-Parzen estimator "
+                "that ships with Optuna core. ``gp`` is Optuna's pure-GP sampler "
+                "and requires torch."
             ),
         ),
     ]

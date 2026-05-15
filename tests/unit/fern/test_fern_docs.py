@@ -43,7 +43,7 @@ def test_fern_check() -> None:
     """Validate the Fern definition has no errors."""
     result = subprocess.run(
         ["fern", "check"],
-        capture_output=True,
+        capture_artifacts=True,
         text=True,
         timeout=60,
     )

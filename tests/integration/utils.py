@@ -184,7 +184,7 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
         "-count_frames",
         "pipe:0",
     ]
-    result = subprocess.run(cmd, input=video_bytes, capture_output=True, check=True)
+    result = subprocess.run(cmd, input=video_bytes, capture_artifacts=True, check=True)
 
     probe_data = orjson.loads(result.stdout)
     format_info = probe_data["format"]

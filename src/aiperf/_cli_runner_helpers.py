@@ -152,9 +152,8 @@ def _build_search_planner(plan: BenchmarkPlan):  # noqa: ANN202
     the `search_planner` category) are reachable through the same code path
     as the built-in `bayesian` planner.
 
-    The planner class is responsible for raising a clear ImportError if its
-    soft-dep tree is unavailable (e.g. BayesianSearchPlanner directs users to
-    `pip install aiperf[optuna]`).
+    The planner class is responsible for raising a clear ImportError if an
+    explicitly requested optional sampler is unavailable.
     """
     from aiperf.config.sweep import AdaptiveSearchSweep
 

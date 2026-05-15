@@ -25,6 +25,7 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     ServerMetricsResults,
     TimeRangeFilter,
+    UnknownMetricData,
 )
 from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
@@ -200,7 +201,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
             metrics: dict[
                 str,
-                GaugeMetricData | CounterMetricData | HistogramMetricData,
+                GaugeMetricData
+                | CounterMetricData
+                | HistogramMetricData
+                | UnknownMetricData,
             ] = {}
 
             for metric_key, metric_entry in time_series.metrics.items():
@@ -222,6 +226,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     match metric_entry.metric_type:
                         case PrometheusMetricType.GAUGE:
                             metrics[base_name] = GaugeMetricData(
+                                description=metric_entry.description,
+                                series=[series_stats],
+                            )
+                        case PrometheusMetricType.UNKNOWN:
+                            metrics[base_name] = UnknownMetricData(
                                 description=metric_entry.description,
                                 series=[series_stats],
                             )

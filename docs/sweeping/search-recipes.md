@@ -267,7 +267,7 @@ Find the largest concurrency at which every configured SLA filter passes. Compos
 - `smooth_isotonic` — PAVA-denoised isotonic regression + PCHIP root-find on per-SLO margin curves; opt-in Phase-3 replicates with bootstrap CI; cliff-curve guard. Strictly more accurate than `monotonic` under noise. ~13–25 iterations on `[1, 1000]` at 5% precision (more with replicates).
 - `monotonic` — exponential probe + bisection; ~10 iterations on `[1, 1000]` at 5% precision; the direct equivalent of perf_analyzer's `--binary-search`. Margin-magnitude-blind.
 - `bo` — penalty-BO maximizing `output_token_throughput` within the feasibility region.
-- `optuna` — same penalty-BO formulation as `bo`, routed through the `OptunaSearchPlanner` (TPE / GP / BoTorch samplers, selected via `--optuna-sampler`). Requires the `[optuna]` extra.
+- `optuna` — same penalty-BO formulation as `bo`, routed through the `OptunaSearchPlanner` (TPE / GP / BoTorch samplers, selected via `--optuna-sampler`). Optuna ships by default; BoTorch requires the optional `botorch` extra.
 - `grid` — 8 log-spaced points + `sla_breach_knee` post-process emitting `sweep_aggregate/sla_breach.json`.
 
 ```bash

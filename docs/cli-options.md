@@ -937,6 +937,43 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
+#### `--otel-url` `<str>`
+
+OTLP/HTTP metrics endpoint URL.
+
+#### `--stream` `<str>`
+
+Select which live telemetry domains to stream: metrics, timing, both, or none.
+<br/>_Default: `default`_
+
+#### `--gen-ai-provider` `<str>`
+
+GenAI semantic convention provider override.
+
+#### `--mlflow-tracking-uri` `<str>`
+
+MLflow tracking URI.
+
+#### `--mlflow-experiment` `<str>`
+
+MLflow experiment name.
+
+#### `--mlflow-run-name` `<str>`
+
+MLflow run name.
+
+#### `--mlflow-tags` `<str>`
+
+Comma-separated MLflow tags.
+
+#### `--mlflow-parent-run-id` `<str>`
+
+Optional MLflow parent run ID.
+
+#### `--mlflow-artifact-globs` `<list>`
+
+Artifact glob overrides for MLflow upload.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -1103,12 +1140,12 @@ Random seed for reproducible search trajectories. When unset, the planner uses n
 
 #### `--search-planner` `<str>`
 
-Outer-loop search planner plugin. Default `bayesian` is a curated Optuna+BoTorch preset (auto-selects qLogNEI for single-objective and qLogNEHVI for multi-objective; applies the Hvarfner-DSP Matern-5/2 kernel to GP fits). `optuna` is the expert-mode alternative exposing `--optuna-sampler` (tpe / gp / botorch) and `--optuna-acquisition`. Both require the `[optuna]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+Outer-loop search planner plugin. Default `bayesian` is a curated Optuna preset that uses BoTorch qLogNEI/qLogNEHVI when the optional `botorch` extra is installed and otherwise falls back to Optuna TPE with a warning. `optuna` is the expert-mode alternative exposing `--optuna-sampler` (tpe / gp / botorch) and `--optuna-acquisition`. Explicit unavailable optional samplers raise. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
 <br/>_Choices: [`bayesian`, `monotonic_sla`, `smooth_isotonic`, `optuna`]_
 
 #### `--optuna-sampler` `<str>`
 
-Optuna sampler selection. Only consulted when --search-planner=optuna. ``tpe`` is the default (dep-light, native constraints since Optuna 3.0; ships with Optuna core). ``gp`` is Optuna's native GP-EI with inequality constraints (Optuna 4.2+) but requires ``torch`` to be installed separately. ``botorch`` requires the additional ``botorch`` package (~600 MB PyTorch install). The ``--search-planner=bayesian`` curated preset locks this to ``botorch``.
+Optuna sampler selection. Only consulted when --search-planner=optuna. ``botorch`` is the preferred implicit default and requires the optional ``botorch`` extra; when the implicit default is unavailable, the planner warns and falls back to ``tpe``. Explicit ``botorch`` requests raise if the optional stack is unavailable. ``tpe`` is dep-light and ships with Optuna core. ``gp`` is Optuna's native GP-EI with inequality constraints (Optuna 4.2+) but requires ``torch``.
 
 #### `--optuna-acquisition` `<str>`
 
@@ -1174,7 +1211,7 @@ Minimum fraction of requests that must satisfy ALL configured per-request SLOs (
 
 #### `--search-style` `<str>`
 
-Search strategy for the max-concurrency-under-sla recipe. 'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'monotonic' runs a 1D binary-search via the MonotonicSLASearchPlanner (~10-20 iterations). 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; requires the [optuna] extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
+Search strategy for the max-concurrency-under-sla recipe. 'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'monotonic' runs a 1D binary-search via the MonotonicSLASearchPlanner (~10-20 iterations). 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
 
 #### `--degradation-threshold` `<float>`
 
@@ -1259,7 +1296,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -1359,6 +1396,12 @@ aiperf plot --config my_plots.yaml
 
 # Show detailed error tracebacks
 aiperf plot --verbose
+
+# Generate plots and upload them to the MLflow run from mlflow_export.json
+aiperf plot --paths artifacts/my-run --mlflow-upload
+
+# Generate plots and upload to an explicit MLflow run
+aiperf plot --paths artifacts/my-run --mlflow-upload --mlflow-tracking-uri http://127.0.0.1:5000 --mlflow-run-id <run_id>
 ```
 
 #### `--paths`, `--empty-paths` `<list>`
@@ -1395,6 +1438,18 @@ Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.
 <br/>_Default: `8050`_
+
+#### `--mlflow-upload`, `--no-mlflow-upload`
+
+Upload generated PNG plot artifacts to an existing MLflow run. Mutually exclusive with --dashboard.
+
+#### `--mlflow-tracking-uri` `<str>`
+
+Optional MLflow tracking URI override for plot upload.
+
+#### `--mlflow-run-id` `<str>`
+
+Optional MLflow run id override for plot upload.
 
 <hr/>
 
@@ -2180,6 +2235,43 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
+#### `--otel-url` `<str>`
+
+OTLP/HTTP metrics endpoint URL.
+
+#### `--stream` `<str>`
+
+Select which live telemetry domains to stream: metrics, timing, both, or none.
+<br/>_Default: `default`_
+
+#### `--gen-ai-provider` `<str>`
+
+GenAI semantic convention provider override.
+
+#### `--mlflow-tracking-uri` `<str>`
+
+MLflow tracking URI.
+
+#### `--mlflow-experiment` `<str>`
+
+MLflow experiment name.
+
+#### `--mlflow-run-name` `<str>`
+
+MLflow run name.
+
+#### `--mlflow-tags` `<str>`
+
+Comma-separated MLflow tags.
+
+#### `--mlflow-parent-run-id` `<str>`
+
+Optional MLflow parent run ID.
+
+#### `--mlflow-artifact-globs` `<list>`
+
+Artifact glob overrides for MLflow upload.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -2346,12 +2438,12 @@ Random seed for reproducible search trajectories. When unset, the planner uses n
 
 #### `--search-planner` `<str>`
 
-Outer-loop search planner plugin. Default `bayesian` is a curated Optuna+BoTorch preset (auto-selects qLogNEI for single-objective and qLogNEHVI for multi-objective; applies the Hvarfner-DSP Matern-5/2 kernel to GP fits). `optuna` is the expert-mode alternative exposing `--optuna-sampler` (tpe / gp / botorch) and `--optuna-acquisition`. Both require the `[optuna]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+Outer-loop search planner plugin. Default `bayesian` is a curated Optuna preset that uses BoTorch qLogNEI/qLogNEHVI when the optional `botorch` extra is installed and otherwise falls back to Optuna TPE with a warning. `optuna` is the expert-mode alternative exposing `--optuna-sampler` (tpe / gp / botorch) and `--optuna-acquisition`. Explicit unavailable optional samplers raise. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
 <br/>_Choices: [`bayesian`, `monotonic_sla`, `smooth_isotonic`, `optuna`]_
 
 #### `--optuna-sampler` `<str>`
 
-Optuna sampler selection. Only consulted when --search-planner=optuna. ``tpe`` is the default (dep-light, native constraints since Optuna 3.0; ships with Optuna core). ``gp`` is Optuna's native GP-EI with inequality constraints (Optuna 4.2+) but requires ``torch`` to be installed separately. ``botorch`` requires the additional ``botorch`` package (~600 MB PyTorch install). The ``--search-planner=bayesian`` curated preset locks this to ``botorch``.
+Optuna sampler selection. Only consulted when --search-planner=optuna. ``botorch`` is the preferred implicit default and requires the optional ``botorch`` extra; when the implicit default is unavailable, the planner warns and falls back to ``tpe``. Explicit ``botorch`` requests raise if the optional stack is unavailable. ``tpe`` is dep-light and ships with Optuna core. ``gp`` is Optuna's native GP-EI with inequality constraints (Optuna 4.2+) but requires ``torch``.
 
 #### `--optuna-acquisition` `<str>`
 
@@ -2417,7 +2509,7 @@ Minimum fraction of requests that must satisfy ALL configured per-request SLOs (
 
 #### `--search-style` `<str>`
 
-Search strategy for the max-concurrency-under-sla recipe. 'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'monotonic' runs a 1D binary-search via the MonotonicSLASearchPlanner (~10-20 iterations). 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; requires the [optuna] extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
+Search strategy for the max-concurrency-under-sla recipe. 'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'monotonic' runs a 1D binary-search via the MonotonicSLASearchPlanner (~10-20 iterations). 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
 
 #### `--degradation-threshold` `<float>`
 
@@ -2502,7 +2594,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

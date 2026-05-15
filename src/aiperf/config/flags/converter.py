@@ -36,6 +36,8 @@ from aiperf.config.flags._converter_runtime import (
 )
 from aiperf.config.flags._converter_telemetry import (
     build_gpu_telemetry,
+    build_mlflow,
+    build_otel,
     build_server_metrics,
 )
 from aiperf.config.flags._converter_warmup import build_warmup
@@ -517,6 +519,8 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     artifacts = build_artifacts(cli)
     gpu_telemetry = build_gpu_telemetry(cli)
     server_metrics = build_server_metrics(cli)
+    otel = build_otel(cli)
+    mlflow = build_mlflow(cli)
     logging_dict, runtime_dict = build_logging_runtime(cli)
 
     nested: dict[str, Any] = {
@@ -532,6 +536,8 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
         "artifacts": artifacts,
         "gpu_telemetry": gpu_telemetry,
         "server_metrics": server_metrics,
+        "otel": otel,
+        "mlflow": mlflow,
     }
     if logging_dict:
         nested["logging"] = logging_dict

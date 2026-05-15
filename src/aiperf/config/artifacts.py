@@ -26,12 +26,15 @@ from aiperf.common.enums import (
     ServerMetricsFormat,
 )
 from aiperf.config.base import BaseConfig
+from aiperf.config.defaults import MLflowDefaults, OutputDefaults
 from aiperf.config.phases import _normalize_duration
 from aiperf.config.user_files import UserFile
 from aiperf.plugin.enums import GPUTelemetryCollectorType
 
 __all__ = [
     "ArtifactsConfig",
+    "MLflowConfig",
+    "OTelConfig",
     "ServerMetricsConfig",
     "ServerMetricsDiscoveryConfig",
     "GpuTelemetryConfig",
@@ -43,6 +46,105 @@ __all__ = [
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]
+
+
+class MLflowConfig(BaseConfig):
+    """MLflow tracking and artifact-upload configuration."""
+
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
+    tracking_uri: Annotated[
+        str | None,
+        Field(default=MLflowDefaults.TRACKING_URI, description="MLflow tracking URI."),
+    ]
+    experiment: Annotated[
+        str,
+        Field(default=MLflowDefaults.EXPERIMENT, description="MLflow experiment name."),
+    ]
+    run_name: Annotated[
+        str | None,
+        Field(default=MLflowDefaults.RUN_NAME, description="MLflow run name."),
+    ]
+    tags: Annotated[
+        str | None,
+        Field(default=MLflowDefaults.TAGS, description="Comma-separated MLflow tags."),
+    ]
+    parent_run_id: Annotated[
+        str | None,
+        Field(default=None, description="Optional MLflow parent run ID."),
+    ]
+    artifact_globs: Annotated[
+        list[str] | None,
+        Field(
+            default=MLflowDefaults.ARTIFACT_GLOBS,
+            description="Artifact glob overrides for MLflow upload.",
+        ),
+    ]
+
+    @property
+    def enabled(self) -> bool:
+        """Whether MLflow export/live streaming is enabled."""
+        return self.tracking_uri is not None
+
+    @property
+    def tags_dict(self) -> dict[str, str]:
+        """Parse comma-separated ``key:value`` MLflow tags."""
+        if not self.tags:
+            return {}
+        tags: dict[str, str] = {}
+        for item in self.tags.split(","):
+            key, sep, value = item.partition(":")
+            if sep and key.strip() and value.strip():
+                tags[key.strip()] = value.strip()
+        return tags
+
+    @property
+    def resolved_artifact_globs(self) -> list[str]:
+        """Return MLflow artifact globs, applying defaults when unset."""
+        return list(self.artifact_globs or MLflowDefaults.DEFAULT_ARTIFACT_GLOBS)
+
+
+class OTelConfig(BaseConfig):
+    """OpenTelemetry metrics streaming configuration."""
+
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
+    metrics_url: Annotated[
+        str | None,
+        Field(default=None, description="OTLP/HTTP metrics endpoint URL."),
+    ]
+    stream_metrics_enabled: Annotated[
+        bool,
+        Field(default=True, description="Stream metric records to OTel."),
+    ]
+    stream_timing_enabled: Annotated[
+        bool,
+        Field(default=True, description="Stream timing records to OTel."),
+    ]
+    custom_resource_attributes: Annotated[
+        dict[str, str],
+        Field(default_factory=dict, description="Custom OTel resource attributes."),
+    ]
+    gen_ai_provider: Annotated[
+        str | None,
+        Field(default=None, description="GenAI semantic convention provider override."),
+    ]
+
+    @property
+    def collector_enabled(self) -> bool:
+        """Whether OTel metrics streaming is enabled."""
+        return self.metrics_url is not None
+
+    @property
+    def stream(self) -> str:
+        """Human-readable stream selection for diagnostics."""
+        if self.stream_metrics_enabled and self.stream_timing_enabled:
+            return "default"
+        if self.stream_metrics_enabled:
+            return "metrics"
+        if self.stream_timing_enabled:
+            return "timing"
+        return "none"
 
 
 class ArtifactsConfig(BaseConfig):
@@ -175,6 +277,14 @@ class ArtifactsConfig(BaseConfig):
         ),
     ]
 
+    export_outputs_json: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Export generated response text to outputs.json after the run.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_artifacts(self) -> ArtifactsConfig:
         """Validate artifact configuration."""
@@ -268,6 +378,11 @@ class ArtifactsConfig(BaseConfig):
         base = self._base()
         name = f"{base}.jsonl" if base else "profile_export.jsonl"
         return self.dir / name
+
+    @property
+    def outputs_json_file(self) -> Path:
+        """Path for the aggregated generated outputs JSON export file."""
+        return self.dir / OutputDefaults.OUTPUTS_JSON_FILE
 
     @property
     def profile_export_raw_jsonl_file(self) -> Path:

@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
-from aiperf.config.sweep.adaptive import SearchSpaceDimension
+from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
+from aiperf.plugin.enums import SearchPlannerType
 
 
 @pytest.fixture
@@ -26,8 +27,17 @@ def adaptive_plan():
                 direction="maximize",
             )
         ],
+        planner=SearchPlannerType.MONOTONIC_SLA,
         max_iterations=3,
         n_initial_points=2,
+        sla_filters=[
+            SLAFilter(
+                metric_tag="time_to_first_token",
+                stat="p95",
+                op="lt",
+                threshold=200.0,
+            )
+        ],
     )
     plan.configs = [MagicMock()]
     return plan
@@ -43,13 +53,7 @@ def test_build_search_planner_returns_none_when_not_adaptive():
 
 
 def test_build_search_planner_dispatches_via_plugin_registry(adaptive_plan):
-    """`_build_search_planner(plan)` returns a SearchPlanner via plugin lookup.
-
-    Skips if Optuna isn't installed (the bayesian preset is now an
-    Optuna+BoTorch curated subclass; the [optuna] extra is optional).
-    """
-    pytest.importorskip("optuna")
-    pytest.importorskip("botorch")
+    """`_build_search_planner(plan)` returns a SearchPlanner via plugin lookup."""
     from aiperf._cli_runner_helpers import _build_search_planner
     from aiperf.orchestrator.search_planner.base import SearchPlanner
 

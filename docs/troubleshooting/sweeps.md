@@ -264,24 +264,23 @@ For the deeper "why does BO behave this way," see [../sweeping/bayesian-optimiza
 
 ---
 
-### 1. Missing Optional Dependency (`optuna` / `botorch`)
+### 1. Missing Optional BoTorch Dependency
 
 **Error message:**
 
 ```text
-Optuna planner requires the 'optuna' extra: `uv pip install -e '.[optuna]'`.
-Underlying import error: <ImportError ...>
+BoTorch sampler requires the optional `botorch` extra. Install via `uv pip install -e '.[botorch]'`.
 ```
 
 **Cause:**
 
-`OptunaSearchPlanner.__init__` (and its `BayesianSearchPlanner` curated-preset subclass) lazy-imports `optuna` (botorch / torch / gpytorch are indirect deps surfaced through Optuna's BoTorch sampler). These dependencies live in the `[optuna]` optional extra (`pyproject.toml`: `optuna = ["optuna>=3.6", "optuna-integration", "botorch>=0.10", "gpytorch", "torch"]`) and are NOT pulled in by default — BO is opt-in to keep the base wheel small.
+`OptunaSearchPlanner` uses Optuna core by default, but its implicit preferred sampler is BoTorch. Explicit `--optuna-sampler botorch` or BoTorch-only acquisitions require `optuna-integration`, `botorch>=0.10`, `gpytorch`, and `torch`. When BoTorch is only the implicit default, AIPerf falls back to TPE with a warning if this optional stack is unavailable; explicit BoTorch requests fail instead of silently changing semantics.
 
 **Fix:**
 
 ```bash
-uv pip install -e ".[optuna]"     # editable / dev install
-pip install "aiperf[optuna]"      # from PyPI
+uv pip install -e ".[botorch]"     # editable / dev install
+pip install "aiperf[botorch]"      # from PyPI
 ```
 
 ---

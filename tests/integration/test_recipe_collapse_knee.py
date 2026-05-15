@@ -174,8 +174,8 @@ class TestAdaptiveRecipesLocateCollapseKnee:
     # is sufficient via `monotonic` and `bo`, which exercise the same
     # adaptive-search code paths. Re-enable once the planner has a
     # max-iterations CLI override or a fast-mode test hook.
-    # `optuna` is also out of scope: requires the optional `[optuna]` extra,
-    # which the default integration env doesn't install.
+    # `optuna` is also out of scope here: the slow recipe coverage already
+    # exercises the shared adaptive-search paths through `bo`.
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "search_style,knee_band",

@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for OptunaSearchPlanner.
 
-Optuna is a soft dep behind the ``[optuna]`` extra; the whole module is
-skipped when optuna is not installed. Mirrors ``test_bayesian.py``'s
-fixture style so the same construction patterns apply.
+Optuna is a core dependency. The BoTorch/Torch sampler stack remains optional,
+so only BoTorch-specific cases skip when that stack is unavailable.
 """
 
 from __future__ import annotations
@@ -138,7 +137,7 @@ def test_construction_succeeds_with_valid_config():
 
 
 def test_construction_without_optuna_raises_clear_error(monkeypatch):
-    """Without optuna installed → ImportError naming the [optuna] extra.
+    """Without optuna installed → ImportError names dependency setup.
 
     Simulated by patching the import inside the planner constructor so the
     test runs even with optuna installed.
@@ -153,7 +152,7 @@ def test_construction_without_optuna_raises_clear_error(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    with pytest.raises(ImportError, match=r"\[optuna\]"):
+    with pytest.raises(ImportError, match=r"core `optuna` dependency"):
         OptunaSearchPlanner(_base_config(), _cfg())
 
 
@@ -379,12 +378,68 @@ def test_sampler_selection_constructs_expected_class(sampler_name, expected_attr
     assert sampler_cls_name == expected_attr
 
 
+def test_implicit_botorch_sampler_without_botorch_falls_back_to_tpe(monkeypatch):
+    """Schema-default BoTorch falls back because the user did not request it."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "optuna_integration" or name.startswith("optuna_integration."):
+            raise ImportError("simulated missing optuna-integration")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    cfg = AdaptiveSearchSweep(
+        search_space=[
+            SearchSpaceDimension(
+                path="phases.profiling.concurrency", lo=1, hi=100, kind="int"
+            )
+        ],
+        objectives=[
+            Objective(
+                metric="output_token_throughput",
+                stat="avg",
+                direction=OptimizationDirection.MAXIMIZE,
+            )
+        ],
+        max_iterations=5,
+        n_initial_points=2,
+        random_seed=42,
+        sla_filters=[],
+        optuna_acquisition="qlognei",
+    )
+    with pytest.warns(RuntimeWarning, match="falling back to optuna_sampler='tpe'"):
+        planner = OptunaSearchPlanner(_base_config(), cfg)
+
+    assert planner._cfg.optuna_sampler == "tpe"
+    assert planner._cfg.optuna_acquisition is None
+    assert type(planner._study.sampler).__name__ == "TPESampler"
+
+
+def test_explicit_botorch_sampler_without_botorch_raises_clear_error(monkeypatch):
+    """Explicit BoTorch sampler requests fail instead of silently downgrading."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "optuna_integration" or name.startswith("optuna_integration."):
+            raise ImportError("simulated missing optuna-integration")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    cfg = _cfg(optuna_sampler="botorch", optuna_acquisition="qlognei")
+    with pytest.raises(ImportError, match=r"BoTorch sampler requires"):
+        OptunaSearchPlanner(_base_config(), cfg)
+
+
 def test_gp_sampler_without_torch_raises_clear_error(monkeypatch):
     """GPSampler branch eagerly raises ImportError when torch is unimportable.
 
     Regression for: prior to this guard, ``build_sampler`` deferred the
     torch import to Optuna's post-startup GP fit phase, so a user with the
-    ``[optuna]`` extra (no torch) would crash mid-search after
+    core Optuna install (no torch) would crash mid-search after
     ``n_initial_points`` random trials. Eager validation surfaces the
     failure at planner construction with an actionable message.
 

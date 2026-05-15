@@ -2017,6 +2017,70 @@ class CLIConfig(BaseConfig):
     ] = False
 
     ##############################################################################
+    # OpenTelemetry / MLflow
+    ##############################################################################
+    otel_url: Annotated[
+        str | None,
+        Field(default=None, description="OTLP/HTTP metrics endpoint URL."),
+        CLIParameter(name=("--otel-url",), group=Groups.OUTPUT),
+    ] = None
+
+    stream: Annotated[
+        Literal["default", "metrics", "timing", "none"],
+        Field(
+            description="Select which live telemetry domains to stream: metrics, timing, both, or none."
+        ),
+        CLIParameter(name=("--stream",), group=Groups.OUTPUT),
+    ] = "default"
+
+    gen_ai_provider: Annotated[
+        str | None,
+        Field(default=None, description="GenAI semantic convention provider override."),
+        CLIParameter(name=("--gen-ai-provider",), group=Groups.OUTPUT),
+    ] = None
+
+    mlflow_tracking_uri: Annotated[
+        str | None,
+        Field(default=None, description="MLflow tracking URI."),
+        CLIParameter(name=("--mlflow-tracking-uri",), group=Groups.OUTPUT),
+    ] = None
+
+    mlflow_experiment: Annotated[
+        str | None,
+        Field(default=None, description="MLflow experiment name."),
+        CLIParameter(name=("--mlflow-experiment",), group=Groups.OUTPUT),
+    ] = None
+
+    mlflow_run_name: Annotated[
+        str | None,
+        Field(default=None, description="MLflow run name."),
+        CLIParameter(name=("--mlflow-run-name",), group=Groups.OUTPUT),
+    ] = None
+
+    mlflow_tags: Annotated[
+        str | None,
+        Field(default=None, description="Comma-separated MLflow tags."),
+        CLIParameter(name=("--mlflow-tags",), group=Groups.OUTPUT),
+    ] = None
+
+    mlflow_parent_run_id: Annotated[
+        str | None,
+        Field(default=None, description="Optional MLflow parent run ID."),
+        CLIParameter(name=("--mlflow-parent-run-id",), group=Groups.OUTPUT),
+    ] = None
+
+    mlflow_artifact_globs: Annotated[
+        list[str] | None,
+        Field(default=None, description="Artifact glob overrides for MLflow upload."),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--mlflow-artifact-globs",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
+    ##############################################################################
     # HTTP Trace
     ##############################################################################
     export_http_trace: Annotated[
@@ -2521,12 +2585,12 @@ class CLIConfig(BaseConfig):
             default=None,
             description=(
                 "Outer-loop search planner plugin. Default `bayesian` is a "
-                "curated Optuna+BoTorch preset (auto-selects qLogNEI for "
-                "single-objective and qLogNEHVI for multi-objective; applies "
-                "the Hvarfner-DSP Matern-5/2 kernel to GP fits). `optuna` is "
-                "the expert-mode alternative exposing `--optuna-sampler` "
-                "(tpe / gp / botorch) and `--optuna-acquisition`. Both require "
-                "the `[optuna]` extra. Third-party planners registered under "
+                "curated Optuna preset that uses BoTorch qLogNEI/qLogNEHVI when "
+                "the optional `botorch` extra is installed and otherwise falls "
+                "back to Optuna TPE with a warning. `optuna` is the expert-mode "
+                "alternative exposing `--optuna-sampler` (tpe / gp / botorch) "
+                "and `--optuna-acquisition`. Explicit unavailable optional "
+                "samplers raise. Third-party planners registered under "
                 "the `search_planner` plugin category are accepted here. Only "
                 "applies when --search-space is set."
             ),
@@ -2543,14 +2607,13 @@ class CLIConfig(BaseConfig):
             default=None,
             description=(
                 "Optuna sampler selection. Only consulted when "
-                "--search-planner=optuna. ``tpe`` is the default (dep-light, "
-                "native constraints since Optuna 3.0; ships with Optuna "
-                "core). ``gp`` is Optuna's native GP-EI with inequality "
-                "constraints (Optuna 4.2+) but requires ``torch`` to be "
-                "installed separately. ``botorch`` requires the additional "
-                "``botorch`` package (~600 MB PyTorch install). The "
-                "``--search-planner=bayesian`` curated preset locks this to "
-                "``botorch``."
+                "--search-planner=optuna. ``botorch`` is the preferred implicit "
+                "default and requires the optional ``botorch`` extra; when the "
+                "implicit default is unavailable, the planner warns and falls "
+                "back to ``tpe``. Explicit ``botorch`` requests raise if the "
+                "optional stack is unavailable. ``tpe`` is dep-light and ships "
+                "with Optuna core. ``gp`` is Optuna's native GP-EI with "
+                "inequality constraints (Optuna 4.2+) but requires ``torch``."
             ),
         ),
         CLIParameter(
@@ -2854,8 +2917,8 @@ class CLIConfig(BaseConfig):
                 "1D binary-search via the MonotonicSLASearchPlanner "
                 "(~10-20 iterations). 'bo' runs penalty Bayesian Optimization "
                 "(~30 iterations). 'optuna' runs the same penalty-BO formulation "
-                "via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; requires "
-                "the [optuna] extra). 'grid' runs a log-spaced 8-step sweep + "
+                "via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch "
+                "requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + "
                 "sla_breach_knee post-process. Recipe-only flag; ignored unless "
                 "--search-recipe max-concurrency-under-sla is set."
             ),

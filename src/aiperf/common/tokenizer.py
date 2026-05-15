@@ -185,6 +185,82 @@ def _is_hf_cached(name: str, revision: str | None = None) -> bool:
     return _is_revision_snapshot_cached(model_dir, revision)
 
 
+def _get_revision_snapshot_dir(name: str, revision: str) -> Path | None:
+    """Return the cached HF snapshot dir for ``(name, revision)``, or None.
+
+    Resolves alias-style short names the same way ``_is_hf_cached`` does.
+    Used by ``_ensure_offline_config_stub`` to locate where a tokenizer-only
+    repo's stub ``config.json`` should land.
+    """
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    if not cache_dir.is_dir():
+        return None
+
+    exact = cache_dir / f"models--{name.replace('/', '--')}"
+    if exact.is_dir():
+        model_dir = exact
+    else:
+        aliases = _find_hf_cache_aliases(name)
+        if len(aliases) != 1:
+            return None
+        model_dir = aliases[0]
+
+    snapshots_dir = model_dir / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+    refs_file = model_dir / "refs" / revision
+    if refs_file.is_file():
+        snap = snapshots_dir / refs_file.read_text().strip()
+    else:
+        snap = snapshots_dir / revision
+    return snap if snap.is_dir() else None
+
+
+# tiktoken BPE-file URLs per encoding (sha1(url) keys the disk cache).
+# Derived encodings (p50k_edit, o200k_harmony) reuse a base encoding's BPE.
+_TIKTOKEN_ENCODING_URLS = {
+    "cl100k_base": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+    "o200k_base": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+    "o200k_harmony": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+    "p50k_base": "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+    "p50k_edit": "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+    "r50k_base": "https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken",
+}
+
+
+def _is_tiktoken_cached(name: str) -> bool:
+    """Check if tiktoken's BPE file is on disk without importing tiktoken.
+
+    Mirrors ``tiktoken.load.read_file_cached`` lookup: ``sha1(url)`` under
+    ``TIKTOKEN_CACHE_DIR`` / ``DATA_GYM_CACHE_DIR`` / ``<tempdir>/data-gym-cache``.
+    Returns False for unknown encodings or when caching is disabled (empty
+    ``TIKTOKEN_CACHE_DIR``) so the caller falls through to a real load —
+    must not under-spawn (would leave child processes hitting the no-timeout
+    CDN call) but may over-spawn (just wastes a subprocess).
+    """
+    import hashlib
+    import tempfile
+
+    encoding = _BUILTIN_ENCODING if name == BUILTIN_TOKENIZER_NAME else name
+    url = _TIKTOKEN_ENCODING_URLS.get(encoding)
+    if url is None:
+        return False
+
+    cache_dir = os.environ.get("TIKTOKEN_CACHE_DIR")
+    if cache_dir is None:
+        cache_dir = os.environ.get("DATA_GYM_CACHE_DIR")
+    if cache_dir is None:
+        cache_dir = os.path.join(tempfile.gettempdir(), "data-gym-cache")
+    if cache_dir == "":
+        # tiktoken treats empty TIKTOKEN_CACHE_DIR as "disable caching"
+        return False
+
+    cache_key = hashlib.sha1(url.encode(), usedforsecurity=False).hexdigest()
+    return Path(cache_dir, cache_key).is_file()
+
+
 def resolve_alias(name: str) -> AliasResolutionResult:
     """Resolve a tokenizer name alias to its canonical repository ID.
 

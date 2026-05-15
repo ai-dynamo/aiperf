@@ -1,16 +1,4 @@
 {
-  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations — prefer fixing the underlying code over extending the list.",
-  "rules": [
-    "PLR0915",
-    "PLR0912",
-    "C901",
-    "TID251",
-    "BLE001",
-    "S110",
-    "S112",
-    "ANN201",
-    "D103"
-  ],
   "violations": [
     [
       "ANN201",
@@ -334,6 +322,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/common/tokenizer_validator.py",
+      "validate_tokenizer_early"
+    ],
+    [
+      "BLE001",
       "src/aiperf/controller/system_controller.py",
       "SystemController._cancel_profiling"
     ],
@@ -451,6 +444,16 @@
       "BLE001",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector.is_url_reachable"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/orchestrator/orchestrator.py",
+      "MultiRunOrchestrator._extract_summary_metrics"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/orchestrator/subprocess_runner.py",
+      "main"
     ],
     [
       "BLE001",
@@ -581,6 +584,11 @@
       "BLE001",
       "src/aiperf/post_processors/record_export_results_processor.py",
       "RecordExportResultsProcessor.process_result"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/post_processors/strategies/genai_semconv.py",
+      "_extract_host"
     ],
     [
       "BLE001",
@@ -784,8 +792,28 @@
     ],
     [
       "C901",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
+    ],
+    [
+      "C901",
+      "src/aiperf/accuracy/graders/math.py",
+      "_math_equal"
+    ],
+    [
+      "C901",
+      "src/aiperf/cli_runner.py",
+      "_run_multi_benchmark"
+    ],
+    [
+      "C901",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/tokenizer_validator.py",
+      "preload_tokenizers"
     ],
     [
       "C901",
@@ -849,13 +877,38 @@
     ],
     [
       "C901",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "C901",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
+    ],
+    [
+      "C901",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
       "DCGMTelemetryCollector._parse_metrics_to_records"
     ],
     [
       "C901",
+      "src/aiperf/orchestrator/aggregation/confidence.py",
+      "ConfidenceAggregation._aggregate_metrics"
+    ],
+    [
+      "C901",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "identify_pareto_optimal"
+    ],
+    [
+      "C901",
       "src/aiperf/orchestrator/jsonl_loader.py",
       "iter_profiling_records"
+    ],
+    [
+      "C901",
+      "src/aiperf/orchestrator/strategies.py",
+      "SweepConfidenceStrategy.aggregate"
     ],
     [
       "C901",
@@ -1024,6 +1077,16 @@
     ],
     [
       "C901",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "C901",
+      "src/aiperf/records/records_manager.py",
+      "RecordsManager.__init__"
+    ],
+    [
+      "C901",
       "src/aiperf/records/records_manager.py",
       "RecordsManager._process_results"
     ],
@@ -1094,6 +1157,21 @@
     ],
     [
       "D103",
+      "src/aiperf/common/optional_dependencies.py",
+      "install_optional_dependency_hint"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/optional_dependencies.py",
+      "mlflow_dependency_message"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/optional_dependencies.py",
+      "otel_dependency_message"
+    ],
+    [
+      "D103",
       "src/aiperf/common/tokenizer_display.py",
       "display_tokenizer_ambiguous_name"
     ],
@@ -1144,6 +1222,16 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/cli_runner.py",
+      "_run_multi_benchmark"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/common/tokenizer_validator.py",
+      "preload_tokenizers"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/dataset/agentic_code_gen/reporting/metrics.py",
       "compute_quality_report"
     ],
@@ -1171,6 +1259,16 @@
       "PLR0912",
       "src/aiperf/endpoints/openai_responses.py",
       "ResponsesEndpoint._extract_response_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "identify_pareto_optimal"
     ],
     [
       "PLR0912",
@@ -1264,6 +1362,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1294,6 +1397,16 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/cli_runner.py",
+      "_run_multi_benchmark"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],
@@ -1311,6 +1424,21 @@
       "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/orchestrator/strategies.py",
+      "SweepConfidenceStrategy.aggregate"
     ],
     [
       "PLR0915",
@@ -1416,6 +1544,11 @@
       "PLR0915",
       "src/aiperf/plot/handlers/single_run_handlers.py",
       "PercentileBandsHandler.create_plot"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "PLR0915",

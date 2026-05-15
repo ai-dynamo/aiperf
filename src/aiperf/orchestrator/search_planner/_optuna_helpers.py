@@ -129,7 +129,7 @@ def build_sampler(cfg: AdaptiveSearchSweep) -> Any:
         except ImportError as e:
             raise ImportError(
                 "GPSampler requires `torch` for post-startup GP fitting. "
-                "Install via `uv pip install -e '.[optuna]' torch` or pick "
+                "Install torch or pick "
                 "a different sampler (`--optuna-sampler tpe` is the "
                 "dep-light default; `--optuna-sampler botorch` is the "
                 "heavyweight constrained-EI option). Underlying "
@@ -155,8 +155,8 @@ def build_sampler(cfg: AdaptiveSearchSweep) -> Any:
             from optuna_integration import BoTorchSampler
         except ImportError as e:
             raise ImportError(
-                "BoTorch sampler requires `optuna-integration` and `botorch`. "
-                "Install via `uv pip install optuna-integration botorch`."
+                "BoTorch sampler requires the optional `botorch` extra. "
+                "Install via `uv pip install -e '.[botorch]'`."
             ) from e
         n_obj = len(cfg.objectives)
         if n_obj > 1:
@@ -205,8 +205,8 @@ def _resolve_candidates_func(acquisition: str | None) -> Any | None:
         )
     except ImportError as e:
         raise ImportError(
-            "--optuna-acquisition requires `optuna-integration` and `botorch`. "
-            "Install via `uv pip install optuna-integration botorch`."
+            "--optuna-acquisition requires the optional `botorch` extra."
+            "Install via `uv pip install -e '.[botorch]'`."
         ) from e
     if acquisition in ("logei", "qlogei"):
         return logei_candidates_func
@@ -264,9 +264,9 @@ def build_qlognei_candidates_func() -> Any:
         from gpytorch.mlls import ExactMarginalLogLikelihood
     except ImportError as e:
         raise ImportError(
-            "--optuna-acquisition qlognei requires botorch>=0.10 (for "
-            "`qLogNoisyExpectedImprovement`). Install via "
-            "`uv pip install 'botorch>=0.10' optuna-integration`."
+            "--optuna-acquisition qlognei requires the optional `botorch` extra "
+            "(for `qLogNoisyExpectedImprovement`). Install via "
+            "`uv pip install -e '.[botorch]'`."
         ) from e
 
     from aiperf.orchestrator.search_planner._botorch_kernel import make_dsp_kernel
@@ -350,8 +350,8 @@ def build_qnehvi_candidates_func(*, reference_point: list[float]) -> Any:
         from gpytorch.mlls import SumMarginalLogLikelihood
     except ImportError as e:
         raise ImportError(
-            "--optuna-acquisition qlognehvi requires botorch>=0.10. "
-            "Install via `uv pip install 'botorch>=0.10' optuna-integration`."
+            "--optuna-acquisition qlognehvi requires the optional `botorch` extra. "
+            "Install via `uv pip install -e '.[botorch]'`."
         ) from e
 
     ref_point_t = torch.tensor(reference_point, dtype=torch.double)

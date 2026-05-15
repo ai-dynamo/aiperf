@@ -40,6 +40,8 @@ Schema Version: 2.0.0
 from aiperf.config.artifacts import (
     ArtifactsConfig,
     GpuTelemetryConfig,
+    MLflowConfig,
+    OTelConfig,
     ServerMetricsConfig,
     ServerMetricsDiscoveryConfig,
 )
@@ -219,6 +221,7 @@ __all__ = [
     "LatinHypercubeSweep",
     "LogNormalDistribution",
     "LoggingConfig",
+    "MLflowConfig",
     "MissingEnvironmentVariableError",
     "MetricsConfig",
     "ModelItem",
@@ -227,6 +230,7 @@ __all__ = [
     "NormalDistribution",
     "Objective",
     "OutcomeConstraint",
+    "OTelConfig",
     "OutputDefaults",
     "PeakEntry",
     "PhaseConfig",

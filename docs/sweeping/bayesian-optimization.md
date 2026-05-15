@@ -21,18 +21,18 @@
 
 ## Two ways to run BO
 
-AIPerf ships a single Optuna+BoTorch BO engine, exposed under two `--search-planner` names:
+AIPerf ships an Optuna-backed adaptive-search engine, exposed under two `--search-planner` names:
 
-- **`--search-planner=bayesian`** (recommended default) — a curated preset that locks in the BoTorch sampler, auto-selects `qLogNoisyExpectedImprovement` for single-objective and `qLogNoisyExpectedHypervolumeImprovement` for multi-objective, and applies the Hvarfner-DSP Matern-5/2 kernel (Hvarfner et al. ICML 2024, [arXiv:2402.02229](https://arxiv.org/abs/2402.02229)) to every GP fit. Native Optuna constraint handling for SLA filters and outcome constraints, per Letham et al. 2019 ([arXiv:1706.07094](https://arxiv.org/abs/1706.07094)). Use this if you don't want to think about sampler/acquisition choice.
-- **`--search-planner=optuna`** (expert mode) — same engine, but exposes `--optuna-sampler {tpe,gp,botorch}` and `--optuna-acquisition {logei,qlogei,qnei,qlognei,qehvi,qnehvi,qlognehvi}` for users who specifically want TPE / GP-EI / a non-default acquisition. Defaults to `botorch` (same surrogate as the `bayesian` preset); pick `tpe` for high-cardinality categorical spaces or to avoid the BoTorch/PyTorch dependency cost.
+- **`--search-planner=bayesian`** (recommended default) — a curated preset that uses the BoTorch sampler when available, auto-selects `qLogNoisyExpectedImprovement` for single-objective and `qLogNoisyExpectedHypervolumeImprovement` for multi-objective, and applies the Hvarfner-DSP Matern-5/2 kernel (Hvarfner et al. ICML 2024, [arXiv:2402.02229](https://arxiv.org/abs/2402.02229)) to every GP fit. If the optional BoTorch stack is unavailable, it logs a warning and falls back to Optuna's core TPE sampler.
+- **`--search-planner=optuna`** (expert mode) — same engine, but exposes `--optuna-sampler {tpe,gp,botorch}` and `--optuna-acquisition {logei,qlogei,qnei,qlognei,qehvi,qnehvi,qlognehvi}` for users who specifically want TPE / GP-EI / a non-default acquisition. Defaults to the BoTorch path when available and falls back to TPE only when that default was implicit; explicit `botorch` requests require the optional BoTorch stack and fail clearly when it is unavailable.
 
-Both require the `[optuna]` extra:
+Optuna is installed by default. The BoTorch sampler is optional:
 
 ```bash
-uv pip install -e '.[optuna]'
+uv pip install -e '.[botorch]'
 ```
 
-The BoTorch sampler additionally pulls in `botorch>=0.10`, `gpytorch`, and `torch` (already declared in the extra).
+The BoTorch extra pulls in `optuna-integration`, `botorch>=0.10`, `gpytorch`, and `torch`.
 
 ## When to use it
 
@@ -80,8 +80,8 @@ This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-plann
 | `--search-initial-points N` | no | Random Sobol points before GP fitting. Default 5. Must be < `--search-max-iterations`. |
 | `--search-random-seed N` | no | Reproducibility seed for the Optuna study. When unset, sampling is non-deterministic. |
 | `--search-percentile-pooling MODE` | no | `mean` (default) or `pooled`. When `--search-stat` is a percentile, switches the BO objective from mean-of-per-trial-percentiles to the percentile of the pooled per-request samples across all trials. `pooled` requires `--export-level records`. See [Objective semantics](#objective-semantics). |
-| `--search-planner NAME` | no | `bayesian` (default; curated Optuna+BoTorch preset) / `optuna` (expert mode) / `monotonic_sla` / `smooth_isotonic`. |
-| `--optuna-sampler SAMPLER` | no | Only consulted with `--search-planner=optuna`. `botorch` (default) / `gp` / `tpe`. The `bayesian` preset locks this to `botorch`. |
+| `--search-planner NAME` | no | `bayesian` (default; curated Optuna preset with BoTorch-if-available fallback to TPE) / `optuna` (expert mode) / `monotonic_sla` / `smooth_isotonic`. |
+| `--optuna-sampler SAMPLER` | no | Only consulted with `--search-planner=optuna`. `botorch` (implicit default) / `gp` / `tpe`. The implicit BoTorch default falls back to TPE when the optional stack is unavailable; explicit `botorch` raises. |
 | `--optuna-acquisition ACQ` | no | BoTorch acquisition override. Only consulted with `--search-planner=optuna --optuna-sampler=botorch`. Single-objective: `qnei` (Letham 2019) or `qlognei` (Ament 2023) for noisy-EI; `logei`/`qlogei` are the explicit defaults. Multi-objective: `qehvi`, `qnehvi`, or `qlognehvi` (Daulton 2021). The cross-field validator on `AdaptiveSearchSweep` requires the choice to match `len(objectives)`: single-objective acquisitions reject `len(objectives) > 1`, multi-objective acquisitions reject `len(objectives) == 1`. The `bayesian` preset auto-selects `qlognei` (single-obj) or `qlognehvi` (multi-obj) based on `len(objectives)`. See [Multi-objective Pareto BO](#multi-objective-pareto-bo). |
 | `--optuna-terminator MODE` | no | Posterior-regret stopping: `regret` (Makarova 2022 `RegretBoundEvaluator`) or `emmr` (Ishibashi 2023). Only consulted with `--search-planner=optuna`. Layered on top of three-signal convergence; `convergence_reason` becomes `posterior_regret_bound` or `emmr` when it fires. |
 

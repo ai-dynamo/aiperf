@@ -41,6 +41,12 @@ def test_adaptive_search_sweep_accepts_explicit_bayesian():
     assert cfg.planner == SearchPlannerType.BAYESIAN
 
 
+def test_adaptive_search_sweep_default_optuna_sampler_is_botorch():
+    """BoTorch remains the preferred implicit sampler; TPE is fallback only."""
+    cfg = AdaptiveSearchSweep(**_minimal_kwargs())
+    assert cfg.optuna_sampler == "botorch"
+
+
 def test_adaptive_search_sweep_rejects_unknown_planner():
     """Names not registered under the `search_planner` plugin category are rejected."""
     with pytest.raises(ValidationError):

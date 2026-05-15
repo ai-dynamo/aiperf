@@ -118,15 +118,6 @@ def _result(
 # ---------------------------------------------------------------------------
 
 
-def _has_optuna() -> bool:
-    try:
-        import optuna  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-@pytest.mark.skipif(not _has_optuna(), reason="optuna extra not installed")
 def test_optuna_planner_treats_nan_as_missing() -> None:
     from aiperf.orchestrator.search_planner.optuna_planner import OptunaSearchPlanner
 
@@ -146,7 +137,6 @@ def test_optuna_planner_treats_nan_as_missing() -> None:
     assert next_proposal is not None
 
 
-@pytest.mark.skipif(not _has_optuna(), reason="optuna extra not installed")
 def test_optuna_feasibility_view_agrees_with_history_on_nan() -> None:
     from aiperf.orchestrator.search_planner.optuna_planner import OptunaSearchPlanner
 

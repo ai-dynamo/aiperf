@@ -87,6 +87,16 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    @field_serializer("urls")
+    def _redact_urls(self, value: list[str], info: Any) -> list[str]:
+        """Redact URL userinfo in serialized config artifacts by default."""
+        context = getattr(info, "context", None)
+        if isinstance(context, dict) and context.get("include_secrets"):
+            return value
+        from aiperf.common.redact import redact_url
+
+        return [redact_url(url) for url in value]
+
     url_strategy: Annotated[
         URLSelectionStrategy,
         Field(

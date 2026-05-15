@@ -71,7 +71,7 @@ def _two_obj_cfg() -> AdaptiveSearchSweep:
         ],
         max_iterations=5,
         n_initial_points=2,
-        # Multi-objective TPE; doesn't require the [optuna]+botorch stack.
+        # Multi-objective TPE; doesn't require the optional BoTorch stack.
         optuna_sampler="tpe",
         optuna_acquisition=None,
         random_seed=42,
@@ -175,75 +175,6 @@ def test_qnehvi_candidates_func_runs_on_synthetic_2obj():
     bounds = torch.tensor([[0.0], [1.0]])
     candidates = func(train_x, train_obj, None, bounds, None)
     assert candidates.shape[-1] == 1  # 1D search space
-
-
-def test_reference_point_uses_explicit_thresholds_when_set():
-    from aiperf.orchestrator.search_planner._optuna_helpers import (
-        derive_reference_point,
-    )
-
-    objectives = [
-        Objective(
-            metric="a",
-            direction=OptimizationDirection.MAXIMIZE,
-            threshold=10.0,
-        ),
-        Objective(
-            metric="b",
-            direction=OptimizationDirection.MINIMIZE,
-            threshold=200.0,
-        ),
-    ]
-    rp = derive_reference_point(objectives, observed=[])
-    assert rp == [10.0, 200.0]
-
-
-def test_reference_point_auto_derives_from_observations_when_threshold_none():
-    from aiperf.orchestrator.search_planner._optuna_helpers import (
-        derive_reference_point,
-    )
-
-    objectives = [
-        Objective(metric="a", direction=OptimizationDirection.MAXIMIZE),
-        Objective(metric="b", direction=OptimizationDirection.MINIMIZE),
-    ]
-    observed = [[10.0, 50.0], [20.0, 100.0], [15.0, 75.0]]
-    rp = derive_reference_point(objectives, observed=observed)
-    # Maximize: worst is min observed (10); 10 - 0.05*|10| = 9.5
-    # Minimize: worst is max observed (100); 100 + 0.05*|100| = 105
-    assert rp[0] == pytest.approx(9.5)
-    assert rp[1] == pytest.approx(105.0)
-
-
-def test_reference_point_mixed_explicit_and_auto():
-    from aiperf.orchestrator.search_planner._optuna_helpers import (
-        derive_reference_point,
-    )
-
-    objectives = [
-        Objective(
-            metric="a",
-            direction=OptimizationDirection.MAXIMIZE,
-            threshold=5.0,
-        ),
-        Objective(metric="b", direction=OptimizationDirection.MINIMIZE),
-    ]
-    observed = [[10.0, 50.0], [20.0, 100.0]]
-    rp = derive_reference_point(objectives, observed=observed)
-    assert rp[0] == 5.0
-    assert rp[1] == pytest.approx(105.0)
-
-
-def test_reference_point_raises_when_no_threshold_and_no_observations():
-    from aiperf.orchestrator.search_planner._optuna_helpers import (
-        derive_reference_point,
-    )
-
-    objectives = [
-        Objective(metric="a", direction=OptimizationDirection.MAXIMIZE),
-    ]
-    with pytest.raises(ValueError, match="no threshold set"):
-        derive_reference_point(objectives, observed=[])
 
 
 def test_multi_objective_improvement_patience_uses_hypervolume_delta():

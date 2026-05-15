@@ -50,7 +50,8 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
       rather than the boundary itself.
     - ``optuna``: same penalty-BO formulation as ``bo`` but routed through
       the ``OptunaSearchPlanner`` (TPE / GP / BoTorch samplers, selected
-      via ``--optuna-sampler``). Requires the ``[optuna]`` extra.
+      via ``--optuna-sampler``). Optuna ships by default; BoTorch requires
+      the optional ``botorch`` extra.
     - ``grid``: log-spaced 8-step sweep + ``sla_breach_knee`` post-process,
       emitting ``sla_breach.json`` with the boundary report.
 

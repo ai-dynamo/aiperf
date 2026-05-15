@@ -99,12 +99,17 @@ class AccuracyConfig(BaseConfig):
         dependent_fields = {
             "tasks": self.tasks,
             "n_shots": self.n_shots,
-            "enable_cot": self.enable_cot or None,
             "grader": self.grader,
             "system_prompt": self.system_prompt,
-            "verbose": self.verbose or None,
         }
-        set_fields = sorted(k for k, v in dependent_fields.items() if v is not None)
+        explicitly_set_boolean_fields = {
+            "enable_cot",
+            "verbose",
+        } & self.model_fields_set
+        set_fields = sorted(
+            [k for k, v in dependent_fields.items() if v is not None]
+            + list(explicitly_set_boolean_fields)
+        )
         if not set_fields:
             return self
         flag_names = ", ".join(f"--accuracy-{k.replace('_', '-')}" for k in set_fields)
@@ -150,11 +155,12 @@ class AccuracyConfig(BaseConfig):
     ]
 
     enable_cot: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description="Enable chain-of-thought prompting for accuracy evaluation. "
-            "Adds reasoning instructions to the prompt.",
+            "Adds reasoning instructions to the prompt. Defaults to the benchmark's "
+            "``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).",
         ),
     ]
 

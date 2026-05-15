@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Curated BO preset (`--search-planner=bayesian`).
 
-Thin subclass of :class:`OptunaSearchPlanner` that locks the sampler to
-``BoTorchSampler`` and sets ``optuna_acquisition`` to ``"qlognei"``
-(single-objective) or ``"qlognehvi"`` (multi-objective). The acquisition
-string is dispatched in :func:`_optuna_helpers._resolve_candidates_func`.
+Thin subclass of :class:`OptunaSearchPlanner` that tries the optional
+``BoTorchSampler`` first and sets ``optuna_acquisition`` to ``"qlognei"``
+(single-objective) or ``"qlognehvi"`` (multi-objective). If the optional
+BoTorch stack is unavailable, it warns and falls back to Optuna's core TPE
+sampler.
 For multi-objective runs the ``qlognehvi`` candidates_func is *not*
 installed at sampler construction — :func:`build_sampler` deliberately
 passes ``candidates_func=None`` when ``n_obj > 1`` and the planner
@@ -17,10 +18,9 @@ point so users don't have to know which ``--optuna-sampler`` /
 ``--optuna-acquisition`` strings to pass.
 
 Power users who want to pick a different sampler (TPE, GP) or acquisition
-should use ``--search-planner=optuna`` instead. This preset deliberately
-overrides ``optuna_sampler`` / ``optuna_acquisition`` even when the user
-sets them — the override is the entire point of the preset. Use the
-``optuna`` planner for explicit sampler/acquisition control.
+should use ``--search-planner=optuna`` instead. Explicit BoTorch requests on
+that planner raise when the optional stack is unavailable; only this curated
+preset performs the TPE fallback.
 
 The Hvarfner-DSP kernel (Hvarfner et al. ICML 2024, arXiv:2402.02229) is
 applied to this preset's qLogNEI / qLogNEHVI fits via
@@ -43,10 +43,10 @@ __all__ = ["BayesianSearchPlanner"]
 
 
 class BayesianSearchPlanner(OptunaSearchPlanner):
-    """Curated Optuna+BoTorch preset for the default Bayesian planner.
+    """Curated Optuna preset for the default Bayesian planner.
 
-    Forces `optuna_sampler="botorch"` and selects qLogNEI or qLogNEHVI from the
-    objective count before delegating to OptunaSearchPlanner. Use
+    Tries `optuna_sampler="botorch"` with qLogNEI or qLogNEHVI first. If the
+    optional BoTorch stack is unavailable, falls back to core Optuna TPE. Use
     `OptunaSearchPlanner` directly when caller-provided sampler/acquisition values
     must be preserved.
     """
@@ -60,4 +60,4 @@ class BayesianSearchPlanner(OptunaSearchPlanner):
                 "optuna_acquisition": curated_acquisition,
             }
         )
-        super().__init__(base_config, curated_cfg)
+        super().__init__(base_config, curated_cfg, allow_implicit_botorch_fallback=True)

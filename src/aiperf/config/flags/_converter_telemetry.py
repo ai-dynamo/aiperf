@@ -3,8 +3,8 @@
 
 """Telemetry section builders for the ``CLIConfig`` -> ``AIPerfConfig`` converter.
 
-Builds ``gpu_telemetry`` and ``server_metrics`` sections by reading top-level
-fields on the ``CLIConfig``.
+Builds ``gpu_telemetry``, ``server_metrics``, ``otel``, and ``mlflow`` sections
+by reading top-level fields on the ``CLIConfig``.
 """
 
 from __future__ import annotations
@@ -67,3 +67,34 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
     if cli.server_metrics_formats:
         server_metrics["formats"] = list(cli.server_metrics_formats)
     return server_metrics
+
+
+def build_otel(cli: CLIConfig) -> dict[str, Any]:
+    """Translate OTel CLI flags into the first-class OTel config dict."""
+    otel: dict[str, Any] = {}
+    cli_set = cli.model_fields_set
+    if "otel_url" in cli_set:
+        otel["metrics_url"] = cli.otel_url
+    if "stream" in cli_set:
+        otel["stream_metrics_enabled"] = cli.stream in ("default", "metrics")
+        otel["stream_timing_enabled"] = cli.stream in ("default", "timing")
+    if "gen_ai_provider" in cli_set:
+        otel["gen_ai_provider"] = cli.gen_ai_provider
+    return otel
+
+
+def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
+    """Translate MLflow CLI flags into the first-class MLflow config dict."""
+    mapping = {
+        "mlflow_tracking_uri": "tracking_uri",
+        "mlflow_experiment": "experiment",
+        "mlflow_run_name": "run_name",
+        "mlflow_tags": "tags",
+        "mlflow_parent_run_id": "parent_run_id",
+        "mlflow_artifact_globs": "artifact_globs",
+    }
+    return {
+        dst: getattr(cli, src)
+        for src, dst in mapping.items()
+        if src in cli.model_fields_set
+    }

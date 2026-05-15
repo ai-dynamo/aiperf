@@ -10,11 +10,11 @@ support is part of the contract.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
-torch = pytest.importorskip("torch")
 optuna = pytest.importorskip("optuna")
-botorch = pytest.importorskip("botorch")
 
 from aiperf.config.config import BenchmarkConfig  # noqa: E402
 from aiperf.config.sweep import (  # noqa: E402
@@ -85,6 +85,7 @@ def test_preset_is_subclass_of_optuna_planner():
 
 
 def test_preset_single_objective_locks_botorch_qlognei():
+    pytest.importorskip("botorch")
     cfg = _adaptive_cfg(n_objectives=1)
     planner = BayesianSearchPlanner(_base_config(), cfg)
     # The preset stamps the curated cfg fields before delegating to super().
@@ -93,6 +94,7 @@ def test_preset_single_objective_locks_botorch_qlognei():
 
 
 def test_preset_multi_objective_locks_botorch_qlognehvi():
+    pytest.importorskip("botorch")
     cfg = _adaptive_cfg(n_objectives=2)
     planner = BayesianSearchPlanner(_base_config(), cfg)
     assert planner._cfg.optuna_sampler == "botorch"
@@ -103,6 +105,7 @@ def test_preset_overrides_user_optuna_flags():
     """User passes --optuna-sampler=tpe but selects --search-planner=bayesian.
     The curated preset overrides; user wanting flexibility must pick =optuna.
     """
+    pytest.importorskip("botorch")
     cfg = _adaptive_cfg(
         n_objectives=1,
         optuna_sampler="tpe",
@@ -111,6 +114,31 @@ def test_preset_overrides_user_optuna_flags():
     planner = BayesianSearchPlanner(_base_config(), cfg)
     assert planner._cfg.optuna_sampler == "botorch"
     assert planner._cfg.optuna_acquisition == "qlognei"
+
+
+def test_preset_falls_back_to_tpe_when_implicit_botorch_is_unavailable():
+    real_build_sampler = __import__(
+        "aiperf.orchestrator.search_planner.optuna_planner",
+        fromlist=["build_sampler"],
+    ).build_sampler
+
+    def fake_build_sampler(cfg):
+        if cfg.optuna_sampler == "botorch":
+            raise ImportError("simulated missing botorch")
+        return real_build_sampler(cfg)
+
+    cfg = _adaptive_cfg(n_objectives=1)
+    with (
+        patch(
+            "aiperf.orchestrator.search_planner.optuna_planner.build_sampler",
+            side_effect=fake_build_sampler,
+        ),
+        pytest.warns(RuntimeWarning, match="falling back to optuna_sampler='tpe'"),
+    ):
+        planner = BayesianSearchPlanner(_base_config(), cfg)
+
+    assert planner._cfg.optuna_sampler == "tpe"
+    assert planner._cfg.optuna_acquisition is None
 
 
 def test_preset_accepts_multi_objective():

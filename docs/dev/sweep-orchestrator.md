@@ -2028,10 +2028,10 @@ Planner modules below are relative to `aiperf.orchestrator.search_planner.` (e.g
 
 | Plugin name | Class | Module | Purpose |
 |---|---|---|---|
-| `bayesian` | `BayesianSearchPlanner` | `bayesian.py` | Curated Optuna+BoTorch preset (subclass of `OptunaSearchPlanner`); auto-selects `qlognei` / `qlognehvi` by `len(objectives)`; native Optuna constraints for SLA filters |
+| `bayesian` | `BayesianSearchPlanner` | `bayesian.py` | Curated Optuna preset (subclass of `OptunaSearchPlanner`); uses BoTorch qLogNEI/qLogNEHVI when available and falls back to TPE with a warning when the optional BoTorch stack is unavailable |
 | `monotonic_sla` | `MonotonicSLASearchPlanner` | `monotonic.py` | 1D exponential probe + bisection mirroring perf_analyzer's `--binary-search`. Margin-magnitude-blind. |
 | `smooth_isotonic` | `SmoothIsotonicSLAPlanner` | `smooth_isotonic.py` (+ helpers `_smooth_isotonic_fit.py`, `_replicate_budget.py`, `_cliff_detect.py`, `_margin_normalize.py`) | 1D PAVA + PCHIP smooth-isotonic fit; opt-in replicates and bootstrap CI; cliff-curve guard. Default for `max-concurrency-under-sla`. |
-| `optuna` | `OptunaSearchPlanner` | `optuna_planner.py` | Expert-mode Optuna BO (TPE / GP / BoTorch samplers exposed via `--optuna-sampler`); requires the `[optuna]` optional extra. |
+| `optuna` | `OptunaSearchPlanner` | `optuna_planner.py` | Expert-mode Optuna BO (TPE / GP / BoTorch samplers exposed via `--optuna-sampler`); Optuna ships by default, BoTorch requires the optional `botorch` extra. |
 
 All four are registered in `src/aiperf/plugin/plugins.yaml` under the `search_planner:` category and resolved via `plugins.get_class(PluginType.SEARCH_PLANNER, name)`.
 
@@ -2101,11 +2101,11 @@ classDiagram
         +convergence_reason -> optional str
     }
     class BayesianSearchPlanner {
-        <<curated Optuna+BoTorch preset>>
+        <<curated Optuna preset>>
         -inherits OptunaSearchPlanner
-        -locks optuna_sampler to botorch
+        -tries BoTorch sampler first
+        -falls back to TPE when BoTorch is unavailable
         -auto-selects qlognei/qlognehvi by objective count
-        -applies Hvarfner-DSP kernel to GP fits
     }
     class MonotonicSLASearchPlanner {
         <<1D feasibility>>
@@ -2295,7 +2295,7 @@ flowchart TB
 
 - **Adding a new planner backend** (random-search baseline, etc.): subclass `SearchPlanner`, implement the four abstract methods (`ask`/`tell`/`is_converged`/`history`); optionally override `convergence_reason` (default returns `None`) and `boundary_summary` (1D feasibility planners only). No orchestrator changes required — `MonotonicSLASearchPlanner`, `SmoothIsotonicSLAPlanner`, and `OptunaSearchPlanner` are existing examples reusing the same ABC. Wiring is already generic: `AdaptiveSearchSweep.planner` is a `SearchPlannerType` (`ExtensibleStrEnum` in `src/aiperf/plugin/enums.pyi`), and `cli_runner._run_multi_benchmark` instantiates the planner via `plugins.get_class(PluginType.SEARCH_PLANNER, sweep.planner)`. To register a new backend, add an entry under `search_planner:` in `src/aiperf/plugin/plugins.yaml` and a matching enum value — no dispatch code changes.
 - **Adding a new executor backend**: subclass `RunExecutor`. `LocalSubprocessExecutor` iterates one (variation, trial) at a time via `execute(BenchmarkRun)` — the seam is adaptive-shaped by construction.
-- **Replacing the BO backend.** The `OptunaSearchPlanner` boundary (and its `BayesianSearchPlanner` curated-preset subclass) is the only Optuna-aware code in the project (plus the `[optuna]` extra in `pyproject.toml`). The `qlognei` / `qlognehvi` acquisitions, posterior-regret stopping (`--optuna-terminator regret`/`emmr`), pooled-percentile aggregation (`--search-percentile-pooling pooled`), and the Hvarfner-DSP Matern-5/2 kernel ([arXiv:2402.02229](https://arxiv.org/abs/2402.02229)) are all plumbed through `_optuna_helpers.py`. The remaining principled upgrade path is wiring per-iteration heteroscedastic noise estimates from the pooled-percentile JSONL helper into a `HeteroskedasticSingleTaskGP`-based custom `candidates_func`. Evidence-gated: ship only if observed within-trial variance varies meaningfully across the search space on real workloads.
+- **Replacing the BO backend.** The `OptunaSearchPlanner` boundary (and its `BayesianSearchPlanner` curated-preset subclass) is the only Optuna-aware code in the project. BoTorch-specific acquisitions live behind the optional `botorch` extra in `pyproject.toml`. The `qlognei` / `qlognehvi` acquisitions, posterior-regret stopping (`--optuna-terminator regret`/`emmr`), pooled-percentile aggregation (`--search-percentile-pooling pooled`), and the Hvarfner-DSP Matern-5/2 kernel ([arXiv:2402.02229](https://arxiv.org/abs/2402.02229)) are all plumbed through `_optuna_helpers.py`. The remaining principled upgrade path is wiring per-iteration heteroscedastic noise estimates from the pooled-percentile JSONL helper into a `HeteroskedasticSingleTaskGP`-based custom `candidates_func`. Evidence-gated: ship only if observed within-trial variance varies meaningfully across the search space on real workloads.
 
 #### `smooth_isotonic` as novel-in-composition
 

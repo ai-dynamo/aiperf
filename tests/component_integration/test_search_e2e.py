@@ -12,8 +12,8 @@ pytest.importorskip("optuna")
 pytest.importorskip("botorch")
 
 # Imports below depend on Optuna+BoTorch being importable. pytest.importorskip
-# must precede them so the whole module is skipped when the [optuna] extra is
-# absent.
+# must precede them so the whole module is skipped when the optional BoTorch
+# stack is absent.
 import orjson  # noqa: E402
 
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
