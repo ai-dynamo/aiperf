@@ -128,7 +128,7 @@ def _apply_sweep_seed_derivation(plan: BenchmarkPlan, config: AIPerfConfig) -> N
     is True (grid / scenario / zip), every variation reuses the base seed.
     Adaptive sweeps add variations on the fly at runtime past the length of
     this list — the orchestrator falls back to SHA derivation (see
-    ``_resolve_run_seed``) for those overflow indices.
+    ``resolve_run_seed``) for those overflow indices.
     """
     base_seed = config.random_seed
     same_seed = (

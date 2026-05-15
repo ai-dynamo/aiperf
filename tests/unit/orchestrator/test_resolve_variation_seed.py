@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 from aiperf.common.random_generator import derive_variation_seed
 from aiperf.config.sweep import SweepVariation
-from aiperf.orchestrator.orchestrator import _resolve_run_seed
+from aiperf.orchestrator.orchestrator import resolve_run_seed
 
 
 def _stub_plan(
@@ -44,14 +44,14 @@ def test_grid_uses_precomputed_indexed_lookup():
     plan = _stub_plan(variation_seeds=[42, 43, 44], random_seed=42)
     for idx in range(3):
         v = SweepVariation(index=idx, label=f"variation_{idx:04d}", values={})
-        assert _resolve_run_seed(plan, v) == 42 + idx
+        assert resolve_run_seed(plan, v) == 42 + idx
 
 
 def test_grid_trials_share_variation_seed_by_default():
     """Default: trials within a variation reuse the same seed (main parity)."""
     plan = _stub_plan(variation_seeds=[42, 43], random_seed=42)
     v = SweepVariation(index=1, label="variation_0001", values={})
-    seeds = {_resolve_run_seed(plan, v, trial=t) for t in range(5)}
+    seeds = {resolve_run_seed(plan, v, trial=t) for t in range(5)}
     assert seeds == {43}
 
 
@@ -61,17 +61,17 @@ def test_adaptive_overflow_falls_back_to_sha_derivation():
     v1 = SweepVariation(index=1, label="search_iter_0001", values={})
     v42 = SweepVariation(index=42, label="search_iter_0042", values={})
 
-    assert _resolve_run_seed(plan, v0) == 42
-    assert _resolve_run_seed(plan, v1) == derive_variation_seed(42, v1.label)
-    assert _resolve_run_seed(plan, v42) == derive_variation_seed(42, v42.label)
-    assert _resolve_run_seed(plan, v1) is not None
-    assert _resolve_run_seed(plan, v42) is not None
+    assert resolve_run_seed(plan, v0) == 42
+    assert resolve_run_seed(plan, v1) == derive_variation_seed(42, v1.label)
+    assert resolve_run_seed(plan, v42) == derive_variation_seed(42, v42.label)
+    assert resolve_run_seed(plan, v1) is not None
+    assert resolve_run_seed(plan, v42) is not None
 
 
 def test_adaptive_overflow_with_no_envelope_seed_returns_none():
     plan = _stub_plan(variation_seeds=[None], random_seed=None)
     v5 = SweepVariation(index=5, label="search_iter_0005", values={})
-    assert _resolve_run_seed(plan, v5) is None
+    assert resolve_run_seed(plan, v5) is None
 
 
 def test_adaptive_same_label_always_yields_same_seed():
@@ -79,13 +79,13 @@ def test_adaptive_same_label_always_yields_same_seed():
     plan_a = _stub_plan(variation_seeds=[42], random_seed=42)
     plan_b = _stub_plan(variation_seeds=[42], random_seed=42)
     v = SweepVariation(index=7, label="search_iter_0007", values={})
-    assert _resolve_run_seed(plan_a, v) == _resolve_run_seed(plan_b, v)
+    assert resolve_run_seed(plan_a, v) == resolve_run_seed(plan_b, v)
 
 
 def test_adaptive_distinct_labels_yield_distinct_seeds():
     plan = _stub_plan(variation_seeds=[42], random_seed=42)
     seeds = {
-        _resolve_run_seed(
+        resolve_run_seed(
             plan, SweepVariation(index=i, label=f"search_iter_{i:04d}", values={})
         )
         for i in range(1, 50)
@@ -100,10 +100,10 @@ def test_per_trial_seeds_distinct_within_one_variation():
     """All trials of a variation get distinct seeds when vary_seed_per_trial=True."""
     plan = _stub_plan(variation_seeds=[42], random_seed=42, vary_seed_per_trial=True)
     v = SweepVariation(index=0, label="concurrency_10", values={})
-    seeds = [_resolve_run_seed(plan, v, trial=t) for t in range(10)]
+    seeds = [resolve_run_seed(plan, v, trial=t) for t in range(10)]
     assert len(set(seeds)) == 10
     # Stable: same (variation, trial) reproduces the same seed.
-    assert seeds[3] == _resolve_run_seed(plan, v, trial=3)
+    assert seeds[3] == resolve_run_seed(plan, v, trial=3)
 
 
 def test_per_trial_seeds_distinct_across_variations():
@@ -113,7 +113,7 @@ def test_per_trial_seeds_distinct_across_variations():
     )
     v0 = SweepVariation(index=0, label="concurrency_10", values={})
     v1 = SweepVariation(index=1, label="concurrency_20", values={})
-    assert _resolve_run_seed(plan, v0, trial=0) != _resolve_run_seed(plan, v1, trial=0)
+    assert resolve_run_seed(plan, v0, trial=0) != resolve_run_seed(plan, v1, trial=0)
 
 
 def test_per_trial_with_no_envelope_seed_returns_none():
@@ -122,8 +122,8 @@ def test_per_trial_with_no_envelope_seed_returns_none():
         variation_seeds=[None], random_seed=None, vary_seed_per_trial=True
     )
     v = SweepVariation(index=0, label="concurrency_10", values={})
-    assert _resolve_run_seed(plan, v, trial=0) is None
-    assert _resolve_run_seed(plan, v, trial=5) is None
+    assert resolve_run_seed(plan, v, trial=0) is None
+    assert resolve_run_seed(plan, v, trial=5) is None
 
 
 def test_per_trial_grid_does_not_use_precomputed_list():
@@ -134,14 +134,14 @@ def test_per_trial_grid_does_not_use_precomputed_list():
     v0 = SweepVariation(index=0, label="concurrency_10", values={})
     v1 = SweepVariation(index=1, label="concurrency_20", values={})
     # Trial 0 of variation 0 must NOT be the bare base_seed (it's SHA-derived).
-    assert _resolve_run_seed(plan, v0, trial=0) != 42
-    assert _resolve_run_seed(plan, v1, trial=0) != 43
+    assert resolve_run_seed(plan, v0, trial=0) != 42
+    assert resolve_run_seed(plan, v1, trial=0) != 43
     # All four (var, trial) combinations are distinct.
     seeds = {
-        _resolve_run_seed(plan, v0, trial=0),
-        _resolve_run_seed(plan, v0, trial=1),
-        _resolve_run_seed(plan, v1, trial=0),
-        _resolve_run_seed(plan, v1, trial=1),
+        resolve_run_seed(plan, v0, trial=0),
+        resolve_run_seed(plan, v0, trial=1),
+        resolve_run_seed(plan, v1, trial=0),
+        resolve_run_seed(plan, v1, trial=1),
     }
     assert len(seeds) == 4
 
@@ -165,7 +165,7 @@ def test_per_trial_composite_label_format_pinned():
     # composite label — not just "any distinct value".
     for trial in (0, 1, 5, 99):
         expected = derive_variation_seed(42, f"{v.label}:trial:{trial}")
-        assert _resolve_run_seed(plan, v, trial=trial) == expected
+        assert resolve_run_seed(plan, v, trial=trial) == expected
 
 
 def test_adaptive_overflow_uses_bare_label_not_composite():
@@ -182,9 +182,9 @@ def test_adaptive_overflow_uses_bare_label_not_composite():
 
     expected = derive_variation_seed(42, "search_iter_0005")
     # Same value for every trial number on the overflow path.
-    assert _resolve_run_seed(plan, v, trial=0) == expected
-    assert _resolve_run_seed(plan, v, trial=3) == expected
+    assert resolve_run_seed(plan, v, trial=0) == expected
+    assert resolve_run_seed(plan, v, trial=3) == expected
     # And critically, NOT equal to the composite-label form.
-    assert _resolve_run_seed(plan, v, trial=0) != derive_variation_seed(
+    assert resolve_run_seed(plan, v, trial=0) != derive_variation_seed(
         42, "search_iter_0005:trial:0"
     )

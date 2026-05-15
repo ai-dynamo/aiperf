@@ -392,7 +392,7 @@ class TestDeriveVariationSeedFormula:
 
     def test_formula_pinned_for_per_trial_composite_label(self):
         """Pins both the SHA formula AND the `:trial:` separator used by
-        `_resolve_run_seed` when `vary_seed_per_trial` is set. The composite
+        `resolve_run_seed` when `vary_seed_per_trial` is set. The composite
         label is constructed at the call site, but the value must match
         `derive_variation_seed(root, f"{label}:trial:{n}")` exactly.
         """

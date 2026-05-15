@@ -71,11 +71,11 @@ def service(
         # raw ``cli_config`` DTO.
         config = resolve_config(cli_config, cli_config.config_file)
         plan = build_benchmark_plan(config)
-        from aiperf.orchestrator.orchestrator import _resolve_run_seed
+        from aiperf.orchestrator.orchestrator import resolve_run_seed
 
         run = _make_benchmark_run(
             plan.configs[0],
-            random_seed=_resolve_run_seed(plan, plan.variations[0]),
+            random_seed=resolve_run_seed(plan, plan.variations[0]),
         )
 
         if health_host is not None:

@@ -65,9 +65,9 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
         )
 
     if plan.is_single_run:
-        from aiperf.orchestrator.orchestrator import _resolve_run_seed
+        from aiperf.orchestrator.orchestrator import resolve_run_seed
 
-        seed = _resolve_run_seed(plan, plan.variations[0])
+        seed = resolve_run_seed(plan, plan.variations[0])
         run = _make_benchmark_run(
             plan.configs[0], random_seed=seed, variables=plan.variables
         )

@@ -106,7 +106,7 @@ def _plan_cooldown_seconds(plan: BenchmarkPlan) -> float:
     return plan.sweep.cooldown_seconds if plan.sweep is not None else 0.0
 
 
-def _resolve_run_seed(
+def resolve_run_seed(
     plan: BenchmarkPlan, variation: SweepVariation, trial: int = 0
 ) -> int | None:
     # Why: grid/zip/scenario sweeps pre-compute the full per-variation seed
@@ -435,7 +435,7 @@ class MultiRunOrchestrator:
                 trial=trial,
                 label=label,
                 artifact_dir=artifact_dir,
-                random_seed=_resolve_run_seed(plan, variation, trial),
+                random_seed=resolve_run_seed(plan, variation, trial),
                 variables=dict(plan.variables),
             )
             logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
@@ -659,7 +659,7 @@ class MultiRunOrchestrator:
                 trial=trial,
                 label=label,
                 artifact_dir=artifact_dir,
-                random_seed=_resolve_run_seed(plan, variation, trial),
+                random_seed=resolve_run_seed(plan, variation, trial),
                 variables=dict(plan.variables),
             )
             logger.info(f"[v{var_idx} t{trial}] Executing {label}...")

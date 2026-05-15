@@ -35,7 +35,7 @@ def mock_loaders() -> Generator[MagicMock, None, None]:
         patch("aiperf.cli_runner._make_benchmark_run"),
     ):
         # build_benchmark_plan returns an object with .configs[0], .variations[0],
-        # and .variation_seeds; service.py uses _resolve_run_seed which
+        # and .variation_seeds; service.py uses resolve_run_seed which
         # reads variation.index, plan.variation_seeds, plan.random_seed, and
         # plan.multi_run.vary_seed_per_trial.
         from aiperf.config.sweep import SweepVariation
