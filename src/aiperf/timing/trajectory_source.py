@@ -112,6 +112,67 @@ class TrajectorySource(ConversationSource):
                 pool_size=pool_size,
             )
 
+        self._log_trajectory_summary()
+
+    def _log_trajectory_summary(self) -> None:
+        """Log a one-block table of every trajectory's start position.
+
+        Format::
+
+            TrajectorySource: built 14 trajectories from 949 traces
+              range cfg=[0.25, 0.75]  observed pct: min=27% median=51% max=72%
+                lane=00  start_turn= 6/24 (25%)  trace_id=abc123
+                lane=01  start_turn=15/22 (68%)  trace_id=def456
+                ...
+
+        Emitted once at construction. Lets you sanity-check the configured
+        start-range produced sensible per-trajectory positions before any
+        request fires, without needing to wait for warmup-completion lines
+        or correlate per-credit return logs.
+        """
+        rows: list[str] = []
+        pcts: list[float] = []
+        # Sort by lane (insertion order = lane assignment in dispatch loops)
+        # so the table reads in the same order it'll be dispatched.
+        for lane, trajectory in enumerate(self.trajectories):
+            meta = self._metadata_lookup.get(trajectory.conversation_id)
+            n_turns = len(meta.turns) if meta is not None else 0
+            k_i = trajectory.start_turn_index
+            pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
+            pcts.append(pct)
+            rows.append(
+                f"    lane={lane:02d}  start_turn={k_i:>3d}/{n_turns:<3d} "
+                f"({pct:>3.0f}%)  trace_id={trajectory.conversation_id}"
+            )
+
+        if pcts:
+            pcts_sorted = sorted(pcts)
+            mid = len(pcts_sorted) // 2
+            if len(pcts_sorted) % 2 == 0:
+                median = (pcts_sorted[mid - 1] + pcts_sorted[mid]) / 2
+            else:
+                median = pcts_sorted[mid]
+            obs_line = (
+                f"  range cfg=[{self._start_min_ratio:.2f}, "
+                f"{self._start_max_ratio:.2f}]  observed pct: "
+                f"min={min(pcts):>3.0f}% median={median:>3.0f}% "
+                f"max={max(pcts):>3.0f}%"
+            )
+        else:
+            obs_line = (
+                f"  range cfg=[{self._start_min_ratio:.2f}, "
+                f"{self._start_max_ratio:.2f}]  (no trajectories built)"
+            )
+
+        body = "\n".join(rows)
+        _logger.info(
+            "TrajectorySource: built %d trajectories from %d traces\n%s\n%s",
+            len(self.trajectories),
+            self._pool_size,
+            obs_line,
+            body,
+        )
+
     def _build_trajectories(self) -> list[Trajectory]:
         trajectories: list[Trajectory] = []
         seen: set[str] = set()
