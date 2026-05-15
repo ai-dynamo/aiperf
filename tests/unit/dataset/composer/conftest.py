@@ -8,12 +8,12 @@ from PIL import Image
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def make_run(cli_config: CLIConfig):
     """Build a BenchmarkRun from a v1 CLIConfig fixture for composer tests."""
-    return make_run_from_v1(cli_config)
+    return make_run_from_cli(cli_config)
 
 
 @pytest.fixture(autouse=True)

@@ -86,9 +86,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
     @pytest.fixture
     def run(self, cli_config):
         """v2 BenchmarkRun built from the cli_config fixture."""
-        from tests.unit.conftest import make_run_from_v1
+        from tests.unit.conftest import make_run_from_cli
 
-        return make_run_from_v1(cli_config)
+        return make_run_from_cli(cli_config)
 
     @pytest.fixture
     def mock_pub_client(self):

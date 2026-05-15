@@ -7,7 +7,7 @@ from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def cli_config() -> CLIConfig:
 @pytest.fixture
 async def loader(cli_config: CLIConfig) -> SpeedBenchLoader:
     return SpeedBenchLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="nvidia/SPEED-Bench",
         hf_split="test",
         hf_subset="qualitative",
@@ -28,7 +28,7 @@ async def loader(cli_config: CLIConfig) -> SpeedBenchLoader:
 @pytest.fixture
 async def coding_loader(cli_config: CLIConfig) -> SpeedBenchLoader:
     return SpeedBenchLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="nvidia/SPEED-Bench",
         hf_split="test",
         hf_subset="qualitative",
@@ -198,7 +198,7 @@ class TestSpeedBenchLoaderCategoryFiltering:
 
     async def test_throughput_entropy_tier_filtering(self, cli_config):
         low_entropy_loader = SpeedBenchLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="throughput_1k",
@@ -224,7 +224,7 @@ class TestSpeedBenchLoaderStreaming:
             **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = SpeedBenchLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",
@@ -244,7 +244,7 @@ class TestSpeedBenchLoaderStreaming:
             **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = SpeedBenchLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",
@@ -264,7 +264,7 @@ class TestSpeedBenchLoaderStreaming:
             **CLIConfig(request_count=2).model_dump(exclude_unset=True),
         )
         loader = SpeedBenchLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",

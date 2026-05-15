@@ -8,7 +8,7 @@ import pytest
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader import ShareGPTLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.mark.asyncio
@@ -18,7 +18,7 @@ class TestShareGPTLoader:
     @pytest.fixture
     async def sharegpt_loader(self, cli_config, mock_tokenizer_cls):
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        return ShareGPTLoader(run=make_run_from_v1(cli_config), tokenizer=tokenizer)
+        return ShareGPTLoader(run=make_run_from_cli(cli_config), tokenizer=tokenizer)
 
     async def test_initialization(self, sharegpt_loader: ShareGPTLoader):
         """Test initialization of ShareGPTLoader"""

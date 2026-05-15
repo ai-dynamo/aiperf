@@ -13,7 +13,7 @@ from aiperf.timing.config import (
     RequestCancellationConfig,
     TimingConfig,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def make_phase_config(**overrides) -> CreditPhaseConfig:
@@ -118,7 +118,7 @@ def make_cfg(**overrides) -> CLIConfig:
 def _make_timing_config(**overrides) -> TimingConfig:
     """Convenience: build a CLIConfig with overrides, run it through the v1
     -> v2 resolver, and return the resulting ``TimingConfig``."""
-    return TimingConfig.from_run(make_run_from_v1(make_cfg(**overrides)))
+    return TimingConfig.from_run(make_run_from_cli(make_cfg(**overrides)))
 
 
 class TestTimingConfig:

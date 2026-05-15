@@ -23,7 +23,7 @@ from aiperf.plugin.enums import (
     PublicDatasetType,
     ServiceRunType,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 # ============================================================================
 # Shared Fixtures
@@ -56,7 +56,7 @@ def base_cfg():
 async def initialized_dataset_manager(mock_tokenizer, base_cfg):
     """Create an initialized DatasetManager with mocked publish."""
     CLIConfig()
-    dataset_manager = DatasetManager(run=make_run_from_v1(base_cfg))
+    dataset_manager = DatasetManager(run=make_run_from_cli(base_cfg))
 
     await dataset_manager.initialize()
     dataset_manager.publish = AsyncMock()
@@ -155,7 +155,7 @@ class TestDatasetManager:
             )
 
             CLIConfig()
-            dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+            dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
             await dataset_manager.initialize()
 
@@ -221,7 +221,7 @@ class TestDatasetManager:
             )
 
             CLIConfig()
-            dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+            dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
             await dataset_manager.initialize()
 
@@ -279,7 +279,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         assert cli_config.dataset_sampling_strategy is None
 
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
@@ -305,7 +305,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
@@ -342,7 +342,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
@@ -389,7 +389,7 @@ class TestDatasetManagerMemoryAndClient:
             num_dataset_entries=5,
         )
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
@@ -433,7 +433,7 @@ class TestDatasetManagerFallbackHandlers:
             num_dataset_entries=3,
         )
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
@@ -554,7 +554,7 @@ class TestKubernetesMode:
     ) -> None:
         """compress_only should be False in local (multiprocessing) mode."""
         CLIConfig(service_run_type=ServiceRunType.MULTIPROCESSING)
-        manager = DatasetManager(run=make_run_from_v1(base_cfg))
+        manager = DatasetManager(run=make_run_from_cli(base_cfg))
         assert manager._compress_only is False
 
 
@@ -588,7 +588,7 @@ class TestDatasetManagerTokenizerSkip:
             endpoint_type="image_retrieval",
         )
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
 
@@ -612,7 +612,7 @@ class TestDatasetManagerTokenizerSkip:
             tokenizer_name="test-model",
         )
         CLIConfig()
-        dataset_manager = DatasetManager(run=make_run_from_v1(cli_config))
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
 
@@ -639,7 +639,7 @@ class TestDatasetManagerTokenizerSkip:
             model_names=["test-model"],
             endpoint_type="chat",
         )
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         # Validator must have materialized the default before any service touches it.
         assert run.cfg.tokenizer is not None
         assert run.cfg.tokenizer.name is None
@@ -695,7 +695,7 @@ class TestConvertMediaUrlsToInline:
             endpoint_type="image_retrieval",
         )
         CLIConfig()
-        dm = DatasetManager(run=make_run_from_v1(cli_config))
+        dm = DatasetManager(run=make_run_from_cli(cli_config))
         await dm.initialize()
         dm.publish = AsyncMock()
         return dm
@@ -880,7 +880,7 @@ class TestAccuracyModeSamplingGuards:
 
     async def _make_manager(self, cli_config: CLIConfig) -> DatasetManager:
         CLIConfig()
-        manager = DatasetManager(run=make_run_from_v1(cli_config))
+        manager = DatasetManager(run=make_run_from_cli(cli_config))
         await manager.initialize()
         return manager
 

@@ -8,7 +8,7 @@ import pytest
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.mmvu import MMVUDatasetLoader
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def cli_config() -> CLIConfig:
 @pytest.fixture
 async def loader(cli_config: CLIConfig) -> MMVUDatasetLoader:
     return MMVUDatasetLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="yale-nlp/MMVU",
         hf_split="validation",
         video_column="video",

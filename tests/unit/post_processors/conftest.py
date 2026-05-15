@@ -380,9 +380,9 @@ def run_raw(cfg_raw: CLIConfig):
     TODO: Replace v1 round-trip with direct BenchmarkConfig construction once
     the raw-record export-level wiring is straightforward to set in v2.
     """
-    from tests.unit.conftest import make_run_from_v1
+    from tests.unit.conftest import make_run_from_cli
 
-    return make_run_from_v1(cfg_raw)
+    return make_run_from_cli(cfg_raw)
 
 
 def _create_test_request_info(

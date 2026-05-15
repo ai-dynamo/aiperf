@@ -10,7 +10,7 @@ import pytest
 from aiperf.common.models import MetricResult
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def make_latency_metric(
@@ -52,6 +52,6 @@ def router_benchmark_run(
     router_cfg: CLIConfig, router_service_config: CLIConfig
 ) -> BenchmarkRun:
     """BenchmarkRun for router testing."""
-    run = make_run_from_v1(router_cfg)
+    run = make_run_from_cli(router_cfg)
     run.benchmark_id = "test-bench"
     return run

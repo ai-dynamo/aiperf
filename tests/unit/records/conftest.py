@@ -70,7 +70,7 @@ def sample_turn():
 @pytest.fixture
 def inference_result_parser(cli_config):
     """Create an InferenceResultParser with mocked dependencies."""
-    from tests.unit.conftest import make_run_from_v1
+    from tests.unit.conftest import make_run_from_cli
 
     def mock_communication_init(self, run, **kwargs):
         from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
@@ -95,7 +95,7 @@ def inference_result_parser(cli_config):
         patch("aiperf.plugin.plugins.get_class"),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
-        parser = InferenceResultParser(run=make_run_from_v1(cli_config))
+        parser = InferenceResultParser(run=make_run_from_cli(cli_config))
         return parser
 
 

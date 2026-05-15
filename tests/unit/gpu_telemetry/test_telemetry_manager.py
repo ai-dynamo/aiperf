@@ -22,7 +22,7 @@ from aiperf.gpu_telemetry.constants import (
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 from aiperf.gpu_telemetry.manager import GPUTelemetryManager
 from aiperf.plugin.enums import GPUTelemetryCollectorType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def _create_cfg(
@@ -46,7 +46,7 @@ class TestTelemetryManagerInitialization:
 
     def _create_manager_with_mocked_base(self, cli_config: CLIConfig):
         """Helper to create TelemetryManager with mocked BaseComponentService."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
 
         with patch(
             "aiperf.common.base_component_service.BaseComponentService.__init__",
@@ -516,7 +516,7 @@ class TestEdgeCases:
 
     def _create_manager_with_mocked_base(self, cli_config: CLIConfig):
         """Helper to create TelemetryManager with mocked BaseComponentService."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
 
         with patch(
             "aiperf.common.base_component_service.BaseComponentService.__init__",
@@ -562,7 +562,7 @@ class TestBothDefaultEndpoints:
 
     def _create_manager_with_mocked_base(self, cli_config: CLIConfig):
         """Helper to create TelemetryManager with mocked BaseComponentService."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
 
         with patch(
             "aiperf.common.base_component_service.BaseComponentService.__init__",

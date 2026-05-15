@@ -32,7 +32,7 @@ from aiperf.server_metrics.storage import (
     ServerMetricsHierarchy,
     ServerMetricsTimeSeries,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 # =============================================================================
 # Mock Data Builders
@@ -146,7 +146,7 @@ def mock_cfg(tmp_path) -> BenchmarkRun:
         artifact_directory=str(tmp_path),
         server_metrics_formats=[ServerMetricsFormat.PARQUET],
     )
-    run = make_run_from_v1(user_cfg)
+    run = make_run_from_cli(user_cfg)
 
     # Verify that output path is within tmp_path (isolation check)
     parquet_path = run.cfg.artifacts.server_metrics_export_parquet_file

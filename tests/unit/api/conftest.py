@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 from aiperf.api.api_service import FastAPIService
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def api_benchmark_run(
     api_cfg: CLIConfig, api_service_config: CLIConfig
 ) -> BenchmarkRun:
     """BenchmarkRun for API service testing, with api_host/api_port set."""
-    run = make_run_from_v1(api_cfg)
+    run = make_run_from_cli(api_cfg)
     run.benchmark_id = "test-bench"
     run.cfg.runtime.api_host = "127.0.0.1"
     run.cfg.runtime.api_port = 9999

@@ -15,7 +15,7 @@ from aiperf.dataset.loader.hf_asr import (
     _MAX_DURATION_SECONDS,
     HFASRDatasetLoader,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def cli_config() -> CLIConfig:
 @pytest.fixture
 async def loader(cli_config: CLIConfig) -> HFASRDatasetLoader:
     return HFASRDatasetLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="openslr/librispeech_asr",
         hf_split="test",
         hf_subset="clean",

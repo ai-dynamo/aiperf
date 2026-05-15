@@ -19,7 +19,7 @@ from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.csv_exporter import ServerMetricsCsvExporter
 from aiperf.server_metrics.json_exporter import ServerMetricsJsonExporter
 from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter
-from tests.unit.conftest import make_cfg_from_v1, make_run_from_v1
+from tests.unit.conftest import make_cfg_from_v1, make_run_from_cli
 
 
 @pytest.fixture
@@ -225,7 +225,7 @@ class TestJsonlWriterFormatSelection:
         )
 
         # Should not raise exception
-        writer = ServerMetricsJSONLWriter(run=make_run_from_v1(config))
+        writer = ServerMetricsJSONLWriter(run=make_run_from_cli(config))
         assert writer is not None
 
     def test_jsonl_writer_disabled_when_format_not_selected(self, tmp_path):
@@ -242,7 +242,7 @@ class TestJsonlWriterFormatSelection:
         )
 
         with pytest.raises(PostProcessorDisabled, match="format not selected"):
-            ServerMetricsJSONLWriter(run=make_run_from_v1(config))
+            ServerMetricsJSONLWriter(run=make_run_from_cli(config))
 
 
 class TestAllExportersEnabled:
@@ -274,7 +274,7 @@ class TestAllExportersEnabled:
         # All should initialize without exceptions
         json_exporter = ServerMetricsJsonExporter(exporter_config=exporter_config)
         csv_exporter = ServerMetricsCsvExporter(exporter_config=exporter_config)
-        jsonl_writer = ServerMetricsJSONLWriter(run=make_run_from_v1(config))
+        jsonl_writer = ServerMetricsJSONLWriter(run=make_run_from_cli(config))
 
         assert json_exporter is not None
         assert csv_exporter is not None
@@ -307,4 +307,4 @@ class TestAllExportersEnabled:
 
         # JSONL should be disabled by default
         with pytest.raises(PostProcessorDisabled, match="format not selected"):
-            ServerMetricsJSONLWriter(run=make_run_from_v1(config))
+            ServerMetricsJSONLWriter(run=make_run_from_cli(config))

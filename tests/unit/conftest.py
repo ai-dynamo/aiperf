@@ -386,14 +386,15 @@ def cli_config() -> CLIConfig:
     return CLIConfig(model_names=["test-model"])
 
 
-def make_run_from_v1(
+def make_run_from_cli(
     cli_config: CLIConfig,
 ):
-    """Build a v2 ``BenchmarkRun`` from a v1 ``CLIConfig``.
+    """Build a v2 ``BenchmarkRun`` from a :class:`CLIConfig` input DTO.
 
-    Test-only helper for fixtures that historically constructed components with
-    ``cli_config`` kwargs. Flows through the v1 -> v2 resolver and yields the
-    v2 ``BenchmarkRun`` the production constructors now require.
+    Test-only helper. Flows the CLI config through the v2 resolver
+    (:func:`aiperf.config.flags.resolver.resolve_config`) to produce an
+    :class:`AIPerfConfig`, then wraps the benchmark section in a
+    :class:`BenchmarkRun` the production constructors require.
     """
     from aiperf.config import BenchmarkRun
     from aiperf.config.flags.resolver import resolve_config
@@ -465,7 +466,7 @@ def benchmark_run(cli_config: CLIConfig):
     Tests migrating off ``cli_config`` constructors should depend on this
     fixture instead.
     """
-    return make_run_from_v1(cli_config)
+    return make_run_from_cli(cli_config)
 
 
 class MockPubClient:
@@ -797,13 +798,13 @@ def make_cfg_from_v1(
 ):
     """Build a v2 ``BenchmarkConfig`` from a v1 ``CLIConfig``.
 
-    Wrapper around ``make_run_from_v1`` that returns just the ``cfg`` for tests
+    Wrapper around ``make_run_from_cli`` that returns just the ``cfg`` for tests
     that need a BenchmarkConfig (e.g. ``ExporterConfig(cfg=...)``) without
     needing the full BenchmarkRun. If ``artifact_directory`` is provided, the
     cfg's ``artifacts.dir`` is overridden so exporter tests can write to a
     tempdir.
     """
-    cfg = make_run_from_v1(cli_config).cfg
+    cfg = make_run_from_cli(cli_config).cfg
     if artifact_directory is not None:
         cfg.artifacts.dir = Path(artifact_directory)
     return cfg

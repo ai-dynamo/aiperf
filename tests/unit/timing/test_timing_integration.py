@@ -6,7 +6,7 @@ from pathlib import Path
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType, TimingMode
 from aiperf.timing.config import TimingConfig
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestTimingConfigurationIntegration:
@@ -19,7 +19,7 @@ class TestTimingConfigurationIntegration:
                 input_file=fname,
                 custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
             )
-            tcfg = TimingConfig.from_run(make_run_from_v1(ucfg))
+            tcfg = TimingConfig.from_run(make_run_from_cli(ucfg))
             assert tcfg.phase_configs[0].total_expected_requests == 100
         finally:
             Path(fname).unlink(missing_ok=True)
@@ -40,7 +40,7 @@ class TestTimingConfigurationIntegration:
                 input_file=fname,
                 custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
             )
-            tcfg = TimingConfig.from_run(make_run_from_v1(ucfg))
+            tcfg = TimingConfig.from_run(make_run_from_cli(ucfg))
             assert tcfg.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
             assert tcfg.phase_configs[0].total_expected_requests == 10
         finally:
@@ -51,7 +51,7 @@ class TestTimingConfigurationIntegration:
             model_names=["test-model"],
             **CLIConfig(request_count=42).model_dump(exclude_unset=True),
         )
-        tcfg = TimingConfig.from_run(make_run_from_v1(ucfg))
+        tcfg = TimingConfig.from_run(make_run_from_cli(ucfg))
         assert tcfg.phase_configs[0].total_expected_requests == 42
 
     def test_empty_dataset_defaults(self):
@@ -63,7 +63,7 @@ class TestTimingConfigurationIntegration:
                 input_file=fname,
                 custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
             )
-            tcfg = TimingConfig.from_run(make_run_from_v1(ucfg))
+            tcfg = TimingConfig.from_run(make_run_from_cli(ucfg))
             assert tcfg.phase_configs[0].total_expected_requests == 10
             assert tcfg.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
         finally:

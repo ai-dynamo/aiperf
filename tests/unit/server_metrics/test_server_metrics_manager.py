@@ -13,7 +13,7 @@ from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.manager import ServerMetricsManager
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ class TestServerMetricsManagerInitialization:
     ):
         """Test basic initialization with inference endpoint."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         assert manager._collectors == {}
@@ -67,7 +67,7 @@ class TestServerMetricsManagerInitialization:
     ):
         """Test that inference endpoint port is discovered by default."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         # Should include inference port (localhost:8000) by default
@@ -81,7 +81,7 @@ class TestServerMetricsManagerInitialization:
     ):
         """Test that user-specified server metrics URLs are added to endpoint list."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_server_metrics_urls),
+            run=make_run_from_cli(cfg_with_server_metrics_urls),
         )
 
         assert (
@@ -98,7 +98,7 @@ class TestServerMetricsManagerInitialization:
     ):
         """Test that duplicate URLs are deduplicated."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_server_metrics_urls),
+            run=make_run_from_cli(cfg_with_server_metrics_urls),
         )
 
         endpoint_counts = {}
@@ -120,7 +120,7 @@ class TestProfileConfigureCommand:
     ):
         """Test configuration when all endpoints are reachable."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_server_metrics_urls),
+            run=make_run_from_cli(cfg_with_server_metrics_urls),
         )
 
         with patch(
@@ -148,7 +148,7 @@ class TestProfileConfigureCommand:
     ):
         """Test configuration when no endpoints are reachable."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         with patch(
@@ -176,7 +176,7 @@ class TestProfileConfigureCommand:
     ):
         """Test that configuration clears previous collectors."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager._collectors["old_collector"] = AsyncMock()
@@ -214,7 +214,7 @@ class TestProfileStartCommand:
         This test only verifies that start() is called.
         """
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -246,7 +246,7 @@ class TestProfileStartCommand:
             return MagicMock()
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
         manager._collectors = {}  # No collectors
 
@@ -271,7 +271,7 @@ class TestProfileStartCommand:
     ):
         """Test start command handles collector initialization failures."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -301,7 +301,7 @@ class TestProfileStartCommand:
             return MagicMock()
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -333,7 +333,7 @@ class TestManagerCallbackFunctionality:
     ):
         """Test that record callback sends ServerMetricsRecordMessage."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock()
@@ -360,7 +360,7 @@ class TestManagerCallbackFunctionality:
     ):
         """Test that error callback logs the error."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         test_error = ErrorDetails.from_exception(ValueError("Test error"))
@@ -375,7 +375,7 @@ class TestManagerCallbackFunctionality:
     ):
         """Test that record callback handles message send failures gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock(
@@ -410,7 +410,7 @@ class TestDisabledServerMetrics:
             no_server_metrics=True,  # Disable server metrics
         )
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
         )
 
         manager.publish = AsyncMock()
@@ -440,7 +440,7 @@ class TestExceptionHandling:
     ):
         """Test that exceptions during reachability check are handled."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         with patch(
@@ -469,7 +469,7 @@ class TestExceptionHandling:
     ):
         """Test that exceptions during baseline capture are logged but don't fail configuration."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         with patch(
@@ -506,7 +506,7 @@ class TestPartialStartup:
     ):
         """Test scenario where some collectors start successfully and some fail."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_server_metrics_urls),
+            run=make_run_from_cli(cfg_with_server_metrics_urls),
         )
 
         # Create 2 collectors: one succeeds, one fails
@@ -545,7 +545,7 @@ class TestProfileCompleteAndCancel:
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -572,7 +572,7 @@ class TestProfileCompleteAndCancel:
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -600,7 +600,7 @@ class TestProfileCompleteAndCancel:
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager._collectors = {}  # Already stopped
@@ -622,7 +622,7 @@ class TestProfileCompleteAndCancel:
         from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -648,7 +648,7 @@ class TestLifecycleHooks:
     ):
         """Test that on_stop hook stops all collectors."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -670,7 +670,7 @@ class TestStopAllCollectors:
     ):
         """Test that stop_all_collectors stops each collector."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector1 = AsyncMock()
@@ -693,7 +693,7 @@ class TestStopAllCollectors:
     ):
         """Test that stop_all_collectors handles failures gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -710,7 +710,7 @@ class TestStopAllCollectors:
     ):
         """Test that stop_all_collectors handles empty collectors dict."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager._collectors = {}
@@ -730,7 +730,7 @@ class TestDelayedShutdown:
     ):
         """Test that delayed shutdown sleeps and then stops service."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager.stop = AsyncMock()
@@ -758,7 +758,7 @@ class TestCallbackEdgeCases:
     ):
         """Test that record callback handles empty record list."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock()
@@ -776,7 +776,7 @@ class TestCallbackEdgeCases:
     ):
         """Test that error callback handles message send failures gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock(
@@ -796,7 +796,7 @@ class TestCallbackEdgeCases:
     ):
         """Test that status send failures are handled gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(cfg_with_endpoint),
+            run=make_run_from_cli(cfg_with_endpoint),
         )
 
         manager.publish = AsyncMock(side_effect=Exception("Publish failed"))

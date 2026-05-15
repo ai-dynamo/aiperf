@@ -17,7 +17,7 @@ from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def mock_cfg() -> BenchmarkRun:
         endpoint_type=EndpointType.CHAT,
         streaming=False,
     )
-    return make_run_from_v1(user_cfg)
+    return make_run_from_cli(user_cfg)
 
 
 @pytest.fixture
@@ -378,7 +378,7 @@ class TestSliceDurationConfig:
             streaming=False,
         )
 
-        run = make_run_from_v1(config)
+        run = make_run_from_cli(config)
         # Set slice_duration on the converted v2 artifacts config (2 seconds).
         run.cfg.artifacts.slice_duration = 2.0
         processor = ServerMetricsAccumulator(run=run)
@@ -435,7 +435,7 @@ class TestSliceDurationConfig:
             streaming=False,
         )
 
-        run = make_run_from_v1(config)
+        run = make_run_from_cli(config)
         # Ensure slice_duration is None on the converted v2 artifacts config.
         run.cfg.artifacts.slice_duration = None
         processor = ServerMetricsAccumulator(run=run)

@@ -18,7 +18,7 @@ from aiperf.dataset.loader.hf_instruction_response import (
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
@@ -33,7 +33,7 @@ def cli_config() -> CLIConfig:
 @pytest.fixture
 async def loader(cli_config: CLIConfig) -> HFInstructionResponseDatasetLoader:
     return HFInstructionResponseDatasetLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="AI-MO/NuminaMath-TIR",
         hf_split="train",
         prompt_column="problem",
@@ -55,7 +55,7 @@ class TestBaseHFDatasetLoader:
 
     async def test_subset_stored_when_provided(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/dataset",
             hf_split="validation",
             hf_subset="subset-a",
@@ -82,7 +82,7 @@ class TestBaseHFDatasetLoader:
         self, cli_config
     ):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="test",
             hf_subset="my-subset",
@@ -104,7 +104,7 @@ class TestBaseHFDatasetLoader:
 
     async def test_streaming_defaults_to_false(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="q",
@@ -113,7 +113,7 @@ class TestBaseHFDatasetLoader:
 
     async def test_streaming_true_passed_to_hf_load_dataset(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="q",
@@ -176,7 +176,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_prompt_template_combines_columns(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="change_request",
@@ -193,7 +193,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_prompt_template_overrides_prompt_column(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="change_request",
@@ -218,7 +218,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_uses_configured_prompt_column(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="question",
@@ -237,7 +237,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_image_column_attaches_image_to_turn(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
@@ -253,7 +253,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_image_column_missing_value_produces_no_images(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
@@ -266,7 +266,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_image_column_non_pil_value_produces_no_images(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
@@ -283,7 +283,7 @@ class TestHFInstructionResponseDatasetLoader:
             **CLIConfig(request_count=2).model_dump(exclude_unset=True),
         )
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
@@ -299,7 +299,7 @@ class TestHFInstructionResponseDatasetLoader:
             **CLIConfig(request_count=2).model_dump(exclude_unset=True),
         )
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
@@ -316,7 +316,7 @@ class TestHFInstructionResponseDatasetLoader:
             **CLIConfig(benchmark_duration=60).model_dump(exclude_unset=True),
         )
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
@@ -328,7 +328,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_pil_to_image_returns_jpeg_data_url(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="q",
@@ -363,7 +363,7 @@ def _make_audio_row(duration_seconds: float = 1.0, sr: int = 16000) -> dict[str,
 class TestHFInstructionResponseAudioColumn:
     def _make_loader(self, cli_config, audio_column="audio"):
         return HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
@@ -372,7 +372,7 @@ class TestHFInstructionResponseAudioColumn:
 
     async def test_turns_have_no_audios_when_audio_column_not_set(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
@@ -413,7 +413,7 @@ def _make_hf_metadata(hf_subset: str | None = None) -> PublicDatasetLoaderMetada
 
 
 def _make_composer(cli_config: CLIConfig) -> PublicDatasetComposer:
-    return PublicDatasetComposer(run=make_run_from_v1(cli_config), tokenizer=None)
+    return PublicDatasetComposer(run=make_run_from_cli(cli_config), tokenizer=None)
 
 
 class TestPublicDatasetComposerHFSubsetOverride:

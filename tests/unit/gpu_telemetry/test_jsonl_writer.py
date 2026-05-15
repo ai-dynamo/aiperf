@@ -18,7 +18,7 @@ from aiperf.gpu_telemetry.jsonl_writer import (
     GPUTelemetryJSONLWriter,
 )
 from aiperf.plugin.enums import EndpointType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 from tests.unit.post_processors.conftest import aiperf_lifecycle, make_telemetry_record
 
 
@@ -35,7 +35,7 @@ def cfg_telemetry_export(tmp_artifact_dir: Path) -> CLIConfig:
 @pytest.fixture
 def run_telemetry_export(cfg_telemetry_export, cli_config):
     """Build a v2 BenchmarkRun from the telemetry-export cli_config fixture."""
-    return make_run_from_v1(cfg_telemetry_export)
+    return make_run_from_cli(cfg_telemetry_export)
 
 
 @pytest.fixture

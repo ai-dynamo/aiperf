@@ -26,7 +26,7 @@ def _build_cfg(
     timing_mode: TimingMode = TimingMode.REQUEST_RATE,
 ) -> CLIConfig:
     """Build a real ``CLIConfig`` (not ``model_construct``) so the v1->v2
-    resolver in ``make_run_from_v1`` has real endpoint/input data to work with.
+    resolver in ``make_run_from_cli`` has real endpoint/input data to work with.
     The legacy ``_timing_mode`` private attribute is preserved for tests that
     branch on it directly.
     """
@@ -42,11 +42,11 @@ def cli_config() -> CLIConfig:
 
 @pytest.fixture
 def create_manager(cli_config):
-    from tests.unit.conftest import make_run_from_v1
+    from tests.unit.conftest import make_run_from_cli
 
     def _create(cfg: CLIConfig) -> TimingManager:
         return TimingManager(
-            run=make_run_from_v1(cfg),
+            run=make_run_from_cli(cfg),
             service_id="test-timing-manager",
         )
 

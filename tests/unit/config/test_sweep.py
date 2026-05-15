@@ -565,7 +565,7 @@ class TestSetNestedValueStrictNamedList:
 class TestScenarioSingularDatasetShorthand:
     """Tests for the singular `dataset:` shorthand inside scenario sweep runs.
 
-    Spec: docs/superpowers/specs/2026-05-02-scenario-sweep-singular-dataset-design.md
+    Spec: (deleted)
     Each test runs the full load_config_from_string -> build_benchmark_plan
     path so regressions anywhere in load -> expand -> render -> validate
     surface here.

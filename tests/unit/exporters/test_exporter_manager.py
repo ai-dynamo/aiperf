@@ -11,7 +11,7 @@ from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin.enums import (
     EndpointType,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_v1(mock_cfg),
+                run=make_run_from_cli(mock_cfg),
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -125,7 +125,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_v1(mock_cfg),
+                run=make_run_from_cli(mock_cfg),
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -169,7 +169,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_v1(mock_cfg),
+                run=make_run_from_cli(mock_cfg),
                 telemetry_results=None,
             )
             await manager.export_console(Console())

@@ -15,7 +15,7 @@ from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.workers.worker_manager import WorkerManager, WorkerStatusInfo
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 DEFAULT_MEMORY = 1024 * 1024 * 100
 WORKER_ID = "test-worker-1"
@@ -33,7 +33,7 @@ def worker_manager() -> WorkerManager:
         "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=8
     ):
         manager = WorkerManager(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             service_id="test-worker-manager",
         )
         manager.warning = MagicMock()
@@ -118,7 +118,7 @@ class TestMaxWorkers:
             )
 
             worker_manager = WorkerManager(
-                run=make_run_from_v1(cli_config),
+                run=make_run_from_cli(cli_config),
                 service_id="test-worker-manager",
             )
 
@@ -152,7 +152,7 @@ class TestMaxWorkers:
             )
 
             worker_manager = WorkerManager(
-                run=make_run_from_v1(cli_config),
+                run=make_run_from_cli(cli_config),
                 service_id="test-worker-manager",
             )
 

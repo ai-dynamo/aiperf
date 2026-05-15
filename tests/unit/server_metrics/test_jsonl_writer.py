@@ -16,7 +16,7 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 from tests.unit.post_processors.conftest import aiperf_lifecycle
 
 
@@ -37,7 +37,7 @@ def cfg_server_metrics_export(
         artifact_directory=tmp_artifact_dir,
         server_metrics_formats=[ServerMetricsFormat.JSONL],
     )
-    return make_run_from_v1(user_cfg)
+    return make_run_from_cli(user_cfg)
 
 
 @pytest.fixture

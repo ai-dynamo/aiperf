@@ -21,7 +21,7 @@ from aiperf.dataset.loader.hf_conversation import HFConversationDatasetLoader
 from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def _jpeg_bytes(width: int = 4, height: int = 4) -> bytes:
@@ -58,7 +58,7 @@ class TestHFConversationLoaderRealSchemas:
 
     def _loader(self, cli_config: CLIConfig) -> HFConversationDatasetLoader:
         return HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -124,7 +124,7 @@ class TestHFInstructionResponseLoaderRealSchemas:
         assert str(ds.features["image"]) == "Image(mode=None, decode=True)"
 
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",

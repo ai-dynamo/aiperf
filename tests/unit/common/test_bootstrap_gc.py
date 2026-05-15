@@ -7,7 +7,7 @@ import pytest
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.config.flags.cli_config import CLIConfig
 from tests.unit.common.conftest import MockGC
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestBootstrapGarbageCollection:
@@ -31,7 +31,7 @@ class TestBootstrapGarbageCollection:
         mock_gc: MockGC,
     ):
         """Test that GC is disabled for Worker service."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         bootstrap_and_run_service(
             "test_worker",
             run=run,
@@ -53,7 +53,7 @@ class TestBootstrapGarbageCollection:
         mock_gc: MockGC,
     ):
         """Test that GC is disabled for TimingManager service."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         bootstrap_and_run_service(
             "test_timing_manager",
             run=run,
@@ -75,7 +75,7 @@ class TestBootstrapGarbageCollection:
         mock_gc: MockGC,
     ):
         """Test that GC is NOT disabled for services other than Worker and TimingManager."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         bootstrap_and_run_service(
             "test_dummy",
             run=run,
@@ -97,7 +97,7 @@ class TestBootstrapGarbageCollection:
         mock_gc: MockGC,
     ):
         """Test that GC operations occur in the correct order: collect -> freeze -> set_threshold -> disable."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         bootstrap_and_run_service(
             "test_worker",
             run=run,

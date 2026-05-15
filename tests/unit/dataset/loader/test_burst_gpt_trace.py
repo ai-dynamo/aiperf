@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.burst_gpt import BurstGPTTraceDatasetLoader
 from aiperf.dataset.loader.models import BurstGPTTrace
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 # ============================================================================
 # Helpers
@@ -48,7 +48,7 @@ def _make_loader(
     prompt_generator._build_token_sequence.return_value = [1, 2, 3]
     return BurstGPTTraceDatasetLoader(
         filename=filename,
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         prompt_generator=prompt_generator,
     )
 

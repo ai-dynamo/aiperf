@@ -36,7 +36,7 @@ graph TD
     E --> F[AccuracyConsoleExporter<br/>AccuracyDataExporter]
 ```
 
-All processors and exporters **self-disable** when `user_config.accuracy.enabled is False` by raising their respective `Disabled` exceptions in `__init__`. This is the same pattern used by `RawRecordWriterProcessor`, `ServerMetricsCsvExporter`, etc.
+All processors and exporters **self-disable** when `cfg.accuracy.enabled is False` by raising their respective `Disabled` exceptions in `__init__`. This is the same pattern used by `RawRecordWriterProcessor`, `ServerMetricsCsvExporter`, etc.
 
 ---
 
@@ -207,7 +207,7 @@ plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, "mmlu")  # -> {"default_grad
 **Parent:** `AIPerfLifecycleMixin`
 **Implements:** `RecordProcessorProtocol`
 **Plugin key:** `accuracy_record` (under `record_processor`)
-**Disables via:** `PostProcessorDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for wiring grading into the record processing pipeline.
 
@@ -225,7 +225,7 @@ async def process_record(
 **Parent:** `AIPerfLifecycleMixin`
 **Implements:** `ResultsProcessorProtocol`
 **Plugin key:** `accuracy_results` (under `results_processor`)
-**Disables via:** `PostProcessorDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for aggregating per-task accuracy metrics.
 
@@ -246,7 +246,7 @@ async def summarize(self) -> list[MetricResult]                                #
 **Parent:** `AIPerfLoggerMixin`
 **Implements:** `ConsoleExporterProtocol`
 **Plugin key:** `accuracy` (under `console_exporter`)
-**Disables via:** `ConsoleExporterDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `ConsoleExporterDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for displaying accuracy results in the terminal.
 
@@ -262,7 +262,7 @@ async def export(self, console: Console) -> None                               #
 **Parent:** `AIPerfLoggerMixin`
 **Implements:** `DataExporterProtocol`
 **Plugin key:** `accuracy_csv` (under `data_exporter`)
-**Disables via:** `DataExporterDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `DataExporterDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for writing accuracy results to CSV.
 

@@ -675,9 +675,9 @@ class _DualBindServiceFixtures:
         cached comm config directly so tests don't depend on the IPC/TCP/DUAL
         resolver path.
         """
-        from tests.unit.conftest import make_run_from_v1
+        from tests.unit.conftest import make_run_from_cli
 
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         if comm_config is not None:
             object.__setattr__(run.cfg, "_comm_config_cache", comm_config)
         return run

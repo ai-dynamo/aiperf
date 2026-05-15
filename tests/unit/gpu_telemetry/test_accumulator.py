@@ -40,9 +40,9 @@ def mock_service_config() -> CLIConfig:
 @pytest.fixture
 def mock_run(mock_cfg, mock_service_config):
     """Provide v2 BenchmarkRun built from mock_cfg + mock_service_config."""
-    from tests.unit.conftest import make_run_from_v1
+    from tests.unit.conftest import make_run_from_cli
 
-    return make_run_from_v1(mock_cfg)
+    return make_run_from_cli(mock_cfg)
 
 
 @pytest.fixture

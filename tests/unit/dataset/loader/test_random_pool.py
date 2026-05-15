@@ -10,7 +10,7 @@ from aiperf.common.models import Audio, Image, Text, Video
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestRandomPool:
@@ -94,7 +94,7 @@ class TestRandomPoolDatasetLoader:
         filepath = create_jsonl_file(content)
 
         loader = RandomPoolDatasetLoader(
-            filename=filepath, run=make_run_from_v1(default_cfg)
+            filename=filepath, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -119,7 +119,7 @@ class TestRandomPoolDatasetLoader:
         filepath = create_jsonl_file(content)
 
         loader = RandomPoolDatasetLoader(
-            filename=filepath, run=make_run_from_v1(default_cfg)
+            filename=filepath, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -144,7 +144,7 @@ class TestRandomPoolDatasetLoader:
         filepath = create_jsonl_file(content)
 
         loader = RandomPoolDatasetLoader(
-            filename=filepath, run=make_run_from_v1(default_cfg)
+            filename=filepath, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -186,7 +186,7 @@ class TestRandomPoolDatasetLoader:
                 )
 
             loader = RandomPoolDatasetLoader(
-                filename=str(temp_path), run=make_run_from_v1(default_cfg)
+                filename=str(temp_path), run=make_run_from_cli(default_cfg)
             )
             dataset = loader.load_dataset()
 
@@ -223,7 +223,7 @@ class TestRandomPoolDatasetLoader:
         data = {"file1.jsonl": [RandomPool(text="Hello world")]}
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -244,7 +244,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -272,7 +272,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -297,7 +297,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", run=make_run_from_v1(default_cfg)
+            filename="dummy_dir", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -326,7 +326,7 @@ class TestRandomPoolDatasetLoader:
         }
 
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", run=make_run_from_v1(default_cfg)
+            filename="dummy_dir", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -354,7 +354,7 @@ class TestRandomPoolDatasetLoader:
 
         loader = RandomPoolDatasetLoader(
             filename="dummy_dir",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             num_conversations=2,
         )
         conversations = loader.convert_to_conversations(data)
@@ -430,7 +430,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -452,7 +452,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -473,7 +473,7 @@ class TestRandomPoolBatchSize:
         ]
         data = {"f.jsonl": [RandomPool(image=img) for img in pool_images]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -487,7 +487,7 @@ class TestRandomPoolBatchSize:
         pool_texts = ["alpha", "beta", "gamma"]
         data = {"f.jsonl": [RandomPool(text=t) for t in pool_texts]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -506,7 +506,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -526,7 +526,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -541,7 +541,7 @@ class TestRandomPoolBatchSize:
         data = {"f.jsonl": [RandomPool(text="hello"), RandomPool(text="world")]}
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             num_conversations=2,
         )
         conversations = loader.convert_to_conversations(data)
@@ -564,7 +564,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -588,7 +588,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -621,7 +621,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -648,7 +648,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -678,7 +678,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -698,7 +698,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -731,7 +731,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -769,7 +769,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -795,7 +795,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -815,7 +815,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -834,7 +834,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -855,7 +855,7 @@ class TestRandomPoolBatchSize:
         """When num_conversations=None is passed, the loader should default to 100."""
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             num_conversations=None,
         )
         assert loader.num_conversations == 100
@@ -872,7 +872,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -894,7 +894,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -915,7 +915,7 @@ class TestRandomPoolBatchSize:
         ]
         data = {"f.jsonl": [RandomPool(audio=a) for a in pool_audios]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -933,7 +933,7 @@ class TestRandomPoolBatchSize:
         ]
         data = {"f.jsonl": [RandomPool(video=v) for v in pool_videos]}
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=5
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=5
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -951,7 +951,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -971,7 +971,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -997,7 +997,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -1022,7 +1022,7 @@ class TestRandomPoolBatchSize:
             ]
         }
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config), num_conversations=2
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -1035,7 +1035,7 @@ class TestRandomPoolBatchSize:
         """batch_size_audio and batch_size_video should be read from the user config."""
         config = self._make_config(batch_size_audio=2, batch_size_video=3)
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(config)
+            filename="dummy.jsonl", run=make_run_from_cli(config)
         )
         assert loader.batch_size_audio == 2
         assert loader.batch_size_video == 3

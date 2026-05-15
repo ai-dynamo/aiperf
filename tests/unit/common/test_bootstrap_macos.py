@@ -12,7 +12,7 @@ from aiperf.common.bootstrap import (
     bootstrap_and_run_service,
 )
 from aiperf.config.flags.cli_config import CLIConfig
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestBootstrapMacOSRedirect:
@@ -35,7 +35,7 @@ class TestBootstrapMacOSRedirect:
         mock_darwin_child_process,
     ):
         """_redirect_stdio_to_devnull is called for Darwin child processes."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
@@ -55,7 +55,7 @@ class TestBootstrapMacOSRedirect:
         mock_darwin_main_process,
     ):
         """_redirect_stdio_to_devnull is NOT called in the main process."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
@@ -75,7 +75,7 @@ class TestBootstrapMacOSRedirect:
         mock_linux_child_process,
     ):
         """_redirect_stdio_to_devnull is NOT called on Linux."""
-        run = make_run_from_v1(cli_config)
+        run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:

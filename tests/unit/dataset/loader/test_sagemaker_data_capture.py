@@ -17,7 +17,7 @@ from aiperf.dataset.loader.sagemaker_data_capture import (
     _decode_payload,
     _parse_iso8601_to_ms,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def _make_capture_record(
@@ -185,7 +185,7 @@ class TestParseTrace:
         prompt_gen = MagicMock()
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=prompt_gen,
         )
 
@@ -255,7 +255,7 @@ class TestLoadDataset:
         prompt_gen = MagicMock()
         return SageMakerDataCaptureLoader(
             filename=path,
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=prompt_gen,
         )
 
@@ -352,7 +352,7 @@ class TestBuildTurn:
         prompt_gen = MagicMock()
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=prompt_gen,
         )
 
@@ -421,7 +421,7 @@ class TestGroupTraces:
         config = CLIConfig(model_names=["test-model"])
         loader = SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
         traces = [
@@ -447,7 +447,7 @@ class TestParseTraceEdgeCases:
         config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -557,7 +557,7 @@ class TestSynthesisHooks:
         config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -642,7 +642,7 @@ class TestTimestampZeroAlignment:
         config = cli_config or CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=path,
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -671,7 +671,7 @@ class TestToolsSupport:
         config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -748,7 +748,7 @@ class TestParseTraceErrorPaths:
         config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 

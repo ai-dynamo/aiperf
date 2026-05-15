@@ -11,7 +11,7 @@ from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.hf_conversation import HFConversationDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
@@ -32,7 +32,7 @@ def cli_config() -> CLIConfig:
 @pytest.fixture
 async def loader(cli_config: CLIConfig) -> HFConversationDatasetLoader:
     return HFConversationDatasetLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="lmarena-ai/VisionArena-Chat",
         hf_split="train",
         conversation_column="conversation",
@@ -43,7 +43,7 @@ async def loader(cli_config: CLIConfig) -> HFConversationDatasetLoader:
 @pytest.fixture
 async def llava_loader(cli_config: CLIConfig) -> HFConversationDatasetLoader:
     return HFConversationDatasetLoader(
-        run=make_run_from_v1(cli_config),
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="lmms-lab/LLaVA-OneVision-Data",
         hf_split="train",
         hf_subset="sharegpt4o",
@@ -232,7 +232,7 @@ class TestHFConversationDatasetLoader:
 
     async def test_attaches_first_image_from_list(self, cli_config):
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -276,7 +276,7 @@ class TestHFConversationDatasetLoader:
         self, cli_config, images_value
     ):
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -298,7 +298,7 @@ class TestHFConversationDatasetLoader:
 
     async def test_skips_corrupt_image_bytes(self, cli_config):
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -320,7 +320,7 @@ class TestHFConversationDatasetLoader:
         # Locks in the documented "not handled" contract for path-only HF dicts
         # (bytes is None, path is a string). Update if path-only is ever supported.
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -345,7 +345,7 @@ class TestHFConversationDatasetLoader:
         full = _jpeg_bytes(256, 256)
         truncated = full[: int(len(full) * 0.95)]
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -379,7 +379,7 @@ class TestHFConversationDatasetLoader:
         truncated_pil = PILImage.open(io.BytesIO(full[: int(len(full) * 0.95)]))
         good_pil = _make_pil_image()
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -420,7 +420,7 @@ class TestHFConversationDatasetLoader:
             **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
@@ -441,7 +441,7 @@ class TestHFConversationDatasetLoader:
             **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
@@ -463,7 +463,7 @@ class TestHFConversationDatasetLoader:
             **CLIConfig(benchmark_duration=60).model_dump(exclude_unset=True),
         )
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(config),
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
@@ -483,7 +483,7 @@ class TestHFConversationDatasetLoader:
 
     async def test_streaming_stored_when_true(self, cli_config):
         loader = HFConversationDatasetLoader(
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",

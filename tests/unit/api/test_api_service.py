@@ -99,9 +99,9 @@ class TestFastAPIServiceInit:
         assert len(mock_fastapi_service._routers) > 0
 
     def test_init_with_custom_host(self, mock_zmq: None, api_cfg: CLIConfig) -> None:
-        from tests.unit.conftest import make_run_from_v1
+        from tests.unit.conftest import make_run_from_cli
 
-        run = make_run_from_v1(api_cfg)
+        run = make_run_from_cli(api_cfg)
         run.cfg.runtime.api_host = "0.0.0.0"
         run.cfg.runtime.api_port = 8080
         service = FastAPIService(
@@ -129,9 +129,9 @@ class TestFastAPIServiceCORSMiddleware:
                 {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": ["*"]},
             )(),
         )
-        from tests.unit.conftest import make_run_from_v1
+        from tests.unit.conftest import make_run_from_cli
 
-        run = make_run_from_v1(api_cfg)
+        run = make_run_from_cli(api_cfg)
         run.cfg.runtime.api_port = 8080
         service = FastAPIService(
             run=run,
@@ -152,9 +152,9 @@ class TestFastAPIServiceCORSMiddleware:
                 "_Fake", (), {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": []}
             )(),
         )
-        from tests.unit.conftest import make_run_from_v1
+        from tests.unit.conftest import make_run_from_cli
 
-        run = make_run_from_v1(api_cfg)
+        run = make_run_from_cli(api_cfg)
         run.cfg.runtime.api_port = 8080
         service = FastAPIService(
             run=run,

@@ -11,7 +11,7 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestMooncakeTrace:
@@ -150,7 +150,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -186,7 +186,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -212,7 +212,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -247,7 +247,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         result = loader.load_dataset()
@@ -266,7 +266,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -305,7 +305,7 @@ class TestMooncakeTraceDatasetLoader:
         cli_config = self.make_cfg(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -341,7 +341,7 @@ class TestMooncakeTraceDatasetLoader:
         cli_config = self.make_cfg(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         loader.load_dataset()
@@ -391,7 +391,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -422,7 +422,7 @@ class TestMooncakeTraceDatasetLoader:
         """Test conversion with empty trace data."""
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations({})
@@ -443,7 +443,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -476,7 +476,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -508,7 +508,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         assert (
@@ -526,7 +526,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         assert loader._infer_context_mode(traces) is None
@@ -546,7 +546,7 @@ class TestMooncakeTraceDatasetLoader:
         }
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -570,7 +570,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         with pytest.raises(ValueError, match="Mixed Mooncake sessions"):
@@ -594,7 +594,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -618,7 +618,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -638,7 +638,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -664,7 +664,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -711,7 +711,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -738,7 +738,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -770,7 +770,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         loader.load_dataset()
@@ -804,7 +804,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -851,7 +851,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -885,7 +885,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -924,7 +924,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         loader.load_dataset()
@@ -953,7 +953,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -1050,7 +1050,7 @@ class TestMooncakeTraceReproducibility:
         rng.init(42)
 
         tokenizer1 = mock_tokenizer_cls.from_pretrained("test-model")
-        run1 = make_run_from_v1(cfg_for_reproducibility)
+        run1 = make_run_from_cli(cfg_for_reproducibility)
         ds1 = run1.cfg.get_default_dataset()
         generator1 = PromptGenerator(
             prompts=getattr(ds1, "prompts", None),
@@ -1073,7 +1073,7 @@ class TestMooncakeTraceReproducibility:
         rng.init(42)
 
         tokenizer2 = mock_tokenizer_cls.from_pretrained("test-model")
-        run2 = make_run_from_v1(cfg_for_reproducibility)
+        run2 = make_run_from_cli(cfg_for_reproducibility)
         ds2 = run2.cfg.get_default_dataset()
         generator2 = PromptGenerator(
             prompts=getattr(ds2, "prompts", None),
@@ -1123,7 +1123,7 @@ class TestMooncakeTraceReproducibility:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_cfg),
+            run=make_run_from_cli(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1199,7 +1199,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1219,7 +1219,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1237,7 +1237,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1263,7 +1263,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1286,7 +1286,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1310,7 +1310,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1340,7 +1340,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1364,7 +1364,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1383,7 +1383,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1403,7 +1403,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1428,7 +1428,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
             default_block_size=256,
         )
@@ -1458,7 +1458,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1480,7 +1480,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1509,7 +1509,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -1533,7 +1533,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -1567,7 +1567,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -1592,7 +1592,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(cli_config),
+            run=make_run_from_cli(cli_config),
             prompt_generator=mock_prompt_generator,
         )
 

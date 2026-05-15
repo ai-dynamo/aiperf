@@ -15,7 +15,7 @@ from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import EndpointType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def cli_config(tmp_path: Path) -> CLIConfig:
 @pytest.fixture
 def benchmark_run(cli_config: CLIConfig):
     """Build a v2 BenchmarkRun from the dataset-scoped cli_config fixture."""
-    return make_run_from_v1(cli_config)
+    return make_run_from_cli(cli_config)
 
 
 @pytest.fixture

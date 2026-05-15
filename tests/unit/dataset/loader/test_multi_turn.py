@@ -9,7 +9,7 @@ from aiperf.common.models import Image, Text
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestMultiTurn:
@@ -152,7 +152,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -192,7 +192,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -217,7 +217,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -253,7 +253,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -285,7 +285,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         result = loader.load_dataset()
 
@@ -315,7 +315,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -355,7 +355,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -396,7 +396,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -425,7 +425,7 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(
-            filename=filename, run=make_run_from_v1(default_cfg)
+            filename=filename, run=make_run_from_cli(default_cfg)
         )
         dataset = loader.load_dataset()
 
@@ -455,7 +455,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         }
 
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -480,7 +480,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         }
 
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -509,7 +509,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
             ]
         }
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
 
         conversations = loader.convert_to_conversations(data)
@@ -547,7 +547,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         }
 
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -574,7 +574,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         }
 
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -597,7 +597,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         }
 
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -617,7 +617,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         }
 
         loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_v1(default_cfg)
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
         conversations = loader.convert_to_conversations(data)
 

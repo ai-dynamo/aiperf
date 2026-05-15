@@ -17,7 +17,7 @@ from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.dataset.loader.sagemaker_data_capture import SageMakerDataCaptureLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 class _DummyLoader(BaseFileLoader):
@@ -104,12 +104,12 @@ class TestSingleTurnInlineParity:
             {"text": "Explain GANs.", "output_length": 200},
             {"text": "Define AI."},
         ]
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
 
         file_loader = SingleTurnDatasetLoader(filename=jsonl_file(records), run=run)
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_cfg)
+        run2 = make_run_from_cli(default_cfg)
         inline_loader = SingleTurnDatasetLoader(inline_records=records, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -126,7 +126,7 @@ class TestSingleTurnInlineParity:
 
     def test_inline_three_records_load_correctly(self, default_cfg):
         records = [{"text": "one"}, {"text": "two"}]
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
         loader = SingleTurnDatasetLoader(inline_records=records, run=run)
         data = loader.load_dataset()
         assert sum(len(v) for v in data.values()) == 2
@@ -148,12 +148,12 @@ class TestMultiTurnInlineParity:
                 ],
             },
         ]
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
 
         file_loader = MultiTurnDatasetLoader(filename=jsonl_file(records), run=run)
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_cfg)
+        run2 = make_run_from_cli(default_cfg)
         inline_loader = MultiTurnDatasetLoader(inline_records=records, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -202,7 +202,7 @@ class TestMooncakeTraceInlineParity:
             },
         ]
 
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
         file_loader = MooncakeTraceDatasetLoader(
             filename=jsonl_file(records),
             run=run,
@@ -210,7 +210,7 @@ class TestMooncakeTraceInlineParity:
         )
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_cfg)
+        run2 = make_run_from_cli(default_cfg)
         inline_loader = MooncakeTraceDatasetLoader(
             inline_records=records,
             run=run2,
@@ -238,11 +238,11 @@ class TestRandomPoolInlineParity:
             {"text": "Explain GANs.", "type": "random_pool"},
             {"text": "Define AI.", "type": "random_pool"},
         ]
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
         file_loader = RandomPoolDatasetLoader(filename=jsonl_file(records), run=run)
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_cfg)
+        run2 = make_run_from_cli(default_cfg)
         inline_loader = RandomPoolDatasetLoader(inline_records=records, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -265,7 +265,7 @@ class TestRandomPoolInlineParity:
             '{"text": "P1", "type": "random_pool"}\n'
             '{"text": "P2", "type": "random_pool"}\n'
         )
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
         file_loader = RandomPoolDatasetLoader(filename=d, run=run)
         file_data = file_loader.load_dataset()
 
@@ -279,7 +279,7 @@ class TestRandomPoolInlineParity:
                 {"text": "P2", "type": "random_pool"},
             ],
         }
-        run2 = make_run_from_v1(default_cfg)
+        run2 = make_run_from_cli(default_cfg)
         inline_loader = RandomPoolDatasetLoader(inline_records=inline, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -356,7 +356,7 @@ class TestSageMakerInlineParity:
             ),
         ]
 
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
         file_loader = SageMakerDataCaptureLoader(
             filename=jsonl_file(records),
             run=run,
@@ -364,7 +364,7 @@ class TestSageMakerInlineParity:
         )
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_cfg)
+        run2 = make_run_from_cli(default_cfg)
         inline_loader = SageMakerDataCaptureLoader(
             inline_records=records,
             run=run2,
@@ -405,7 +405,7 @@ class TestSageMakerInlineParity:
                 user_message="just one",
             )
         ]
-        run = make_run_from_v1(default_cfg)
+        run = make_run_from_cli(default_cfg)
         loader = SageMakerDataCaptureLoader(
             inline_records=records,
             run=run,

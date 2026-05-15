@@ -9,7 +9,7 @@ from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.spec_bench import SpecBenchLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def cli_config() -> CLIConfig:
 
 @pytest.fixture
 async def loader(cli_config: CLIConfig) -> SpecBenchLoader:
-    return SpecBenchLoader(run=make_run_from_v1(cli_config))
+    return SpecBenchLoader(run=make_run_from_cli(cli_config))
 
 
 @pytest.mark.asyncio

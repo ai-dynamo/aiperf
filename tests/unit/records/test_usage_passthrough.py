@@ -34,7 +34,7 @@ def mock_tokenizer():
 @pytest.fixture
 def parser():
     """Create a parser with mocked endpoint."""
-    from tests.unit.conftest import make_run_from_v1
+    from tests.unit.conftest import make_run_from_cli
 
     mock_endpoint = MagicMock()
 
@@ -67,7 +67,7 @@ def parser():
         ),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
-        parser = InferenceResultParser(run=make_run_from_v1(cli_config))
+        parser = InferenceResultParser(run=make_run_from_cli(cli_config))
         parser.endpoint = mock_endpoint
         return parser
 

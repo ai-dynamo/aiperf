@@ -20,13 +20,13 @@ from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.otel_metrics_results_processor import (
     OTelMetricsResultsProcessor,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_run_from_cli
 from tests.unit.post_processors.conftest import create_metric_records_message
 
 
 @pytest.fixture
 def cfg_otel(tmp_artifact_dir):
-    run = make_run_from_v1(
+    run = make_run_from_cli(
         CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,
@@ -41,7 +41,7 @@ def cfg_otel(tmp_artifact_dir):
 
 @pytest.fixture
 def cfg_otel_mlflow(tmp_artifact_dir):
-    run = make_run_from_v1(
+    run = make_run_from_cli(
         CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,
@@ -56,7 +56,7 @@ def cfg_otel_mlflow(tmp_artifact_dir):
 
 @pytest.fixture
 def cfg_mlflow_only(tmp_artifact_dir):
-    run = make_run_from_v1(
+    run = make_run_from_cli(
         CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,
@@ -107,7 +107,7 @@ def _setup_fanout_processor(
 
 class TestOTelMetricsResultsProcessor:
     def test_disabled_without_otel_or_mlflow(self) -> None:
-        cfg = make_run_from_v1(
+        cfg = make_run_from_cli(
             CLIConfig(model_names=["test-model"], endpoint_type=EndpointType.CHAT)
         )
         with pytest.raises(PostProcessorDisabled):
@@ -142,7 +142,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         tmp_artifact_dir,
     ) -> None:
-        run = make_run_from_v1(
+        run = make_run_from_cli(
             CLIConfig(
                 model_names=["test-model"],
                 endpoint_type=EndpointType.CHAT,
@@ -216,7 +216,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         tmp_artifact_dir,
     ) -> None:
-        cfg = make_run_from_v1(
+        cfg = make_run_from_cli(
             CLIConfig(
                 model_names=["test-model"],
                 endpoint_type=EndpointType.CHAT,
@@ -248,7 +248,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         tmp_artifact_dir,
     ) -> None:
-        cfg = make_run_from_v1(
+        cfg = make_run_from_cli(
             CLIConfig(
                 model_names=["test-model"],
                 endpoint_type=EndpointType.CHAT,

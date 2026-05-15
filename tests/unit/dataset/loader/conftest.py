@@ -36,7 +36,7 @@ def create_jsonl_file():
 def create_cfg_and_composer(mock_tokenizer_cls):
     """Create a CLIConfig and CustomDatasetComposer for testing."""
 
-    from tests.unit.conftest import make_run_from_v1
+    from tests.unit.conftest import make_run_from_cli
 
     def _create():
         config = CLIConfig.model_construct(
@@ -47,7 +47,7 @@ def create_cfg_and_composer(mock_tokenizer_cls):
         tokenizer = mock_tokenizer_cls.from_pretrained(
             "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
         )
-        run = make_run_from_v1(config)
+        run = make_run_from_cli(config)
         composer = CustomDatasetComposer(run=run, tokenizer=tokenizer)
         return config, composer
 

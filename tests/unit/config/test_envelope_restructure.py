@@ -3,7 +3,7 @@
 
 """Behavior tests for the envelope shape restructure.
 
-Spec: docs/superpowers/specs/2026-05-03-aiperf-config-envelope-restructure-design.md
+Spec: (deleted)
 """
 
 from __future__ import annotations
