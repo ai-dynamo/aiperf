@@ -1,6 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Re-exports from branch's split enum files (added by the K8s rebuild).
+# These were re-exported through enums.enums on the branch; on main they are
+# in dedicated split files. Importing here keeps `from aiperf.common.enums
+# import X` working for K8s code without flattening the split.
+from aiperf.common.enums.dataset_enums import OslMode, SweepType
+from aiperf.common.enums.export_enums import RecordExportFormat, SummaryFormat
+from aiperf.common.enums.lifecycle_enums import WorkerStartupState
+from aiperf.common.enums.metric_enums import AggregationKind
+from aiperf.common.enums.server_metrics_enums import GpuTelemetryType
+
 from aiperf.common.enums.base_enums import (
     BasePydanticBackedStrEnum,
     BasePydanticEnumInfo,
@@ -81,6 +91,13 @@ from aiperf.plugin.enums import DatasetFormat
 
 __all__ = [
     "AIPerfLogLevel",
+    "AggregationKind",
+    "GpuTelemetryType",
+    "OslMode",
+    "RecordExportFormat",
+    "SummaryFormat",
+    "SweepType",
+    "WorkerStartupState",
     "AudioFormat",
     "BaseMetricUnit",
     "BaseMetricUnitInfo",

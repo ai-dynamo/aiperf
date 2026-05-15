@@ -21,10 +21,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ConfigDict, Field
 
-from aiperf.config._base import BaseConfig
+from aiperf.config.base import BaseConfig
 
 if TYPE_CHECKING:
-    from aiperf.config.multi_run import ConvergenceConfig as ConvergenceConfig
+    from aiperf.config.sweep.multi_run import ConvergenceConfig as ConvergenceConfig
 
 __all__ = [
     "ConvergenceConfig",  # noqa: F822 — provided lazily via module __getattr__
@@ -35,7 +35,7 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name == "ConvergenceConfig":
-        from aiperf.config.multi_run import ConvergenceConfig
+        from aiperf.config.sweep.multi_run import ConvergenceConfig
 
         return ConvergenceConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

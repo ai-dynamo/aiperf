@@ -773,3 +773,30 @@ class MetricFlags(Flag):
         # Bitwise AND will return 0 (MetricFlags.NONE) if there are no common flags.
         # If there are some missing, but some found, the result will not be 0.
         return (self & flags) == MetricFlags.NONE
+
+
+class AggregationKind(CaseInsensitiveStrEnum):
+    """Defines how an aggregate metric combines per-record values.
+
+    Used by MetricsAccumulator for vectorized windowed aggregation
+    instead of replaying records through metric instances.
+    """
+
+    SUM = "sum"
+    """Sum all values. Used by counter metrics (request count, error count, etc.)."""
+
+    MAX = "max"
+    """Take the maximum value. Used by max timestamp metrics."""
+
+    MIN = "min"
+    """Take the minimum value. Used by min timestamp metrics."""
+
+
+class PlotMetricDirection(CaseInsensitiveStrEnum):
+    """Direction indicating whether higher or lower metric values are better for plotting purposes."""
+
+    HIGHER = "higher"
+    """Higher values are better (e.g., throughput, accuracy)."""
+
+    LOWER = "lower"
+    """Lower values are better (e.g., latency, error rate)."""

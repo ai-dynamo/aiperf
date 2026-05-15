@@ -1,0 +1,307 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""KV cache (tokens-in-flight) sweep-line algorithms, including ICL-aware variants."""
+
+from __future__ import annotations
+
+import numpy as np
+from numpy.typing import NDArray
+
+from aiperf.analysis.sweepline import (
+    FloatArray,
+    Int32Array,
+    Int64Array,
+    _sweep_line_cumsum,
+)
+
+
+def _kv_cache_events(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    input_tokens: FloatArray,
+    *,
+    output_tokens: FloatArray,
+) -> tuple[list[FloatArray], list[FloatArray]]:
+    """Collect (timestamp, token-delta) events for input + output tokens in KV cache."""
+    has_start = ~np.isnan(start_ns) & ~np.isnan(input_tokens)
+    gen_dur = end_ns - generation_start_ns
+    has_gen = ~np.isnan(generation_start_ns) & ~np.isnan(output_tokens) & (gen_dur > 0)
+    has_end = ~np.isnan(end_ns)
+
+    parts_ts: list[FloatArray] = []
+    parts_delta: list[FloatArray] = []
+
+    # Event 1: +input_tokens at start_ns (prefill begins)
+    pf_valid = (
+        has_start & ~np.isnan(generation_start_ns) & (generation_start_ns > start_ns)
+    )
+    if pf_valid.any():
+        parts_ts.append(start_ns[pf_valid])
+        parts_delta.append(input_tokens[pf_valid])
+
+    # Event 2: +output_tokens at generation_start_ns
+    if has_gen.any():
+        parts_ts.append(generation_start_ns[has_gen])
+        parts_delta.append(output_tokens[has_gen])
+
+    # Event 3: free tokens at end_ns
+    end_with_input = pf_valid & has_end
+    end_with_gen = has_gen & has_end
+    both = end_with_input & end_with_gen
+    input_only = end_with_input & ~end_with_gen
+    gen_only = end_with_gen & ~end_with_input
+
+    if both.any():
+        parts_ts.append(end_ns[both])
+        parts_delta.append(-(input_tokens[both] + output_tokens[both]))
+    if input_only.any():
+        parts_ts.append(end_ns[input_only])
+        parts_delta.append(-input_tokens[input_only])
+    if gen_only.any():
+        parts_ts.append(end_ns[gen_only])
+        parts_delta.append(-output_tokens[gen_only])
+
+    return parts_ts, parts_delta
+
+
+def tokens_in_flight_sweep_line(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    input_tokens: FloatArray,
+    *,
+    output_tokens: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
+    """Compute instantaneous KV cache token load at every event boundary.
+
+    Models the total tokens held in server memory (KV cache) per request:
+    - During prefill [start_ns, generation_start_ns): input_tokens
+    - During generation [generation_start_ns, end_ns): input_tokens + output_tokens
+
+    Input tokens stay in the KV cache throughout the request lifetime, and
+    output tokens accumulate on top during generation. This reveals GPU
+    memory pressure — two concurrent 4K-token requests look identical to two
+    128-token requests in concurrency but wildly different here.
+    """
+    parts_ts, parts_delta = _kv_cache_events(
+        start_ns,
+        generation_start_ns,
+        end_ns,
+        input_tokens,
+        output_tokens=output_tokens,
+    )
+    if len(parts_ts) == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    return _sweep_line_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+
+
+def tokens_in_flight_sweep_line_icl(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    input_tokens: FloatArray,
+    *,
+    output_tokens: FloatArray,
+    icl_values: FloatArray,
+    icl_record_indices: Int32Array,
+    icl_offsets: Int64Array,
+) -> tuple[FloatArray, FloatArray]:
+    """ICL-aware tokens in flight: output tokens ramp up at chunk boundaries.
+
+    Instead of adding all output_tokens at generation_start_ns, this function
+    adds tokens_per_chunk at each SSE chunk boundary during generation,
+    modeling the gradual KV cache growth as tokens are generated.
+    """
+    if len(icl_values) == 0:
+        return tokens_in_flight_sweep_line(
+            start_ns,
+            generation_start_ns,
+            end_ns,
+            input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    chunk_ts, chunk_delta, has_icl = _icl_chunk_events(
+        generation_start_ns=generation_start_ns,
+        output_tokens=output_tokens,
+        end_ns=end_ns,
+        icl_values=icl_values,
+        icl_record_indices=icl_record_indices,
+        icl_offsets=icl_offsets,
+    )
+
+    parts_ts: list[FloatArray] = []
+    parts_delta: list[FloatArray] = []
+    if chunk_ts is not None:
+        parts_ts.append(chunk_ts)
+        parts_delta.append(chunk_delta)
+
+    has_start = ~np.isnan(start_ns) & ~np.isnan(input_tokens)
+    pf_valid = (
+        has_start & ~np.isnan(generation_start_ns) & (generation_start_ns > start_ns)
+    )
+    if pf_valid.any():
+        parts_ts.append(start_ns[pf_valid])
+        parts_delta.append(input_tokens[pf_valid])
+
+    has_end = ~np.isnan(end_ns)
+    end_with_input_and_icl = pf_valid & has_end & has_icl
+    end_with_input_only = pf_valid & has_end & ~has_icl
+    end_with_icl_only = ~pf_valid & has_end & has_icl
+
+    if end_with_input_and_icl.any():
+        parts_ts.append(end_ns[end_with_input_and_icl])
+        parts_delta.append(
+            -(
+                input_tokens[end_with_input_and_icl]
+                + output_tokens[end_with_input_and_icl]
+            )
+        )
+    if end_with_input_only.any():
+        parts_ts.append(end_ns[end_with_input_only])
+        parts_delta.append(-input_tokens[end_with_input_only])
+    if end_with_icl_only.any():
+        parts_ts.append(end_ns[end_with_icl_only])
+        parts_delta.append(-output_tokens[end_with_icl_only])
+
+    if len(parts_ts) == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    return _sweep_line_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+
+
+def _icl_chunk_events(
+    *,
+    generation_start_ns: FloatArray,
+    output_tokens: FloatArray,
+    end_ns: FloatArray,
+    icl_values: FloatArray,
+    icl_record_indices: Int32Array,
+    icl_offsets: Int64Array,
+) -> tuple[FloatArray | None, FloatArray, NDArray[np.bool_]]:
+    """Build per-chunk +tokens delta events; also return per-record has_icl mask.
+
+    Models the TTFT chunk explicitly: the first output token arrives at
+    ``gen_start_ns`` and is not in the ICL series (ICL[0] is the gap between
+    chunks 1 and 2). Emit +1 token at gen_start_ns and distribute (osl - 1)
+    across the K ICL events; total adds across (K + 1) events == osl.
+    """
+    rec_idx = icl_record_indices
+
+    global_cs = np.cumsum(icl_values)
+    request_offsets = icl_offsets[rec_idx]
+    start_cs = np.where(request_offsets > 0, global_cs[request_offsets - 1], 0.0)
+    relative_cs = global_cs - start_cs
+
+    gen_start = generation_start_ns[rec_idx]
+    interval_end = gen_start + relative_cs
+
+    icl_counts = np.bincount(rec_idx, minlength=len(output_tokens)).astype(np.float64)
+    per_req_tokens = output_tokens[rec_idx]
+    per_req_icl_count = icl_counts[rec_idx]
+    tokens_per_chunk = np.where(
+        per_req_icl_count > 0, (per_req_tokens - 1.0) / per_req_icl_count, 0.0
+    )
+
+    # Allow zero ICL — back-to-back chunks in the same network packet are legitimate.
+    # Strictly negative ICL would silently NaN-corrupt downstream cumsum, so drop it.
+    chunk_valid = ~np.isnan(gen_start) & (icl_values >= 0) & ~np.isnan(per_req_tokens)
+    has_icl = icl_counts > 0
+
+    # Clamp chunk arrival strictly before record's end_ns. Recorder jitter can
+    # place a chunk past end_ns; lexsort then orders -end before +chunk leaving
+    # a permanent negative offset. np.nextafter (not subtracting a constant): at
+    # ns-epoch ts (~1.7e18) float64 precision is ~256 ns so -1 round-trips.
+    rec_end_ns = end_ns[rec_idx]
+    needs_clamp = ~np.isnan(rec_end_ns) & (interval_end >= rec_end_ns)
+    interval_end = np.where(
+        needs_clamp, np.nextafter(rec_end_ns, -np.inf), interval_end
+    )
+
+    # TTFT chunk: +1 token at gen_start_ns per record with ICL and >= 1 osl;
+    # combined with the (osl - 1)/K per-chunk events below, sums to osl.
+    ttft_valid_per_rec = (
+        ~np.isnan(generation_start_ns)
+        & has_icl
+        & ~np.isnan(output_tokens)
+        & (output_tokens >= 1)
+    )
+
+    parts_ts: list[FloatArray] = []
+    parts_delta: list[FloatArray] = []
+    if ttft_valid_per_rec.any():
+        parts_ts.append(generation_start_ns[ttft_valid_per_rec])
+        parts_delta.append(np.ones(int(ttft_valid_per_rec.sum()), dtype=np.float64))
+    if chunk_valid.any():
+        parts_ts.append(interval_end[chunk_valid])
+        parts_delta.append(tokens_per_chunk[chunk_valid])
+
+    if not parts_ts:
+        return None, np.zeros(0, dtype=np.float64), has_icl
+    return np.concatenate(parts_ts), np.concatenate(parts_delta), has_icl
+
+
+def throughput_sweep_line_icl(
+    generation_start_ns: FloatArray,
+    output_tokens: FloatArray,
+    icl_values: FloatArray,
+    icl_record_indices: Int32Array,
+    *,
+    icl_offsets: Int64Array,
+) -> tuple[FloatArray, FloatArray]:
+    """Compute ICL-aware instantaneous throughput at every chunk boundary.
+
+    Each ICL interval carries ``(osl - 1) / n_nonzero_icl_intervals`` tokens.
+    Returns (sorted_timestamps, throughput_values) in tokens/ns; 2M events
+    (one +rate and one -rate per chunk interval).
+    """
+    if len(icl_values) == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    rec_idx = icl_record_indices
+
+    # Per-request cumulative ICL — vectorized grouped cumsum
+    global_cs = np.cumsum(icl_values)
+    request_offsets = icl_offsets[rec_idx]
+    start_cs = np.where(request_offsets > 0, global_cs[request_offsets - 1], 0.0)
+    relative_cs = global_cs - start_cs
+
+    gen_start = generation_start_ns[rec_idx]
+    interval_end = gen_start + relative_cs
+    interval_start = interval_end - icl_values
+
+    # Per-request NON-ZERO ICL count: zero-ICL entries can't carry a rate
+    # (division by zero → inf), so excluded both as events and from divisor.
+    # Using total icl_counts here would under-divide and leak tokens.
+    nonzero_mask = icl_values > 0
+    icl_counts = np.bincount(
+        rec_idx[nonzero_mask], minlength=len(output_tokens)
+    ).astype(np.float64)
+    per_req_tokens = output_tokens[rec_idx]
+    per_req_icl_count = icl_counts[rec_idx]
+    # (osl - 1) because the TTFT chunk delivers 1 token instantaneously at
+    # gen_start_ns; matches non-ICL throughput_sweep_line's (osl - 1) / gen_dur.
+    tokens_per_msg = np.where(
+        per_req_icl_count > 0, (per_req_tokens - 1.0) / per_req_icl_count, 0.0
+    )
+    rates = np.where(
+        icl_values > 0, tokens_per_msg / np.where(icl_values > 0, icl_values, 1.0), 0.0
+    )
+
+    # Records with osl < 1 produce a negative tokens_per_msg; clamp via per_req_tokens >= 1.
+    valid = (
+        ~np.isnan(gen_start)
+        & (icl_values > 0)
+        & ~np.isnan(per_req_tokens)
+        & (per_req_tokens >= 1)
+    )
+    if not valid.any():
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    timestamps = np.concatenate([interval_start[valid], interval_end[valid]])
+    deltas = np.concatenate([rates[valid], -rates[valid]])
+
+    sorted_ts, throughput = _sweep_line_cumsum(timestamps, deltas)
+    return sorted_ts, throughput
