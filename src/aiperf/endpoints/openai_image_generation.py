@@ -42,13 +42,11 @@ class ImageGenerationEndpoint(BaseEndpoint):
         if not request_info.turns:
             raise ValueError("Image generation endpoint requires at least one turn.")
 
-        turn = request_info.turns[0]
+        turn = request_info.turns[-1]
         model_endpoint = request_info.model_endpoint
 
         if not turn.texts or not turn.texts[0].contents:
-            raise ValueError(
-                "Image generation endpoint requires text prompt in first turn."
-            )
+            raise ValueError("Image generation endpoint requires a text prompt.")
 
         prompt = turn.texts[0].contents[0]
 
@@ -66,6 +64,9 @@ class ImageGenerationEndpoint(BaseEndpoint):
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
+
+        if turn.extra_body:
+            payload.update(turn.extra_body)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload

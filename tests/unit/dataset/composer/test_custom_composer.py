@@ -42,6 +42,9 @@ MOCK_SINGLE_TURN_CONTENT = """{"text": "Write a haiku.", "output_length": 50}
 {"text": "Summarize machine learning."}
 """
 
+MOCK_DAG_MODEL_CONTENT = """{"session_id": "root", "turns": [{"messages": [{"role": "user", "content": "Use a child model."}], "model": "child-model"}]}
+"""
+
 MOCK_MULTI_TURN_CONTENT = """{"session_id": "s1", "turns": [{"text": "Summarize.", "output_length": 100}, {"text": "Key points only."}, {"text": "Expand on point 2.", "output_length": 300}]}
 """
 
@@ -124,6 +127,19 @@ class TestCoreFunctionality:
         assert conversations[0].turns[0].max_tokens == 50
         assert conversations[1].turns[0].max_tokens == 500
         assert conversations[2].turns[0].max_tokens == 200
+
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    def test_dag_turn_model_precedence(
+        self, mock_check_file, custom_config, mock_tokenizer, tmp_path
+    ):
+        path = tmp_path / "data.dag.jsonl"
+        path.write_text(MOCK_DAG_MODEL_CONTENT, encoding="utf-8")
+        custom_config.input.file = str(path)
+        custom_config.input.custom_dataset_type = CustomDatasetType.DAG_JSONL
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert conversations[0].turns[0].model == "child-model"
 
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_MULTI_TURN_CONTENT))

@@ -185,6 +185,24 @@ class _DatasetSettings(BaseSettings):
     )
 
 
+class _DagSettings(BaseSettings):
+    """Settings for DAG benchmark mode (`dag_jsonl` input type)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DAG_",
+    )
+
+    FAIL_FAST: bool = Field(
+        default=False,
+        description="When True, abort the whole run on the first DAG child "
+        "error (cancel pending siblings, raise to PhaseRunner, terminate "
+        "phase). Default False - the orchestrator counts the error in "
+        "BranchStats.children_errored, releases the join slot, drains pending "
+        "siblings, and continues the run. Set via "
+        "AIPERF_DAG_FAIL_FAST=1 for strict CI assertions.",
+    )
+
+
 class _DeveloperSettings(BaseSettings):
     """Development and debugging configuration.
 
@@ -1081,6 +1099,10 @@ class _Environment(BaseSettings):
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,
         description="Dataset loading and configuration settings",
+    )
+    DAG: _DagSettings = Field(
+        default_factory=_DagSettings,
+        description="DAG benchmark mode settings (dag_jsonl input type)",
     )
     DEV: _DeveloperSettings = Field(
         default_factory=_DeveloperSettings,

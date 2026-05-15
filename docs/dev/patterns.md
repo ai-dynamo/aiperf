@@ -296,6 +296,58 @@ vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=
 # Returns list of (x, y) tuples forming a closed polygon
 ```
 
+## Validator Pattern
+
+Per-feature load-time validators (e.g. `BranchOrchestrator` v1) run from the
+end of dataset loaders. Unsupported constructs raise ``NotImplementedError``
+with a ``<loc>: <reason>`` prefix where ``<loc>`` identifies the offending
+conversation/turn so misconfigurations surface before any credit is issued:
+
+```python
+# src/aiperf/common/validators/orchestrator_v1.py - gate convention
+raise NotImplementedError(
+    f"conversation '{conv.conversation_id}' turn {idx}: "
+    f"prerequisite kind '{prereq.kind}' not supported by v1 orchestrator"
+)
+```
+
+## Endpoint Mixin Pattern
+
+Reusable response-parsing behavior lives in mixins applied to endpoint classes:
+
+```python
+# src/aiperf/endpoints/raw_endpoint.py - composing a mixin
+class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs: Any) -> None:
+        super().__init__(model_endpoint, **kwargs)
+        self._init_response_parser()
+```
+
+The mixin in ``src/aiperf/endpoints/response_mixin.py`` compiles an optional
+``endpoint.extra.response_field`` JMESPath query at construction time, with
+auto-detect fallback when the query fails or no JSON body is present.
+
+## Per-turn dataset `extra`
+
+Custom dataset rows use `extra` for non-native request-body fields. Loaders map that user-facing field into internal `Turn.extra_body`. Every endpoint formatter that builds a JSON request body shallow-merges `Turn.extra_body` into the wire body at the very end of payload construction, AFTER `model_endpoint.endpoint.extra`. The merge is shallow `dict.update`; user-provided keys win on collision.
+
+**Rules new formatters and loaders must follow:**
+
+- **Dispatch-turn scoping.** Endpoint formatters read `turn.extra_body`, `turn.max_tokens`, and `turn.model` from `request_info.turns[-1]` only. Parent turns earlier in the conversation history must never leak these request-control fields into a child payload, so DAG/FORK children stay clean of parent vendor knobs, limits, or model overrides.
+- **Tools-as-system-prompt.** Only `raw_tools` walks `request_info.turns` from the end via `BaseEndpoint._latest_turn_attr`. Tool definitions behave like a system prompt and persist across a multi-turn or FORK conversation when the dispatching turn does not redeclare them.
+- **Dataset user-facing field is `extra`.** Custom dataset row schemas (`SingleTurn`, inner `MultiTurn` turns, `MooncakeTrace`, `DagTurn`) declare a per-turn `extra: dict[str, Any] | None`. Loaders translate `row.extra` into `Turn.extra_body` at construction time. `DagTurn` uses Pydantic's `extra="forbid"` so a typo'd `extra_body` is rejected at load time; the other dataset schemas are `extra="allow"` so an unrecognized `extra_body` is silently ignored — author the supported field instead.
+
+Coverage:
+
+- Chat-style formatters with full history flattening (`openai_chat`, `chat_embeddings` via inheritance, `openai_responses`).
+- Single-turn formatters (`openai_completions`, `openai_embeddings` and `nim_embeddings`, `openai_image_generation`, `openai_video_generation`, `openai_image_edit`, `nim_image_retrieval`, `huggingface_generate`, `solido_rag`, the rankings family via `BaseRankingsEndpoint`, and `template_endpoint`).
+
+`huggingface_generate` deliberately merges `extra_body` at the TOP level of the wire body (not nested under `parameters`).
+
+`openai_image_edit` filters reserved keys (`prompt`, `image`, `url`, `mask`) out of both endpoint extras and `extra_body` to protect the multipart upload contract.
+
+`raw_endpoint` intentionally skips this merge — it ships the user-authored `Turn.raw_payload` verbatim.
+
 ## Strategy Protocol Pattern
 
 The OTel results processor uses a strategy protocol to dispatch incoming data

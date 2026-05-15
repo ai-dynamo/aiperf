@@ -74,6 +74,14 @@ class MetricsJsonExporter(MetricsBaseExporter):
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
 
+        # Splice DAG branch orchestration counters when present. Non-DAG
+        # runs leave ``branch_stats`` unset on ProfileResults so the
+        # section is omitted entirely (model_dump_json with
+        # ``exclude_none=True`` drops it).
+        branch_stats = getattr(self._results, "branch_stats", None)
+        if branch_stats is not None:
+            export_data.branch_stats = branch_stats
+
         self.trace_or_debug(
             lambda: f"Exporting data to JSON file: {export_data}",
             lambda: f"Exporting data to JSON file: {self._file_path}",

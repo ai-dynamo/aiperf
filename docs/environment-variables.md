@@ -52,6 +52,14 @@ Configuration file paths for distributed deployments. Controls paths to configur
 | `AIPERF_CONFIG_SERVICE_FILE` | `None` | — | Path to service configuration JSON/YAML file. Default: /etc/aiperf/service_config.json in Kubernetes deployments. |
 | `AIPERF_CONFIG_USER_FILE` | `None` | — | Path to user configuration JSON/YAML file. Default: /etc/aiperf/user_config.json in Kubernetes deployments. |
 
+## DAG
+
+Settings for DAG benchmark mode (`dag_jsonl` input type).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_DAG_FAIL_FAST` | `False` | — | When True, abort the whole run on the first DAG child error (cancel pending siblings, raise to PhaseRunner, terminate phase). Default False - the orchestrator counts the error in BranchStats.children_errored, releases the join slot, drains pending siblings, and continues the run. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI assertions. |
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations, as well as memory-mapped dataset storage settings.

@@ -24,6 +24,7 @@ profile.json
 profile.html
 .vscode
 *.jsonl
+!tests/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/
 coverage.json

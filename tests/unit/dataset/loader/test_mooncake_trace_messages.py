@@ -3,10 +3,14 @@
 
 """Tests for MooncakeTrace messages field validation."""
 
+from pathlib import Path
+
+import orjson
 import pytest
 from pydantic import ValidationError
 
 from aiperf.dataset.loader.models import MooncakeTrace
+from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
 
 
@@ -114,3 +118,59 @@ class TestMooncakeMessagesValidation:
         messages = [{"role": "user", "content": "Hello"}]
         with pytest.raises(ValidationError, match="tools.*non-empty"):
             MooncakeTrace(messages=messages, tools=[])
+
+
+class TestMooncakeTraceExtraBody:
+    def test_extra_propagates_to_turn_in_messages_mode(
+        self,
+        tmp_path: Path,
+        default_user_config,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        with open(file, "wb") as f:
+            f.write(
+                orjson.dumps(
+                    {
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "extra": {"top_k": 7},
+                    }
+                )
+            )
+            f.write(b"\n")
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=file,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        turn = conversations[0].turns[0]
+        assert turn.extra_body == {"top_k": 7}
+
+    def test_extra_propagates_to_turn_in_text_input_mode(
+        self,
+        tmp_path: Path,
+        default_user_config,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        with open(file, "wb") as f:
+            f.write(
+                orjson.dumps(
+                    {
+                        "text_input": "hi",
+                        "extra": {"min_tokens": 50},
+                    }
+                )
+            )
+            f.write(b"\n")
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=file,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        turn = conversations[0].turns[0]
+        assert turn.extra_body == {"min_tokens": 50}

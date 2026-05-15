@@ -699,6 +699,20 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = ConvergenceMode.CI_WIDTH
 
+    inter_turn_delay_cap_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Optional cap on per-turn delay_ms in seconds. Used by "
+            "the dag_jsonl loader to bound long sleeps in trace replays. "
+            "None (default) leaves authored delays uncapped.",
+        ),
+        CLIParameter(
+            name=("--inter-turn-delay-cap-seconds",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     def get_sweep_parameter(self) -> tuple[str, list] | None:
         """Detect which parameter is being swept (if any).
 

@@ -109,6 +109,36 @@ def _should_quote_arg(x: Any) -> bool:
     return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
 
 
+def _collect_pre_session_refs(data: dict, into: set[str]) -> None:
+    """Add ``pre_session_spawns`` child ids (bare strings only) into ``into``."""
+    for child in data.get("pre_session_spawns", []) or []:
+        if isinstance(child, str):
+            into.add(child)
+
+
+def _collect_turn_refs(turn: dict, into: set[str]) -> None:
+    """Add child ids referenced from one turn's ``forks`` and ``spawns`` into ``into``.
+
+    ``forks`` entries are a bare ``"<sid>"`` or a ``{"child": "<sid>", ...}``
+    object. ``spawns`` entries are a bare ``"<sid>"`` or a
+    ``{"children": [...], ...}`` object (DagSpawn form).
+    """
+    for fork_entry in turn.get("forks", []) or []:
+        if isinstance(fork_entry, str):
+            into.add(fork_entry)
+        elif isinstance(fork_entry, dict):
+            child = fork_entry.get("child")
+            if isinstance(child, str):
+                into.add(child)
+    for spawn_entry in turn.get("spawns", []) or []:
+        if isinstance(spawn_entry, str):
+            into.add(spawn_entry)
+        elif isinstance(spawn_entry, dict):
+            for child in spawn_entry.get("children", []) or []:
+                if isinstance(child, str):
+                    into.add(child)
+
+
 # CLI keyword -> collector type for local-only GPU telemetry collectors.
 _LOCAL_COLLECTOR_KEYWORDS: dict[str, GPUTelemetryCollectorType] = {
     "pynvml": GPUTelemetryCollectorType.PYNVML,
@@ -268,10 +298,9 @@ class UserConfig(BaseConfig):
                 and self.input.conversation.num is None
                 and self.loadgen.benchmark_duration is None
             ):
-                _logger.warning(
-                    f"No request count value provided, setting to {LoadGeneratorDefaults.MIN_REQUEST_COUNT}"
+                self._autodefault_request_count_with_forking_check(
+                    LoadGeneratorDefaults.MIN_REQUEST_COUNT
                 )
-                self.loadgen.request_count = LoadGeneratorDefaults.MIN_REQUEST_COUNT
         else:
             # Default to concurrency burst mode if no request rate or schedule is provided.
             # CONCURRENCY_BURST works with either session concurrency OR prefill concurrency.
@@ -292,14 +321,12 @@ class UserConfig(BaseConfig):
                 effective_concurrency = (
                     self.loadgen.concurrency or self.loadgen.prefill_concurrency
                 )
-                self.loadgen.request_count = max(
+                fallback = max(
                     LoadGeneratorDefaults.MIN_REQUEST_COUNT,
                     effective_concurrency
                     * LoadGeneratorDefaults.REQUEST_COUNT_MULTIPLIER,
                 )
-                _logger.warning(
-                    f"No request count value provided, setting to {self.loadgen.request_count}"
-                )
+                self._autodefault_request_count_with_forking_check(fallback)
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
 
@@ -484,6 +511,9 @@ class UserConfig(BaseConfig):
         Returns:
             True if fixed schedule should be enabled for this trace dataset.
         """
+        if self.input.disable_auto_fixed_schedule:
+            return False
+
         if self.input.custom_dataset_type is None or not plugins.is_trace_dataset(
             self.input.custom_dataset_type
         ):
@@ -508,6 +538,105 @@ class UserConfig(BaseConfig):
             )
 
         return False
+
+    def _is_forking_dataset(self) -> bool:
+        """True if the configured custom dataset can fork (DAG branches).
+
+        Today only ``dag_jsonl`` carries fork semantics; other custom
+        datasets (single_turn, raw_payload, inputs_json, mooncake_trace)
+        are linear. Used by the auto-default logic to size
+        ``--num-conversations`` rather than ``--request-count`` for
+        forking datasets, since the former lets the DAG run to
+        completion and the latter would truncate mid-tree.
+        """
+        return self.input.custom_dataset_type == "dag_jsonl"
+
+    def _maybe_autodefault_num_conversations_for_forking_dataset(self) -> None:
+        """If forking and both num/request-count unset, seed num-conversations.
+
+        Used by ``validate_timing_mode`` to default ``--num-conversations``
+        to the *root* count (sessions not referenced by any fork list)
+        rather than auto-defaulting ``--request-count``, which (since it
+        counts fork-spawned children) would silently truncate the DAG
+        mid-tree.
+        """
+        if not self._is_forking_dataset():
+            return
+        roots = self._count_dag_root_entries()
+        if roots > 0:
+            self.input.conversation.num = roots
+            _logger.info(
+                f"No request count or conversation count provided for forking dataset; "
+                f"defaulting --num-conversations to {roots} (run each root in the file once). "
+                f"Use --request-count for a literal wire-request cap instead."
+            )
+
+    def _autodefault_request_count_with_forking_check(
+        self, fallback_request_count: int
+    ) -> None:
+        """Apply the load-cap autodefault when both request-count and num
+        conversations are unset. Forking datasets seed num-conversations
+        to root count instead so the DAG isn't truncated mid-tree.
+        """
+        self._maybe_autodefault_num_conversations_for_forking_dataset()
+        if self.loadgen.request_count is None and self.input.conversation.num is None:
+            _logger.warning(
+                f"No request count value provided, setting to {fallback_request_count}"
+            )
+            self.loadgen.request_count = fallback_request_count
+
+    @staticmethod
+    def _collect_dag_session_and_fork_ids(file_path: str) -> tuple[set[str], set[str]]:
+        """Walk a dag_jsonl file once, returning (all_session_ids, referenced_ids).
+
+        ``referenced_ids`` covers every id that the orchestrator dispatches as
+        a child of another conversation: bare-string and object-form
+        ``forks`` entries, bare-string and ``DagSpawn``-object ``spawns``
+        entries, and top-level ``pre_session_spawns``. Anything in
+        ``referenced_ids`` is NOT a root and must not be sampled standalone.
+        """
+        all_ids: set[str] = set()
+        referenced_ids: set[str] = set()
+        with open(file_path) as f:
+            for raw in f:
+                if not (line := raw.strip()):
+                    continue
+                try:
+                    data = load_json_str(line)
+                except JSONDecodeError:
+                    continue
+                sid = data.get("session_id")
+                if isinstance(sid, str):
+                    all_ids.add(sid)
+                _collect_pre_session_refs(data, referenced_ids)
+                for turn in data.get("turns", []) or []:
+                    if isinstance(turn, dict):
+                        _collect_turn_refs(turn, referenced_ids)
+        return all_ids, referenced_ids
+
+    def _count_dag_root_entries(self) -> int:
+        """Count root conversations (no incoming forks) in a dag_jsonl file.
+
+        Roots are conversations not referenced by any other conversation's
+        ``forks`` list. The loader only ever samples roots — non-root
+        entries (children) are seeded into the orchestrator from their
+        parent's worker context, so sizing ``--num-conversations`` by
+        total entry count would over-run a file with deep fanout (e.g.
+        a file with 1 root + 2 children = 3 entries should default to
+        1 conversation, not 3).
+        """
+        if not self.input.file:
+            return 0
+        try:
+            all_ids, referenced_ids = self._collect_dag_session_and_fork_ids(
+                self.input.file
+            )
+        except (OSError, FileNotFoundError) as e:
+            _logger.error(
+                f"Cannot read dag_jsonl file {self.input.file} for root counting: {e}"
+            )
+            return 0
+        return len(all_ids - referenced_ids)
 
     def _count_dataset_entries(self) -> int:
         """Count the number of valid entries in a custom dataset file or directory.

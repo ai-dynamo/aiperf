@@ -8,6 +8,7 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
 
 # =============================================================================
@@ -195,3 +196,11 @@ class JsonExportData(AIPerfBaseModel):
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description=(
+            "DAG branch orchestration counters (children spawned/completed/"
+            "errored/truncated, parents suspended/resumed). Present only on "
+            "DAG-shaped runs; absent for non-DAG benchmarks."
+        ),
+    )

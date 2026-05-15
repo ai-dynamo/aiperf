@@ -223,6 +223,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/timing/concurrency.py",
       ""
     ],
@@ -893,11 +898,6 @@
     ],
     [
       "function-size",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.run"
-    ],
-    [
-      "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1150,11 +1150,6 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
     ],
     [
       "nesting-depth",

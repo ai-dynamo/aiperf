@@ -89,3 +89,21 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         if isinstance(v, dict):
             return DatasetClientMetadata.from_json(v)
         return v
+
+
+class DatasetConfigurationFailedNotification(BaseServiceMessage):
+    """Notification published by DatasetManager when its PROFILE_CONFIGURE handler raises.
+
+    Lets peer services (notably TimingManager, which awaits
+    DatasetConfiguredNotification) abort their wait immediately instead of
+    blocking on the dataset configuration timeout. The CommandErrorResponse
+    path remains the authoritative failure signal for the SystemController;
+    this notification is the broadcast equivalent for fan-out wakeups.
+    """
+
+    message_type: MessageTypeT = MessageType.DATASET_CONFIGURATION_FAILED
+
+    error: str = Field(
+        ...,
+        description="Human-readable description of the dataset configuration failure.",
+    )
