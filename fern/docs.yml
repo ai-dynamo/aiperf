@@ -14,6 +14,12 @@ products:
     versions:
       - display-name: Latest (v0.7.0)
         path: ./versions/v0.7.0.yml
+        slug: latest
+        availability: stable
+      - display-name: dev
+        path: ./versions/dev.yml
+        slug: dev
+        availability: beta
       - display-name: v0.7.0
         path: ./versions/v0.7.0.yml
         slug: v0.7.0
