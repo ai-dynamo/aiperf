@@ -147,6 +147,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         delay=single_turn.delay,
                         role=single_turn.role,
                         max_tokens=single_turn.output_length,
+                        extra_body=single_turn.extra,
                     )
                 )
             conversations.append(conversation)

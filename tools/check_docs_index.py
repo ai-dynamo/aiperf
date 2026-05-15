@@ -42,6 +42,10 @@ ALLOWLIST = {
     "accuracy/accuracy_stubs.md",
 }
 
+# Directory prefixes (relative to docs/) whose markdown files are intentionally
+# excluded from the published Fern index (e.g. internal planning/spec drafts).
+ALLOWLIST_PREFIXES = ("superpowers/",)
+
 
 def get_indexed_paths(index_path: Path) -> set[str]:
     """Extract all path: values from index.yml."""
@@ -78,7 +82,8 @@ def main() -> None:
 
     all_docs = get_all_docs(args.docs_dir)
     indexed = get_indexed_paths(args.index)
-    missing = sorted(all_docs - indexed - ALLOWLIST)
+    prefix_skipped = {f for f in all_docs if f.startswith(ALLOWLIST_PREFIXES)}
+    missing = sorted(all_docs - indexed - ALLOWLIST - prefix_skipped)
 
     if missing:
         print(
@@ -92,7 +97,7 @@ def main() -> None:
         sys.exit(1)
 
     print(
-        f"OK: all {len(all_docs) - len(ALLOWLIST)} docs files are listed in {args.index}"
+        f"OK: all {len(all_docs) - len(ALLOWLIST) - len(prefix_skipped)} docs files are listed in {args.index}"
     )
 
 

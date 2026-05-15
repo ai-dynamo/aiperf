@@ -9,6 +9,38 @@ from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
 
+def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
+    """Enforce the minimal shape that OpenAI chat-completions messages must have.
+
+    Raises ``ValueError`` if ``messages`` is empty or any entry is not a dict
+    with a ``role`` key. Used by loader models (``MooncakeTrace``, ``DagTurn``)
+    that accept free-form message dicts.
+    """
+    if not messages:
+        raise ValueError("'messages' must be a non-empty list")
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict) or "role" not in msg:
+            raise ValueError(
+                f"Each message must have a 'role' key, but message at index {i} does not"
+            )
+
+
+def _has_any_modality(row: Any) -> bool:
+    """True when ``row`` has any of the multimodal content fields populated."""
+    return any(
+        (
+            row.text,
+            row.texts,
+            row.image,
+            row.images,
+            row.audio,
+            row.audios,
+            row.video,
+            row.videos,
+        )
+    )
+
+
 class SingleTurn(AIPerfBaseModel):
     """Defines the schema for single-turn data.
 
@@ -66,6 +98,10 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
+    extra: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -85,18 +121,7 @@ class SingleTurn(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
-        if not any(
-            [
-                self.text,
-                self.texts,
-                self.image,
-                self.images,
-                self.audio,
-                self.audios,
-                self.video,
-                self.videos,
-            ]
-        ):
+        if not _has_any_modality(self):
             raise ValueError("At least one modality must be provided")
         return self
 
@@ -179,18 +204,7 @@ class RandomPool(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "RandomPool":
         """Ensure at least one modality is provided"""
-        if not any(
-            [
-                self.text,
-                self.texts,
-                self.image,
-                self.images,
-                self.audio,
-                self.audios,
-                self.video,
-                self.videos,
-            ]
-        ):
+        if not _has_any_modality(self):
             raise ValueError("At least one modality must be provided")
         return self
 
@@ -200,16 +214,18 @@ class MooncakeTrace(AIPerfBaseModel):
 
     See https://github.com/kvcache-ai/Mooncake for more details.
 
-    Supports three input modes (exactly one required):
+    Supports four input modes (exactly one required):
     - input_length: Synthetic text generated from token count (optionally with hash_ids)
     - text_input: Literal text string sent as the prompt
     - messages: List of OpenAI-compatible message dicts sent directly to the API
+    - payload: Complete pre-built API request payload sent verbatim through the transport
 
     Examples:
     - Minimal: {"input_length": 10, "hash_ids": [123]}
     - With input_length: {"input_length": 10, "output_length": 4}
     - With text_input: {"text_input": "Hello world", "output_length": 4}
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
+    - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
     """
 
@@ -230,6 +246,12 @@ class MooncakeTrace(AIPerfBaseModel):
         None,
         description="List of OpenAI-compatible tool definitions. Only allowed when 'messages' is provided.",
     )
+    payload: dict[str, Any] | None = Field(
+        None,
+        description="Complete pre-built API request payload sent verbatim "
+        "to the transport. Bypasses all endpoint formatting. Cannot be "
+        "combined with other input modes.",
+    )
 
     # Optional fields
     output_length: int | None = Field(
@@ -247,6 +269,10 @@ class MooncakeTrace(AIPerfBaseModel):
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"
     )
+    extra: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
+    )
 
     @model_validator(mode="after")
     def validate_input(self) -> "MooncakeTrace":
@@ -255,22 +281,30 @@ class MooncakeTrace(AIPerfBaseModel):
             self.input_length is not None,
             self.text_input is not None,
             self.messages is not None,
+            self.payload is not None,
         ]
         input_mode_count = sum(input_modes)
         if input_mode_count == 0:
             raise ValueError(
-                "Exactly one of 'input_length', 'text_input', or 'messages' must be provided"
+                "Exactly one of 'input_length', 'text_input', 'messages', or 'payload' must be provided"
             )
         if input_mode_count > 1:
             raise ValueError(
-                "'input_length', 'text_input', and 'messages' are mutually exclusive. Use only one of them."
+                "'input_length', 'text_input', 'messages', and 'payload' are mutually exclusive. Use only one of them."
             )
 
         if self.hash_ids is not None and self.input_length is None:
             raise ValueError(
-                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' or 'messages' are provided"
+                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input', 'messages', or 'payload' are provided"
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "MooncakeTrace":
+        """Validate the payload field is non-empty when provided."""
+        if self.payload is not None and not self.payload:
+            raise ValueError("'payload' must be a non-empty dict")
         return self
 
     @model_validator(mode="after")
@@ -281,19 +315,8 @@ class MooncakeTrace(AIPerfBaseModel):
                 raise ValueError("'tools' is only allowed when 'messages' is provided")
             if not self.tools:
                 raise ValueError("'tools' must be a non-empty list")
-
-        if self.messages is None:
-            return self
-
-        if not self.messages:
-            raise ValueError("'messages' must be a non-empty list")
-
-        for i, msg in enumerate(self.messages):
-            if not isinstance(msg, dict) or "role" not in msg:
-                raise ValueError(
-                    f"Each message must have a 'role' key, but message at index {i} does not"
-                )
-
+        if self.messages is not None:
+            validate_chat_messages(self.messages)
         return self
 
 
@@ -366,6 +389,28 @@ class BurstGPTTrace(AIPerfBaseModel):
     output_length: int = Field(description="Output token count (Response tokens)")
 
 
+class RawPayload(AIPerfBaseModel):
+    """A single raw API request payload for verbatim replay.
+
+    On-disk schema for ``--input-type raw_payload`` (loaded by
+    ``RawPayloadDatasetLoader``); the parsed payload becomes
+    ``Turn.raw_payload``, which ``RawEndpoint`` (or any endpoint) ships
+    verbatim. Distinct from ``RawRecordInfo``, which is the export-side
+    record produced by ``raw_record_writer_processor``.
+    """
+
+    payload: dict[str, Any] = Field(description="Complete API request payload.")
+
+
+class InputsJsonSession(AIPerfBaseModel):
+    """A session from the InputsFile format with pre-formatted payloads."""
+
+    session_id: str = Field(description="Session ID of the conversation.")
+    payloads: list[dict[str, Any]] = Field(
+        min_length=1, description="Ordered list of per-turn payloads."
+    )
+
+
 class SageMakerDataCaptureTrace(AIPerfBaseModel):
     """Trace entry parsed from a SageMaker Data Capture JSONL record.
 
@@ -426,6 +471,8 @@ CustomDatasetT = TypeVar(
     | MooncakeTrace
     | BailianTrace
     | BurstGPTTrace
+    | RawPayload
+    | InputsJsonSession
     | SageMakerDataCaptureTrace,
 )
 """A union type of all custom data types."""

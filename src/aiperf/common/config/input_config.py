@@ -223,6 +223,20 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE
 
+    disable_auto_fixed_schedule: Annotated[
+        bool,
+        Field(
+            description="Disable automatic promotion of timestamped trace datasets to fixed-schedule timing mode. "
+            "When set, AIPerf honors the explicit `--concurrency` / `--request-rate` selection even for trace datasets "
+            "containing timestamps. Useful when re-running a captured trace with a different load pattern than the one "
+            "it was originally captured under."
+        ),
+        CLIParameter(
+            name=("--no-fixed-schedule",),
+            group=Groups.INPUT,
+        ),
+    ] = InputDefaults.DISABLE_AUTO_FIXED_SCHEDULE
+
     fixed_schedule_auto_offset: Annotated[
         bool,
         Field(

@@ -226,6 +226,109 @@ class TestInferenceClient:
         assert record == expected_record
 
     @pytest.mark.asyncio
+    async def test_send_request_sends_raw_payload_without_endpoint_formatting(
+        self, inference_client, sample_request_info
+    ):
+        """Test that raw_payload turns bypass endpoint payload formatting."""
+        raw_payload = {
+            "messages": [{"role": "user", "content": "exact body"}],
+            "temperature": 0.7,
+            "vendor_flag": {"preserve": True},
+        }
+        request_info = sample_request_info
+        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
+        expected_record = RequestRecord(request_info=request_info)
+        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
+        inference_client.transport.send_request = AsyncMock(
+            return_value=expected_record
+        )
+
+        await inference_client.send_request(request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == raw_payload
+
+    @pytest.mark.asyncio
+    async def test_send_request_sends_empty_raw_payload_without_formatting(
+        self, inference_client, sample_request_info
+    ):
+        """Test that an empty raw_payload is still a verbatim payload."""
+        raw_payload = {}
+        request_info = sample_request_info
+        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
+        expected_record = RequestRecord(request_info=request_info)
+        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
+        inference_client.transport.send_request = AsyncMock(
+            return_value=expected_record
+        )
+
+        await inference_client.send_request(request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == raw_payload
+
+    @pytest.mark.asyncio
+    async def test_send_request_preserves_raw_payload_formatter_conflicts(
+        self, inference_client, sample_request_info
+    ):
+        """Test raw_payload top-level fields are not overwritten by endpoint defaults."""
+        raw_payload = {
+            "messages": [{"role": "user", "content": "authored"}],
+            "model": "payload-model",
+            "stream": True,
+            "max_tokens": 17,
+            "temperature": 0.01,
+            "tools": [{"type": "function", "function": {"name": "do_it"}}],
+        }
+        request_info = sample_request_info
+        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
+        expected_record = RequestRecord(request_info=request_info)
+        inference_client.endpoint.format_payload.return_value = {
+            "model": "endpoint-model",
+            "stream": False,
+            "messages": [{"role": "user", "content": "rewritten"}],
+        }
+        inference_client.transport.send_request = AsyncMock(
+            return_value=expected_record
+        )
+
+        await inference_client.send_request(request_info)
+
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == raw_payload
+        assert call_args.kwargs["payload"]["model"] == "payload-model"
+        assert call_args.kwargs["payload"]["stream"] is True
+        assert call_args.kwargs["payload"]["messages"][0]["content"] == "authored"
+
+    @pytest.mark.asyncio
+    async def test_send_request_formats_when_only_earlier_turn_has_raw_payload(
+        self, inference_client, sample_request_info
+    ):
+        """Test raw_payload passthrough is scoped to the current turn."""
+        request_info = sample_request_info
+        request_info.turns = [
+            Turn(
+                role="user",
+                raw_payload={"messages": [{"role": "user", "content": "old"}]},
+            ),
+            Turn(role="user", texts=[Text(contents=["current"])]),
+        ]
+        expected_payload = {"messages": [{"role": "user", "content": "current"}]}
+        expected_record = RequestRecord(request_info=request_info)
+        inference_client.endpoint.format_payload.return_value = expected_payload
+        inference_client.transport.send_request = AsyncMock(
+            return_value=expected_record
+        )
+
+        await inference_client.send_request(request_info)
+
+        inference_client.endpoint.format_payload.assert_called_once_with(request_info)
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == expected_payload
+
+    @pytest.mark.asyncio
     async def test_send_request_raises_on_empty_turns(self, inference_client):
         """Test that send_request raises ValueError when turns is empty."""
         request_info = RequestInfo(
@@ -271,7 +374,7 @@ class TestInferenceClient:
             end_perf_ns=2000,
         )
 
-        result = inference_client._enrich_request_record(
+        result = inference_client._finalize_request_record(
             record=record, request_info=request_info
         )
 

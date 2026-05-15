@@ -33,6 +33,13 @@ from tests.harness.utils import (
 logging.getLogger("faker").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.INFO)
 
+# Limit glibc malloc arenas to avoid a rare heap-corruption SIGABRT seen
+# during subprocess shutdown under heavy `-n auto` xdist load. Spawning
+# ~7 aiperf processes × ~24 xdist workers creates enough fork/thread
+# contention to occasionally trip glibc's double-free detector during C
+# extension teardown. Bounding arenas fixes it without user-visible cost.
+os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+
 _logger = AIPerfLogger(__name__)
 
 

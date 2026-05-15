@@ -96,6 +96,58 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
 
 
+class ConversationBranchMode(CaseInsensitiveStrEnum):
+    """Mode discriminator for ``ConversationBranchInfo``.
+
+    Distinguishes two kinds of DAG branches sharing one primitive:
+
+    - ``FORK``: child inherits the parent's accumulated message context and
+      sticky-routes to the parent's worker (prefix-cache locality). Used by
+      aiperf's native DAG conversation-forking semantics.
+    - ``SPAWN``: child starts with a fresh context, free routing. Used for
+      pre-session sub-agent dispatch.
+    """
+
+    FORK = "fork"
+    """Child inherits parent's turn_list (accumulated message history + captured
+    live responses); sticky-routes to parent's worker for prefix-cache locality."""
+
+    SPAWN = "spawn"
+    """Child gets a fresh context; free routing (no sticky pin to parent).
+
+    Disambiguation note: this SPAWN is the DAG-branch mode (a child
+    *conversation* that runs alongside its parent). It is unrelated to
+    ``SpawnWorkersCommand`` (the controller->worker-manager command that
+    spawns *worker processes*). One is dataset/orchestration semantics;
+    the other is process lifecycle.
+    """
+
+
+class PrerequisiteKind(CaseInsensitiveStrEnum):
+    """Types of conditions that can gate a turn's dispatch.
+
+    Extensible: v1 orchestrator only honors SPAWN_JOIN; the remaining values
+    are reserved and rejected at load time by
+    ``validate_for_orchestrator_v1``. Each deferred value is pinned to a
+    future orchestrator capability in the DAG prereq-gating design doc.
+    """
+
+    SPAWN_JOIN = "spawn_join"
+    """All blocking children from a named branch have completed."""
+
+    CHILD_SESSION_COMPLETE = "child_session_complete"
+    """A specific child runtime session has completed (reserved)."""
+
+    TIMER = "timer"
+    """Wall-clock delay has elapsed (reserved)."""
+
+    EXTERNAL_EVENT = "external_event"
+    """Named external signal has been received (reserved)."""
+
+    BARRIER = "barrier"
+    """Runtime-diamond join on a shared barrier_id (reserved)."""
+
+
 class ConversationContextMode(CaseInsensitiveStrEnum):
     """Controls how prior turns are accumulated in multi-turn conversations.
 
@@ -269,6 +321,7 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"

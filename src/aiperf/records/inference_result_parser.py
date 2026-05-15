@@ -370,7 +370,7 @@ class InferenceResultParser(CommunicationMixin):
                 if response.data.content:
                     output_texts.append(response.data.content)
             elif isinstance(response.data, ToolCallResponseData):
-                output_texts.append(response.data.text)
+                output_texts.append(response.data.tool_call_text)
             else:
                 output_texts.append(response.data.get_text())
 

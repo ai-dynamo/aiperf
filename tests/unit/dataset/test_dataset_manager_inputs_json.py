@@ -7,13 +7,17 @@ Unit tests for DatasetManager._generate_inputs_json_file method.
 import json
 import logging
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.models import InputsFile, SessionPayloads
+from aiperf.common.enums import CreditPhase
+from aiperf.common.models import InputsFile, RequestInfo, RequestRecord, SessionPayloads
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
 from aiperf.plugin import plugins
+from aiperf.workers.inference_client import InferenceClient
 
 
 def _validate_chat_payload_structure(payload: dict) -> None:
@@ -275,3 +279,51 @@ class TestDatasetManagerInputsJsonGeneration:
         log_messages = [record.message for record in caplog.records]
         assert any("Generating inputs.json file" in msg for msg in log_messages)
         assert any("inputs.json file generated" in msg for msg in log_messages)
+
+    @pytest.mark.asyncio
+    async def test_inputs_json_replay_sends_generated_payload_without_reformatting(
+        self,
+        populated_dataset_manager,
+        tmp_path: Path,
+    ):
+        """Test generated inputs.json payloads replay without endpoint formatting."""
+        populated_dataset_manager.user_config.output.artifact_directory = tmp_path
+        await populated_dataset_manager._generate_inputs_json_file()
+        inputs_path = tmp_path / OutputDefaults.INPUTS_JSON_FILE
+        exported = json.loads(inputs_path.read_text())
+        exported_payload = exported["data"][0]["payloads"][0]
+
+        loader = InputsJsonPayloadLoader(
+            filename=inputs_path,
+            user_config=populated_dataset_manager.user_config,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        replay_turn = conversations[0].turns[0]
+        assert replay_turn.raw_payload == exported_payload
+
+        model_endpoint = ModelEndpointInfo.from_user_config(
+            populated_dataset_manager.user_config
+        )
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[replay_turn],
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id=conversations[0].session_id,
+        )
+        client = InferenceClient(
+            model_endpoint=model_endpoint, service_id="test-service"
+        )
+        client.endpoint.format_payload = Mock(return_value={"messages": []})
+        client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=request_info)
+        )
+
+        await client.send_request(request_info)
+
+        client.endpoint.format_payload.assert_not_called()
+        call_args = client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == exported_payload

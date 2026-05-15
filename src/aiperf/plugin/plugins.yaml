@@ -395,6 +395,23 @@ endpoint:
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
 
+  raw:
+    class: aiperf.endpoints.raw_endpoint:RawEndpoint
+    description: |
+      Fallback endpoint for non-standard APIs. Does not format payloads or
+      append a URL path. Parses responses using auto-detection with optional
+      JMESPath extraction via response_field. Prefer a regular endpoint type
+      when the target API is supported.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |
@@ -499,6 +516,29 @@ custom_dataset_loader:
     metadata:
       is_trace: true
       default_block_size: 512
+
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Each line is a
+      complete API request body sent directly to the transport with zero
+      formatting. Supports single file (one conversation per line) and
+      directory mode (one JSONL file per multi-turn conversation).
+
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Inputs JSON payload loader for verbatim API replay. Loads AIPerf
+      InputsFile format with pre-formatted payloads. Preserves multi-turn
+      session structure and sends each payload directly to the transport
+      without endpoint formatting.
+
+  dag_jsonl:
+    class: aiperf.dataset.loader.dag_jsonl:DagJsonlLoader
+    description: |
+      DAG-shaped benchmark loader. Each JSONL line is a Conversation;
+      supports forks: and spawns: shorthand at the turn level; topology
+      walk validates and stamps agent_depth and TurnMetadata.has_forks.
 
   sagemaker_data_capture:
     class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader

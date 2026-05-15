@@ -66,11 +66,11 @@ class ImageEditEndpoint(BaseEndpoint):
         if not request_info.turns:
             raise ValueError("Image edit endpoint requires at least one turn.")
 
-        turn = request_info.turns[0]
+        turn = request_info.turns[-1]
         model_endpoint = request_info.model_endpoint
 
         if not turn.texts or not turn.texts[0].contents:
-            raise ValueError("Image edit endpoint requires text prompt in first turn.")
+            raise ValueError("Image edit endpoint requires a text prompt.")
         if not turn.images or not turn.images[0].contents:
             raise ValueError(
                 "Image edit endpoint requires a reference image in turn.images[0]."
@@ -93,17 +93,35 @@ class ImageEditEndpoint(BaseEndpoint):
         else:
             payload["image"] = self._build_image_field(image_content)
 
-        if model_endpoint.endpoint.extra:
-            for key, value in model_endpoint.endpoint.extra:
-                if key in _RESERVED_PAYLOAD_KEYS:
-                    self.warning(
-                        f"--extra-inputs {key!r} is managed by the endpoint and was ignored."
-                    )
-                    continue
-                payload[key] = value
+        self._merge_with_reserved_filter(
+            payload, model_endpoint.endpoint.extra or [], "--extra-inputs"
+        )
+        self._merge_with_reserved_filter(
+            payload, (turn.extra_body or {}).items(), "extra_body"
+        )
 
         self.trace(lambda: f"Formatted image edit payload keys: {list(payload)}")
         return payload
+
+    def _merge_with_reserved_filter(
+        self,
+        payload: dict[str, Any],
+        items: Any,
+        label: str,
+    ) -> None:
+        """Merge ``items`` into ``payload`` while skipping reserved multipart keys.
+
+        Reserved keys (``prompt``, ``image``, ``url``, ``mask``) are endpoint-
+        managed; collisions log a warning and are dropped. ``label`` identifies
+        the source for the warning text.
+        """
+        for key, value in items:
+            if key in _RESERVED_PAYLOAD_KEYS:
+                self.warning(
+                    f"{label} {key!r} is managed by the endpoint and was ignored."
+                )
+                continue
+            payload[key] = value
 
     @staticmethod
     def _build_image_field(content: str) -> dict[str, Any]:

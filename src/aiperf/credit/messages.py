@@ -11,6 +11,7 @@ from pydantic import Field
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import BaseServiceMessage
 from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.types import MessageTypeT
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
@@ -52,6 +53,14 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.CREDIT_PHASE_COMPLETE
     stats: CreditPhaseStats = Field(..., description="The credit phase stats")
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="DAG branch orchestration counters at phase completion. "
+        "None for non-DAG runs (no BranchOrchestrator); a populated "
+        "BranchStats snapshot for DAG-shaped runs (FORK or SPAWN). "
+        "RecordsManager forwards this to ProfileResults so the JSON "
+        "exporter can splice it into profile_export_aiperf.json.",
+    )
 
 
 class CreditsCompleteMessage(BaseServiceMessage):
