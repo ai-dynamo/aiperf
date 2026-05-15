@@ -365,6 +365,9 @@ class MessageType(CaseInsensitiveStrEnum):
     SERVER_METRICS_STATUS = "server_metrics_status"
     WORKER_HEALTH = "worker_health"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
+    WORKER_POD_STATE = "worker_pod_state"
+    WORKER_STARTUP_STATE = "worker_startup_state"
+    WORKER_GROUP_STATS = "worker_group_stats"
 
 
 class ModelSelectionStrategy(CaseInsensitiveStrEnum):
