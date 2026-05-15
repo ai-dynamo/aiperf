@@ -370,6 +370,20 @@ class ResolvedConfig(BaseModel):
         "For single-turn: equals total_records. For multi-turn: "
         "count of unique session_id values.",
     )
+    dataset_root_count: dict[str, int] | None = Field(
+        default=None,
+        description="Root-conversation count per file-based dataset. "
+        "For forking datasets (dag_jsonl): sessions not referenced by any "
+        "other session's forks/spawns/pre_session_spawns lists — these are "
+        "the entries the loader actually samples standalone. "
+        "Other dataset types are not populated.",
+    )
+    dataset_is_forking: dict[str, bool] | None = Field(
+        default=None,
+        description="Whether each file-based dataset can fork (DAG branches). "
+        "Today only dag_jsonl carries fork semantics; other custom datasets "
+        "(single_turn, multi_turn, mooncake_trace, ...) are linear.",
+    )
     comm_config: BaseZMQCommunicationConfig | None = Field(
         default=None,
         description="Pre-built ZMQ communication config. "

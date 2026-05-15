@@ -576,7 +576,22 @@ class CLIConfig(BaseConfig):
         CLIParameter(
             name=("--fixed-schedule",),
             group=Groups.FIXED_SCHEDULE,
-            negative=None,
+        ),
+    ] = False
+
+    disable_auto_fixed_schedule: Annotated[
+        bool,
+        Field(
+            description="Suppress the automatic switch to fixed-schedule mode for "
+            "trace datasets that carry per-record timestamps. By default a "
+            "trace input (e.g. mooncake_trace) with timestamps in the first "
+            "record auto-promotes the profiling phase to fixed_schedule. Pass "
+            "--no-fixed-schedule to keep the user-selected timing mode (e.g. "
+            "concurrency, request_rate) and ignore the trace timestamps.",
+        ),
+        CLIParameter(
+            name=("--no-fixed-schedule",),
+            group=Groups.FIXED_SCHEDULE,
         ),
     ] = False
 

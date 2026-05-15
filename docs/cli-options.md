@@ -382,9 +382,14 @@ Path to a YAML configuration file. CLI flags override values from the config fil
 
 ### Fixed Schedule
 
-#### `--fixed-schedule`, `--no-fixed-schedule`
+#### `--fixed-schedule`
 
 Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets.
+<br/>_Flag (no value required)_
+
+#### `--no-fixed-schedule`
+
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -1685,9 +1690,14 @@ Path to a YAML configuration file. CLI flags override values from the config fil
 
 ### Fixed Schedule
 
-#### `--fixed-schedule`, `--no-fixed-schedule`
+#### `--fixed-schedule`
 
 Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets.
+<br/>_Flag (no value required)_
+
+#### `--no-fixed-schedule`
+
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 

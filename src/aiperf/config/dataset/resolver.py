@@ -31,6 +31,8 @@ class _DatasetResolution:
     has_timing: dict[str, bool] = field(default_factory=dict)
     total_records: dict[str, int] = field(default_factory=dict)
     session_counts: dict[str, int] = field(default_factory=dict)
+    root_counts: dict[str, int] = field(default_factory=dict)
+    is_forking: dict[str, bool] = field(default_factory=dict)
 
 
 class DatasetResolver:
@@ -67,6 +69,10 @@ class DatasetResolver:
         if acc.total_records:
             run.resolved.dataset_total_records = acc.total_records
             run.resolved.dataset_session_count = acc.session_counts
+        if acc.is_forking:
+            run.resolved.dataset_is_forking = acc.is_forking
+        if acc.root_counts:
+            run.resolved.dataset_root_count = acc.root_counts
         if acc.paths or acc.types:
             _logger.debug(
                 f"Resolved {len(acc.paths)} dataset paths, {len(acc.types)} types"
@@ -110,6 +116,14 @@ class DatasetResolver:
             )
             acc.total_records[name] = records
             acc.session_counts[name] = sessions
+
+        # 4. Forking-dataset analysis (DAG roots) — only dag_jsonl today.
+        from aiperf.plugin.enums import CustomDatasetType
+
+        is_forking = dataset_type == CustomDatasetType.DAG_JSONL
+        acc.is_forking[name] = is_forking
+        if is_forking and not resolved.is_dir():
+            acc.root_counts[name] = self._count_dag_roots(str(resolved))
 
     @staticmethod
     def _resolve_inline(
@@ -326,6 +340,25 @@ class DatasetResolver:
             pass
         return DatasetSamplingStrategy.SEQUENTIAL
 
+    @staticmethod
+    def _count_dag_roots(file_path: str) -> int:
+        """Count root sessions (not referenced by any fork/spawn) in a dag_jsonl file.
+
+        Roots are the entries the DAG loader actually samples standalone;
+        non-root children are seeded into the orchestrator from their parent
+        worker. Sizing ``num_conversations`` by total record count would
+        over-run a file with deep fanout (e.g. 1 root + 2 children = 3
+        records should default to 1 conversation, not 3).
+        """
+        try:
+            all_ids, referenced = _collect_dag_session_and_fork_ids(file_path)
+        except (OSError, FileNotFoundError) as err:
+            _logger.error(
+                f"Cannot read dag_jsonl file {file_path} for root counting: {err}"
+            )
+            return 0
+        return len(all_ids - referenced)
+
 
 def _add_session_id(line: str, session_ids: set[str]) -> None:
     """Parse a JSONL line and add its session_id/chat_id to the set."""
@@ -338,3 +371,64 @@ def _add_session_id(line: str, session_ids: set[str]) -> None:
     sid = data.get("session_id") or data.get("chat_id")
     if sid is not None:
         session_ids.add(str(sid))
+
+
+def _collect_pre_session_refs(data: dict, into: set[str]) -> None:
+    """Add ``pre_session_spawns`` child ids (bare strings only) into ``into``."""
+    for child in data.get("pre_session_spawns", []) or []:
+        if isinstance(child, str):
+            into.add(child)
+
+
+def _collect_turn_refs(turn: dict, into: set[str]) -> None:
+    """Add child ids referenced from one turn's ``forks``/``spawns`` into ``into``.
+
+    ``forks`` entries are a bare ``"<sid>"`` or a ``{"child": "<sid>", ...}``
+    object. ``spawns`` entries are a bare ``"<sid>"`` or a
+    ``{"children": [...], ...}`` object (DagSpawn form).
+    """
+    for fork_entry in turn.get("forks", []) or []:
+        if isinstance(fork_entry, str):
+            into.add(fork_entry)
+        elif isinstance(fork_entry, dict):
+            child = fork_entry.get("child")
+            if isinstance(child, str):
+                into.add(child)
+    for spawn_entry in turn.get("spawns", []) or []:
+        if isinstance(spawn_entry, str):
+            into.add(spawn_entry)
+        elif isinstance(spawn_entry, dict):
+            for child in spawn_entry.get("children", []) or []:
+                if isinstance(child, str):
+                    into.add(child)
+
+
+def _collect_dag_session_and_fork_ids(file_path: str) -> tuple[set[str], set[str]]:
+    """Walk a dag_jsonl file once, returning ``(all_session_ids, referenced_ids)``.
+
+    ``referenced_ids`` covers every id the orchestrator dispatches as a child
+    of another conversation: bare-string and object-form ``forks`` entries,
+    bare-string and ``DagSpawn``-object ``spawns`` entries, and top-level
+    ``pre_session_spawns``. Anything in ``referenced_ids`` is NOT a root and
+    must not be sampled standalone.
+    """
+    from aiperf.common.utils import load_json_str
+
+    all_ids: set[str] = set()
+    referenced_ids: set[str] = set()
+    with open(file_path) as f:
+        for raw in f:
+            if not (line := raw.strip()):
+                continue
+            try:
+                data = load_json_str(line)
+            except (ValueError, TypeError):
+                continue
+            sid = data.get("session_id")
+            if isinstance(sid, str):
+                all_ids.add(sid)
+            _collect_pre_session_refs(data, referenced_ids)
+            for turn in data.get("turns", []) or []:
+                if isinstance(turn, dict):
+                    _collect_turn_refs(turn, referenced_ids)
+    return all_ids, referenced_ids

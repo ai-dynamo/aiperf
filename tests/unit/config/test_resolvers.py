@@ -404,6 +404,79 @@ class TestDatasetResolver:
         with pytest.raises(FileNotFoundError, match="Dataset 'main' file not found"):
             DatasetResolver().resolve(run)
 
+    def test_counts_dag_roots_for_dag_jsonl(self, tmp_path):
+        """Forking datasets (dag_jsonl) should populate dataset_root_count.
+
+        File: s1 (root), s2 (child of s1.forks), s3 (child of s2.spawns),
+        s4 (root, referenced by no one). Roots = {s1, s4} -> count=2.
+        Non-roots = {s2, s3}.
+        """
+        import json
+
+        dataset_file = tmp_path / "dag.jsonl"
+        lines = [
+            {"session_id": "s1", "turns": [{"forks": ["s2"]}]},
+            {
+                "session_id": "s2",
+                "turns": [{"spawns": [{"children": ["s3"]}]}],
+            },
+            {"session_id": "s3", "turns": []},
+            {"session_id": "s4", "turns": []},
+        ]
+        dataset_file.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {
+                    "name": "profiling",
+                    "type": "file",
+                    "path": str(dataset_file),
+                    "format": "dag_jsonl",
+                }
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_is_forking == {"profiling": True}
+        assert run.resolved.dataset_root_count == {"profiling": 2}
+
+    def test_non_forking_dataset_marks_is_forking_false(self, tmp_path):
+        """Non-DAG file datasets get is_forking=False, root_count unset."""
+        dataset_file = tmp_path / "data.jsonl"
+        dataset_file.write_text('{"prompt": "hello"}\n')
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[{"name": "profiling", "type": "file", "path": str(dataset_file)}],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_is_forking == {"profiling": False}
+        assert run.resolved.dataset_root_count is None
+
 
 # ---------------------------------------------------------------------------
 # TimingResolver

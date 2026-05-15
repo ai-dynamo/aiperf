@@ -136,6 +136,9 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
             "User-centric rate mode requires --session-turns-mean >= 2. "
             "For single-turn workloads, use --request-rate instead."
         )
+
+    _apply_dataset_aware_autodefaults(prof, cli)
+
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
@@ -160,6 +163,133 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
             "Pass --request-cancellation-rate > 0 to enable cancellation, or "
             "drop --request-cancellation-delay."
         )
+
+
+def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """CLI-only port of the v1 dataset-aware autodefaults.
+
+    Three behaviors, all conditional on the user's CLI invocation supplying
+    a dataset file (no behavior change for YAML-only configs, which are
+    expected to be complete):
+
+    1. Trace auto-promotion: a trace ``--custom-dataset-type`` whose first
+       record carries a ``timestamp`` field flips the phase to
+       fixed_schedule unless the user passed ``--no-fixed-schedule``.
+    2. fixed_schedule autodefault: when a fixed_schedule phase has no
+       stop condition, fill ``requests`` from the dataset record count
+       (single-pass).
+    3. Forking-dataset autodefault: when the dataset is ``dag_jsonl`` and
+       no stop condition is set, fill ``sessions`` from the DAG root
+       count so the run executes each root once instead of truncating
+       mid-tree.
+
+    Bare-string ``--custom-dataset-type`` (no ``--input-file``) is a no-op
+    for I/O-dependent steps.
+    """
+    from pathlib import Path
+
+    from aiperf.config.phases import PhaseType
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import CustomDatasetType
+
+    file_path: Path | None = cli.input_file if cli.input_file is not None else None
+    dataset_type = cli.custom_dataset_type
+    has_stop_condition = any(k in prof for k in ("requests", "duration", "sessions"))
+
+    # Trace auto-promotion: requires both --custom-dataset-type (to know it's
+    # a trace) and --input-file (to peek at the first record for timestamps).
+    if (
+        dataset_type is not None
+        and file_path is not None
+        and not cli.disable_auto_fixed_schedule
+        and prof["type"] != PhaseType.FIXED_SCHEDULE
+        and plugins.is_trace_dataset(str(dataset_type))
+        and _first_record_has_timestamp(file_path)
+    ):
+        # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
+        # explicitly opted into a rate-controlled mode against a timestamped
+        # trace, refuse the combo loudly rather than silently dropping their
+        # flag — they almost certainly want one or the other, not both.
+        conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
+        if conflicts:
+            raise ValueError(
+                "Trace dataset has per-record timestamps and would be "
+                "auto-promoted to fixed_schedule, but the following flags "
+                f"are incompatible with fixed_schedule mode: {conflicts}. "
+                "Either drop the conflicting flags to enable auto-fixed-"
+                "schedule, or pass --no-fixed-schedule to keep your "
+                "user-selected timing mode and ignore trace timestamps."
+            )
+        prof["type"] = PhaseType.FIXED_SCHEDULE
+
+    # fixed_schedule autodefault: dataset entry count -> requests.
+    if (
+        prof["type"] == PhaseType.FIXED_SCHEDULE
+        and "requests" not in prof
+        and file_path is not None
+    ):
+        records = _count_dataset_records(file_path)
+        if records > 0:
+            prof["requests"] = records
+
+    # Forking-dataset autodefault: DAG roots -> sessions.
+    is_dag = dataset_type is not None and str(dataset_type) == str(
+        CustomDatasetType.DAG_JSONL
+    )
+    if is_dag and not has_stop_condition and file_path is not None:
+        from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
+
+        try:
+            all_ids, referenced = _collect_dag_session_and_fork_ids(str(file_path))
+        except (OSError, FileNotFoundError):
+            return
+        roots = len(all_ids - referenced)
+        if roots > 0:
+            prof["sessions"] = roots
+
+
+def _first_record_has_timestamp(file_path: object) -> bool:
+    """Return True when the first non-empty JSONL record carries a timestamp."""
+    from pathlib import Path
+
+    from aiperf.common.utils import load_json_str
+
+    path = Path(file_path)
+    if not path.is_file():
+        return False
+    try:
+        with open(path) as f:
+            for line in f:
+                if not (stripped := line.strip()):
+                    continue
+                try:
+                    data = load_json_str(stripped)
+                except (ValueError, TypeError):
+                    return False
+                return data.get("timestamp") is not None
+    except OSError:
+        return False
+    return False
+
+
+def _count_dataset_records(file_path: object) -> int:
+    """Count non-empty lines across a JSONL file or directory of JSONLs."""
+    from pathlib import Path
+
+    path = Path(file_path)
+    try:
+        if path.is_dir():
+            total = 0
+            for jsonl in path.rglob("*.jsonl"):
+                with open(jsonl) as f:
+                    total += sum(1 for line in f if line.strip())
+            return total
+        if path.is_file():
+            with open(path) as f:
+                return sum(1 for line in f if line.strip())
+    except OSError:
+        return 0
+    return 0
 
 
 def build_profiling(cli: CLIConfig) -> dict[str, Any]:

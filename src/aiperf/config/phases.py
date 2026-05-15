@@ -211,8 +211,11 @@ class BasePhaseConfig(BaseConfig):
         ),
     ]
 
-    # Subclasses set False to opt out (e.g. FixedSchedulePhase where
-    # the stop condition is inferred from the dataset).
+    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
+    # stop condition is inferred from the dataset). Otherwise CLI users
+    # get autodefaults applied in the CLI->YAML converter (see
+    # ``aiperf.config.flags._converter_profiling``); YAML users must be
+    # explicit.
     _stop_condition_required: ClassVar[bool] = True
 
     # =========================================================================
