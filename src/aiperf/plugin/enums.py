@@ -27,7 +27,7 @@ else:
 
 APIRouterTypeStr: TypeAlias = str
 APIRouterType = plugins.create_enum(PluginType.API_ROUTER, "APIRouterType", module=__name__)
-"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.PROGRESS, APIRouterType.WORKERS"""
+"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.RESULTS, APIRouterType.WORKERS"""
 
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
@@ -119,7 +119,7 @@ ServiceType = plugins.create_enum(PluginType.SERVICE, "ServiceType", module=__na
 
 ServiceRunTypeStr: TypeAlias = str
 ServiceRunType = plugins.create_enum(PluginType.SERVICE_MANAGER, "ServiceRunType", module=__name__)
-"""Dynamic enum for service manager. Example: ServiceRunType.MULTIPROCESSING"""
+"""Dynamic enum for service manager. Example: ServiceRunType.KUBERNETES, ServiceRunType.MULTIPROCESSING"""
 
 CommunicationBackendStr: TypeAlias = str
 CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "CommunicationBackend", module=__name__)

@@ -134,6 +134,14 @@ api_router:
     class: aiperf.api.routers.core:CoreRouter
     description: Config, health, and readiness endpoints.
 
+  debug:
+    class: aiperf.api.routers.debug:DebugRouter
+    description: Controller-internal state snapshots for diagnosing CR status.workers issues.
+
+  dataset:
+    class: aiperf.api.routers.dataset:DatasetRouter
+    description: Dataset metadata and file streaming with compression support.
+
   metrics:
     class: aiperf.api.routers.metrics:MetricsRouter
     description: Real-time metrics state and Prometheus/JSON endpoints.
@@ -146,6 +154,22 @@ api_router:
     class: aiperf.api.routers.results:ResultsRouter
     description: Final benchmark results and artifact file downloads.
 
+  server_metrics:
+    class: aiperf.api.routers.server_metrics:ServerMetricsRouter
+    description: Server-side Prometheus metrics scraping endpoints.
+
+  static:
+    class: aiperf.api.routers.static:StaticRouter
+    description: Static HTML file serving for dashboard and index pages.
+
+  tokenizer:
+    class: aiperf.api.routers.tokenizer:TokenizerRouter
+    description: Tokenizer bundle download endpoint for distributed workers.
+
+  websocket:
+    class: aiperf.api.routers.websocket:WebSocketRouter
+    description: WebSocket endpoint for real-time ZMQ message streaming.
+
   workers:
     class: aiperf.api.routers.workers:WorkersRouter
     description: Worker health tracking and /api/workers endpoint.
@@ -157,6 +181,13 @@ api_router:
 # One-to-one mapping: exactly one service manager is selected based on run_mode.
 # =============================================================================
 service_manager:
+  kubernetes:
+    class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
+    description: |
+      Kubernetes service manager for distributed deployments. Runs control-plane
+      services in separate controller-pod containers while workers and record
+      processors are external Kubernetes pods managed by JobSet.
+
   multiprocessing:
     class: aiperf.controller.multiprocess_service_manager:MultiProcessServiceManager
     description: |
