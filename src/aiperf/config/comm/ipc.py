@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import tempfile
 from pathlib import Path
 from typing import Annotated, ClassVar
@@ -8,8 +9,47 @@ from typing import Annotated, ClassVar
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
 from aiperf.plugin.enums import CommunicationBackend
+
+# Windows fallback: ZMQ does not support ipc:// on Windows. Use TCP loopback
+# with a deterministic port derived from a hash of the would-be IPC path, so
+# bind and connect sides agree without explicit coordination.
+#
+# Range chosen to:
+#  - stay below the OS ephemeral-port range (49152+ on Linux/macOS/Win10+)
+#  - sit above the cluster of common service ports (HTTP/Prometheus/vLLM/
+#    Ollama/OTLP/etc.) so a co-running service on localhost is unlikely to
+#    have already bound a port we hash to
+#  - keep birthday-paradox collision probability low for AIPerf's ~15 sockets:
+#    P(collision) ≈ 1 - exp(-n^2 / (2 * RANGE)). At RANGE=20000, n=15 → ~0.56%.
+#
+# Per-aiperf-run uniqueness is provided by ``tempfile.mkdtemp()`` randomness
+# in ``ZMQIPCConfig.validate_path`` — two concurrent aiperf processes get
+# different ipc paths, which feed into the salt, which produces different
+# port distributions.
+_WINDOWS_TCP_BASE_PORT = 28000
+_WINDOWS_TCP_PORT_RANGE = 20000
+
+
+def _build_socket_address(path: Path | None, ipc_filename: str) -> str:
+    """Build a ZMQ socket address for an inter-service connection.
+
+    On Linux/macOS: returns ipc://{path}/{ipc_filename} (Unix domain socket).
+    On Windows: returns tcp://127.0.0.1:<port> with a deterministic port
+    derived from sha256(path/ipc_filename), since Windows ZMQ does not
+    support ipc://. Path is required on every platform so callers maintain
+    a consistent contract and the hash inputs are stable.
+    """
+    if path is None:
+        raise ValueError("IPC path is required for socket address derivation")
+    if IS_WINDOWS:
+        salt = f"{path}/{ipc_filename}"
+        digest = hashlib.sha256(salt.encode()).hexdigest()
+        port_offset = int(digest[:8], 16) % _WINDOWS_TCP_PORT_RANGE
+        return f"tcp://127.0.0.1:{_WINDOWS_TCP_BASE_PORT + port_offset}"
+    return f"ipc://{path / ipc_filename}"
 
 
 class ZMQIPCProxyConfig(BaseZMQProxyConfig):
@@ -21,10 +61,8 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
     enable_capture: bool = Field(default=False, description="Enable capture socket")
 
     def _addr(self, endpoint: str) -> str:
-        """Build an IPC address for the given endpoint."""
-        if self.path is None:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / self.name}_{endpoint}.ipc"
+        """Build an address for the given endpoint (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.path, f"{self.name}_{endpoint}.ipc")
 
     @property
     def frontend_address(self) -> str:
@@ -97,35 +135,25 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
 
     @property
     def records_push_pull_address(self) -> str:
-        """Get the records push/pull address based on protocol configuration."""
-        if not self.path:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'records_push_pull.ipc'}"
+        """Get the records push/pull address (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.path, "records_push_pull.ipc")
 
     @property
     def credit_router_address(self) -> str:
-        """Get the credit router address for streaming ROUTER-DEALER."""
-        if not self.path:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'credit_router.ipc'}"
+        """Get the credit router address (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.path, "credit_router.ipc")
 
     @property
     def credit_return_router_address(self) -> str:
-        """Get the credit return router address for dedicated return channel."""
-        if not self.path:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'credit_return_router.ipc'}"
+        """Get the credit return router address (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.path, "credit_return_router.ipc")
 
     @property
     def control_address(self) -> str:
-        """Get the control channel address."""
-        if not self.path:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'control.ipc'}"
+        """Get the control channel address (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.path, "control.ipc")
 
     @property
     def group_lifecycle_address(self) -> str:
-        """Get the group-local lifecycle channel address."""
-        if not self.path:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'group_lifecycle.ipc'}"
+        """Get the group-local lifecycle channel address (ipc:// on POSIX, tcp:// on Windows)."""
+        return _build_socket_address(self.path, "group_lifecycle.ipc")

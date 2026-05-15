@@ -37,7 +37,6 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
-import platform
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -46,6 +45,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
@@ -901,11 +901,20 @@ class _ServiceSettings(BaseSettings):
 
     @model_validator(mode="after")
     def auto_disable_uvloop_on_windows(self) -> Self:
-        """Automatically disable uvloop on Windows as it's not supported."""
-        if platform.system() == "Windows" and not self.DISABLE_UVLOOP:
-            _logger.info(
-                "Windows detected: automatically disabling uvloop (not supported on Windows)"
-            )
+        """Automatically disable uvloop on Windows as it's not supported.
+
+        Validator fires on every ``_ServiceSettings()`` construction, which
+        runs once in the main process AND once per spawned child service.
+        Gate the log line to the main process so the user sees it once, not
+        ~9 times per aiperf run on Windows.
+        """
+        if IS_WINDOWS and not self.DISABLE_UVLOOP:
+            import multiprocessing
+
+            if multiprocessing.parent_process() is None:
+                _logger.info(
+                    "Windows detected: automatically disabling uvloop (not supported on Windows)"
+                )
             self.DISABLE_UVLOOP = True
         return self
 

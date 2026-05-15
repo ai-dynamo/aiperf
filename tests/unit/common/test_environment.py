@@ -19,45 +19,35 @@ class TestServiceSettingsUvloopWindows:
     """Test suite for automatic uvloop disabling on Windows."""
 
     @pytest.mark.parametrize(
-        "platform_name,expected_disable_uvloop",
+        "is_windows,expected_disable_uvloop",
         [
-            param("Windows", True, id="windows_auto_disabled"),
-            param("Linux", False, id="linux_enabled"),
-            param("Darwin", False, id="macos_enabled"),
+            param(True, True, id="windows_auto_disabled"),
+            param(False, False, id="linux_enabled"),
+            param(False, False, id="macos_enabled"),
         ],
     )
-    @patch("aiperf.common.environment.platform.system")
-    def test_platform_uvloop_detection(
-        self, mock_platform, platform_name, expected_disable_uvloop
-    ):
+    def test_platform_uvloop_detection(self, is_windows, expected_disable_uvloop):
         """Test that uvloop is automatically disabled on Windows and enabled elsewhere."""
-        mock_platform.return_value = platform_name
-
-        settings = _ServiceSettings()
-
-        assert settings.DISABLE_UVLOOP is expected_disable_uvloop
+        with patch("aiperf.common.environment.IS_WINDOWS", is_windows):
+            settings = _ServiceSettings()
+            assert settings.DISABLE_UVLOOP is expected_disable_uvloop
 
     @pytest.mark.parametrize(
-        "platform_name,manual_setting,expected_result",
+        "is_windows,manual_setting,expected_result",
         [
-            param("Windows", False, True, id="windows_override_attempt"),
-            param("Windows", True, True, id="windows_manual_disable"),
-            param("Linux", True, True, id="linux_manual_disable"),
-            param("Linux", False, False, id="linux_default_enabled"),
-            param("Darwin", True, True, id="macos_manual_disable"),
-            param("Darwin", False, False, id="macos_default_enabled"),
+            param(True, False, True, id="windows_override_attempt"),
+            param(True, True, True, id="windows_manual_disable"),
+            param(False, True, True, id="linux_manual_disable"),
+            param(False, False, False, id="linux_default_enabled"),
+            param(False, True, True, id="macos_manual_disable"),
+            param(False, False, False, id="macos_default_enabled"),
         ],
     )
-    @patch("aiperf.common.environment.platform.system")
-    def test_manual_uvloop_settings(
-        self, mock_platform, platform_name, manual_setting, expected_result
-    ):
+    def test_manual_uvloop_settings(self, is_windows, manual_setting, expected_result):
         """Test manual DISABLE_UVLOOP settings across platforms."""
-        mock_platform.return_value = platform_name
-
-        settings = _ServiceSettings(DISABLE_UVLOOP=manual_setting)
-
-        assert settings.DISABLE_UVLOOP is expected_result
+        with patch("aiperf.common.environment.IS_WINDOWS", is_windows):
+            settings = _ServiceSettings(DISABLE_UVLOOP=manual_setting)
+            assert settings.DISABLE_UVLOOP is expected_result
 
 
 class TestProfileConfigureTimeout:

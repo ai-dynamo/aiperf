@@ -5,13 +5,13 @@ import asyncio
 import contextlib
 import multiprocessing
 import os
-import platform
 import signal
 import sys
 import uuid
 import warnings
 from typing import TYPE_CHECKING
 
+from aiperf.common.constants import IS_MACOS, IS_WINDOWS
 from aiperf.common.enums import LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.plugin.enums import ServiceType
@@ -121,7 +121,7 @@ def bootstrap_and_run_service(
         # processes inherit terminal file descriptors and interfere with Textual's
         # terminal management, causing ASCII garbage and freezing when mouse events occur.
         # Only apply this in spawned child processes, NOT in the main process where Textual runs.
-        if platform.system() == "Darwin" and is_child_process:
+        if IS_MACOS and is_child_process:
             _redirect_stdio_to_devnull()
 
         # Initialize global RandomGenerator for reproducible random number generation
@@ -143,6 +143,8 @@ def bootstrap_and_run_service(
 
         _exit_if_service_failed(service)
 
+    _configure_event_loop_policy_for_platform()
+
     with contextlib.suppress(asyncio.CancelledError):
         if not Environment.SERVICE.DISABLE_UVLOOP:
             import uvloop
@@ -150,6 +152,23 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+
+def _configure_event_loop_policy_for_platform() -> None:
+    """On Windows, switch to ``WindowsSelectorEventLoopPolicy`` before the
+    event loop is created.
+
+    pyzmq's async sockets call ``loop.add_reader()`` / ``loop.add_writer()``,
+    which the default ``ProactorEventLoop`` on Windows does not implement.
+    The selector policy must be set before ``asyncio.run()``/``uvloop.run()``
+    constructs the loop.
+
+    uvloop is already auto-disabled on Windows via ``environment.py``, so on
+    Windows this only matters for the asyncio path. On non-Windows platforms
+    this is a no-op — the default policy is already correct.
+    """
+    if IS_WINDOWS:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 def _exit_if_service_failed(service) -> None:
