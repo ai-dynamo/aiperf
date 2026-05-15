@@ -1,0 +1,50 @@
+Agentic Code Session Profile: Target vs Synthesized Dataset
+============================================================
+
+1,205 sessions | 14,163 turns | block_size=512
+
+                                               Target      Dataset    Error
+----------------------------------------------------------------------------
+Initial Context (tokens)
+  mean                                        57,000    54,779.5  -3.9%
+  median                                      47,000    47,263.0  +0.6%
+
+New Tokens Per Turn
+  mean                                         6,000     5,798.4  -3.4%
+  median                                       4,000     3,927.0  -1.8%
+
+Generation Length (tokens)
+  mean                                         1,000       989.7  -1.0%
+  median                                         800       784.0  -2.0%
+  p05                                             30       261.0
+  p99                                          3,750     3,808.3
+
+Prompt
+  max_prompt_tokens                          200,000     200,000
+
+Additional Dataset Statistics
+----------------------------------------------------------------------------
+Turns Per Session
+  mean                                             -        11.8
+  median                                           -        11.0
+  p05                                              -         1.0
+  p25                                              -         5.0
+  p75                                              -        18.0
+  p95                                              -        25.0
+  p99                                              -        28.0
+
+Inter-Turn Delay (ms)
+  mean                                             -       7,597
+  median                                           -       2,021
+  p05                                              -         147
+  p95                                              -      31,153
+  (70% agentic ~5s, 30% human ~30s)
+
+Session Duration (estimated @ 20,000 prefill tok/s, 60 decode tok/s)
+  mean                                             -         4.7 min
+  median                                           -         4.2 min
+
+Session Endings
+  forced retires (hit context limit)               -         297
+  probabilistic resets                             -         834
+  restart splits                                   -          74
