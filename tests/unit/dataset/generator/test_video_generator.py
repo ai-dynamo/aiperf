@@ -295,7 +295,7 @@ def audio_config():
         format=VideoFormat.WEBM,
         codec="libvpx-vp9",
         synth_type=VideoSynthType.MOVING_SHAPES,
-        audio=VideoAudioConfig(sample_rate=44100, channels=1),
+        audio=VideoAudioConfig(sample_rate=44.1, channels=1),
     )
 
 
@@ -323,6 +323,30 @@ class TestVideoGeneratorAudio:
         data, sr = sf.read(io.BytesIO(wav_bytes))
         audio_duration = len(data) / sr
         assert abs(audio_duration - audio_config.duration) < 0.01
+
+    @pytest.mark.parametrize(
+        "sample_rate_khz,expected_hz",
+        [(8.0, 8000), (16.0, 16000), (44.1, 44100), (48.0, 48000), (96.0, 96000)],
+    )
+    def test_generate_audio_data_sample_rate_khz_to_hz(
+        self, sample_rate_khz, expected_hz
+    ):
+        """Config sample_rate (kHz) is converted to Hz in the generated WAV."""
+        config = VideoConfig(
+            width=64,
+            height=64,
+            duration=0.5,
+            fps=2,
+            format=VideoFormat.WEBM,
+            codec="libvpx-vp9",
+            synth_type=VideoSynthType.MOVING_SHAPES,
+            audio=VideoAudioConfig(sample_rate=sample_rate_khz, channels=1),
+        )
+        generator = VideoGenerator(config)
+        wav_bytes = generator._generate_audio_data()
+
+        _, sr = sf.read(io.BytesIO(wav_bytes))
+        assert sr == expected_hz
 
     @pytest.mark.parametrize("channels", [1, 2])
     def test_generate_audio_data_channels(self, channels):

@@ -18,9 +18,14 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import (
     LoadGeneratorDefaults,
+    MLflowDefaults,
     ServerMetricsDefaults,
 )
-from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
+from aiperf.common.config.config_validators import (
+    coerce_value,
+    parse_str_or_dict_as_tuple_list,
+    parse_str_or_list,
+)
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.input_config import InputConfig
@@ -44,8 +49,11 @@ def _is_localhost_url(url: str) -> bool:
     """Check if a URL points to localhost."""
     from urllib.parse import urlparse
 
-    # Handle IPv6 localhost without brackets (e.g., "::1:8000")
-    if url.startswith("::1:") or url.startswith("[::1]"):
+    # Handle IPv6 localhost without brackets (e.g. "::1:8000" or "http://::1:8000").
+    # `EndpointConfig` now prepends `http://` to scheme-less URLs, so we accept
+    # both the pre-normalization and post-normalization forms here.
+    url_without_scheme = url.removeprefix("http://").removeprefix("https://")
+    if url_without_scheme.startswith("::1:") or url_without_scheme.startswith("[::1]"):
         return True
 
     # Add scheme if missing for proper parsing
@@ -57,9 +65,114 @@ def _is_localhost_url(url: str) -> bool:
     return hostname.lower() in ("localhost", "127.0.0.1", "::1")
 
 
+def _normalize_otel_metrics_url(url: str) -> str:
+    """Normalize OTel collector URL to an OTLP metrics endpoint."""
+    from urllib.parse import urlparse, urlunparse
+
+    normalized_url = url.strip()
+    if not normalized_url:
+        raise ValueError("--otel-url cannot be empty.")
+
+    # Only auto-prefix host[:port] style values. Explicit schemes must be validated as-is.
+    if "://" not in normalized_url:
+        normalized_url = f"http://{normalized_url}"
+
+    parsed = urlparse(normalized_url)
+    # `urlparse("http://:4318")` yields netloc=":4318" but hostname=None —
+    # netloc truthiness alone is not enough. Require a non-empty hostname so
+    # bare-port values don't slip through and produce a malformed OTLP endpoint.
+    if not parsed.scheme or not parsed.netloc or not parsed.hostname:
+        raise ValueError(
+            f"Invalid --otel-url value: {url!r}. Expected host[:port] or a full URL."
+        )
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(
+            f"Invalid --otel-url value: {url!r}. "
+            f"Only http and https schemes are supported (got {parsed.scheme!r}). "
+            "OTLP/gRPC is not supported; use the OTLP/HTTP exporter endpoint."
+        )
+
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1/metrics"):
+        normalized_path = path
+    elif not path:
+        normalized_path = "/v1/metrics"
+    else:
+        normalized_path = f"{path}/v1/metrics"
+
+    return urlunparse(parsed._replace(path=normalized_path))
+
+
 def _should_quote_arg(x: Any) -> bool:
     """Determine if the value should be quoted in the CLI command."""
     return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
+
+
+# Helpers for resolving local GPU telemetry collectors from plugin metadata.
+# Adding/removing a local collector only requires editing plugins.yaml
+# (set ``is_local: true``) plus the collector class validation hook.
+def _local_collector_keywords() -> dict[str, GPUTelemetryCollectorType]:
+    """CLI keyword (the plugin name, lowercased) -> collector type."""
+    return {
+        member.lower(): member
+        for member in GPUTelemetryCollectorType
+        if plugins.get_gpu_telemetry_collector_metadata(member).is_local
+    }
+
+
+def _collect_pre_session_refs(data: dict, into: set[str]) -> None:
+    """Add ``pre_session_spawns`` child ids (bare strings only) into ``into``."""
+    for child in data.get("pre_session_spawns", []) or []:
+        if isinstance(child, str):
+            into.add(child)
+
+
+def _collect_turn_refs(turn: dict, into: set[str]) -> None:
+    """Add child ids referenced from one turn's ``forks`` and ``spawns`` into ``into``.
+
+    ``forks`` entries are a bare ``"<sid>"`` or a ``{"child": "<sid>", ...}``
+    object. ``spawns`` entries are a bare ``"<sid>"`` or a
+    ``{"children": [...], ...}`` object (DagSpawn form).
+    """
+    for fork_entry in turn.get("forks", []) or []:
+        if isinstance(fork_entry, str):
+            into.add(fork_entry)
+        elif isinstance(fork_entry, dict):
+            child = fork_entry.get("child")
+            if isinstance(child, str):
+                into.add(child)
+    for spawn_entry in turn.get("spawns", []) or []:
+        if isinstance(spawn_entry, str):
+            into.add(spawn_entry)
+        elif isinstance(spawn_entry, dict):
+            for child in spawn_entry.get("children", []) or []:
+                if isinstance(child, str):
+                    into.add(child)
+
+
+def _is_local_collector(collector_type: GPUTelemetryCollectorType) -> bool:
+    """Return True if this collector reads from the local host."""
+    return plugins.get_gpu_telemetry_collector_metadata(collector_type).is_local
+
+
+def _validate_collector_environment(
+    collector_type: GPUTelemetryCollectorType,
+) -> None:
+    """Run the collector class's ``validate_environment`` hook.
+
+    Every ``gpu_telemetry_collector`` plugin implements this on its class.
+    Remote collectors (DCGM) are no-ops; local collectors raise
+    ``RuntimeError`` when their native bindings are missing. We translate
+    that to ``ValueError`` so Pydantic wraps it as a ``ValidationError``.
+    """
+    CollectorClass = plugins.get_class(
+        "gpu_telemetry_collector",
+        collector_type,
+    )
+    try:
+        CollectorClass.validate_environment()
+    except RuntimeError as e:
+        raise ValueError(str(e)) from e
 
 
 class UserConfig(BaseConfig):
@@ -90,6 +203,8 @@ class UserConfig(BaseConfig):
             # Note: Use single quotes to avoid conflicts with double quotes in arguments.
             args = [f"'{x}'" if _should_quote_arg(x) else str(x) for x in args]
             cmd = " ".join(["aiperf", *args])
+            # redact_cli_command handles --api-key, sensitive headers, and URL-typed
+            # flags (--url, --otel-url, --mlflow-tracking-uri) in one pass.
             self.cli_command = redact_cli_command(cmd)
         return self
 
@@ -176,10 +291,9 @@ class UserConfig(BaseConfig):
                 and self.input.conversation.num is None
                 and self.loadgen.benchmark_duration is None
             ):
-                _logger.warning(
-                    f"No request count value provided, setting to {LoadGeneratorDefaults.MIN_REQUEST_COUNT}"
+                self._autodefault_request_count_with_forking_check(
+                    LoadGeneratorDefaults.MIN_REQUEST_COUNT
                 )
-                self.loadgen.request_count = LoadGeneratorDefaults.MIN_REQUEST_COUNT
         else:
             # Default to concurrency burst mode if no request rate or schedule is provided.
             # CONCURRENCY_BURST works with either session concurrency OR prefill concurrency.
@@ -200,14 +314,12 @@ class UserConfig(BaseConfig):
                 effective_concurrency = (
                     self.loadgen.concurrency or self.loadgen.prefill_concurrency
                 )
-                self.loadgen.request_count = max(
+                fallback = max(
                     LoadGeneratorDefaults.MIN_REQUEST_COUNT,
                     effective_concurrency
                     * LoadGeneratorDefaults.REQUEST_COUNT_MULTIPLIER,
                 )
-                _logger.warning(
-                    f"No request count value provided, setting to {self.loadgen.request_count}"
-                )
+                self._autodefault_request_count_with_forking_check(fallback)
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
 
@@ -351,12 +463,50 @@ class UserConfig(BaseConfig):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_sweep_incompatibilities(self) -> Self:
+        """Validate that parameter sweeps are not combined with incompatible modes.
+
+        Raises:
+            ValueError: If parameter sweep is combined with fixed schedule mode.
+        """
+        # Use parameter-agnostic sweep detection
+        sweep_param = self.loadgen.get_sweep_parameter()
+        is_sweep = sweep_param is not None
+
+        if is_sweep:
+            # Check for fixed schedule mode incompatibility
+            # Fixed schedule mode is incompatible because it replays exact timing patterns
+            # from a trace file, which doesn't make sense when varying concurrency
+            if self.input.fixed_schedule:
+                param_name, param_values = sweep_param
+                raise ValueError(
+                    f"Parameter sweeps (e.g., --{param_name} {','.join(map(str, param_values))}) cannot be used with --fixed-schedule mode. "
+                    "Fixed schedule replays exact timing patterns from trace files, which is incompatible with "
+                    "varying parameter values. Use a single parameter value or remove --fixed-schedule."
+                )
+
+            # Also check if trace dataset will auto-enable fixed schedule
+            if self._should_use_fixed_schedule_for_trace_dataset():
+                param_name, param_values = sweep_param
+                raise ValueError(
+                    f"Parameter sweeps (e.g., --{param_name} {','.join(map(str, param_values))}) cannot be used with mooncake_trace datasets "
+                    "that have timestamps (which auto-enable fixed schedule mode). "
+                    "Fixed schedule replays exact timing patterns from trace files, which is incompatible with "
+                    "varying parameter values. Use a single parameter value or use a dataset without timestamps."
+                )
+
+        return self
+
     def _should_use_fixed_schedule_for_trace_dataset(self) -> bool:
         """Check if a trace dataset has timestamps and should use fixed schedule.
 
         Returns:
             True if fixed schedule should be enabled for this trace dataset.
         """
+        if self.input.disable_auto_fixed_schedule:
+            return False
+
         if self.input.custom_dataset_type is None or not plugins.is_trace_dataset(
             self.input.custom_dataset_type
         ):
@@ -382,20 +532,128 @@ class UserConfig(BaseConfig):
 
         return False
 
+    def _is_forking_dataset(self) -> bool:
+        """True if the configured custom dataset can fork (DAG branches).
+
+        Today only ``dag_jsonl`` carries fork semantics; other custom
+        datasets (single_turn, raw_payload, inputs_json, mooncake_trace)
+        are linear. Used by the auto-default logic to size
+        ``--num-conversations`` rather than ``--request-count`` for
+        forking datasets, since the former lets the DAG run to
+        completion and the latter would truncate mid-tree.
+        """
+        return self.input.custom_dataset_type == "dag_jsonl"
+
+    def _maybe_autodefault_num_conversations_for_forking_dataset(self) -> None:
+        """If forking and both num/request-count unset, seed num-conversations.
+
+        Used by ``validate_timing_mode`` to default ``--num-conversations``
+        to the *root* count (sessions not referenced by any fork list)
+        rather than auto-defaulting ``--request-count``, which (since it
+        counts fork-spawned children) would silently truncate the DAG
+        mid-tree.
+        """
+        if not self._is_forking_dataset():
+            return
+        roots = self._count_dag_root_entries()
+        if roots > 0:
+            self.input.conversation.num = roots
+            _logger.info(
+                f"No request count or conversation count provided for forking dataset; "
+                f"defaulting --num-conversations to {roots} (run each root in the file once). "
+                f"Use --request-count for a literal wire-request cap instead."
+            )
+
+    def _autodefault_request_count_with_forking_check(
+        self, fallback_request_count: int
+    ) -> None:
+        """Apply the load-cap autodefault when both request-count and num
+        conversations are unset. Forking datasets seed num-conversations
+        to root count instead so the DAG isn't truncated mid-tree.
+        """
+        self._maybe_autodefault_num_conversations_for_forking_dataset()
+        if self.loadgen.request_count is None and self.input.conversation.num is None:
+            _logger.warning(
+                f"No request count value provided, setting to {fallback_request_count}"
+            )
+            self.loadgen.request_count = fallback_request_count
+
+    @staticmethod
+    def _collect_dag_session_and_fork_ids(file_path: str) -> tuple[set[str], set[str]]:
+        """Walk a dag_jsonl file once, returning (all_session_ids, referenced_ids).
+
+        ``referenced_ids`` covers every id that the orchestrator dispatches as
+        a child of another conversation: bare-string and object-form
+        ``forks`` entries, bare-string and ``DagSpawn``-object ``spawns``
+        entries, and top-level ``pre_session_spawns``. Anything in
+        ``referenced_ids`` is NOT a root and must not be sampled standalone.
+        """
+        all_ids: set[str] = set()
+        referenced_ids: set[str] = set()
+        with open(file_path) as f:
+            for raw in f:
+                if not (line := raw.strip()):
+                    continue
+                try:
+                    data = load_json_str(line)
+                except JSONDecodeError:
+                    continue
+                sid = data.get("session_id")
+                if isinstance(sid, str):
+                    all_ids.add(sid)
+                _collect_pre_session_refs(data, referenced_ids)
+                for turn in data.get("turns", []) or []:
+                    if isinstance(turn, dict):
+                        _collect_turn_refs(turn, referenced_ids)
+        return all_ids, referenced_ids
+
+    def _count_dag_root_entries(self) -> int:
+        """Count root conversations (no incoming forks) in a dag_jsonl file.
+
+        Roots are conversations not referenced by any other conversation's
+        ``forks`` list. The loader only ever samples roots — non-root
+        entries (children) are seeded into the orchestrator from their
+        parent's worker context, so sizing ``--num-conversations`` by
+        total entry count would over-run a file with deep fanout (e.g.
+        a file with 1 root + 2 children = 3 entries should default to
+        1 conversation, not 3).
+        """
+        if not self.input.file:
+            return 0
+        try:
+            all_ids, referenced_ids = self._collect_dag_session_and_fork_ids(
+                self.input.file
+            )
+        except (OSError, FileNotFoundError) as e:
+            _logger.error(
+                f"Cannot read dag_jsonl file {self.input.file} for root counting: {e}"
+            )
+            return 0
+        return len(all_ids - referenced_ids)
+
     def _count_dataset_entries(self) -> int:
-        """Count the number of valid entries in a custom dataset file.
+        """Count the number of valid entries in a custom dataset file or directory.
+
+        For directories, recursively counts non-empty lines across all .jsonl files.
 
         Returns:
-            int: Number of non-empty lines in the file
+            int: Number of non-empty lines
         """
         if not self.input.file:
             return 0
 
+        path = self.input.file
         try:
-            with open(self.input.file) as f:
+            if path.is_dir():
+                count = 0
+                for jsonl_file in path.rglob("*.jsonl"):
+                    with open(jsonl_file) as f:
+                        count += sum(1 for line in f if line.strip())
+                return count
+            with open(path) as f:
                 return sum(1 for line in f if line.strip())
         except (OSError, FileNotFoundError) as e:
-            _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
+            _logger.error(f"Cannot read dataset file {path}: {e}")
             return 0
 
     endpoint: Annotated[
@@ -458,17 +716,118 @@ class UserConfig(BaseConfig):
         DisableCLI(reason="This is automatically generated at runtime"),
     ] = None
 
+    mlflow_tracking_uri: Annotated[
+        str | None,
+        Field(
+            default=MLflowDefaults.TRACKING_URI,
+            description=(
+                "MLflow Tracking Server URI used for post-run uploads "
+                "(e.g., http://localhost:5000). "
+                "When set, AIPerf uploads params, metrics, tags, and artifacts "
+                "(including plots) to MLflow after profiling completes."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-tracking-uri",),
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.TRACKING_URI
+
+    mlflow_experiment: Annotated[
+        str,
+        Field(
+            default=MLflowDefaults.EXPERIMENT,
+            description=(
+                "MLflow experiment name for post-run uploads. "
+                "Requires --mlflow-tracking-uri to be set."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-experiment",),
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.EXPERIMENT
+
+    mlflow_run_name: Annotated[
+        str | None,
+        Field(
+            default=MLflowDefaults.RUN_NAME,
+            description=(
+                "Optional MLflow run name for post-run uploads. "
+                "If omitted, AIPerf derives a name from benchmark metadata."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-run-name",),
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.RUN_NAME
+
+    mlflow_tags: Annotated[
+        list[tuple[str, str]] | None,
+        Field(
+            default=MLflowDefaults.TAGS,
+            description=(
+                "Additional MLflow run tags to attach on upload. "
+                "Specify as key:value pairs (e.g., --mlflow-tag team:perf) "
+                "or as JSON string."
+            ),
+        ),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
+        CLIParameter(
+            name=("--mlflow-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.TAGS
+
+    mlflow_artifact_globs: Annotated[
+        list[str] | None,
+        Field(
+            default=MLflowDefaults.ARTIFACT_GLOBS,
+            description=(
+                "Optional artifact glob patterns for MLflow upload, relative to "
+                "--output-artifact-dir. Can be specified multiple times. "
+                "If not set, sensible defaults include exports and plot files."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--mlflow-artifact-glob",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = MLflowDefaults.ARTIFACT_GLOBS
+
+    mlflow_parent_run_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional MLflow run id to attach this run to as a child "
+                "(passed through to mlflow.start_run(parent_run_id=...)). "
+                "Applied only when a new MLflow run is created; ignored on "
+                "live-run reuse because MLflow pins the parent at creation time."
+            ),
+        ),
+        CLIParameter(
+            name=("--mlflow-parent-run-id",),
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
     gpu_telemetry: Annotated[
         list[str] | None,
         Field(
             description=(
                 "Enable GPU telemetry console display and optionally specify: "
                 "(1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, "
-                "(2) 'dashboard' for realtime dashboard mode, "
-                "(3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
-                "(4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
+                "(2) 'amdsmi' to use local amdsmi library for AMD ROCm GPUs, "
+                "(3) 'dashboard' for realtime dashboard mode, "
+                "(4) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
+                "(5) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
                 "Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. "
-                "Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400"
+                "Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400"
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -490,12 +849,91 @@ class UserConfig(BaseConfig):
         ),
     ] = False
 
+    otel_url: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Enable real-time metric streaming to an OpenTelemetry collector via OTLP. "
+                "Requires the AIPerf otel extra (`aiperf[otel]`). "
+                "Accepts one collector URL. "
+                "The value can be a collector base URL or full OTLP metrics endpoint. "
+                "If no path is specified, '/v1/metrics' is appended automatically. "
+                "Examples: --otel-url localhost:4318 | --otel-url http://collector:4318 "
+            ),
+        ),
+        CLIParameter(
+            name=("--otel-url",),
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
+    stream: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Select which AIPerf telemetry domains to stream over OTel. "
+                "Valid values: 'metrics', 'timing', or 'default'. "
+                "'default' streams both metrics and timing domains. "
+                "If omitted and --otel-url is set, default behavior is used. "
+                "Examples: --stream metrics | --stream timing | --stream default "
+                "| --stream metrics timing"
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--stream",),
+            consume_multiple=True,
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
+    otel_resource_attributes: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Custom OTel resource attributes as key=value pairs. "
+                "Merged into the default resource attributes on every exported metric. "
+                "Examples: --otel-resource-attributes team=inference "
+                "| --otel-resource-attributes env=prod,region=us-west-2"
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--otel-resource-attributes",),
+            consume_multiple=True,
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
+    gen_ai_provider: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit value for the gen_ai.provider.name OTel attribute. "
+                "When unset, AIPerf auto-infers from the endpoint URL host; "
+                "falls back to '_OTHER' if no match. "
+                "Example: --gen-ai-provider openai"
+            ),
+        ),
+        CLIParameter(
+            name=("--gen-ai-provider",),
+            group=Groups.TELEMETRY,
+        ),
+    ] = None
+
     _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
     _gpu_telemetry_collector_type: GPUTelemetryCollectorType = (
         GPUTelemetryCollectorType.DCGM
     )
     _gpu_telemetry_urls: list[str] = []
     _gpu_telemetry_metrics_file: Path | None = None
+    _otel_metrics_url: str | None = None
+    _otel_stream_metrics_enabled: bool = True
+    _otel_stream_timing_enabled: bool = True
 
     @model_validator(mode="after")
     def _parse_gpu_telemetry_config(self) -> Self:
@@ -512,41 +950,15 @@ class UserConfig(BaseConfig):
         if not self.gpu_telemetry:
             return self
 
-        mode = GPUTelemetryMode.SUMMARY
-        collector_type = GPUTelemetryCollectorType.DCGM
-        urls = []
-        metrics_file = None
+        mode, collector_type, urls, metrics_file = self._classify_gpu_telemetry_items(
+            self.gpu_telemetry
+        )
 
-        for item in self.gpu_telemetry:
-            # Check for CSV file (file extension heuristic)
-            if item.endswith(".csv"):
-                metrics_file = Path(item)
-                if not metrics_file.exists():
-                    raise ValueError(f"GPU metrics file not found: {item}")
-            # Check for pynvml collector type
-            elif item.lower() == "pynvml":
-                collector_type = GPUTelemetryCollectorType.PYNVML
-                try:
-                    import pynvml  # noqa: F401
-                except ImportError as e:
-                    raise ValueError(
-                        "pynvml package not installed. Install with: pip install nvidia-ml-py"
-                    ) from e
-            # Check for dashboard mode
-            elif item in ["dashboard"]:
-                mode = GPUTelemetryMode.REALTIME_DASHBOARD
-            # Check for URLs (only applicable for DCGM collector)
-            elif item.startswith("http") or ":" in item:
-                normalized_url = item if item.startswith("http") else f"http://{item}"
-                urls.append(normalized_url)
-            else:
-                raise ValueError(
-                    f"Invalid GPU telemetry item: {item}. Valid options are: 'pynvml', 'dashboard', '.csv' file, and URLs."
-                )
+        _validate_collector_environment(collector_type)
 
-        if collector_type == GPUTelemetryCollectorType.PYNVML and urls:
+        if _is_local_collector(collector_type) and urls:
             raise ValueError(
-                "Cannot use pynvml with DCGM URLs. Use either 'pynvml' for local "
+                f"Cannot use {collector_type} with DCGM URLs. Use either '{collector_type}' for local "
                 "GPU monitoring or URLs for DCGM endpoints, not both."
             )
 
@@ -555,20 +967,64 @@ class UserConfig(BaseConfig):
         self._gpu_telemetry_urls = urls
         self._gpu_telemetry_metrics_file = metrics_file
 
-        # Warn if pynvml is used with non-localhost server URLs
-        if collector_type == GPUTelemetryCollectorType.PYNVML:
-            non_local_urls = [
-                url for url in self.endpoint.urls if not _is_localhost_url(url)
-            ]
-            if non_local_urls:
-                _logger.warning(
-                    f"Using pynvml for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
-                    "pynvml collects GPU metrics from the local machine only. "
-                    "If the inference server is running remotely, the GPU telemetry will not reflect "
-                    "the server's GPU usage. Consider using DCGM mode with the server's metrics endpoint instead."
-                )
-
+        self._warn_if_local_collector_with_remote_urls(collector_type)
         return self
+
+    @staticmethod
+    def _classify_gpu_telemetry_items(
+        items: list[str],
+    ) -> tuple[GPUTelemetryMode, GPUTelemetryCollectorType, list[str], Path | None]:
+        """Walk the ``--gpu-telemetry`` items and classify each one."""
+        mode = GPUTelemetryMode.SUMMARY
+        collector_type = GPUTelemetryCollectorType.DCGM
+        urls: list[str] = []
+        metrics_file: Path | None = None
+        local_keywords = _local_collector_keywords()
+
+        for item in items:
+            lowered = item.lower()
+            if item.endswith(".csv"):
+                metrics_file = Path(item)
+                if not metrics_file.exists():
+                    raise ValueError(f"GPU metrics file not found: {item}")
+            elif lowered in local_keywords:
+                selected = local_keywords[lowered]
+                if _is_local_collector(collector_type) and collector_type != selected:
+                    raise ValueError(
+                        f"Conflicting local GPU telemetry collectors: "
+                        f"'{collector_type}' and '{selected}'. Choose exactly one."
+                    )
+                collector_type = selected
+            elif item == "dashboard":
+                mode = GPUTelemetryMode.REALTIME_DASHBOARD
+            elif item.startswith("http") or ":" in item:
+                normalized_url = item if item.startswith("http") else f"http://{item}"
+                urls.append(normalized_url)
+            else:
+                valid_kw = ", ".join(f"'{k}'" for k in sorted(local_keywords))
+                prefix = f"{valid_kw}, " if valid_kw else ""
+                raise ValueError(
+                    f"Invalid GPU telemetry item: {item}. Valid options are: "
+                    f"{prefix}'dashboard', '.csv' file, and URLs."
+                )
+        return mode, collector_type, urls, metrics_file
+
+    def _warn_if_local_collector_with_remote_urls(
+        self, collector_type: GPUTelemetryCollectorType
+    ) -> None:
+        """Warn when a local-only collector is paired with non-localhost servers."""
+        if not _is_local_collector(collector_type):
+            return
+        non_local_urls = [
+            url for url in self.endpoint.urls if not _is_localhost_url(url)
+        ]
+        if non_local_urls:
+            _logger.warning(
+                f"Using {collector_type} for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
+                f"{collector_type} collects GPU metrics from the local machine only. "
+                "If the inference server is running remotely, the GPU telemetry will not reflect "
+                "the server's GPU usage. Consider using DCGM mode with the server's metrics endpoint instead."
+            )
 
     @property
     def gpu_telemetry_mode(self) -> GPUTelemetryMode:
@@ -582,7 +1038,7 @@ class UserConfig(BaseConfig):
 
     @property
     def gpu_telemetry_collector_type(self) -> GPUTelemetryCollectorType:
-        """Get the GPU telemetry collector type (DCGM or PYNVML)."""
+        """Get the GPU telemetry collector type."""
         return self._gpu_telemetry_collector_type
 
     @property
@@ -599,6 +1055,217 @@ class UserConfig(BaseConfig):
     def gpu_telemetry_disabled(self) -> bool:
         """Check if GPU telemetry collection is disabled."""
         return self.no_gpu_telemetry
+
+    @model_validator(mode="after")
+    def _parse_otel_config(self) -> Self:
+        """Parse and normalize OTel collector URL configuration."""
+        valid_telemetry_values = {"metrics", "timing", "default"}
+        selected_values = [value.lower() for value in (self.stream or [])]
+
+        if not selected_values:
+            # Default behavior is to stream both domains when selection is omitted.
+            self._otel_stream_metrics_enabled = True
+            self._otel_stream_timing_enabled = True
+        else:
+            invalid_values = [
+                value
+                for value in selected_values
+                if value not in valid_telemetry_values
+            ]
+            if invalid_values:
+                raise ValueError(
+                    "Invalid --stream value(s): "
+                    + ", ".join(sorted(set(invalid_values)))
+                    + ". "
+                    "Valid options are: metrics, timing, default."
+                )
+            if "default" in selected_values:
+                # Default mode means stream both domains, even if combined with others.
+                self._otel_stream_metrics_enabled = True
+                self._otel_stream_timing_enabled = True
+            else:
+                self._otel_stream_metrics_enabled = "metrics" in selected_values
+                self._otel_stream_timing_enabled = "timing" in selected_values
+
+        if self.otel_url is None:
+            # Warn/reject if OTel secondary options set without --otel-url.
+            # gen_ai_provider is included because it is consumed only by the OTel
+            # GenAI-semconv strategy (see infer_provider_name in genai_semconv.py),
+            # so passing it without --otel-url is a silent no-op for the user.
+            has_otel_secondary = bool(
+                self.stream or self.otel_resource_attributes or self.gen_ai_provider
+            )
+            if has_otel_secondary:
+                raise ValueError(
+                    "--stream, --otel-resource-attributes, and --gen-ai-provider "
+                    "require --otel-url to be set."
+                )
+            self._otel_metrics_url = None
+            return self
+
+        self._otel_metrics_url = _normalize_otel_metrics_url(self.otel_url)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_otel_resource_attributes(self) -> Self:
+        """Reject malformed --otel-resource-attributes entries.
+
+        Each entry must be ``key=value``. Missing ``=``, empty key, and empty
+        value are rejected — silently dropping them or emitting empty keys/
+        values produces OTLP resource attributes that tools like the
+        Collector and MLflow reject or display as ``""``.
+        """
+        if not self.otel_resource_attributes:
+            return self
+        for item in self.otel_resource_attributes:
+            for pair in item.split(","):
+                pair = pair.strip()
+                if not pair:
+                    continue
+                if "=" not in pair:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "expected key=value."
+                    )
+                key, _, value = pair.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "key cannot be empty."
+                    )
+                if not value:
+                    raise ValueError(
+                        f"Invalid --otel-resource-attributes entry {pair!r}: "
+                        "value cannot be empty."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_mlflow_config(self) -> Self:
+        """Validate and normalize MLflow post-run upload configuration."""
+        if self.mlflow_artifact_globs is not None:
+            normalized_globs: list[str] = []
+            for glob in self.mlflow_artifact_globs:
+                normalized_glob = glob.strip()
+                if not normalized_glob:
+                    raise ValueError("--mlflow-artifact-glob entries cannot be empty.")
+                normalized_globs.append(normalized_glob)
+            self.mlflow_artifact_globs = normalized_globs
+
+        if self.mlflow_tracking_uri is None:
+            has_secondary = (
+                self.mlflow_experiment != MLflowDefaults.EXPERIMENT
+                or self.mlflow_run_name is not None
+                or self.mlflow_tags is not None
+                or self.mlflow_artifact_globs is not None
+                or self.mlflow_parent_run_id is not None
+            )
+            if has_secondary:
+                raise ValueError(
+                    "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
+                    "--mlflow-artifact-glob, and --mlflow-parent-run-id "
+                    "require --mlflow-tracking-uri to be set."
+                )
+            return self
+
+        tracking_uri = self.mlflow_tracking_uri.strip()
+        if not tracking_uri:
+            raise ValueError("--mlflow-tracking-uri cannot be empty.")
+        self.mlflow_tracking_uri = tracking_uri
+
+        if not self.mlflow_experiment.strip():
+            raise ValueError(
+                "--mlflow-experiment cannot be empty when --mlflow-tracking-uri is set."
+            )
+        self.mlflow_experiment = self.mlflow_experiment.strip()
+
+        if self.mlflow_run_name is not None:
+            run_name = self.mlflow_run_name.strip()
+            self.mlflow_run_name = run_name or None
+
+        return self
+
+    @property
+    def otel_metrics_url(self) -> str | None:
+        """Get the normalized OTLP/HTTP metrics endpoint URL."""
+        return self._otel_metrics_url
+
+    @property
+    def otel_collector_enabled(self) -> bool:
+        """Check if an OpenTelemetry collector sink is configured."""
+        return bool(self._otel_metrics_url)
+
+    @property
+    def otel_custom_resource_attributes(self) -> dict[str, str]:
+        """Parse --otel-resource-attributes into a dict of key=value pairs.
+
+        Pre-validated by ``_validate_otel_resource_attributes`` — malformed
+        entries raise there, so this accessor can assume well-formed input.
+        """
+        if not self.otel_resource_attributes:
+            return {}
+        attrs: dict[str, str] = {}
+        for item in self.otel_resource_attributes:
+            for pair in item.split(","):
+                pair = pair.strip()
+                if not pair:
+                    continue
+                key, _, value = pair.partition("=")
+                attrs[key.strip()] = value.strip()
+        return attrs
+
+    @property
+    def otel_stream_metrics_enabled(self) -> bool:
+        """Check if request-level metric telemetry is enabled for OTel streaming."""
+        return self._otel_stream_metrics_enabled
+
+    @property
+    def otel_stream_timing_enabled(self) -> bool:
+        """Check if phase-level timing telemetry is enabled for OTel streaming."""
+        return self._otel_stream_timing_enabled
+
+    @property
+    def gen_ai_provider_name(self) -> str:
+        """Resolved gen_ai.provider.name attribute value.
+
+        (a) explicit --gen-ai-provider override,
+        (b) auto-infer from endpoint URL host,
+        (c) literal '_OTHER'.
+
+        Plain ``@property`` (not cached) because ``UserConfig`` is a Pydantic
+        model without ``frozen=True``; caching the first access would go stale
+        if a test or caller later mutates ``gen_ai_provider`` or
+        ``endpoint.urls``. The inference runs a handful of small regexes and is
+        called once per OTel record attribute build — not worth the caching risk.
+        """
+        from aiperf.post_processors.strategies.genai_semconv import infer_provider_name
+
+        return infer_provider_name(self)
+
+    @property
+    def mlflow_enabled(self) -> bool:
+        """Check if MLflow post-run upload is enabled."""
+        return self.mlflow_tracking_uri is not None
+
+    @property
+    def mlflow_tags_dict(self) -> dict[str, str]:
+        """Get MLflow tags as a normalized dict[str, str]."""
+        tags: dict[str, str] = {}
+        for key, value in self.mlflow_tags or []:
+            key_str = str(key).strip()
+            if not key_str:
+                continue
+            tags[key_str] = str(value)
+        return tags
+
+    @property
+    def mlflow_resolved_artifact_globs(self) -> list[str] | tuple[str, ...]:
+        """Get explicit or default artifact glob patterns for MLflow upload."""
+        if self.mlflow_artifact_globs:
+            return self.mlflow_artifact_globs
+        return MLflowDefaults.DEFAULT_ARTIFACT_GLOBS
 
     server_metrics: Annotated[
         list[str] | None,
@@ -739,7 +1406,12 @@ class UserConfig(BaseConfig):
             case TimingMode.REQUEST_RATE:
                 stimulus = []
                 if self.loadgen.concurrency is not None:
-                    stimulus.append(f"concurrency{self.loadgen.concurrency}")
+                    if isinstance(self.loadgen.concurrency, list):
+                        stimulus.append(
+                            f"concurrency_sweep_{'_'.join(map(str, self.loadgen.concurrency))}"
+                        )
+                    else:
+                        stimulus.append(f"concurrency{self.loadgen.concurrency}")
                 if self.loadgen.request_rate is not None:
                     stimulus.append(f"request_rate{self.loadgen.request_rate}")
                 return "-".join(stimulus)
@@ -791,26 +1463,31 @@ class UserConfig(BaseConfig):
         if self.loadgen.concurrency is None:
             return self
 
+        # Get concurrency values to check (handle both int and list)
+        concurrency_values = (
+            [self.loadgen.concurrency]
+            if isinstance(self.loadgen.concurrency, int)
+            else self.loadgen.concurrency
+        )
+
         # For multi-turn scenarios, check against conversation_num
-        if (
-            self.input.conversation.num is not None
-            and self.loadgen.concurrency > self.input.conversation.num
-        ):
-            raise ValueError(
-                f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
-                f"the number of conversations ({self.input.conversation.num}). "
-                "Either reduce --concurrency or increase --conversation-num."
-            )
+        if self.input.conversation.num is not None:
+            for concurrency in concurrency_values:
+                if concurrency > self.input.conversation.num:
+                    raise ValueError(
+                        f"Concurrency ({concurrency}) cannot be greater than "
+                        f"the number of conversations ({self.input.conversation.num}). "
+                        "Either reduce --concurrency or increase --conversation-num."
+                    )
         # For single-turn scenarios, check against request_count if it is set
-        elif (
-            self.loadgen.request_count is not None
-            and self.loadgen.concurrency > self.loadgen.request_count
-        ):
-            raise ValueError(
-                f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
-                f"the request count ({self.loadgen.request_count}). Either reduce "
-                "--concurrency or increase --request-count."
-            )
+        elif self.loadgen.request_count is not None:
+            for concurrency in concurrency_values:
+                if concurrency > self.loadgen.request_count:
+                    raise ValueError(
+                        f"Concurrency ({concurrency}) cannot be greater than "
+                        f"the request count ({self.loadgen.request_count}). Either reduce "
+                        "--concurrency or increase --request-count."
+                    )
 
         return self
 
@@ -838,33 +1515,42 @@ class UserConfig(BaseConfig):
             )
 
         # Validate prefill_concurrency <= concurrency
-        if (
-            prefill_concurrency is not None
-            and self.loadgen.concurrency is not None
-            and prefill_concurrency > self.loadgen.concurrency
-        ):
-            raise ValueError(
-                f"--prefill-concurrency ({prefill_concurrency}) cannot be greater than "
-                f"--concurrency ({self.loadgen.concurrency}). "
-                "Prefill concurrency limits how many requests can be in the prefill stage, "
-                "which cannot exceed the total concurrent requests."
+        # For sweep mode, check against all concurrency values
+        if prefill_concurrency is not None and self.loadgen.concurrency is not None:
+            concurrency_values = (
+                [self.loadgen.concurrency]
+                if isinstance(self.loadgen.concurrency, int)
+                else self.loadgen.concurrency
             )
+            for concurrency in concurrency_values:
+                if prefill_concurrency > concurrency:
+                    raise ValueError(
+                        f"--prefill-concurrency ({prefill_concurrency}) cannot be greater than "
+                        f"--concurrency ({concurrency}). "
+                        "Prefill concurrency limits how many requests can be in the prefill stage, "
+                        "which cannot exceed the total concurrent requests."
+                    )
 
         # Validate warmup_prefill_concurrency <= warmup_concurrency (or concurrency)
         if warmup_prefill_concurrency is not None:
             effective_warmup_concurrency = (
                 self.loadgen.warmup_concurrency or self.loadgen.concurrency
             )
-            if (
-                effective_warmup_concurrency is not None
-                and warmup_prefill_concurrency > effective_warmup_concurrency
-            ):
-                raise ValueError(
-                    f"--warmup-prefill-concurrency ({warmup_prefill_concurrency}) cannot be "
-                    f"greater than warmup concurrency ({effective_warmup_concurrency}). "
-                    "Prefill concurrency limits how many requests can be in the prefill stage, "
-                    "which cannot exceed the total concurrent requests."
+            if effective_warmup_concurrency is not None:
+                # Handle list concurrency for warmup
+                warmup_concurrency_values = (
+                    [effective_warmup_concurrency]
+                    if isinstance(effective_warmup_concurrency, int)
+                    else effective_warmup_concurrency
                 )
+                for warmup_concurrency in warmup_concurrency_values:
+                    if warmup_prefill_concurrency > warmup_concurrency:
+                        raise ValueError(
+                            f"--warmup-prefill-concurrency ({warmup_prefill_concurrency}) cannot be "
+                            f"greater than warmup concurrency ({warmup_concurrency}). "
+                            "Prefill concurrency limits how many requests can be in the prefill stage, "
+                            "which cannot exceed the total concurrent requests."
+                        )
 
         return self
 
@@ -993,7 +1679,7 @@ class UserConfig(BaseConfig):
             "mean" in self.input.prompt.input_tokens.model_fields_set
             and self.input.prompt.input_tokens.mean > 0
         ):
-            raise err("--synthetic-input-tokens-mean")
+            raise err("Synthetic input token mean (--synthetic-input-tokens-mean)")
         else:
             self.input.prompt.input_tokens.mean = 0
 
@@ -1001,7 +1687,7 @@ class UserConfig(BaseConfig):
             "stddev" in self.input.prompt.input_tokens.model_fields_set
             and self.input.prompt.input_tokens.stddev > 0
         ):
-            raise err("--synthetic-input-tokens-stddev")
+            raise err("Synthetic input token stddev (--synthetic-input-tokens-stddev)")
         else:
             self.input.prompt.input_tokens.stddev = 0
 
@@ -1009,12 +1695,12 @@ class UserConfig(BaseConfig):
             "batch_size" in self.input.prompt.model_fields_set
             and self.input.prompt.batch_size > 0
         ):
-            raise err("--batch-size-text")
+            raise err("Text batch size (--batch-size-text)")
         else:
             self.input.prompt.batch_size = 0
 
         if self.input.prompt.sequence_distribution is not None:
-            raise err("--sequence-distribution")
+            raise err("Sequence distribution (--sequence-distribution)")
 
         if self.input.prompt.prefix_prompt.model_fields_set:
             raise err("Prefix prompt options")

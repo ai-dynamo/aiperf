@@ -112,7 +112,7 @@ class TestChatEndpoint:
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="Audio content must be in the format"):
+        with pytest.raises(ValueError, match="audio content must be in the format"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_with_video(self, endpoint, model_endpoint):

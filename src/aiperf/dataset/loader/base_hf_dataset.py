@@ -2,15 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import base64
+import io
+import mimetypes
 from abc import abstractmethod
 from typing import Any
 
+import soundfile as sf
 from datasets import load_dataset as hf_load_dataset
 from PIL import Image as PILImage
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.common.models import Conversation, Image
+from aiperf.common.models import Audio, Conversation, Image, Video
 from aiperf.dataset import utils
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -22,6 +26,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def __init__(
         self,
         user_config: UserConfig,
+        *,
         hf_dataset_name: str,
         hf_split: str = "train",
         hf_subset: str | None = None,
@@ -45,7 +50,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             )
         except Exception as e:
             raise DatasetLoaderError(
-                f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}"
+                f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}. "
+                f"If the dataset is gated, authenticate with 'uv run hf auth login' "
+                f"and accept the terms on the dataset's HuggingFace page."
             ) from e
         return {"dataset": dataset}
 
@@ -66,17 +73,90 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def _extract_images(self, row: dict[str, Any], image_column: str) -> list[Image]:
         """Extract images from a dataset row column.
 
-        Handles both a single PIL Image and a list of PIL Images,
-        returning the first valid image found.
+        Accepts scalar or list-wrapped values; returns the first valid image as
+        a single-element list, or ``[]`` if none. Handles HF-decoded PIL Images
+        and undecoded ``{"bytes": ..., "path": ...}`` dicts (datasets declared
+        with ``Image(decode=False)``, e.g. VisionArena, return raw byte dicts).
+
+        Path-only dicts (``bytes is None``) aren't handled — VisionArena (the
+        dataset that motivated this fix) embeds bytes inline; we log a debug
+        message so an operator pointing aiperf at a path-only dataset can see
+        why ``inputs.json`` is text-only. Both branches are wrapped in the same
+        ``try`` so header-detection errors (``UnidentifiedImageError``) and
+        load-time errors raised when ``_pil_to_image`` re-encodes (``OSError``
+        from truncated payloads) skip the bad image instead of aborting the
+        loader.
         """
         value = row.get(image_column)
-        if isinstance(value, PILImage.Image):
-            return [self._pil_to_image(value)]
-        if isinstance(value, list):
-            pil = next((v for v in value if isinstance(v, PILImage.Image)), None)
-            if pil:
-                return [self._pil_to_image(pil)]
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            try:
+                if isinstance(item, PILImage.Image):
+                    return [self._pil_to_image(item)]
+                if not isinstance(item, dict):
+                    continue
+                if item.get("bytes"):
+                    pil = PILImage.open(io.BytesIO(item["bytes"]))
+                    return [self._pil_to_image(pil)]
+                if item.get("path"):
+                    self.debug(
+                        f"path-only HF image dict not supported: {item.get('path')}"
+                    )
+            except (OSError, PILImage.UnidentifiedImageError):
+                continue
         return []
+
+    def _extract_videos(self, row: dict[str, Any], video_column: str) -> list[Video]:
+        """Extract videos from a dataset row column.
+
+        Handles URL strings and dicts with raw bytes (HF video format).
+        URL strings are passed through directly; bytes are base64-encoded.
+
+        Scalar-only: if a future dataset declares ``Sequence(Video(decode=False))``,
+        mirror ``_extract_images``' list-unwrap loop here to avoid the same
+        silent-empty regression that motivated this file's image fix.
+        """
+        value = row.get(video_column)
+        if isinstance(value, str) and value:
+            # Pass through any valid URI scheme; only prepend file:// for bare paths
+            url = (
+                value
+                if "://" in value or value.startswith("data:")
+                else f"file://{value}"
+            )
+            return [Video(name="", contents=[url])]
+        if isinstance(value, dict) and "bytes" in value and value["bytes"]:
+            path = value.get("path", "")
+            mime_type = mimetypes.guess_type(path)[0] if path else None
+            mime_type = mime_type or "video/mp4"
+            b64 = base64.b64encode(value["bytes"]).decode("utf-8")
+            return [Video(name="", contents=[f"data:{mime_type};base64,{b64}"])]
+        return []
+
+    def _extract_audio(self, row: dict[str, Any], audio_column: str) -> list[Audio]:
+        """Extract audio from a dataset row column.
+
+        Handles HF Audio dicts with array/sampling_rate fields.
+        Encodes the numpy array as WAV and returns base64 in the format
+        expected by the chat endpoint: 'wav,<base64>'.
+        """
+        value = row.get(audio_column)
+        if not isinstance(value, dict):
+            return []
+        array = value.get("array")
+        sr = value.get("sampling_rate")
+        if array is None or sr is None:
+            return []
+        try:
+            buf = io.BytesIO()
+            sf.write(buf, array, sr, format="WAV")
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return [Audio(name="", contents=[f"wav,{b64}"])]
+        except (OSError, ValueError, RuntimeError) as e:
+            self.debug(
+                lambda exc=e: f"Failed to encode WAV from column '{audio_column}': {exc.__class__.__name__}: {exc}"
+            )
+            return []
 
     def _max_conversations(self) -> int | None:
         """Return the maximum number of conversations to build from the dataset.

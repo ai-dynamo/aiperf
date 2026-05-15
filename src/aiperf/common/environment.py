@@ -16,10 +16,13 @@ Structure:
     Environment.HTTP.*           - HTTP client socket and connection settings
     Environment.LOGGING.*        - Logging configuration
     Environment.METRICS.*        - Metrics collection and storage
+    Environment.MLFLOW.*         - MLflow export settings
+    Environment.OTEL.*           - OTel metrics streaming
     Environment.RECORD.*         - Record processing
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
     Environment.TIMING.*         - Timing manager settings
+    Environment.TOKENIZER.*      - Tokenizer pre-warm and loading
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
@@ -179,6 +182,24 @@ class _DatasetSettings(BaseSettings):
         le=100,
         default=10,
         description="Maximum number of concurrent media URL downloads",
+    )
+
+
+class _DagSettings(BaseSettings):
+    """Settings for DAG benchmark mode (`dag_jsonl` input type)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DAG_",
+    )
+
+    FAIL_FAST: bool = Field(
+        default=False,
+        description="When True, abort the whole run on the first DAG child "
+        "error (cancel pending siblings, raise to PhaseRunner, terminate "
+        "phase). Default False - the orchestrator counts the error in "
+        "BranchStats.children_errored, releases the join slot, drains pending "
+        "siblings, and continues the run. Set via "
+        "AIPERF_DAG_FAIL_FAST=1 for strict CI assertions.",
     )
 
 
@@ -455,6 +476,68 @@ class _MetricsSettings(BaseSettings):
         default=50,
         description="Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens)",
     )
+    TDIGEST_COMPRESSION: int = Field(
+        ge=20,
+        le=10000,
+        default=500,
+        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
+    )
+
+
+class _OTelSettings(BaseSettings):
+    """OpenTelemetry metrics streaming configuration.
+
+    Controls buffering and flush behavior for OTLP metric streaming.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_OTEL_",
+    )
+
+    FLUSH_INTERVAL_SECONDS: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Interval in seconds between periodic OTel metrics flushes",
+    )
+    MAX_BATCH_RECORDS: int = Field(
+        ge=1,
+        le=1000000,
+        default=500,
+        description="Maximum number of metric records to include in a single OTel flush",
+    )
+    MAX_BUFFERED_RECORDS: int = Field(
+        ge=1,
+        le=10000000,
+        default=10000,
+        description="Maximum number of buffered metric records before oldest records are dropped",
+    )
+    REQUEST_TIMEOUT_SECONDS: float = Field(
+        ge=0.1,
+        le=300.0,
+        default=10.0,
+        description="Timeout in seconds for OTel collector HTTP requests",
+    )
+
+
+class _MLflowSettings(BaseSettings):
+    """MLflow export configuration.
+
+    Controls timeout behavior for post-run MLflow artifact uploads.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_MLFLOW_",
+    )
+
+    EXPORT_TIMEOUT_SECONDS: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Timeout in seconds for the post-run MLflow export operation. "
+        "If the MLflow tracking server is unreachable, the export will be abandoned "
+        "after this duration rather than blocking indefinitely.",
+    )
 
 
 class _RecordSettings(BaseSettings):
@@ -724,6 +807,33 @@ class _ServiceSettings(BaseSettings):
         return self
 
 
+class _TokenizerSettings(BaseSettings):
+    """Tokenizer pre-warm and loading configuration.
+
+    Controls how the CLI parent pre-warms tokenizer caches before
+    spawning AIPerf services. Pre-warming runs in subprocesses so the
+    parent never imports the heavy native libraries (``transformers``,
+    Rust-backed ``tokenizers``, ``tiktoken``).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_TOKENIZER_",
+    )
+
+    PRELOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=120.0,
+        description=(
+            "Timeout in seconds for the parent's tokenizer pre-warm phase. "
+            "Bounds the total wall-clock time for all parallel subprocess "
+            "pre-warms. On timeout, subprocesses are killed and AIPerf "
+            "continues; child services may then download tokenizers "
+            "themselves on first use."
+        ),
+    )
+
+
 class _UISettings(BaseSettings):
     """User interface and dashboard configuration.
 
@@ -990,6 +1100,10 @@ class _Environment(BaseSettings):
         default_factory=_DatasetSettings,
         description="Dataset loading and configuration settings",
     )
+    DAG: _DagSettings = Field(
+        default_factory=_DagSettings,
+        description="DAG benchmark mode settings (dag_jsonl input type)",
+    )
     DEV: _DeveloperSettings = Field(
         default_factory=_DeveloperSettings,
         description="Development and debugging settings",
@@ -1010,6 +1124,14 @@ class _Environment(BaseSettings):
         default_factory=_MetricsSettings,
         description="Metrics collection and storage settings",
     )
+    MLFLOW: _MLflowSettings = Field(
+        default_factory=_MLflowSettings,
+        description="MLflow export settings",
+    )
+    OTEL: _OTelSettings = Field(
+        default_factory=_OTelSettings,
+        description="OpenTelemetry metrics streaming settings",
+    )
     RECORD: _RecordSettings = Field(
         default_factory=_RecordSettings,
         description="Record processing and export settings",
@@ -1025,6 +1147,10 @@ class _Environment(BaseSettings):
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,
         description="Timing manager settings",
+    )
+    TOKENIZER: _TokenizerSettings = Field(
+        default_factory=_TokenizerSettings,
+        description="Tokenizer pre-warm and loading settings",
     )
     UI: _UISettings = Field(
         default_factory=_UISettings,

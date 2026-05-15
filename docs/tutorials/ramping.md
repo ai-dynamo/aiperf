@@ -148,9 +148,8 @@ Request Rate (QPS)
           15s   30s   45s   60s              Time
 ```
 
-<Note>
-The starting rate is calculated proportionally: `start = target * (update_interval / duration)`. With default settings (0.1s updates), ramping to 100 QPS over 60 seconds starts at ~0.17 QPS (not zero).
-</Note>
+> [!NOTE]
+> The starting rate is calculated proportionally: `start = target * (update_interval / duration)`. With default settings (0.1s updates), ramping to 100 QPS over 60 seconds starts at ~0.17 QPS (not zero).
 
 ### Combining Rate and Concurrency Ramping
 

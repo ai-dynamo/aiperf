@@ -6,7 +6,7 @@ from typing import ClassVar, Generic, TypeVar, get_args, get_origin
 from aiperf.common.enums import MetricFlags, MetricValueTypeVarT
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricAggregator, MetricResultsDict
 
 RecordMetricT = TypeVar("RecordMetricT", bound=BaseRecordMetric)
 
@@ -57,6 +57,8 @@ class DerivedSumMetric(
             raise ValueError(
                 f"{self.record_metric_type.tag} is missing in the metrics."
             )
-        if not isinstance(metric_values, MetricArray):
-            raise ValueError(f"{self.record_metric_type.tag} is not a MetricArray.")
+        if not isinstance(metric_values, MetricAggregator):
+            raise ValueError(
+                f"{self.record_metric_type.tag} is not a MetricAggregator."
+            )
         return metric_values.sum

@@ -61,6 +61,10 @@ class TestAggregateExporters:
         # Check schema and version info (from existing exporters)
         assert "schema_version" in data
         assert "aiperf_version" in data
+        # The aggregate-confidence exporter owns its own SCHEMA_VERSION,
+        # decoupled from JsonExportData (regular profile export). The two
+        # files have different per-metric shapes and evolve independently.
+        assert data["schema_version"] == AggregateConfidenceJsonExporter.SCHEMA_VERSION
 
         # Check aggregate metadata
         assert "metadata" in data
@@ -183,6 +187,47 @@ class TestAggregateExporters:
         assert output_dir.exists()
         assert output_dir.is_dir()
         assert json_path.exists()
+
+    async def test_aggregate_schema_version_decoupled_from_json_export_data(
+        self, tmp_path
+    ):
+        """The aggregate exporter must own its SCHEMA_VERSION.
+
+        Regression guard: a previous version inherited
+        `JsonExportData.SCHEMA_VERSION`, which caused the aggregate file's
+        version to silently bump whenever the regular profile export's
+        schema changed — even when the aggregate file's per-metric shape
+        was unaffected. Patching `JsonExportData.SCHEMA_VERSION` to a
+        sentinel must NOT affect what the aggregate exporter writes.
+        """
+        from aiperf.common.models.export_models import JsonExportData
+
+        # Sentinel that no real schema version would ever use.
+        sentinel = "9999-decoupling-canary"
+
+        aggregate = AggregateResult(
+            aggregation_type="confidence",
+            num_runs=1,
+            num_successful_runs=1,
+            failed_runs=[],
+            metrics={},
+            metadata={},
+        )
+        config = AggregateExporterConfig(result=aggregate, output_dir=tmp_path / "agg")
+
+        with patch.object(JsonExportData, "SCHEMA_VERSION", sentinel):
+            exporter = AggregateConfidenceJsonExporter(config)
+            json_path = await exporter.export()
+            with open(json_path) as f:
+                data = json.load(f)
+
+        # Aggregate output must reflect the exporter's own SCHEMA_VERSION,
+        # NOT the patched JsonExportData value.
+        assert data["schema_version"] != sentinel, (
+            "AggregateConfidenceJsonExporter is still tracking "
+            "JsonExportData.SCHEMA_VERSION — must use its own constant."
+        )
+        assert data["schema_version"] == AggregateConfidenceJsonExporter.SCHEMA_VERSION
 
     def test_confidence_metric_to_json_result(self):
         """Test ConfidenceMetric.to_json_result() conversion."""

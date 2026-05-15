@@ -310,6 +310,24 @@ endpoint:
       tokenizes_input: true
       metrics_title: Image Generation Metrics
 
+  image_edit:
+    class: aiperf.endpoints.openai_image_edit:ImageEditEndpoint
+    description: |
+      OpenAI Image Edit (image-to-image) endpoint. Edits an input image using
+      a text prompt. Compatible with SGLang's /v1/images/edits and FLUX.2
+      unified diffusion serving. Uses multipart/form-data request encoding
+      because the input image is uploaded as a file field. Use
+      --endpoint-type image_edit.
+    metadata:
+      endpoint_path: /v1/images/edits
+      supports_streaming: false
+      produces_tokens: false
+      produces_images: true
+      supports_images: true
+      tokenizes_input: true
+      requires_form_data: true
+      metrics_title: Image Edit Metrics
+
   video_generation:
     class: aiperf.endpoints.openai_video_generation:VideoGenerationEndpoint
     description: |
@@ -376,6 +394,23 @@ endpoint:
       produces_tokens: true
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
+
+  raw:
+    class: aiperf.endpoints.raw_endpoint:RawEndpoint
+    description: |
+      Fallback endpoint for non-standard APIs. Does not format payloads or
+      append a URL path. Parses responses using auto-detection with optional
+      JMESPath extraction via response_field. Prefer a regular endpoint type
+      when the target API is supported.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
 
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
@@ -481,6 +516,40 @@ custom_dataset_loader:
     metadata:
       is_trace: true
       default_block_size: 512
+
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Each line is a
+      complete API request body sent directly to the transport with zero
+      formatting. Supports single file (one conversation per line) and
+      directory mode (one JSONL file per multi-turn conversation).
+
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Inputs JSON payload loader for verbatim API replay. Loads AIPerf
+      InputsFile format with pre-formatted payloads. Preserves multi-turn
+      session structure and sends each payload directly to the transport
+      without endpoint formatting.
+
+  dag_jsonl:
+    class: aiperf.dataset.loader.dag_jsonl:DagJsonlLoader
+    description: |
+      DAG-shaped benchmark loader. Each JSONL line is a Conversation;
+      supports forks: and spawns: shorthand at the turn level; topology
+      walk validates and stamps agent_depth and TurnMetadata.has_forks.
+
+  sagemaker_data_capture:
+    class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader
+    description: |
+      Amazon SageMaker Data Capture trace replay loader. Parses JSONL files
+      produced by SageMaker real-time endpoint data capture. Replays the exact
+      captured prompts (messages) with original timing. Supports directory input
+      (recursive globbing of hourly-partitioned capture files).
+      Usage: --custom-dataset-type sagemaker_data_capture --input-file ./captured/ --fixed-schedule
+    metadata:
+      is_trace: true
 
   multi_turn:
     class: aiperf.dataset.loader.multi_turn:MultiTurnDatasetLoader
@@ -671,6 +740,12 @@ record_processor:
       Accuracy record processor that grades LLM responses against ground truth
       for accuracy benchmarking. Self-disables when accuracy mode is off.
 
+  outputs_json:
+    class: aiperf.post_processors.outputs_json_record_processor:OutputsJsonRecordProcessor
+    description: |
+      Outputs JSON record processor that captures model response text per request.
+      Enabled when --export-outputs-json is set. Writes per-processor fragment files.
+
 # =============================================================================
 # Results Processors
 # =============================================================================
@@ -697,6 +772,13 @@ results_processor:
       Results processor that computes metrics from MetricType.DERIVED and
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
+
+  otel_metrics_streamer:
+    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
+    description: |
+      Streams per-record metrics to a user-provided OpenTelemetry collector
+      with periodic export.
+      Enabled when --otel-url is configured.
 
   record_export:
     class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
@@ -748,6 +830,13 @@ data_exporter:
       JSON exporter for aggregated metrics. Exports benchmark results to JSON
       format with full metric details and structured data. Always loaded.
 
+  mlflow:
+    class: aiperf.exporters.mlflow_data_exporter:MLflowDataExporter
+    description: |
+      MLflow post-run exporter that uploads benchmark params, metrics, tags,
+      and generated artifacts (including plots) to an MLflow Tracking server.
+      Enabled when --mlflow-tracking-uri is configured.
+
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
     description: |
@@ -789,6 +878,12 @@ data_exporter:
     description: |
       CSV exporter for accuracy benchmarking results. Exports per-problem grading
       details for offline analysis. Self-disables when accuracy mode is off.
+
+  outputs_json:
+    class: aiperf.exporters.outputs_json_exporter:OutputsJsonExporter
+    description: |
+      Aggregates per-processor output fragment files and merges with metrics
+      into final outputs.json. Enabled when --export-outputs-json is set.
 
 # =============================================================================
 # Console Exporters
@@ -977,11 +1072,18 @@ plot:
       display_name: Time Window Summary
       category: aggregated
 
+  latency_throughput_uncertainty:
+    class: aiperf.plot.handlers.multi_run_handlers:LatencyThroughputUncertaintyHandler
+    description: Latency vs throughput with crosshair error bars and confidence ellipses.
+    metadata:
+      display_name: Uncertainty Scatter
+      category: comparison
+
 # =============================================================================
 # GPU Telemetry Collector
 # =============================================================================
 # GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
-# Supports DCGM HTTP endpoints and pynvml Python library.
+# Supports DCGM HTTP endpoints and plugin-defined local collectors.
 # One-to-one mapping based on gpu_telemetry_collector configuration.
 # =============================================================================
 gpu_telemetry_collector:
@@ -993,6 +1095,15 @@ gpu_telemetry_collector:
     class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
     description: |
       PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
+    metadata:
+      is_local: true
+  amdsmi:
+    class: aiperf.gpu_telemetry.amdsmi_collector:AMDSMITelemetryCollector
+    description: |
+      AMDSMI telemetry collector for AMD ROCm GPUs (Instinct MI300X, MI355X, etc.).
+      Uses the amdsmi Python library shipped with ROCm.
+    metadata:
+      is_local: true
 
 # =============================================================================
 # Accuracy Graders
@@ -1006,6 +1117,8 @@ accuracy_grader:
     description: |
       Exact match grader that compares extracted answers against ground truth
       using exact string matching. Suitable for factual Q&A and classification tasks.
+    metadata:
+      is_implemented: false
 
   math:
     class: aiperf.accuracy.graders.math:MathGrader
@@ -1022,8 +1135,35 @@ accuracy_grader:
   code_execution:
     class: aiperf.accuracy.graders.code_execution:CodeExecutionGrader
     description: |
-      Code execution grader that runs generated code in a sandboxed environment
-      and compares output against expected results.
+      Code execution grader for LiveCodeBench, backed by lighteval's
+      ``lcb_codegen_metric``. Extracts the model's code block, executes it
+      against public + private test cases in sandboxed subprocesses, and
+      reports pass@1. Requires the ``[accuracy]`` install.
+
+  lighteval_expr:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader
+    description: |
+      Lighteval ``expr_gold_metric`` — used by AIME24/AIME25. Wraps lighteval's
+      ``MultilingualExtractiveMatchMetric`` configured with
+      ``ExprExtractionConfig`` for gold and
+      ``(ExprExtractionConfig, LatexExtractionConfig(boxed_match_priority=0))``
+      for predictions, matching the trt-llm benchmark recipe's
+      ``acc_bench_lighteval.py`` definition.
+
+  lighteval_latex:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalLatexGrader
+    description: |
+      Lighteval ``latex_gold_metric`` — used by MATH-500. Same as
+      ``lighteval_expr`` but the gold extractor uses
+      ``LatexExtractionConfig`` since MATH-500 gold answers are LaTeX
+      snippets like ``\\frac{1}{3}``.
+
+  lighteval_gpqa:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalGPQAGrader
+    description: |
+      Lighteval ``gpqa_metric`` — used by GPQA-Diamond. Extracts via
+      ``IndicesExtractionConfig(prefix_for_extraction="NativeLetters")``
+      to find the chosen A/B/C/D letter in both gold and prediction.
 
 # =============================================================================
 # Accuracy Benchmarks
@@ -1045,10 +1185,15 @@ accuracy_benchmark:
     class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark
     description: |
       AIME (American Invitational Mathematics Examination) benchmark for
-      advanced high school mathematics problems.
+      advanced high school mathematics problems. Aligned with the trt-llm
+      benchmark recipe's DeepEval-backed AIME path: same dataset
+      (Maxwell-Jia/AIME_2024), same prompt template, same default n_shots
+      (8) and chain-of-thought (on), same default system prompt.
     metadata:
       default_grader: math
-      default_n_shots: 0
+      default_n_shots: 8
+      default_enable_cot: true
+      default_system_prompt: "Please reason step by step, and put your final answer within \\boxed{}."
 
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
@@ -1057,6 +1202,7 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 0
+      is_implemented: false
 
   bigbench:
     class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
@@ -1066,6 +1212,7 @@ accuracy_benchmark:
     metadata:
       default_grader: exact_match
       default_n_shots: 3
+      is_implemented: false
 
   aime24:
     class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
@@ -1074,6 +1221,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   aime25:
     class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
@@ -1082,6 +1230,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   math_500:
     class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
@@ -1091,6 +1240,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
@@ -1100,6 +1250,7 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 0
+      is_implemented: false
 
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
@@ -1109,6 +1260,7 @@ accuracy_benchmark:
     metadata:
       default_grader: code_execution
       default_n_shots: 0
+      is_implemented: false
 
 # =============================================================================
 # Communication Backends
@@ -1225,6 +1377,17 @@ public_dataset_loader:
       hf_split: val
       prompt_column: question
       image_column: image
+
+  mmvu:
+    class: aiperf.dataset.loader.mmvu:MMVUDatasetLoader
+    description: |
+      MMVU expert-level video understanding benchmark from HuggingFace (yale-nlp).
+      Loads video questions with video URLs as single-turn multimodal requests.
+      Prompt combines the question with multiple-choice options (matching vLLM benchmark format).
+    metadata:
+      hf_dataset_name: yale-nlp/MMVU
+      hf_split: validation
+      video_column: video
 
   vision_arena:
     class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader
@@ -1653,6 +1816,69 @@ public_dataset_loader:
       hf_split: train
       prompt_column: change_request
       prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
+  # ---------------------------------------------------------------------------
+  # ASR (Automatic Speech Recognition) datasets
+  # ---------------------------------------------------------------------------
+  librispeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      LibriSpeech ASR benchmark dataset (openslr). Clean read-speech clips from
+      audiobooks. Uses the test.clean split by default.
+    metadata:
+      hf_dataset_name: openslr/librispeech_asr
+      hf_split: test
+      hf_subset: clean
+      streaming: true
+      audio_column: audio
+
+  voxpopuli:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      VoxPopuli English ASR dataset (facebook). Unlabelled speech data from
+      European Parliament recordings.
+    metadata:
+      hf_dataset_name: facebook/voxpopuli
+      hf_split: test
+      hf_subset: en
+      audio_column: audio
+      streaming: true
+
+  gigaspeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      GigaSpeech English ASR dataset (speechcolab). Large-scale multi-domain
+      corpus from audiobooks, podcasts, and YouTube. Requires HuggingFace authentication.
+    metadata:
+      hf_dataset_name: speechcolab/gigaspeech
+      hf_split: test
+      hf_subset: xs
+      audio_column: audio
+      streaming: true
+
+  ami:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      AMI Meeting Corpus ASR dataset (Edinburgh CSTR). Meeting recordings with
+      individual headset microphone audio. Public, no authentication required.
+    metadata:
+      hf_dataset_name: edinburghcstr/ami
+      hf_split: test
+      hf_subset: ihm
+      audio_column: audio
+      streaming: true
+
+  spgispeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      SPGISpeech ASR dataset (Kensho). Financial earnings call recordings.
+      Requires HuggingFace authentication and terms acceptance.
+    metadata:
+      hf_dataset_name: kensho/spgispeech
+      hf_split: test
+      hf_subset: test
+      audio_column: audio
+      streaming: true
 
 # =============================================================================
 # ZMQ Proxies

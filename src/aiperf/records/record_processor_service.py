@@ -8,8 +8,9 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_pull_message
+from aiperf.common.hooks import on_command, on_message, on_pull_message
 from aiperf.common.messages import (
+    DatasetConfiguredNotification,
     InferenceResultsMessage,
     MetricRecordsMessage,
     ProfileConfigureCommand,
@@ -91,6 +92,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.exception(f"Error creating record processor: {e!r}")
                 raise
 
+    @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
+    async def _on_dataset_configured(
+        self, message: DatasetConfiguredNotification
+    ) -> None:
+        for processor in self.records_processors:
+            if hasattr(processor, "on_dataset_configured"):
+                processor.on_dataset_configured(message.metadata)
+
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
@@ -155,6 +164,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
+            agent_depth=record.request_info.agent_depth,
+            parent_correlation_id=record.request_info.parent_correlation_id,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)

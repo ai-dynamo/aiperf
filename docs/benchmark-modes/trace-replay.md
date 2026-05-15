@@ -51,6 +51,7 @@ Required fields for trace replay:
 - `output_length`: Number of output tokens
 - `hash_ids`: List of block hashes (optional)
 - `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
+- `extra`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch; user-supplied keys win over `--extra-inputs`.
 
 Example entry:
 
@@ -62,7 +63,7 @@ Example entry:
 
 Create a trace file with timing information:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > custom_trace.jsonl << 'EOF'
 {"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
@@ -70,10 +71,10 @@ cat > custom_trace.jsonl << 'EOF'
 {"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
 EOF
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 Run AIPerf with the trace file:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -84,7 +85,7 @@ aiperf profile \
     --custom-dataset-type mooncake_trace \
     --fixed-schedule
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamps specified in the trace. This reproduces the original timing pattern.
 
@@ -111,11 +112,23 @@ When replaying conversations that involve tool use (function calling), include t
 
 The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter.
 
+## Per-Request Extra Inputs
+
+Use the `extra` field to inject arbitrary key-value pairs into the HTTP payload for individual trace entries. This works alongside (and after) the global `--extra-inputs` flag, so per-entry values override global defaults for the same top-level key.
+
+```json
+{"input_length": 100, "output_length": 50, "timestamp": 0, "extra": {"nvext": {"priority": 99}}}
+{"input_length": 200, "output_length": 30, "timestamp": 500}
+{"messages": [{"role": "user", "content": "Hello"}], "output_length": 50, "timestamp": 1000, "extra": {"routing": "fast"}}
+```
+
+**Merge semantics:** Merging is shallow — a per-entry `{"nvext": {...}}` replaces the entire global `nvext` key. Deep merge is not performed.
+
 ## Profile using real Mooncake Trace
 
 For real-world benchmarking, use the FAST25 production trace data from the Mooncake research paper:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Download the Mooncake trace data
 curl -Lo mooncake_trace.jsonl https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/arxiv-trace/mooncake_trace.jsonl
@@ -133,4 +146,4 @@ aiperf profile \
     --custom-dataset-type mooncake_trace \
     --fixed-schedule
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
@@ -9,6 +11,15 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.dataset.loader.models import CustomDatasetT
+from aiperf.plugin.enums import DatasetSamplingStrategy
+
+LoaderProbeData = dict[str, Any]
+"""First-line probe shape passed to ``can_load`` overrides.
+
+Any of ``session_id``, ``turns``, ``messages``, ``data``, ``conversation_id``
+may be present depending on the on-disk format. Loaders branch on which keys
+exist to decide whether they recognise the file.
+"""
 
 
 class BaseLoader(AIPerfLoggerMixin, ABC):
@@ -41,6 +52,16 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
         """
         return None
 
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        """Dataset-level preferred sampling strategy for downstream conversation selection.
+
+        Override in subclasses when the dataset format implies a specific strategy
+        (e.g. raw payload replay loaders prefer SEQUENTIAL to preserve recorded order).
+        Defaults to SHUFFLE for general datasets.
+        """
+        return DatasetSamplingStrategy.SHUFFLE
+
     @abstractmethod
     def load_dataset(self) -> dict[str, list[CustomDatasetT]]: ...
 
@@ -65,6 +86,23 @@ class BaseFileLoader(BaseLoader):
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, filename: str, user_config: UserConfig, **kwargs):
+    def __init__(self, *, filename: str | Path, user_config: UserConfig, **kwargs):
         super().__init__(user_config=user_config, **kwargs)
-        self.filename = filename
+        self.filename = Path(filename) if isinstance(filename, str) else filename
+
+
+class BaseRawPayloadLoader(BaseFileLoader):
+    """Base for loaders that produce verbatim raw_payload conversations.
+
+    Provides shared defaults: MESSAGE_ARRAY_WITH_RESPONSES context mode and
+    SEQUENTIAL sampling. Used by ``inputs_json`` and ``raw_payload`` loaders
+    that replay pre-built API request payloads byte-for-byte.
+    """
+
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        return DatasetSamplingStrategy.SEQUENTIAL

@@ -15,7 +15,11 @@ class ExactMatchGrader(BaseGrader):
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs
     ) -> GradingResult:
-        raise NotImplementedError
+        raise NotImplementedError(
+            "exact_match grader is not yet implemented; only 'multiple_choice' is available in this release."
+        )
 
     def extract_answer(self, response_text: str, **kwargs) -> str:
-        raise NotImplementedError
+        raise NotImplementedError(
+            "exact_match grader is not yet implemented; only 'multiple_choice' is available in this release."
+        )

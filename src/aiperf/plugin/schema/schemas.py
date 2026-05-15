@@ -280,7 +280,11 @@ class EndpointMetadata(BaseModel):
     )
     requires_form_data: bool = Field(
         default=False,
-        description="Whether endpoint supports multipart/form-data request encoding.",
+        description=(
+            "True for endpoints that require multipart/form-data (binary uploads), "
+            "e.g., video_generation, image_edit. EndpointConfig consumes this flag "
+            "to auto-select the request encoding."
+        ),
     )
     requires_inline_media: bool = Field(
         default=False,
@@ -382,6 +386,18 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default=None,
         description="Column name containing the image data (PIL Image). Used for multimodal datasets.",
     )
+    video_column: str | None = Field(
+        default=None,
+        description="Column name containing the video data (URL string or bytes dict). Used for video multimodal datasets.",
+    )
+    audio_column: str | None = Field(
+        default=None,
+        description=(
+            "Column name containing audio data. Depending on loader/dataset, this can be "
+            "an HF Audio dict with array/sampling_rate (decoded) or bytes/path (decode=False). "
+            "Used for ASR/speech datasets."
+        ),
+    )
     conversation_column: str | None = Field(
         default=None,
         description="Column name containing the conversation messages array. Required for HFConversationDatasetLoader.",
@@ -432,4 +448,19 @@ class ServiceMetadata(BaseModel):
     replicable: bool = Field(
         default=False,
         description="Whether the service can have multiple instances running in parallel.",
+    )
+
+
+class GPUTelemetryCollectorMetadata(BaseModel):
+    """Config-time metadata for GPU telemetry collector plugins.
+
+    Local collectors set ``is_local`` so ``--gpu-telemetry <name>`` is treated
+    as an in-process collector keyword instead of a DCGM URL. Native binding
+    validation lives on the collector class itself via ``validate_environment``
+    so each implementation owns its own dependency check.
+    """
+
+    is_local: bool = Field(
+        default=False,
+        description="Whether this collector runs in-process against the local host.",
     )

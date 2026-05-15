@@ -22,8 +22,6 @@ class InputTokensConfig(BaseConfig):
     A configuration class for defining input token related settings.
     """
 
-    _CLI_GROUP = Groups.INPUT_SEQUENCE_LENGTH
-
     mean: Annotated[
         int,
         Field(
@@ -38,7 +36,7 @@ class InputTokensConfig(BaseConfig):
                 "--synthetic-input-tokens-mean",  # GenAI-Perf
                 "--isl",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.INPUT_SEQUENCE_LENGTH,
         ),
     ] = InputTokensDefaults.MEAN
 
@@ -56,7 +54,7 @@ class InputTokensConfig(BaseConfig):
                 "--synthetic-input-tokens-stddev",  # GenAI-Perf
                 "--isl-stddev",
             ),
-            group=_CLI_GROUP,
+            group=Groups.INPUT_SEQUENCE_LENGTH,
         ),
     ] = InputTokensDefaults.STDDEV
 
@@ -75,7 +73,7 @@ class InputTokensConfig(BaseConfig):
                 "--synthetic-input-tokens-block-size",
                 "--isl-block-size",
             ),
-            group=_CLI_GROUP,
+            group=Groups.INPUT_SEQUENCE_LENGTH,
         ),
     ] = None
 
@@ -84,8 +82,6 @@ class OutputTokensConfig(BaseConfig):
     """
     A configuration class for defining output token related settings.
     """
-
-    _CLI_GROUP = Groups.OUTPUT_SEQUENCE_LENGTH
 
     mean: Annotated[
         int | None,
@@ -102,7 +98,7 @@ class OutputTokensConfig(BaseConfig):
                 "--output-tokens-mean",  # GenAI-Perf
                 "--osl",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT_SEQUENCE_LENGTH,
         ),
     ] = None
 
@@ -121,7 +117,7 @@ class OutputTokensConfig(BaseConfig):
                 "--output-tokens-stddev",  # GenAI-Perf
                 "--osl-stddev",
             ),
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT_SEQUENCE_LENGTH,
         ),
     ] = OutputTokensDefaults.STDDEV
 
@@ -130,8 +126,6 @@ class PrefixPromptConfig(BaseConfig):
     """
     A configuration class for defining prefix prompt related settings.
     """
-
-    _CLI_GROUP = Groups.PREFIX_PROMPT
 
     pool_size: Annotated[
         int,
@@ -147,7 +141,7 @@ class PrefixPromptConfig(BaseConfig):
                 "--prefix-prompt-pool-size",
                 "--num-prefix-prompts",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.PREFIX_PROMPT,
         ),
     ] = PrefixPromptDefaults.POOL_SIZE
 
@@ -168,7 +162,7 @@ class PrefixPromptConfig(BaseConfig):
                 "--prompt-prefix-length",
                 "--prefix-prompt-length",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.PREFIX_PROMPT,
         ),
     ] = PrefixPromptDefaults.LENGTH
 
@@ -185,7 +179,7 @@ class PrefixPromptConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--shared-system-prompt-length",),
-            group=_CLI_GROUP,
+            group=Groups.PREFIX_PROMPT,
         ),
     ] = None
 
@@ -203,7 +197,7 @@ class PrefixPromptConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--user-context-prompt-length",),
-            group=_CLI_GROUP,
+            group=Groups.PREFIX_PROMPT,
         ),
     ] = None
 
@@ -212,8 +206,6 @@ class PromptConfig(BaseConfig):
     """
     A configuration class for defining prompt related settings.
     """
-
-    _CLI_GROUP = Groups.PROMPT
 
     @model_validator(mode="after")
     def validate_sequence_distribution_format(self) -> Self:
@@ -246,7 +238,7 @@ class PromptConfig(BaseConfig):
                 "--batch-size",  # GenAI-Perf
                 "-b",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.PROMPT,
         ),
     ] = PromptDefaults.BATCH_SIZE
 

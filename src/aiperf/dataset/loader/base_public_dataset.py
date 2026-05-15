@@ -150,6 +150,7 @@ class BasePublicDatasetLoader(BaseLoader):
 
     def is_valid_sequence(
         self,
+        *,
         prompt_len: int,
         output_len: int,
         min_seq_len: int = 4,

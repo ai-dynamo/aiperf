@@ -18,6 +18,7 @@ def service(
     service_type: Annotated[
         ServiceType, CLIParameter(name="--type", help="Service type to run.")
     ],
+    *,
     user_config_file: Annotated[
         Path | None,
         CLIParameter(

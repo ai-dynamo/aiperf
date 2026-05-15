@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import abstractmethod
+from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
@@ -36,7 +37,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     def __init__(
         self,
         *,
-        filename: str,
+        filename: str | Path,
         prompt_generator: PromptGenerator,
         user_config: UserConfig,
         default_block_size: int | None = None,
@@ -229,14 +230,15 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     def _build_turn(self, trace: TraceT, prompt: str) -> Turn:
         """Build a :class:`Turn` from trace data and a generated prompt.
 
-        Default implementation extracts `timestamp`, `delay`, `output_length`
-        via getattr, which works for both Mooncake and Bailian traces.
+        Default implementation extracts `timestamp`, `delay`, `output_length`,
+        and `extra` via getattr, which works for both Mooncake and Bailian traces.
         """
         return Turn(
             timestamp=getattr(trace, "timestamp", None),
             delay=getattr(trace, "delay", None),
             texts=[Text(name="text", contents=[prompt])],
             max_tokens=getattr(trace, "output_length", None),
+            extra_body=getattr(trace, "extra", None),
         )
 
     def convert_to_conversations(
@@ -289,8 +291,10 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         # Phase 2: Batch parallel decode for all cache misses
         if pending_decodes:
             self.debug(
-                lambda: f"Parallel decoding {len(pending_decodes)} prompts "
-                f"({len(data)} conversations)"
+                lambda: (
+                    f"Parallel decoding {len(pending_decodes)} prompts "
+                    f"({len(data)} conversations)"
+                )
             )
             token_sequences = [p[2] for p in pending_decodes]
             decoded_prompts = parallel_decode(

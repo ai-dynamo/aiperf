@@ -1,5 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+ci:
+  skip:
+    - add-license
+    - generate-cli-docs
+    - generate-env-vars-docs
+    - generate-plugin-artifacts
+    - validate-plugin-schemas
+    - test-imports
+    - check-agent-files-sync
+    - check-ergonomics
+    - check-ruff-baselined
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
@@ -25,7 +36,7 @@ repos:
       - id: requirements-txt-fixer
       - id: trailing-whitespace
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.2.4
+    rev: v2.4.2
     hooks:
     - id: codespell
       additional_dependencies: [tomli]
@@ -73,8 +84,29 @@ repos:
         files: ^(src/aiperf|tests)/.*\.py$
         pass_filenames: false
         args: []
+      - id: check-agent-files-sync
+        name: check-agent-files-sync
+        entry: make check-agent-files-sync
+        language: python
+        files: ^(AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.cursor/rules/python\.mdc|tools/check_agent_files_sync\.py)$
+        pass_filenames: false
+        args: []
+      - id: check-ergonomics
+        name: check-ergonomics
+        entry: make check-ergonomics
+        language: python
+        files: (\.py$|^tools/(check_ergonomics\.py|ergonomics_baseline\.json)$)
+        pass_filenames: false
+        args: []
+      - id: check-ruff-baselined
+        name: check-ruff-baselined
+        entry: make check-ruff-baselined
+        language: python
+        files: (\.py$|^tools/(ruff_baselined\.py|ruff_baseline\.json)$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.8
+    rev: v0.14.14
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]

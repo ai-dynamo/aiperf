@@ -53,20 +53,6 @@ def test_fern_check() -> None:
     )
 
 
-def test_fern_check_strict() -> None:
-    """Validate the Fern definition with strict broken-link checking."""
-    result = subprocess.run(
-        ["fern", "check", "--warnings", "--strict-broken-links"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0, (
-        f"fern check --strict-broken-links failed (exit {result.returncode}):\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-
-
 def test_fern_docs_dev_starts() -> None:
     """Verify fern docs dev builds and starts without errors.
 

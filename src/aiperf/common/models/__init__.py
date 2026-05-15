@@ -3,6 +3,8 @@
 
 from aiperf.common.models.auto_routed_model import AutoRoutedModel
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.branch import ConversationBranchInfo
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.credit_models import (
     BasePhaseStats,
     CreditPhaseStats,
@@ -40,6 +42,7 @@ from aiperf.common.models.export_models import (
     TimesliceCollectionExportData,
     TimesliceData,
 )
+from aiperf.common.models.extracted_payload import ExtractedPayload
 from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
@@ -52,6 +55,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
+from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
     BaseResponseData,
@@ -73,6 +77,7 @@ from aiperf.common.models.record_models import (
     RankingsResponseData,
     RawRecordInfo,
     ReasoningResponseData,
+    RecordContext,
     RequestInfo,
     RequestRecord,
     SSEField,
@@ -80,6 +85,7 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
     TokenCounts,
+    ToolCallResponseData,
     VideoResponseData,
 )
 from aiperf.common.models.sequence_distribution import (
@@ -148,8 +154,10 @@ __all__ = [
     "BaseTimeslice",
     "BaseTraceData",
     "BinaryResponse",
+    "BranchStats",
     "CPUTimes",
     "Conversation",
+    "ConversationBranchInfo",
     "ConversationMetadata",
     "CounterMetricData",
     "CounterSeries",
@@ -166,6 +174,7 @@ __all__ = [
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",
+    "ExtractedPayload",
     "GaugeMetricData",
     "GaugeSeries",
     "GaugeStats",
@@ -212,6 +221,7 @@ __all__ = [
     "RankingsResponseData",
     "RawRecordInfo",
     "ReasoningResponseData",
+    "RecordContext",
     "RequestInfo",
     "RequestRecord",
     "SSEField",
@@ -239,9 +249,11 @@ __all__ = [
     "TimesliceCollectionExportData",
     "TimesliceData",
     "TokenCounts",
+    "ToolCallResponseData",
     "TraceDataExport",
     "Turn",
     "TurnMetadata",
+    "TurnPrerequisite",
     "Usage",
     "Video",
     "VideoResponseData",

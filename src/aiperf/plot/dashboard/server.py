@@ -54,6 +54,7 @@ class DashboardServer:
         plot_config: PlotConfig,
         loader: DataLoader,
         host: str = "127.0.0.1",
+        *,
         port: int = 8050,
     ):
         """Initialize the dashboard server."""

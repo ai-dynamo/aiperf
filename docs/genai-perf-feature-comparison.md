@@ -7,9 +7,8 @@ sidebar-title: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
 
 This comparison matrix shows the supported CLI options between GenAI-Perf and AIPerf.
 
-<Note>
-This is a living document and will be updated as new features are added to AIPerf.
-</Note>
+> [!NOTE]
+> This is a living document and will be updated as new features are added to AIPerf.
 
 
 **Legend:**
@@ -312,9 +311,8 @@ This is a living document and will be updated as new features are added to AIPer
 
 ## **Perf-Analyzer Passthrough Arguments**
 
-<Note>
-GenAI-Perf supports passing through arguments to the Perf-Analyzer CLI. AIPerf does not support this, as it does not use Perf-Analyzer under the hood.
-</Note>
+> [!NOTE]
+> GenAI-Perf supports passing through arguments to the Perf-Analyzer CLI. AIPerf does not support this, as it does not use Perf-Analyzer under the hood.
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|

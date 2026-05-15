@@ -30,6 +30,21 @@ class StopCondition(ABC):
     and may optionally implement the can_start_new_session() method for more restrictive cases.
     """
 
+    # DAG children (``agent_depth > 0``) are dispatched reactively by
+    # ``BranchOrchestrator`` at credit-return time, NOT by the phase's
+    # ``TimingStrategy`` loop, and do not consume entries from the
+    # ``DatasetSampler``. Their stop-condition behavior splits by intent:
+    #   - cancellation, duration timeout, ``--request-count``: HONORED.
+    #     ``--request-count`` is a literal wire-request cap and
+    #     time/cancellation are user-facing guarantees that apply to
+    #     every credit on the wire.
+    #   - ``--num-conversations`` (SessionCountStopCondition): BYPASSED.
+    #     It targets sampler-plan completion ("run N full conversations")
+    #     — children belong to a conversation tree and should run as
+    #     part of their parent's session, not be truncated mid-tree.
+    # Default True; subclasses opt out by setting it to False.
+    applies_to_dag_children: bool = True
+
     def __init__(
         self,
         config: CreditPhaseConfig,
@@ -71,7 +86,16 @@ class LifecycleStopCondition(StopCondition):
     """Lifecycle based stop condition. Checks if the phase is cancelled or has completed sending.
 
     NOTE: This is always used and is the first in the list of stop conditions.
+
+    DAG-children behavior: this condition opts out of the DAG-child gating
+    pathway because ``is_sending_complete`` flips when the strategy's own
+    loop exits (e.g. ``--num-conversations`` reached), but the orchestrator
+    still needs to fan out children when those root credits return AFTER
+    sending-complete fires. ``DagLifecycleStopCondition`` covers
+    cancellation for DAG dispatch.
     """
+
+    applies_to_dag_children = False
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -84,6 +108,32 @@ class LifecycleStopCondition(StopCondition):
             not self._lifecycle.was_cancelled
             and not self._lifecycle.is_sending_complete
         )
+
+
+class DagLifecycleStopCondition(StopCondition):
+    """Cancellation gate for DAG-child dispatch.
+
+    The default ``LifecycleStopCondition`` opts out of DAG child gating so
+    orchestrator-driven fan-out still works after the strategy's own loop
+    has exited (sending-complete). Cancellation must still gate DAG
+    dispatch — this condition supplies that piece, with ``can_send_any_turn``
+    always True for the strategy path (this condition is only meaningful
+    on the DAG-child gate).
+    """
+
+    applies_to_dag_children = True
+
+    @classmethod
+    def should_use(cls, config: CreditPhaseConfig) -> bool:
+        """Always used (lifecycle is always present)."""
+        return True
+
+    def can_send_any_turn(self) -> bool:
+        """For DAG-child gating: gate on cancellation only (sending-complete
+        is intentionally NOT gated for DAG fan-out — see
+        ``LifecycleStopCondition`` docstring).
+        """
+        return not self._lifecycle.was_cancelled
 
 
 class RequestCountStopCondition(StopCondition):
@@ -100,7 +150,17 @@ class RequestCountStopCondition(StopCondition):
 
 
 class SessionCountStopCondition(StopCondition):
-    """Session count based stop condition."""
+    """Session count based stop condition.
+
+    Bypassed for DAG children. ``--num-conversations`` is a sampler
+    plan target — "run N full conversations" — and DAG offspring are
+    part of the conversation tree they belong to, not separate
+    plannable units. Honoring this gate for children would truncate
+    DAG trees mid-stream; the wire-cap intent is served by
+    ``--request-count`` instead, which DOES apply to children.
+    """
+
+    applies_to_dag_children = False
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -112,10 +172,16 @@ class SessionCountStopCondition(StopCondition):
 
         True when either: session limit not reached (can start new sessions),
         OR already-started sessions still have unsent turns remaining.
+
+        Compares ROOT-only wire count to ``total_session_turns`` (also
+        root-only). Using global ``requests_sent`` here would prematurely
+        return False for BG-fork parents, where child wires arrive in
+        parallel with the parent's later turns and inflate the global
+        counter beyond the root's planned wire count.
         """
         return (
             self._counter.sent_sessions < self._config.expected_num_sessions
-            or self._counter.requests_sent < self._counter.total_session_turns
+            or self._counter.root_requests_sent < self._counter.total_session_turns
         )
 
     def can_start_new_session(self) -> bool:
@@ -144,6 +210,7 @@ class DurationStopCondition(StopCondition):
 # NOTE: The order of these classes will determine the order that the stop conditions are checked in.
 _STOP_CONDITION_CLASSES = [
     LifecycleStopCondition,  # Always used first
+    DagLifecycleStopCondition,  # DAG-only: cancellation gate for child dispatch
     RequestCountStopCondition,
     SessionCountStopCondition,
     DurationStopCondition,
@@ -201,6 +268,15 @@ class StopConditionChecker:
             stop_condition.can_start_new_session
             for stop_condition in self._stop_conditions
         ]
+        # ``applies_to_dag_children`` filter: stop conditions that opt out of
+        # DAG-child gating (e.g. ``SessionCountStopCondition`` — see its
+        # docstring) are excluded when the orchestrator dispatches a child
+        # via ``CreditIssuer._dispatch_dag_turn``.
+        self._can_send_dag_child_turn_funcs: list[Callable] = [
+            stop_condition.can_send_any_turn
+            for stop_condition in self._stop_conditions
+            if stop_condition.applies_to_dag_children
+        ]
 
     def can_send_any_turn(self) -> bool:
         """True if phase can send ANY turn (first or subsequent).
@@ -214,6 +290,18 @@ class StopConditionChecker:
         - All sessions complete (session-based mode)
         """
         return all(func() for func in self._can_send_any_turn_funcs)
+
+    def can_send_dag_child_turn(self) -> bool:
+        """True if a DAG child turn can still dispatch.
+
+        Used by ``CreditIssuer._dispatch_dag_turn``: identical to
+        ``can_send_any_turn`` except stop conditions that opt out via
+        ``applies_to_dag_children = False`` (currently
+        ``SessionCountStopCondition``) are excluded — children belong
+        to their parent's session and shouldn't be truncated by
+        ``--num-conversations``.
+        """
+        return all(func() for func in self._can_send_dag_child_turn_funcs)
 
     def can_start_new_session(self) -> bool:
         """True if phase can start a NEW session (more restrictive).

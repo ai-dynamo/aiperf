@@ -52,6 +52,7 @@ class BaseConfig(BaseModel):
     def _attach_comments(
         data: Any,
         model: BaseModel,
+        *,
         context: dict,
         indent: int,
         indent_level: int = 0,

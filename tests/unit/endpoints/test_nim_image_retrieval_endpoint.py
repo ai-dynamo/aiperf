@@ -130,6 +130,17 @@ class TestImageRetrievalEndpointFormatPayload:
         with pytest.raises(ValueError, match="No valid image content found"):
             endpoint.format_payload(request_info)
 
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges into the payload."""
+        turn = Turn(
+            images=[Image(contents=[BASE64_PNG])],
+            extra_body={"vendor_top_k": 3},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_top_k"] == 3
+
 
 class TestImageRetrievalEndpointParseResponse:
     """Tests for ImageRetrievalEndpoint.parse_response."""

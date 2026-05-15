@@ -16,20 +16,21 @@ class TokenizerConfig(BaseConfig):
     A configuration class for defining tokenizer related settings.
     """
 
-    _CLI_GROUP = Groups.TOKENIZER
-
     name: Annotated[
         str | None,
         Field(
             description="HuggingFace tokenizer identifier, local path, or `builtin` for token counting in prompts and responses. "
             "Accepts model names (e.g., `meta-llama/Llama-2-7b-hf`), filesystem paths to tokenizer files, "
             "or `builtin` for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). "
-            "If not specified, defaults to the value of `--model-names`. Essential for accurate token-based metrics "
+            "If not specified, defaults to the value of `--model-names`. "
+            "If `--tokenizer` is not set and the model name looks like an obvious placeholder "
+            "(e.g. `mock-model`, `test-model`, `fake-model`), AIPerf substitutes `builtin` automatically "
+            "and emits a warning. Essential for accurate token-based metrics "
             "(input/output token counts, token throughput).",
         ),
         CLIParameter(
             name=("--tokenizer"),
-            group=_CLI_GROUP,
+            group=Groups.TOKENIZER,
         ),
     ] = TokenizerDefaults.NAME
 
@@ -42,7 +43,7 @@ class TokenizerConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--tokenizer-revision"),
-            group=_CLI_GROUP,
+            group=Groups.TOKENIZER,
         ),
     ] = TokenizerDefaults.REVISION
 
@@ -55,7 +56,7 @@ class TokenizerConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--tokenizer-trust-remote-code"),
-            group=_CLI_GROUP,
+            group=Groups.TOKENIZER,
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE
 

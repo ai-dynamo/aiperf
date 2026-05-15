@@ -678,6 +678,61 @@ class TestAioHttpTransportCancellation:
         await transport.stop()
 
     @pytest.mark.asyncio
+    async def test_cancellation_works_with_multipart_form_data_body(
+        self, model_endpoint_non_streaming
+    ):
+        """Regression: cancel_after_ns must honor multipart bodies.
+
+        Before the fix, FormData bodies left expected_request_body_size=None,
+        so on_request_sent never fired and cancellation surfaced as
+        RequestSendTimeout instead of RequestCancellationError.
+        """
+        from aiperf.common.enums import RequestContentType
+
+        # Reuse the standard non-streaming endpoint, just flip its content-type.
+        model_endpoint_non_streaming.endpoint.request_content_type = (
+            RequestContentType.MULTIPART_FORM_DATA
+        )
+
+        transport = AioHttpTransport(model_endpoint=model_endpoint_non_streaming)
+        await transport.initialize()
+
+        capture_session, holder = self._create_mock_session_factory(
+            complete_immediately=False
+        )
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.side_effect = capture_session
+
+            cancel_after_ns = 100_000_000  # 100ms
+            request_info = create_request_info(
+                model_endpoint_non_streaming, cancel_after_ns=cancel_after_ns
+            )
+            # image_edit-shaped payload: text + base64 file field.
+            payload = {
+                "prompt": "edit",
+                "image": {
+                    "b64_data": "iVBORw0KGgoAAAANSUhEUg==",
+                    "filename": "ref.png",
+                    "content_type": "image/png",
+                },
+            }
+
+            task = asyncio.create_task(transport.send_request(request_info, payload))
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            await self._fire_request_sent_event(holder["trace_config"], body_size=4096)
+
+            record = await task
+
+        assert record.error is not None, f"Expected cancellation error, got: {record}"
+        assert record.error.type == "RequestCancellationError", (
+            f"Multipart cancellation regressed to {record.error.type!r}"
+        )
+        await transport.stop()
+
+    @pytest.mark.asyncio
     async def test_send_request_cancellation_record_has_timing(
         self, model_endpoint_non_streaming
     ):

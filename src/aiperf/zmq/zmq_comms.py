@@ -64,6 +64,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
         **kwargs,

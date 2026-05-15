@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -13,6 +14,7 @@ import plotly.graph_objects as go
 from aiperf.plot.constants import DEFAULT_PERCENTILE
 from aiperf.plot.core.plot_generator import PlotGenerator
 from aiperf.plot.core.plot_specs import PlotSpec
+from aiperf.plot.models.uncertainty import BenchmarkPoint
 
 
 class BaseMultiRunHandler:
@@ -212,3 +214,169 @@ class ScatterLineHandler(BaseMultiRunHandler):
             experiment_types=experiment_types,
             group_display_names=group_display_names,
         )
+
+
+def _build_uncertainty_points(
+    data: "pd.DataFrame",
+    x_col: str,
+    y_col: str,
+    *,
+    group_col: str | list[str] | None,
+    label_col: str | None,
+    ci_level: float,
+) -> list[BenchmarkPoint]:
+    """Build a list of BenchmarkPoint from a grouped DataFrame using t-distribution CIs.
+
+    For each group bucket, computes (mean, ci_half) for x and y and constructs
+    one BenchmarkPoint. CIs use a Student-t critical value at ci_level with
+    df = n - 1; for n < 2, CI half-widths collapse to 0.
+
+    Args:
+        data: DataFrame with metric columns.
+        x_col: Column name for x-axis metric.
+        y_col: Column name for y-axis metric.
+        group_col: Column name OR list of candidate column names. If a list is
+            given, the first name that exists in data.columns is used; if none
+            match (or None), all rows form a single bucket.
+        label_col: Optional column whose mode-per-bucket becomes BenchmarkPoint.label.
+        ci_level: Confidence level in (0, 1), typically 0.90, 0.95, or 0.99.
+    """
+    import numpy as np
+    from scipy import stats as scipy_stats
+
+    # Normalize list-valued group_col to a single column name
+    if isinstance(group_col, list):
+        group_col = next((col for col in group_col if col in data.columns), None)
+
+    if group_col and group_col in data.columns:
+        groups: list = sorted(data[group_col].dropna().unique())
+    else:
+        groups = [None]
+
+    points: list[BenchmarkPoint] = []
+    for group in groups:
+        group_df = (
+            data[data[group_col] == group] if group is not None and group_col else data
+        )
+        group_df = group_df.dropna(subset=[x_col, y_col])
+        if group_df.empty:
+            continue
+
+        x_vals = group_df[x_col].values.astype(float)
+        y_vals = group_df[y_col].values.astype(float)
+        n = len(x_vals)
+        x_mean = float(np.mean(x_vals))
+        y_mean = float(np.mean(y_vals))
+
+        if n >= 2:
+            t_crit = scipy_stats.t.ppf((1 + ci_level) / 2, df=n - 1)
+            x_ci_half = t_crit * float(np.std(x_vals, ddof=1) / np.sqrt(n))
+            y_ci_half = t_crit * float(np.std(y_vals, ddof=1) / np.sqrt(n))
+        else:
+            x_ci_half = 0.0
+            y_ci_half = 0.0
+
+        label_val = None
+        if label_col and label_col in group_df.columns:
+            label_mode = group_df[label_col].dropna().mode()
+            label_val = str(label_mode.iloc[0]) if not label_mode.empty else None
+
+        points.append(
+            BenchmarkPoint(
+                x_mean=x_mean,
+                y_mean=y_mean,
+                x_ci_low=x_mean - x_ci_half,
+                x_ci_high=x_mean + x_ci_half,
+                y_ci_low=y_mean - y_ci_half,
+                y_ci_high=y_mean + y_ci_half,
+                cov_xy=None,
+                label=label_val,
+                n_runs=n,
+            )
+        )
+
+    return points
+
+
+class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
+    """Handler for latency-throughput uncertainty plots."""
+
+    def can_handle(self, spec: PlotSpec, data: pd.DataFrame) -> bool:
+        """Check if required metric columns exist in the DataFrame."""
+        for metric in spec.metrics:
+            if metric.name not in data.columns and metric.name != "concurrency":
+                return False
+        return True
+
+    def create_plot(
+        self, spec: PlotSpec, data: pd.DataFrame, available_metrics: dict
+    ) -> go.Figure:
+        """Build LatencyThroughputUncertaintyData from DataFrame and delegate to PlotGenerator."""
+        from aiperf.plot.models.uncertainty import (
+            LatencyThroughputUncertaintyData,
+            UncertaintySeries,
+        )
+
+        x_metric = next(m for m in spec.metrics if m.axis == "x")
+        y_metric = next(m for m in spec.metrics if m.axis == "y")
+
+        ci_level = spec.ci_level
+        if ci_level not in {0.90, 0.95, 0.99}:
+            ci_level = 0.95
+
+        # Series-level grouping (e.g., model or request_count)
+        series_col = spec.group_by
+        if isinstance(series_col, list):
+            series_col = series_col[0] if series_col else None
+
+        # Point-level grouping (operating points within each series)
+        point_col = "concurrency" if "concurrency" in data.columns else None
+
+        # Build series
+        series_list: list[UncertaintySeries] = []
+        if series_col and series_col in data.columns and series_col != point_col:
+            for series_val in sorted(data[series_col].dropna().unique(), key=str):
+                series_df = data[data[series_col] == series_val]
+                points = _build_uncertainty_points(
+                    series_df,
+                    x_metric.name,
+                    y_metric.name,
+                    group_col=point_col,
+                    label_col=spec.label_by,
+                    ci_level=ci_level,
+                )
+                if points:
+                    series_name = f"{series_col} = {series_val}"
+                    series_list.append(
+                        UncertaintySeries(
+                            name=series_name,
+                            points=points,
+                        )
+                    )
+        else:
+            # Single series — group by concurrency for operating points
+            points = _build_uncertainty_points(
+                data,
+                x_metric.name,
+                y_metric.name,
+                group_col=point_col or series_col,
+                label_col=spec.label_by,
+                ci_level=ci_level,
+            )
+            if points:
+                series_list.append(UncertaintySeries(name="Mean", points=points))
+
+        uncertainty_data = LatencyThroughputUncertaintyData(
+            series=series_list,
+            confidence_level=ci_level,
+            title=spec.title,
+            x_label=self._get_metric_label(
+                x_metric.name, x_metric.stat or DEFAULT_PERCENTILE, available_metrics
+            ),
+            y_label=self._get_metric_label(
+                y_metric.name, y_metric.stat or "avg", available_metrics
+            ),
+            group_by=series_col,
+        )
+
+        return self.plot_generator.create_uncertainty_plot(uncertainty_data)

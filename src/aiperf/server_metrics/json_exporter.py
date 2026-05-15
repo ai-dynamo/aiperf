@@ -15,6 +15,7 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsEndpointInfo,
     ServerMetricsExportData,
     ServerMetricsSummary,
+    UnknownMetricData,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
@@ -143,7 +144,10 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
     ) -> tuple[
         dict[
             str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
+            GaugeMetricData
+            | CounterMetricData
+            | HistogramMetricData
+            | UnknownMetricData,
         ],
         dict[str, ServerMetricsEndpointInfo] | None,
     ]:
@@ -177,7 +181,10 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
 
         metrics: dict[
             str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
+            GaugeMetricData
+            | CounterMetricData
+            | HistogramMetricData
+            | UnknownMetricData,
         ] = {}
         endpoint_info: dict[str, ServerMetricsEndpointInfo] = {}
 
@@ -197,6 +204,8 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
                     match metric_data.type:
                         case PrometheusMetricType.GAUGE:
                             metric_class = GaugeMetricData
+                        case PrometheusMetricType.UNKNOWN:
+                            metric_class = UnknownMetricData
                         case PrometheusMetricType.COUNTER:
                             metric_class = CounterMetricData
                         case PrometheusMetricType.HISTOGRAM:

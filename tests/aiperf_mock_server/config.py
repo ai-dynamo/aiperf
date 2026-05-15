@@ -219,6 +219,50 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--no-tokenizer"),
     ] = False
 
+    # /v1/models Options (used by readiness-probe tests)
+    default_model: Annotated[
+        str,
+        Field(
+            description="Model id returned by GET /v1/models once the models "
+            "endpoint is 'ready'. Independent of which model names appear in "
+            "individual inference requests (those are echoed back as-is)."
+        ),
+        Parameter(name="--default-model"),
+    ] = "mock-model"
+
+    models_ready_delay_seconds: Annotated[
+        float,
+        Field(
+            description="Seconds after server start during which GET /v1/models "
+            "returns an empty data list. Simulates a model server that's up "
+            "but hasn't finished loading weights.",
+            ge=0.0,
+        ),
+        Parameter(name="--models-ready-delay-seconds"),
+    ] = 0.0
+
+    disable_models_endpoint: Annotated[
+        bool,
+        Field(
+            description="If set, GET /v1/models returns 404. Used to exercise "
+            "the readiness-probe fallback to a plain base-URL GET."
+        ),
+        Parameter(name="--disable-models-endpoint"),
+    ] = False
+
+    inference_ready_delay_seconds: Annotated[
+        float,
+        Field(
+            description="Seconds after server start during which the inference "
+            "endpoints (/v1/chat/completions, /v1/completions, /v1/embeddings) "
+            "return HTTP 503. Simulates a stack that's up on the frontend but "
+            "whose workers haven't loaded weights yet. Used to exercise the "
+            "inference-mode readiness probe's retry loop.",
+            ge=0.0,
+        ),
+        Parameter(name="--inference-ready-delay-seconds"),
+    ] = 0.0
+
 
 server_config: MockServerConfig = MockServerConfig()
 

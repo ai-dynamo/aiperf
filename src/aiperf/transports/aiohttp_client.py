@@ -27,6 +27,26 @@ if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
 
 
+def _expected_request_body_size(data: Any) -> int | None:
+    """Return the byte length of an HTTP request body, or None if unknown.
+
+    The aiohttp trace callback uses this to fire ``on_request_sent`` once
+    ``bytes_sent`` reaches the expected total. For multipart bodies (image_edit,
+    video_generation) the size is not directly len-able, so we serialize the
+    FormData payload once and read its computed size.
+    """
+    if isinstance(data, bytes):
+        return len(data)
+    if isinstance(data, aiohttp.FormData):
+        # TODO: compute size analytically from `data._fields` to avoid the
+        # extra MultipartWriter materialization that session.request() will do.
+        try:
+            return data().size
+        except (ValueError, TypeError, AttributeError):
+            return None
+    return None
+
+
 class AioHttpClient(AIPerfLoggerMixin):
     """A high-performance HTTP client for communicating with HTTP based REST APIs using aiohttp.
 
@@ -58,6 +78,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         method: str,
         url: str,
         headers: dict[str, str],
+        *,
         data: bytes | aiohttp.FormData | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
@@ -96,9 +117,11 @@ class AioHttpClient(AIPerfLoggerMixin):
             trace_data=trace_data,
         )
 
-        # Create trace config for comprehensive timing
-        # Pass expected body size for chunk-based completion detection
-        expected_request_body_size = len(data) if isinstance(data, bytes) else None
+        # Create trace config for comprehensive timing.
+        # The trace fires `on_request_sent` once `bytes_sent` reaches this size, so
+        # the cancellation timer can start. Without it, multipart bodies wait until
+        # the send-timeout safety net and surface as RequestSendTimeout.
+        expected_request_body_size = _expected_request_body_size(data)
         collect_chunks = self.collect_trace_chunks
         trace_config = create_aiohttp_trace_config(
             record.trace_data,
@@ -126,7 +149,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                 trace_configs=[trace_config],
                 trust_env=AioHttpDefaults.TRUST_ENV,
             ) as session:
+                # Re-pair start_perf_ns with timestamp_ns at the same instant: the Pydantic
+                # default_factory fired at record construction (above), but session setup
+                # has now moved start_perf_ns forward, so timestamp_ns needs the same shift
+                # to keep the (wall, perf) pairing used by compute_time_ns.
                 record.start_perf_ns = time.perf_counter_ns()
+                record.timestamp_ns = time.time_ns()
                 async with session.request(
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
@@ -329,6 +357,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         payload: bytes | aiohttp.FormData,
         headers: dict[str, str],
         cancel_after_ns: int,
+        *,
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,

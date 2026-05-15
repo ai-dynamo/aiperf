@@ -9,7 +9,10 @@ __pycache__/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.pre-commit-cache/
 .mypy_cache/
+.hypothesis/
+.kiro/
 .env
 .env.*
 *.log
@@ -21,6 +24,7 @@ profile.json
 profile.html
 .vscode
 *.jsonl
+!tests/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/
 coverage.json
@@ -28,10 +32,20 @@ coverage.json
 # Generated plugin stubs (not committed, regenerate with: make generate-plugin-enums)
 src/aiperf/plugin/enums.pyi
 
-# Claude Code - ignore user settings, keep agent and skill configs
+# Generated at wheel-build time by the nightly CI pipeline; never committed.
+src/aiperf/_build_info.py
+
+# Agent Skills (open standard, agentskills.io)
+.agents/*
+!.agents/skills/
+
+# Claude Code - ignore user settings, keep agents and the skills symlink
 .claude/*
 !.claude/agents/
-!.claude/skills/
+!.claude/skills
+
+# Codex - ignore user settings
+.codex/*
 
 # Cursor - ignore user settings
 .cursor/*

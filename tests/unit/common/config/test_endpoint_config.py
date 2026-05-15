@@ -134,3 +134,216 @@ class TestMultiURLSupport:
         """URLs list must have at least one entry."""
         with pytest.raises(ValueError):
             EndpointConfig(model_names=["gpt2"], urls=[])
+
+
+class TestURLSchemeNormalization:
+    """Regression tests for the readiness-probe scheme normalization bug.
+
+    Previously, a URL like ``localhost:8000`` worked for benchmark requests
+    (transport prepended ``http://``) but broke the readiness probe path,
+    which passed the raw URL to aiohttp and got NonHttpUrlClientError.
+    The fix centralizes scheme normalization in EndpointConfig so every
+    consumer receives a well-formed URL.
+    """
+
+    def test_bare_host_port_gets_http_prepended(self):
+        """`localhost:8000` should normalize to `http://localhost:8000`."""
+        config = EndpointConfig(model_names=["gpt2"], urls=["localhost:8000"])
+        assert config.urls == ["http://localhost:8000"]
+        assert config.url == "http://localhost:8000"
+
+    def test_existing_http_url_unchanged(self):
+        config = EndpointConfig(model_names=["gpt2"], urls=["http://localhost:8000"])
+        assert config.urls == ["http://localhost:8000"]
+
+    def test_existing_https_url_unchanged(self):
+        config = EndpointConfig(model_names=["gpt2"], urls=["https://example.com:8443"])
+        assert config.urls == ["https://example.com:8443"]
+
+    def test_mixed_list_normalized_per_element(self):
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            urls=["server1:8000", "https://server2:8443", "server3"],
+        )
+        assert config.urls == [
+            "http://server1:8000",
+            "https://server2:8443",
+            "http://server3",
+        ]
+
+    def test_default_url_is_normalized(self):
+        """The default `EndpointDefaults.URL` is scheme-less; with
+        `validate_default=True` the AfterValidator runs on it too, so a
+        config built without `--url` (e.g. just `--wait-for-model-timeout 30`)
+        still yields a well-formed URL.
+        """
+        config = EndpointConfig(model_names=["gpt2"])  # no urls= argument
+        assert all(u.startswith(("http://", "https://")) for u in config.urls), (
+            f"Default URLs were not normalized: {config.urls}"
+        )
+
+    def test_uppercase_scheme_not_corrupted(self):
+        """Pre-existing schemes are preserved regardless of case (no
+        ``http://`` is prepended to ``HTTP://host``)."""
+        config = EndpointConfig(model_names=["gpt2"], urls=["HTTP://host:8000"])
+        assert config.urls == ["HTTP://host:8000"]
+
+    def test_non_http_scheme_not_corrupted(self):
+        """A non-http(s) scheme is left alone — the validator should not
+        produce ``http://ftp://host``. aiohttp will reject it downstream,
+        which is the correct error behavior."""
+        config = EndpointConfig(model_names=["gpt2"], urls=["ftp://host:21"])
+        assert config.urls == ["ftp://host:21"]
+
+
+class TestWaitForModelValidation:
+    """Tests for the readiness-probe flag coherence + bounds validation.
+
+    The probe is enabled by setting --wait-for-model-timeout to a positive
+    value. Dependent flags (--wait-for-model-interval, --wait-for-model-mode)
+    have no effect when disabled and should be rejected if set alone, so
+    typos like `--wait-for-model-interval 1` (without a timeout) fail fast.
+    """
+
+    def test_default_probe_disabled(self):
+        """With no probe flags set, the probe is disabled (timeout == 0)."""
+        config = EndpointConfig(model_names=["gpt2"])
+        assert config.wait_for_model_timeout == 0.0
+
+    def test_setting_timeout_enables_probe(self):
+        """Setting --wait-for-model-timeout to a positive value is the
+        one-and-only way to enable the probe."""
+        config = EndpointConfig(model_names=["gpt2"], wait_for_model_timeout=60.0)
+        assert config.wait_for_model_timeout == 60.0
+
+    def test_interval_without_timeout_rejected(self):
+        """Setting --wait-for-model-interval without a positive timeout is
+        incoherent (the interval will never be consulted)."""
+        with pytest.raises(ValueError, match="wait-for-model-interval"):
+            EndpointConfig(model_names=["gpt2"], wait_for_model_interval=1.0)
+
+    def test_mode_without_timeout_rejected(self):
+        """Setting --wait-for-model-mode without a positive timeout is
+        incoherent (the mode will never be consulted)."""
+        with pytest.raises(ValueError, match="wait-for-model-mode"):
+            EndpointConfig(model_names=["gpt2"], wait_for_model_mode="inference")
+
+    def test_interval_with_timeout_accepted(self):
+        """With a positive timeout, interval can be customized freely."""
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            wait_for_model_timeout=60.0,
+            wait_for_model_interval=2.5,
+        )
+        assert config.wait_for_model_interval == 2.5
+
+    def test_mode_with_timeout_accepted(self):
+        """With a positive timeout, mode can be customized freely."""
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            wait_for_model_timeout=60.0,
+            wait_for_model_mode="both",
+        )
+        assert config.wait_for_model_mode == "both"
+
+    def test_negative_timeout_rejected(self):
+        """Negative timeout is nonsensical and rejected by ge=0.0 validator."""
+        with pytest.raises(ValueError):
+            EndpointConfig(model_names=["gpt2"], wait_for_model_timeout=-1.0)
+
+    def test_zero_interval_rejected(self):
+        """Zero interval would create a tight retry loop; rejected by gt=0.0
+        validator (this fires even when paired with a positive timeout)."""
+        with pytest.raises(ValueError):
+            EndpointConfig(
+                model_names=["gpt2"],
+                wait_for_model_timeout=60.0,
+                wait_for_model_interval=0.0,
+            )
+
+    def test_invalid_mode_rejected(self):
+        """Mode is a Literal; unknown values rejected by pydantic."""
+        with pytest.raises(ValueError):
+            EndpointConfig(
+                model_names=["gpt2"],
+                wait_for_model_timeout=60.0,
+                wait_for_model_mode="something-else",  # type: ignore[arg-type]
+            )
+
+
+class TestRequestContentTypeAutoDefault:
+    """Auto-default request_content_type for endpoints declaring requires_form_data."""
+
+    def test_image_edit_defaults_to_multipart(self):
+        """image_edit endpoint metadata.requires_form_data is True -> multipart default."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["black-forest-labs/FLUX.2-klein-4B"],
+            type=EndpointType.IMAGE_EDIT,
+        )
+        assert config.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_video_generation_defaults_to_multipart(self):
+        """Same auto-default applies to other requires_form_data endpoints."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["any"],
+            type=EndpointType.VIDEO_GENERATION,
+        )
+        assert config.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_chat_endpoint_keeps_default_none(self):
+        """JSON-only endpoints (requires_form_data=False) stay at None."""
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            type=EndpointType.CHAT,
+        )
+        assert config.request_content_type is None
+
+    def test_explicit_json_on_multipart_endpoint_rejected(self):
+        """application/json must not silently bypass multipart on requires_form_data endpoints."""
+        from aiperf.common.enums import RequestContentType
+
+        with pytest.raises(ValueError, match="requires multipart/form-data"):
+            EndpointConfig(
+                model_names=["any"],
+                type=EndpointType.IMAGE_EDIT,
+                request_content_type=RequestContentType.APPLICATION_JSON,
+            )
+
+    def test_explicit_multipart_on_chat_rejected(self):
+        """Explicit multipart on a JSON-only endpoint still raises."""
+        from aiperf.common.enums import RequestContentType
+
+        with pytest.raises(ValueError, match="does not support it"):
+            EndpointConfig(
+                model_names=["gpt2"],
+                type=EndpointType.CHAT,
+                request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+            )
+
+    def test_explicit_json_on_chat_passes_through(self):
+        """Explicit application/json on a JSON-native endpoint is preserved as-is."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            type=EndpointType.CHAT,
+            request_content_type=RequestContentType.APPLICATION_JSON,
+        )
+        assert config.request_content_type == RequestContentType.APPLICATION_JSON
+
+    def test_explicit_multipart_on_image_edit_passes_through(self):
+        """Explicit multipart on a requires_form_data endpoint is accepted as-is
+        (the auto-default branch is bypassed when the user already set the value).
+        """
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["any"],
+            type=EndpointType.IMAGE_EDIT,
+            request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+        )
+        assert config.request_content_type == RequestContentType.MULTIPART_FORM_DATA
