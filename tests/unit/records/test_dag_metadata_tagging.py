@@ -237,6 +237,7 @@ class TestRecordsManagerOnCreditPhaseComplete:
     async def test_stores_branch_stats_when_present(self):
         mgr = MagicMock(spec=RecordsManager)
         mgr._phase_branch_stats = {}
+        mgr._complete_credit_phases = set()
         mgr._records_tracker = MagicMock()
         mgr._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
 
@@ -258,6 +259,7 @@ class TestRecordsManagerOnCreditPhaseComplete:
     async def test_no_op_when_branch_stats_absent(self):
         mgr = MagicMock(spec=RecordsManager)
         mgr._phase_branch_stats = {}
+        mgr._complete_credit_phases = set()
         mgr._records_tracker = MagicMock()
         mgr._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
 
