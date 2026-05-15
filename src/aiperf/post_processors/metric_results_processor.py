@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
+
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import (
     MetricDictValueTypeT,
@@ -175,12 +177,16 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Compute metric results, filter internal/experimental, and convert to display units
         results = [
             to_display_unit(
-                self._create_metric_result(tag, values, results_source=self._results),
+                self._create_metric_result(tag, values),
                 MetricRegistry,
             )
             for tag, values in self._results.items()
             if self._should_include_in_summary(tag)
         ]
+        results.extend(
+            to_display_unit(result, MetricRegistry)
+            for result in self._create_adjusted_metric_results(self._results)
+        )
         self.debug(lambda: f"Summarized {len(results)} metric results")
         return results
 
@@ -193,25 +199,16 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         self,
         tag: MetricTagT,
         values: MetricDictValueTypeT,
-        *,
-        results_source: MetricResultsDict | None = None,
     ) -> MetricResult:
         """Create a MetricResult from a the current values of a metric."""
 
         metric_class = self._instances_map[tag]
-        src = results_source if results_source is not None else self._results
 
         if isinstance(values, MetricArray):
-            inflation = 0
-            if metric_class.has_flags(MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS):
-                raw_errors = src.get(ErrorRequestCountMetric.tag)
-                if raw_errors is not None and int(raw_errors) > 0:
-                    inflation = int(raw_errors)
             return values.to_result(
                 tag,
                 metric_class.header,
                 str(metric_class.unit),
-                percentile_inflation_failures=inflation,
             )
 
         if isinstance(values, int | float):
@@ -224,3 +221,54 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             )
 
         raise ValueError(f"Unexpected values type: {type(values)}")
+
+    def _create_adjusted_metric_results(
+        self,
+        results_source: MetricResultsDict,
+    ) -> list[MetricResult]:
+        """Create adjusted latency distributions with failed requests as +inf."""
+        failed_request_count = self._failed_request_count(results_source)
+        if failed_request_count <= 0:
+            return []
+
+        adjusted_results: list[MetricResult] = []
+        for source_tag in self._adjusted_percentile_source_tags():
+            adjusted_tag = f"adj_{source_tag}"
+            adjusted_metric_class = MetricRegistry.get_class(adjusted_tag)
+            source_values = results_source.get(source_tag)
+
+            if source_values is not None and not isinstance(source_values, MetricArray):
+                continue
+
+            values = (
+                source_values.data
+                if isinstance(source_values, MetricArray)
+                else np.array([], dtype=np.float64)
+            )
+            adjusted_results.append(
+                MetricArray.adjusted_result_from_values(
+                    adjusted_tag,
+                    adjusted_metric_class.header,
+                    str(adjusted_metric_class.unit),
+                    values,
+                    failed_request_count,
+                )
+            )
+
+        return adjusted_results
+
+    def _failed_request_count(self, results_source: MetricResultsDict) -> int:
+        """Return failed request count, treating a missing error metric as zero."""
+        raw_errors = results_source.get(ErrorRequestCountMetric.tag, 0) or 0
+        return int(raw_errors)
+
+    def _adjusted_percentile_source_tags(self) -> list[MetricTagT]:
+        """Return source record metrics that should emit adjusted distributions."""
+        required_flags, disallowed_flags = self.get_filters()
+        required_flags |= MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
+        disallowed_flags |= MetricFlags.SYNTHETIC
+        return MetricRegistry.tags_applicable_to(
+            required_flags,
+            disallowed_flags,
+            MetricType.RECORD,
+        )

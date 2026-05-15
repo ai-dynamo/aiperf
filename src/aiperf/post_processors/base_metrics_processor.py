@@ -53,6 +53,10 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         if not Environment.DEV.MODE and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS:
             disallowed_flags |= MetricFlags.EXPERIMENTAL
 
+        # Synthetic metrics are emitted by summary/export post-processing, not by
+        # the normal record, aggregate, or derived metric pipelines.
+        disallowed_flags |= MetricFlags.SYNTHETIC
+
         # NOTE: We don't filter out INTERNAL metrics here, because they are often required for other metrics
 
         return required_flags, disallowed_flags

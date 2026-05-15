@@ -17,9 +17,11 @@ This document provides a comprehensive reference of all metrics available in AIP
 - [Detailed Metric Descriptions](#detailed-metric-descriptions)
   - [Streaming Metrics](#streaming-metrics)
     - [Time to First Token (TTFT)](#time-to-first-token-ttft)
+    - [Adjusted Time to First Token](#adjusted-time-to-first-token)
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
+    - [Adjusted Inter Token Latency](#adjusted-inter-token-latency)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
     - [Prefill Throughput Per User](#prefill-throughput-per-user)
@@ -67,9 +69,12 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Error Input Sequence Length](#total-error-input-sequence-length)
   - [General Metrics](#general-metrics)
     - [Request Latency](#request-latency)
+    - [Adjusted Request Latency](#adjusted-request-latency)
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
     - [Error Request Count](#error-request-count)
+    - [Completed Request Count](#completed-request-count)
+    - [Request Error Rate](#request-error-rate)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
@@ -177,6 +182,24 @@ ttft_seconds = ttft_ns / 1e9
 
 ---
 
+### Adjusted Time to First Token
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Reports the TTFT distribution after adding each failed request as an unbounded latency sample. The metric appears as `adj_time_to_first_token` and uses the same display unit as TTFT.
+
+**Formula:**
+```python
+adjusted_ttft_samples = successful_ttft_samples + [float("inf")] * error_request_count
+```
+
+**Notes:**
+- Percentiles are selected from real samples with nearest-value percentile semantics; they do not interpolate between finite values and `inf`.
+- A percentile value of `inf` means that percentile falls in the failed-request portion of the adjusted distribution.
+- Emitted only when failed requests are present.
+
+---
+
 ### Time to Second Token (TTST)
 
 **Type:** [Record Metric](#record-metrics)
@@ -243,6 +266,24 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 **Notes:**
 - Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
+
+---
+
+### Adjusted Inter Token Latency
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Reports the ITL distribution after adding each failed request as an unbounded latency sample. The metric appears as `adj_inter_token_latency` and uses the same display unit as ITL.
+
+**Formula:**
+```python
+adjusted_itl_samples = successful_itl_samples + [float("inf")] * error_request_count
+```
+
+**Notes:**
+- Percentiles are selected from real samples with nearest-value percentile semantics; they do not interpolate between finite values and `inf`.
+- A percentile value of `inf` means that percentile falls in the failed-request portion of the adjusted distribution.
+- Emitted only when failed requests are present.
 
 ---
 
@@ -970,6 +1011,26 @@ request_latency_ns = request.content_responses[-1].perf_ns - request.start_perf_
 
 ---
 
+### Adjusted Request Latency
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Reports the request latency distribution after adding each failed request as an unbounded latency sample. The metric appears as `adj_request_latency` and uses the same display unit as request latency.
+
+**Formula:**
+```python
+adjusted_request_latency_samples = (
+    successful_request_latency_samples + [float("inf")] * error_request_count
+)
+```
+
+**Notes:**
+- Percentiles are selected from real samples with nearest-value percentile semantics; they do not interpolate between finite values and `inf`.
+- A percentile value of `inf` means that percentile falls in the failed-request portion of the adjusted distribution.
+- Emitted only when failed requests are present, including all-error runs.
+
+---
+
 ### Request Throughput
 
 **Type:** [Derived Metric](#derived-metrics)
@@ -1013,6 +1074,42 @@ error_request_count = sum(1 for r in records if not r.valid)
 
 **Notes:**
 - Error rate can be computed as `error_request_count / (request_count + error_request_count)`.
+
+---
+
+### Completed Request Count
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The total number of completed benchmark requests, including both successful and failed requests. This metric appears as `completed_request_count`.
+
+**Formula:**
+```python
+completed_request_count = request_count + error_request_count
+```
+
+**Notes:**
+- Unlike `request_count`, this includes requests that completed with errors.
+- All-error runs report the number of failed requests instead of omitting the metric.
+
+---
+
+### Request Error Rate
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The percentage of completed requests that failed. This metric appears as `request_error_rate`.
+
+**Formula:**
+```python
+request_error_rate = 100.0 * error_request_count / (
+    request_count + error_request_count
+)
+```
+
+**Notes:**
+- Missing success or error counts are treated as zero.
+- All-error runs report `100.0`.
 
 ---
 

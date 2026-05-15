@@ -272,7 +272,7 @@ class TestHttpTraceConsoleExporter:
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | HTTP Trace Timing" in output
         # Metric column is narrow vs. many stat columns; names often truncate with "…"
-        assert "Bloc" in output  # HTTP Blocked
+        assert "Block" in output
         assert "DNS" in output and "Look" in output  # HTTP DNS Lookup
         assert "Conn" in output  # HTTP Connecting
         assert "Send" in output  # HTTP Sending
@@ -295,7 +295,7 @@ class TestHttpTraceConsoleExporter:
 
         output = capsys.readouterr().out
         # HTTP trace metrics should be present
-        assert "Bloc" in output
+        assert "Block" in output
         assert "Dura" in output and "conn" in output
         # Regular metrics should NOT be present
         assert "Time to First Token" not in output

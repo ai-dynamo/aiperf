@@ -24,6 +24,12 @@ class JsonMetricResult(AIPerfBaseModel):
     GenAI-Perf JSON output.
     """
 
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="allow",
+        ser_json_inf_nan="constants",
+    )
+
     unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
     avg: float | None = None
     p1: float | None = None
@@ -38,11 +44,6 @@ class JsonMetricResult(AIPerfBaseModel):
     min: int | float | None = None
     max: int | float | None = None
     std: float | None = None
-    # AIPerf extension: percentiles with failed requests modeled as unbounded latency.
-    adj_p50: float | None = None
-    adj_p90: float | None = None
-    adj_p95: float | None = None
-    adj_p99: float | None = None
 
 
 # =============================================================================
@@ -151,10 +152,30 @@ class JsonExportData(AIPerfBaseModel):
     )
     request_throughput: JsonMetricResult | None = None
     request_latency: JsonMetricResult | None = None
+    adj_request_latency: JsonMetricResult | None = Field(
+        default=None,
+        description="Request latency distribution with failed requests modeled as unbounded latency.",
+    )
     request_count: JsonMetricResult | None = None
+    completed_request_count: JsonMetricResult | None = Field(
+        default=None,
+        description="Total completed requests, including successful and failed requests.",
+    )
+    request_error_rate: JsonMetricResult | None = Field(
+        default=None,
+        description="Percentage of completed requests that failed.",
+    )
     time_to_first_token: JsonMetricResult | None = None
+    adj_time_to_first_token: JsonMetricResult | None = Field(
+        default=None,
+        description="TTFT distribution with failed requests modeled as unbounded latency.",
+    )
     time_to_second_token: JsonMetricResult | None = None
     inter_token_latency: JsonMetricResult | None = None
+    adj_inter_token_latency: JsonMetricResult | None = Field(
+        default=None,
+        description="ITL distribution with failed requests modeled as unbounded latency.",
+    )
     output_token_throughput: JsonMetricResult | None = None
     output_token_throughput_per_user: JsonMetricResult | None = None
     output_sequence_length: JsonMetricResult | None = None

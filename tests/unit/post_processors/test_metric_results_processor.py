@@ -3,15 +3,23 @@
 
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pytest
 
 from aiperf.common.config import UserConfig
+from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.types.adjusted_latency_metrics import AdjustedRequestLatencyMetric
+from aiperf.metrics.types.completed_request_count_metric import (
+    CompletedRequestCountMetric,
+)
 from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
+from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
+from aiperf.metrics.types.request_error_rate_metric import RequestErrorRateMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
@@ -243,8 +251,45 @@ class TestMetricResultsProcessor:
             RequestLatencyMetric.tag,
             RequestLatencyMetric.header,
             str(RequestLatencyMetric.unit),
-            percentile_inflation_failures=0,
         )
+
+    @pytest.mark.asyncio
+    async def test_summarize_adds_adjusted_metric_for_failures(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        """Adjusted metric percentiles use nearest-value failures as +inf."""
+        processor = MetricResultsProcessor(mock_user_config)
+        latencies = MetricArray()
+        latencies.extend([100.0 * NANOS_PER_MILLIS] * 9)
+        processor._results[RequestLatencyMetric.tag] = latencies
+        processor._results[ErrorRequestCountMetric.tag] = 1
+
+        results = {result.tag: result for result in await processor.summarize()}
+
+        adjusted = results[AdjustedRequestLatencyMetric.tag]
+        assert adjusted.count == 10
+        assert adjusted.p90 == 100.0
+        assert np.isinf(adjusted.p95)
+        assert np.isinf(adjusted.p99)
+        assert not np.isnan(adjusted.p95)
+        assert not np.isnan(adjusted.p99)
+
+    @pytest.mark.asyncio
+    async def test_summarize_reports_all_error_runs(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        """All-error runs still report completion count, error rate, and adjusted latency."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._results[ErrorRequestCountMetric.tag] = 3
+
+        results = {result.tag: result for result in await processor.summarize()}
+
+        assert results[CompletedRequestCountMetric.tag].avg == 3
+        assert results[RequestErrorRateMetric.tag].avg == 100.0
+        adjusted = results[AdjustedRequestLatencyMetric.tag]
+        assert adjusted.count == 3
+        assert np.isinf(adjusted.p50)
+        assert np.isinf(adjusted.p99)
 
     def test_create_metric_result_invalid_type(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig

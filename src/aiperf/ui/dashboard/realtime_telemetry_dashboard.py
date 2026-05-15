@@ -46,8 +46,6 @@ class GPUMetricsTable(Widget):
         "p99",
         "p90",
         "p50",
-        "adj_p95",
-        "adj_p99",
         "std",
     ]
     COLUMNS = ["Metric", *STATS_FIELDS]
@@ -149,7 +147,7 @@ class GPUMetricsTable(Widget):
             ],
         ]
 
-    def _format_value(self, value) -> Text:
+    def _format_value(self, value: int | float | str | None) -> Text:
         """Format a metric value for display (matches console exporter format)."""
         if value is None:
             return Text("N/A", justify="right", style="dim")

@@ -12,9 +12,9 @@ from aiperf.metrics.types.request_count_metric import RequestCountMetric
 class RequestErrorRateMetric(BaseDerivedMetric[float]):
     """Percentage of completed requests that ended in error.
 
-    Uses :class:`ErrorRequestCountMetric` and :class:`CompletedRequestCountMetric`
-    so latency percentiles (computed on successes only) can be read alongside
-    the operational error rate.
+    Uses :class:`RequestCountMetric` for successful requests and
+    :class:`ErrorRequestCountMetric` for failed requests. Missing success or
+    error counts are treated as zero so all-error runs can report 100%.
     """
 
     tag = "request_error_rate"
@@ -24,12 +24,12 @@ class RequestErrorRateMetric(BaseDerivedMetric[float]):
     unit = GenericMetricUnit.PERCENT
     display_order = 1080
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS
-    required_metrics = {
-        RequestCountMetric.tag,
-    }
+    # Either count can be absent in all-success or all-error runs, so treat both
+    # as optional and let _derive_value decide whether there is enough data.
+    required_metrics = None
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
-        successes = int(metric_results.get_or_raise(RequestCountMetric))
+        successes = int(metric_results.get(RequestCountMetric.tag, 0) or 0)
         errors = int(metric_results.get(ErrorRequestCountMetric.tag, 0) or 0)
         total = successes + errors
         if total <= 0:

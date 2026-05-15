@@ -24,8 +24,6 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         "p99",
         "p90",
         "p50",
-        "adj_p95",
-        "adj_p99",
         "std",
     ]
 

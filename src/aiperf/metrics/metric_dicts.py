@@ -185,34 +185,12 @@ class MetricArray(Generic[MetricValueTypeVarT]):
         """Return number of elements."""
         return len(self._array)
 
-    def to_result(
-        self,
-        tag: MetricTagT,
-        header: str,
-        unit: str,
-        *,
-        percentile_inflation_failures: int = 0,
-    ) -> MetricResult:
-        """Compute metric stats with zero-copy.
-
-        Args:
-            percentile_inflation_failures: When > 0, append this many ``+inf`` samples before
-                computing ``adj_*`` percentiles (failed requests as unbounded latency).
-        """
-
+    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
+        """Compute metric stats with zero-copy."""
         arr = self.data
         p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
             arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
-        adj_p50 = adj_p90 = adj_p95 = adj_p99 = None
-        if percentile_inflation_failures > 0:
-            inflated = np.concatenate(
-                [arr, np.full(percentile_inflation_failures, np.inf, dtype=np.float64)]
-            )
-            adj_p50, adj_p90, adj_p95, adj_p99 = np.percentile(
-                inflated, [50, 90, 95, 99]
-            )
-
         return MetricResult(
             tag=tag,
             header=header,
@@ -232,8 +210,142 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             p95=p95,
             p99=p99,
             count=len(self._array),
-            adj_p50=adj_p50,
-            adj_p90=adj_p90,
-            adj_p95=adj_p95,
-            adj_p99=adj_p99,
+        )
+
+    def to_adjusted_result(
+        self,
+        tag: MetricTagT,
+        header: str,
+        unit: str,
+        failed_request_count: int,
+    ) -> MetricResult:
+        """Compute stats over successes plus failed requests as unbounded latency."""
+        return self.adjusted_result_from_values(
+            tag,
+            header,
+            unit,
+            self.data,
+            failed_request_count,
+        )
+
+    @staticmethod
+    def adjusted_result_from_values(
+        tag: MetricTagT,
+        header: str,
+        unit: str,
+        values: np.ndarray,
+        failed_request_count: int,
+    ) -> MetricResult:
+        """Create an adjusted distribution without materializing +inf samples."""
+        if failed_request_count < 0:
+            raise ValueError("failed_request_count must be non-negative")
+
+        success_count = len(values)
+        total_count = success_count + failed_request_count
+        if total_count <= 0:
+            raise IndexError("cannot compute adjusted result with no samples")
+
+        p1, p5, p10, p25, p50, p75, p90, p95, p99 = (
+            MetricArray._nearest_percentiles_with_failures(
+                values,
+                failed_request_count,
+                [1, 5, 10, 25, 50, 75, 90, 95, 99],
+            )
+        )
+
+        if failed_request_count > 0:
+            unbounded_value = float("inf")
+            return MetricResult(
+                tag=tag,
+                header=header,
+                unit=unit,
+                min=float(np.min(values)) if success_count > 0 else unbounded_value,
+                max=unbounded_value,
+                avg=unbounded_value,
+                sum=unbounded_value,
+                std=unbounded_value,
+                p1=p1,
+                p5=p5,
+                p10=p10,
+                p25=p25,
+                p50=p50,
+                p75=p75,
+                p90=p90,
+                p95=p95,
+                p99=p99,
+                count=total_count,
+            )
+
+        return MetricArray._finite_adjusted_result(
+            tag,
+            header,
+            unit,
+            values,
+            p1,
+            p5,
+            p10,
+            p25,
+            p50,
+            p75,
+            p90,
+            p95,
+            p99,
+        )
+
+    @staticmethod
+    def _nearest_percentiles_with_failures(
+        values: np.ndarray,
+        failed_request_count: int,
+        percentiles: list[int],
+    ) -> list[float]:
+        """Compute nearest-value percentiles with failures ordered after successes."""
+        success_count = len(values)
+        total_count = success_count + failed_request_count
+        results: list[float] = []
+
+        for percentile in percentiles:
+            index = int(np.round((total_count - 1) * (percentile / 100.0)))
+            if index >= success_count:
+                results.append(float("inf"))
+            else:
+                results.append(float(np.partition(values, index)[index]))
+
+        return results
+
+    @staticmethod
+    def _finite_adjusted_result(
+        tag: MetricTagT,
+        header: str,
+        unit: str,
+        values: np.ndarray,
+        p1: float,
+        p5: float,
+        p10: float,
+        p25: float,
+        p50: float,
+        p75: float,
+        p90: float,
+        p95: float,
+        p99: float,
+    ) -> MetricResult:
+        """Build a normal finite adjusted result when no failures are present."""
+        return MetricResult(
+            tag=tag,
+            header=header,
+            unit=unit,
+            min=float(np.min(values)),
+            max=float(np.max(values)),
+            avg=float(np.mean(values)),
+            sum=float(np.sum(values)),
+            std=float(np.std(values)),
+            p1=p1,
+            p5=p5,
+            p10=p10,
+            p25=p25,
+            p50=p50,
+            p75=p75,
+            p90=p90,
+            p95=p95,
+            p99=p99,
+            count=len(values),
         )

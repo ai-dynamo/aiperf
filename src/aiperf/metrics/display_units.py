@@ -4,7 +4,7 @@
 import math
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.constants import ADJ_PERCENTILE_STAT_KEYS, STAT_KEYS
+from aiperf.common.constants import STAT_KEYS
 from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.models import MetricResult
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -31,11 +31,12 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
     record = result.model_copy(deep=True)
     record.unit = display_unit.value
 
-    for stat in (*STAT_KEYS, *ADJ_PERCENTILE_STAT_KEYS):
+    for stat in STAT_KEYS:
         val = getattr(record, stat, None)
         if val is None:
             continue
-        # Only convert numeric values
+        # Only finite numeric values need conversion. Unbounded adjusted latency
+        # values remain +inf in every time unit.
         if isinstance(val, int | float) and math.isfinite(val):
             try:
                 new_value = metric_cls.unit.convert_to(display_unit, val)

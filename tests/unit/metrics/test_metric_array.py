@@ -110,6 +110,40 @@ class TestMetricArray:
         assert result.p50 == p50
         assert result.count == len(values)
 
+    def test_to_adjusted_result_uses_nearest_value_for_failures(self) -> None:
+        """Adjusted percentiles return real samples or +inf, never interpolated NaN."""
+        array = MetricArray()
+        array.extend([100.0] * 9)
+
+        result = array.to_adjusted_result(
+            "adj_test",
+            "Adjusted Test",
+            "ms",
+            failed_request_count=1,
+        )
+
+        assert result.count == 10
+        assert result.p90 == 100.0
+        assert np.isinf(result.p95)
+        assert np.isinf(result.p99)
+        assert not np.isnan(result.p95)
+        assert not np.isnan(result.p99)
+
+    def test_adjusted_result_handles_all_error_distribution(self) -> None:
+        """All-error runs should still report unbounded adjusted percentiles."""
+        result = MetricArray.adjusted_result_from_values(
+            "adj_test",
+            "Adjusted Test",
+            "ms",
+            np.array([], dtype=np.float64),
+            failed_request_count=3,
+        )
+
+        assert result.count == 3
+        assert np.isinf(result.avg)
+        assert np.isinf(result.p50)
+        assert np.isinf(result.p99)
+
 
 class TestMetricArrayEdgeCases:
     """Test edge cases for MetricArray."""

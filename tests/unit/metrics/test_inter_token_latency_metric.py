@@ -17,7 +17,7 @@ from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeli
 
 
 class TestInterTokenLatencyMetric:
-    def test_adjusted_percentiles_include_failed_requests(self):
+    def test_adjusted_percentiles_include_failed_requests(self) -> None:
         """#688: ITL gets adj_* percentiles like request_latency and TTFT."""
         assert InterTokenLatencyMetric.has_flags(
             MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS

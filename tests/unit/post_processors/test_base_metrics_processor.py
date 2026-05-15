@@ -84,6 +84,7 @@ class TestBaseMetricsProcessor:
             assert not (disallowed_flags & supported_flag), (
                 f"Expected supported flag {supported_flag} should not be disallowed"
             )
+        assert disallowed_flags & MetricFlags.SYNTHETIC
 
     def test_setup_metrics_basic(
         self,
@@ -112,6 +113,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
             | MetricFlags.EXPERIMENTAL
+            | MetricFlags.SYNTHETIC
         )
 
         # Verify registry calls
@@ -196,7 +198,7 @@ class TestBaseMetricsProcessor:
 
         mock_metric_registry.tags_applicable_to.assert_called_once_with(
             expected_required,
-            expected_disallowed | MetricFlags.EXPERIMENTAL,
+            expected_disallowed | MetricFlags.EXPERIMENTAL | MetricFlags.SYNTHETIC,
             MetricType.RECORD,
         )
 
@@ -239,7 +241,8 @@ class TestBaseMetricsProcessor:
             | MetricFlags.PRODUCES_VIDEO_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
-            | MetricFlags.EXPERIMENTAL,
+            | MetricFlags.EXPERIMENTAL
+            | MetricFlags.SYNTHETIC,
             MetricType.RECORD,
             MetricType.AGGREGATE,
             MetricType.DERIVED,

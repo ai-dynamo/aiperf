@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import math
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -37,7 +38,32 @@ def sample_records():
             p95=None,
             p99=149.0,
             std=10.0,
-        )
+        ),
+        MetricResult(
+            tag="adj_request_latency",
+            header="Adjusted Request Latency",
+            unit="ms",
+            avg=float("inf"),
+            min=100.0,
+            max=float("inf"),
+            p50=100.0,
+            p90=100.0,
+            p95=float("inf"),
+            p99=float("inf"),
+            std=float("inf"),
+        ),
+        MetricResult(
+            tag="completed_request_count",
+            header="Completed Requests (Success + Error)",
+            unit="requests",
+            avg=10.0,
+        ),
+        MetricResult(
+            tag="request_error_rate",
+            header="Request Error Rate",
+            unit="%",
+            avg=10.0,
+        ),
     ]
 
 
@@ -109,6 +135,13 @@ class TestMetricsJsonExporter:
             assert data.time_to_first_token.unit == "ms"
             assert data.time_to_first_token.avg == 123.0
             assert data.time_to_first_token.p1 == 101.0
+            assert data.adj_request_latency is not None
+            assert math.isinf(data.adj_request_latency.p95)
+            assert math.isinf(data.adj_request_latency.p99)
+            assert data.completed_request_count is not None
+            assert data.completed_request_count.avg == 10.0
+            assert data.request_error_rate is not None
+            assert data.request_error_rate.avg == 10.0
 
             assert data.input_config is not None
             assert isinstance(data.input_config, UserConfig)

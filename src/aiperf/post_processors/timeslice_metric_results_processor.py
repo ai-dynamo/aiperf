@@ -110,14 +110,16 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
             slice_results = self._timeslice_results[timeslice_index]
             metric_results = [
                 to_display_unit(
-                    self._create_metric_result(
-                        tag, values, results_source=slice_results
-                    ),
+                    self._create_metric_result(tag, values),
                     MetricRegistry,
                 )
                 for tag, values in slice_results.items()
                 if self._should_include_in_summary(tag)
             ]
+            metric_results.extend(
+                to_display_unit(result, MetricRegistry)
+                for result in self._create_adjusted_metric_results(slice_results)
+            )
             timeslice_metric_results[counter] = metric_results
 
         self.info(

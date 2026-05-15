@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -22,11 +23,13 @@ class CompletedRequestCountMetric(BaseDerivedMetric[int]):
     unit = GenericMetricUnit.REQUESTS
     display_order = 1075
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS
-    required_metrics = {
-        RequestCountMetric.tag,
-    }
+    # Either count can be absent in all-success or all-error runs, so treat both
+    # as optional and let _derive_value decide whether there is enough data.
+    required_metrics = None
 
     def _derive_value(self, metric_results: MetricResultsDict) -> int:
-        successes = int(metric_results.get_or_raise(RequestCountMetric))
+        successes = int(metric_results.get(RequestCountMetric.tag, 0) or 0)
         errors = int(metric_results.get(ErrorRequestCountMetric.tag, 0) or 0)
+        if successes + errors <= 0:
+            raise NoMetricValue("No completed requests")
         return successes + errors
