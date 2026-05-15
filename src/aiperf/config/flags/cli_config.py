@@ -779,6 +779,24 @@ class CLIConfig(BaseConfig):
         ),
     ] = 1.0
 
+    inter_turn_delay_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Clamp per-turn replay delays (read from JSONL trace "
+            "files) to at most this many seconds. ``None`` disables the cap. "
+            "Used by the DAG JSONL loader to keep long pre-recorded waits "
+            "from stalling the benchmark; the loader reports the clamp count "
+            "at end of load. Routes onto the active FileDataset's "
+            "``inter_turn_delay_cap_seconds`` field at config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--inter-turn-delay-cap-seconds",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # Prompt
     ##############################################################################

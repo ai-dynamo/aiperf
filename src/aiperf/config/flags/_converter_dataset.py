@@ -540,6 +540,25 @@ def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
     d["osl"] = osl
 
 
+def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--inter-turn-delay-cap-seconds`` onto ``FileDataset``.
+
+    The cap clamps per-turn replay delays (read from JSONL trace files)
+    so long pre-recorded waits don't stall the benchmark. Only meaningful
+    on file datasets (synthetic datasets compute their own delays).
+    """
+    from aiperf.common.enums import DatasetType
+
+    if d.get("type") != DatasetType.FILE:
+        return
+    if (
+        "inter_turn_delay_cap_seconds" not in cli.model_fields_set
+        or cli.inter_turn_delay_cap_seconds is None
+    ):
+        return
+    d["inter_turn_delay_cap_seconds"] = cli.inter_turn_delay_cap_seconds
+
+
 # --- text-endpoint validation -------------------------------------------
 
 
@@ -635,6 +654,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
+    _apply_inter_turn_delay_cap(d, cli)
     if "random_seed" in cli.model_fields_set:
         d["random_seed"] = cli.random_seed
     return d
