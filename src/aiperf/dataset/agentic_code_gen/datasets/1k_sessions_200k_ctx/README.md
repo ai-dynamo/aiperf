@@ -20,7 +20,7 @@ Included in this directory:
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | Distribution config + run parameters used to generate `dataset.jsonl` |
+| `manifest.json` | Distribution config + run parameters characterizing the dataset |
 
 Expected dataset, user-generated via the `aiperf synthesize agentic-code` command above:
 
