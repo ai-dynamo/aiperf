@@ -370,7 +370,7 @@ class ResolvedConfig(BaseModel):
         "For single-turn: equals total_records. For multi-turn: "
         "count of unique session_id values.",
     )
-    dataset_root_count: dict[str, int] | None = Field(
+    dataset_root_count: dict[str, Annotated[int, Field(ge=0)]] | None = Field(
         default=None,
         description="Root-conversation count per file-based dataset. "
         "For forking datasets (dag_jsonl): sessions not referenced by any "

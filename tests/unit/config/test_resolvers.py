@@ -9,10 +9,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.config import BenchmarkConfig
 from aiperf.config.gpu_telemetry import GpuTelemetryConfig
-from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.config.resolution.plan import BenchmarkRun, ResolvedConfig
 from aiperf.config.resolution.resolvers import (
     ArtifactDirResolver,
     CommConfigResolver,
@@ -70,6 +71,16 @@ def minimal_config():
 @pytest.fixture()
 def run_with_config(minimal_config, tmp_path):
     return _make_run(minimal_config, artifact_dir=tmp_path / "artifacts")
+
+
+# ---------------------------------------------------------------------------
+# Resolved runtime state
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_config_rejects_negative_dataset_root_count() -> None:
+    with pytest.raises(ValidationError, match="dataset_root_count"):
+        ResolvedConfig(dataset_root_count={"profiling": -1})
 
 
 # ---------------------------------------------------------------------------

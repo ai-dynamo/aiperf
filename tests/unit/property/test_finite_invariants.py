@@ -209,6 +209,13 @@ FINITE_FIELD_WHITELIST: dict[str, str] = {
 }
 
 
+def _iter_annotation_metadata(annotation: Any) -> list[Any]:
+    metadata = list(getattr(annotation, "__metadata__", None) or [])
+    for inner in typing.get_args(annotation):
+        metadata.extend(_iter_annotation_metadata(inner))
+    return metadata
+
+
 def _field_accepts_only_finite(field: Any) -> bool:
     """True iff the field's annotation rejects NaN/inf at validation time.
 
@@ -219,16 +226,13 @@ def _field_accepts_only_finite(field: Any) -> bool:
     because NaN comparisons against the bound return False.
     """
     metadata = list(getattr(field, "metadata", []) or [])
-    # ``FiniteFloat | None`` is ``Optional[Annotated[float, AfterValidator(...)]]``;
-    # the AfterValidator lives on the nested Annotated, not on FieldInfo.metadata,
-    # so walk the union args and pull metadata from each Annotated member.
     ann = getattr(field, "annotation", None)
     if ann is not None:
-        for inner in typing.get_args(ann):
-            inner_meta = getattr(inner, "__metadata__", None)
-            if inner_meta:
-                metadata.extend(inner_meta)
+        metadata.extend(_iter_annotation_metadata(ann))
     for m in metadata:
+        nested_metadata = getattr(m, "metadata", None)
+        if nested_metadata:
+            metadata.extend(nested_metadata)
         # AfterValidator(_check_finite)
         func = getattr(m, "func", None)
         if func is not None and getattr(func, "__name__", "") == "_check_finite":
