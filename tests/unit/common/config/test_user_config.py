@@ -365,31 +365,23 @@ class TestGPUTelemetryConfig:
             sys.modules.pop("amdsmi", None)
 
     def test_amdsmi_missing_module_yields_install_hint(self) -> None:
-        """ImportError when probing amdsmi surfaces the install hint."""
-        from importlib import import_module as _orig
-
-        def _raise(name):
-            if name == "amdsmi":
-                raise ImportError("simulated missing")
-            return _orig(name)
+        """validate_environment surfaces the install hint when amdsmi is absent."""
+        from aiperf.gpu_telemetry import amdsmi_collector as amdsmi_mod
 
         with (
-            patch("aiperf.common.config.user_config.import_module", _raise),
+            patch.object(amdsmi_mod, "amdsmi", None),
             pytest.raises(ValidationError, match="amdsmi package not installed"),
         ):
             make_config(gpu_telemetry=["amdsmi"])
 
     def test_amdsmi_native_lib_oserror_yields_install_hint(self) -> None:
-        """OSError (native lib failed to load) is caught and surfaces install hint."""
-        from importlib import import_module as _orig
+        """validate_environment surfaces the install hint when amdsmi native lib fails to load."""
+        from aiperf.gpu_telemetry import amdsmi_collector as amdsmi_mod
 
-        def _raise(name):
-            if name == "amdsmi":
-                raise OSError("libamd_smi.so: cannot open shared object file")
-            return _orig(name)
-
+        # The module-level try/except already coerces ImportError/OSError into
+        # ``amdsmi is None``; validate_environment then raises the hint.
         with (
-            patch("aiperf.common.config.user_config.import_module", _raise),
+            patch.object(amdsmi_mod, "amdsmi", None),
             pytest.raises(ValidationError, match="amdsmi package not installed"),
         ):
             make_config(gpu_telemetry=["amdsmi"])
@@ -414,9 +406,13 @@ class TestGPUTelemetryConfig:
     def test_selection_with_runtime_local_collector(self) -> None:
         fake_name = "fake_local_gpu"
         fake_enum_member = "FAKE_LOCAL_GPU"
+        validated_environment = False
 
         class FakeLocalCollector:
-            pass
+            @classmethod
+            def validate_environment(cls) -> None:
+                nonlocal validated_environment
+                validated_environment = True
 
         GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
         try:
@@ -424,16 +420,39 @@ class TestGPUTelemetryConfig:
                 "gpu_telemetry_collector",
                 fake_name,
                 FakeLocalCollector,
-                metadata={
-                    "is_local": True,
-                    "import_module": "json",
-                    "install_hint": "fake collector not installed",
-                },
+                metadata={"is_local": True},
             ):
                 config = make_config(gpu_telemetry=[fake_name])
                 assert config.gpu_telemetry_collector_type == GPUTelemetryCollectorType(
                     fake_name
                 )
+                assert validated_environment is True
+        finally:
+            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+
+    def test_runtime_local_collector_validation_error_surfaces(self) -> None:
+        fake_name = "fake_broken_gpu"
+        fake_enum_member = "FAKE_BROKEN_GPU"
+
+        class FakeBrokenCollector:
+            @classmethod
+            def validate_environment(cls) -> None:
+                raise RuntimeError("fake_broken_gpu bindings are not installed")
+
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with (
+                mock_plugin(
+                    "gpu_telemetry_collector",
+                    fake_name,
+                    FakeBrokenCollector,
+                    metadata={"is_local": True},
+                ),
+                pytest.raises(
+                    ValidationError, match="fake_broken_gpu bindings are not installed"
+                ),
+            ):
+                make_config(gpu_telemetry=[fake_name])
         finally:
             GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
 
@@ -442,7 +461,9 @@ class TestGPUTelemetryConfig:
         fake_enum_member = "FAKE_LOCAL_GPU"
 
         class FakeLocalCollector:
-            pass
+            @classmethod
+            def validate_environment(cls) -> None:
+                """No-op; fake collector has no native bindings to probe."""
 
         GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
         try:
@@ -450,11 +471,7 @@ class TestGPUTelemetryConfig:
                 "gpu_telemetry_collector",
                 fake_name,
                 FakeLocalCollector,
-                metadata={
-                    "is_local": True,
-                    "import_module": "json",
-                    "install_hint": "fake collector not installed",
-                },
+                metadata={"is_local": True},
             ):
                 sys.modules["pynvml"] = type(sys)("pynvml")
                 try:
@@ -473,7 +490,9 @@ class TestGPUTelemetryConfig:
         fake_enum_member = "FAKE_LOCAL_GPU"
 
         class FakeLocalCollector:
-            pass
+            @classmethod
+            def validate_environment(cls) -> None:
+                """No-op; fake collector has no native bindings to probe."""
 
         GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
         try:
@@ -482,11 +501,7 @@ class TestGPUTelemetryConfig:
                     "gpu_telemetry_collector",
                     fake_name,
                     FakeLocalCollector,
-                    metadata={
-                        "is_local": True,
-                        "import_module": "json",
-                        "install_hint": "fake collector not installed",
-                    },
+                    metadata={"is_local": True},
                 ),
                 pytest.raises(
                     ValidationError,
@@ -502,7 +517,9 @@ class TestGPUTelemetryConfig:
         fake_enum_member = "FAKE_LOCAL_GPU"
 
         class FakeLocalCollector:
-            pass
+            @classmethod
+            def validate_environment(cls) -> None:
+                """No-op; fake collector has no native bindings to probe."""
 
         GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
         try:
@@ -510,11 +527,7 @@ class TestGPUTelemetryConfig:
                 "gpu_telemetry_collector",
                 fake_name,
                 FakeLocalCollector,
-                metadata={
-                    "is_local": True,
-                    "import_module": "json",
-                    "install_hint": "fake collector not installed",
-                },
+                metadata={"is_local": True},
             ):
                 with pytest.raises(
                     ValidationError, match=f"Invalid GPU telemetry item.*'{fake_name}'"

@@ -301,7 +301,7 @@ Category-specific metadata is validated against Pydantic models in `aiperf.plugi
 | `TransportMetadata` | `transport_type`, `url_schemes` |
 | `PlotMetadata` | `display_name`, `category` |
 | `ServiceMetadata` | `required`, `auto_start`, `disable_gc`, `replicable` |
-| `GPUTelemetryCollectorMetadata` | `is_local`, `import_module`, `install_hint` |
+| `GPUTelemetryCollectorMetadata` | `is_local` |
 
 ## CLI Commands
 

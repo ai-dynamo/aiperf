@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
-from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -111,7 +110,7 @@ def _should_quote_arg(x: Any) -> bool:
 
 # Helpers for resolving local GPU telemetry collectors from plugin metadata.
 # Adding/removing a local collector only requires editing plugins.yaml
-# (set ``is_local: true`` plus an ``install_hint``) — no edits here.
+# (set ``is_local: true``) plus the collector class validation hook.
 def _local_collector_keywords() -> dict[str, GPUTelemetryCollectorType]:
     """CLI keyword (the plugin name, lowercased) -> collector type."""
     return {
@@ -126,25 +125,24 @@ def _is_local_collector(collector_type: GPUTelemetryCollectorType) -> bool:
     return plugins.get_gpu_telemetry_collector_metadata(collector_type).is_local
 
 
-def _ensure_local_collector_importable(
+def _validate_collector_environment(
     collector_type: GPUTelemetryCollectorType,
 ) -> None:
-    """Verify that the Python bindings for a local collector are importable.
+    """Run the collector class's ``validate_environment`` hook.
 
-    Catches broader than just ``ImportError``: amdsmi (and to a lesser extent
-    pynvml) can also raise ``OSError`` when the wheel is installed but the
-    underlying native library (libamd_smi, libnvidia-ml) is missing or fails
-    to load. Surface those failures with the same friendly install hint
-    instead of leaking an internal traceback.
+    Every ``gpu_telemetry_collector`` plugin implements this on its class.
+    Remote collectors (DCGM) are no-ops; local collectors raise
+    ``RuntimeError`` when their native bindings are missing. We translate
+    that to ``ValueError`` so Pydantic wraps it as a ``ValidationError``.
     """
-    meta = plugins.get_gpu_telemetry_collector_metadata(collector_type)
-    # Plugin name is the default module name when not overridden in metadata.
-    module_name = meta.import_module or collector_type
+    CollectorClass = plugins.get_class(
+        "gpu_telemetry_collector",
+        collector_type,
+    )
     try:
-        import_module(module_name)
-    except (ImportError, OSError) as e:
-        hint = meta.install_hint or f"{module_name} package not installed."
-        raise ValueError(hint) from e
+        CollectorClass.validate_environment()
+    except RuntimeError as e:
+        raise ValueError(str(e)) from e
 
 
 class UserConfig(BaseConfig):
@@ -827,6 +825,8 @@ class UserConfig(BaseConfig):
             self.gpu_telemetry
         )
 
+        _validate_collector_environment(collector_type)
+
         if _is_local_collector(collector_type) and urls:
             raise ValueError(
                 f"Cannot use {collector_type} with DCGM URLs. Use either '{collector_type}' for local "
@@ -866,7 +866,6 @@ class UserConfig(BaseConfig):
                         f"'{collector_type}' and '{selected}'. Choose exactly one."
                     )
                 collector_type = selected
-                _ensure_local_collector_importable(collector_type)
             elif item == "dashboard":
                 mode = GPUTelemetryMode.REALTIME_DASHBOARD
             elif item.startswith("http") or ":" in item:

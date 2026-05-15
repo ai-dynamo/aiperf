@@ -123,6 +123,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/gpu_telemetry/amdsmi_collector.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/gpu_telemetry/manager.py",
       ""
     ],

@@ -121,7 +121,7 @@ endpoint:
       metrics_title: LLM Metrics
 ```
 
-Local GPU telemetry collectors use metadata for CLI classification and native dependency checks:
+Local GPU telemetry collectors declare themselves via `is_local`. Each collector class implements `validate_environment()` to surface missing native bindings before the benchmark starts; DCGM is a passthrough no-op.
 
 ```yaml
 # plugins.yaml
@@ -131,8 +131,6 @@ gpu_telemetry_collector:
     description: Local GPU telemetry collector using vendor Python bindings.
     metadata:
       is_local: true
-      import_module: my_vendor_smi
-      install_hint: "my_vendor_smi is not installed; install the vendor SMI wheel."
 ```
 
 ```python

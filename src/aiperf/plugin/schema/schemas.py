@@ -455,20 +455,12 @@ class GPUTelemetryCollectorMetadata(BaseModel):
     """Config-time metadata for GPU telemetry collector plugins.
 
     Local collectors set ``is_local`` so ``--gpu-telemetry <name>`` is treated
-    as an in-process collector keyword instead of a DCGM URL. ``import_module``
-    and ``install_hint`` surface missing native Python bindings before the
-    benchmark starts.
+    as an in-process collector keyword instead of a DCGM URL. Native binding
+    validation lives on the collector class itself via ``validate_environment``
+    so each implementation owns its own dependency check.
     """
 
     is_local: bool = Field(
         default=False,
         description="Whether this collector runs in-process against the local host.",
-    )
-    import_module: str | None = Field(
-        default=None,
-        description="Python module import-probed during config validation.",
-    )
-    install_hint: str | None = Field(
-        default=None,
-        description="User-facing error message shown when import_module fails.",
     )
