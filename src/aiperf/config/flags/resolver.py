@@ -387,6 +387,8 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     if target is None:
         return
 
+    _reject_loadgen_target_collisions(fields_set)
+
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr not in fields_set:
             continue
@@ -394,6 +396,32 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         if value is None:
             continue
         target[key] = value
+
+
+def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
+    """Raise when two distinct CLI source-attrs map to the same phase key.
+
+    Without this guard, the second tuple in :data:`_LOADGEN_PHASE_FIELD_MAP`
+    silently wins via dict assignment when both source-attrs are set (e.g.
+    ``--request-rate`` and ``--user-centric-rate`` both write ``"rate"``).
+    Two flags landing on the same key is always a user error.
+    """
+    collisions: dict[str, list[str]] = {}
+    for attr, key in _LOADGEN_PHASE_FIELD_MAP:
+        if attr in fields_set:
+            collisions.setdefault(key, []).append(attr)
+    duplicates = {k: v for k, v in collisions.items() if len(v) > 1}
+    if not duplicates:
+        return
+    from aiperf.config.loader.errors import ConfigurationError
+
+    details = "; ".join(
+        f"{k!r} <- {sorted(attrs)}" for k, attrs in sorted(duplicates.items())
+    )
+    raise ConfigurationError(
+        f"Mutually exclusive CLI loadgen flags target the same phase "
+        f"key(s): {details}. Pass only one."
+    )
 
 
 def _find_profiling_phase(phases: list[Any]) -> dict[str, Any] | None:
