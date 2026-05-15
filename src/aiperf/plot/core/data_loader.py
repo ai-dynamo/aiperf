@@ -512,7 +512,7 @@ class DataLoader(AIPerfLoggerMixin):
         The aggregate file's metadata block carries ``variation_label`` /
         ``variation_values`` when the sweep orchestrator wrote it (see
         ``_export_one_variation_aggregate`` in
-        ``src/aiperf/_cli_runner_sweep_helpers.py``). The aggregate file does
+        ``src/aiperf/cli_runner/_sweep_helpers.py``). The aggregate file does
         NOT carry an ``input_config`` block, so without this plumb the
         dashboard's per-cell concurrency labels (which read
         ``RunMetadata.concurrency``) come back ``None``. Only triggers on
@@ -1712,7 +1712,7 @@ class DataLoader(AIPerfLoggerMixin):
         1. ``aggregated["metadata"]["variation_label"]`` — the orchestrator
            stamps this onto the per-cell aggregate JSON (see
            ``_export_one_variation_aggregate`` in
-           ``src/aiperf/_cli_runner_sweep_helpers.py``). Authoritative.
+           ``src/aiperf/cli_runner/_sweep_helpers.py``). Authoritative.
         2. **Path walk-up through generic shells.** The run directory's
            own name is often a generic counter that hides the cell:
            ``aggregate/`` (INDEPENDENT trials>1), ``run_NNNN``

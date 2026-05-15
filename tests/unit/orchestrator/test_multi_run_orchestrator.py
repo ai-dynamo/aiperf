@@ -443,7 +443,7 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
 
     # _execute_repeated imports build_strategy from _cli_runner_helpers
     # locally, so patch the source module.
-    import aiperf._cli_runner_helpers as helpers_mod
+    import aiperf.cli_runner._helpers as helpers_mod
 
     monkeypatch.setattr(helpers_mod, "build_strategy", _fake_build)
 

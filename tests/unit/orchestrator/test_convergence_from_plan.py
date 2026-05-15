@@ -91,7 +91,7 @@ def test_build_convergence_criterion_dispatches_via_plugin_registry(plan):
     third party registers a fourth criterion under `convergence_criterion`,
     its name string passed via `plan.multi_run.convergence.mode` will route the same way.
     """
-    from aiperf._cli_runner_helpers import _build_convergence_criterion
+    from aiperf.cli_runner._helpers import _build_convergence_criterion
 
     plan.multi_run.convergence.mode = "ci_width"
     assert isinstance(_build_convergence_criterion(plan), CIWidthConvergence)
@@ -111,7 +111,7 @@ def test_build_convergence_criterion_unknown_mode_raises(plan):
     `--convergence-mode ci-width` (hyphen) instead of `ci_width` would get
     the default and never know.
     """
-    from aiperf._cli_runner_helpers import _build_convergence_criterion
+    from aiperf.cli_runner._helpers import _build_convergence_criterion
     from aiperf.plugin.types import TypeNotFoundError
 
     plan.multi_run.convergence.mode = "not_a_real_mode"

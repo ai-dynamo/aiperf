@@ -7,7 +7,7 @@ Lives in a sibling module to ``_cli_runner_helpers.py`` purely to keep
 both files under the 500-line ergonomics cap; downstream callers should
 prefer the re-export from ``_cli_runner_helpers``:
 
-    >>> from aiperf._cli_runner_helpers import aggregate_sweep_and_export
+    >>> from aiperf.cli_runner._helpers import aggregate_sweep_and_export
 
 The single public entry point is :func:`aggregate_sweep_and_export`.
 """
@@ -715,7 +715,7 @@ async def aggregate_sweep_and_export(
     """
     import asyncio
 
-    from aiperf._cli_runner_post_process import (
+    from aiperf.cli_runner._post_process import (
         export_sweep_aggregate,
         run_post_process_hook,
     )

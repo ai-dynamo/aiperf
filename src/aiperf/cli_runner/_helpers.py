@@ -7,7 +7,7 @@ Split out purely to keep ``cli_runner.py`` below the file/function size
 ergonomics limits; the helpers here are not part of the public API.
 
 The sweep-aggregate helper :func:`aggregate_sweep_and_export` lives in
-the sibling :mod:`aiperf._cli_runner_sweep_helpers` (also for size
+the sibling :mod:`aiperf.cli_runner._sweep_helpers` (also for size
 reasons) and is re-exported here for caller convenience.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiperf._cli_runner_sweep_helpers import (
+from aiperf.cli_runner._sweep_helpers import (
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
 )

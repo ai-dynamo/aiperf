@@ -13,7 +13,7 @@
     ],
     [
       "file-size",
-      "src/aiperf/_cli_runner_sweep_helpers.py",
+      "src/aiperf/cli_runner/_sweep_helpers.py",
       ""
     ],
     [
@@ -23,7 +23,7 @@
     ],
     [
       "file-size",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       ""
     ],
     [
@@ -323,12 +323,12 @@
     ],
     [
       "function-size",
-      "src/aiperf/_cli_runner_sweep_helpers.py",
+      "src/aiperf/cli_runner/_sweep_helpers.py",
       "_export_one_variation_aggregate"
     ],
     [
       "function-size",
-      "src/aiperf/_cli_runner_sweep_helpers.py",
+      "src/aiperf/cli_runner/_sweep_helpers.py",
       "aggregate_sweep_and_export"
     ],
     [

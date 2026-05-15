@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf._cli_runner_sweep_helpers import (
+from aiperf.cli_runner._sweep_helpers import (
     _aggregate_group_to_stats,
     _build_per_combination_stats,
     _build_sweep_aggregate_result,
@@ -260,7 +260,7 @@ class TestSweepExportHelpers:
         assert "pareto_optimal" in aggregate.metadata
 
     @patch(
-        "aiperf._cli_runner_post_process.export_sweep_aggregate", new_callable=AsyncMock
+        "aiperf.cli_runner._post_process.export_sweep_aggregate", new_callable=AsyncMock
     )
     @patch("aiperf.orchestrator.aggregation.sweep.SweepAnalyzer.compute")
     @pytest.mark.asyncio
@@ -271,7 +271,7 @@ class TestSweepExportHelpers:
         sweep_results: list[RunResult],
         tmp_path: Path,
     ):
-        from aiperf._cli_runner_sweep_helpers import aggregate_sweep_and_export
+        from aiperf.cli_runner._sweep_helpers import aggregate_sweep_and_export
 
         mock_compute.return_value = {
             "metadata": {},

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from aiperf._cli_runner_helpers import (
+from aiperf.cli_runner._helpers import (
     aggregate_and_export,
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
@@ -20,7 +20,7 @@ from aiperf._cli_runner_helpers import (
     log_multi_run_banner,
     validate_convergence_config,
 )
-from aiperf._cli_runner_helpers import (
+from aiperf.cli_runner._helpers import (
     print_aggregate_summary as _print_aggregate_summary,
 )
 from aiperf.cli_utils import raise_startup_error_and_exit
@@ -629,8 +629,8 @@ def _execute_multi_benchmark(
     """
     import asyncio as _asyncio
 
-    from aiperf._cli_runner_helpers import _build_search_planner
-    from aiperf._sweep_table_logger import (
+    from aiperf.cli_runner._helpers import _build_search_planner
+    from aiperf.cli_runner._sweep_table_logger import (
         SweepTableLogger,
         _should_emit_sweep_table,
     )

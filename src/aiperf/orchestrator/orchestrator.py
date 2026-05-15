@@ -79,7 +79,7 @@ def _resolve_artifact_dir(
     is_sweep = plan.is_sweep
     multi_run = plan.trials > 1
     if iteration_order is None:
-        from aiperf._cli_runner_sweep_helpers import _plan_iteration_order
+        from aiperf.cli_runner._sweep_helpers import _plan_iteration_order
 
         iteration_order = _plan_iteration_order(plan)
 
@@ -131,7 +131,7 @@ def _resolve_run_seed(
 
 def _build_strategy(plan: BenchmarkPlan) -> Any:
     """Construct a per-variation execution strategy from a BenchmarkPlan."""
-    from aiperf._cli_runner_helpers import build_strategy
+    from aiperf.cli_runner._helpers import build_strategy
 
     return build_strategy(plan, logger)
 
@@ -158,7 +158,7 @@ class MultiRunOrchestrator:
                 finishes its trials. Receives ``(variation_key, cell)`` where
                 ``variation_key`` is ``(label, tuple(sorted(values.items())))``
                 and ``cell`` is the dict produced by
-                :func:`aiperf._cli_runner_sweep_helpers._aggregate_one_cell`.
+                :func:`aiperf.cli_runner._sweep_helpers._aggregate_one_cell`.
                 Useful for live observers (e.g. a streaming Pareto tracker).
                 Exceptions raised by the callback are caught and logged at
                 WARNING so a buggy observer cannot break the sweep.
@@ -185,7 +185,7 @@ class MultiRunOrchestrator:
         if self._cell_callback is None:
             return
         try:
-            from aiperf._cli_runner_sweep_helpers import _aggregate_one_cell
+            from aiperf.cli_runner._sweep_helpers import _aggregate_one_cell
 
             cell = _aggregate_one_cell(cell_results, plan, variation)
             if cell is None:
@@ -317,7 +317,7 @@ class MultiRunOrchestrator:
         """
         self._maybe_write_sampling_design(plan)
 
-        from aiperf._cli_runner_sweep_helpers import _plan_iteration_order
+        from aiperf.cli_runner._sweep_helpers import _plan_iteration_order
         from aiperf.common.enums import SweepMode
 
         if plan.is_adaptive_search:

@@ -45,7 +45,7 @@ def adaptive_plan():
 
 def test_build_search_planner_returns_none_when_not_adaptive():
     """`_build_search_planner` returns None for non-adaptive plans."""
-    from aiperf._cli_runner_helpers import _build_search_planner
+    from aiperf.cli_runner._helpers import _build_search_planner
 
     plan = MagicMock()
     plan.sweep = None
@@ -54,7 +54,7 @@ def test_build_search_planner_returns_none_when_not_adaptive():
 
 def test_build_search_planner_dispatches_via_plugin_registry(adaptive_plan):
     """`_build_search_planner(plan)` returns a SearchPlanner via plugin lookup."""
-    from aiperf._cli_runner_helpers import _build_search_planner
+    from aiperf.cli_runner._helpers import _build_search_planner
     from aiperf.orchestrator.search_planner.base import SearchPlanner
 
     planner = _build_search_planner(adaptive_plan)

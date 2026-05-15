@@ -3,7 +3,7 @@
 
 """Sweep export glue: artifact write + post-process hook.
 
-Lives in a separate module from :mod:`aiperf._cli_runner_sweep_helpers` purely
+Lives in a separate module from :mod:`aiperf.cli_runner._sweep_helpers` purely
 to keep both files under the 500-line ergonomics cap. Two public entry points:
 
 - :func:`export_sweep_aggregate` -- builds the AggregateResult, writes the

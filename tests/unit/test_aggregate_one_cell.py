@@ -4,7 +4,7 @@
 
 from unittest.mock import MagicMock
 
-from aiperf._cli_runner_sweep_helpers import _aggregate_one_cell
+from aiperf.cli_runner._sweep_helpers import _aggregate_one_cell
 
 
 def _make_run_result(stats: dict, success: bool = True):

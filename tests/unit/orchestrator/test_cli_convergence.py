@@ -173,8 +173,8 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
-        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
+        from aiperf.cli_runner._helpers import build_strategy as real_build_strategy
 
         captured: list = []
 
@@ -208,8 +208,8 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
-        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
+        from aiperf.cli_runner._helpers import build_strategy as real_build_strategy
 
         captured: list = []
 
@@ -248,8 +248,8 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
-        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
+        from aiperf.cli_runner._helpers import build_strategy as real_build_strategy
 
         captured: list = []
 
@@ -287,8 +287,8 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
-        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
+        from aiperf.cli_runner._helpers import build_strategy as real_build_strategy
 
         captured: list = []
 
@@ -354,7 +354,7 @@ class TestBuildStrategyMinRunsPropagation:
     """
 
     def test_propagates_min_runs_into_adaptive_strategy(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(
             trials=10,
@@ -366,7 +366,7 @@ class TestBuildStrategyMinRunsPropagation:
         assert strategy.min_runs == 7
 
     def test_propagates_min_runs_into_criterion(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(
             trials=10,
@@ -380,7 +380,7 @@ class TestBuildStrategyMinRunsPropagation:
         assert strategy.criterion._min_runs == 6
 
     def test_min_runs_below_three_emits_warning(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(
             trials=5,
@@ -395,7 +395,7 @@ class TestBuildStrategyMinRunsPropagation:
         assert "recommended minimum of 3" in msg
 
     def test_min_runs_at_least_three_does_not_warn(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(
             trials=5,
@@ -413,7 +413,7 @@ class TestBuildStrategyMinRunsPropagation:
         invisible mismatch (criterion permits convergence at N samples but
         strategy still won't ask, or vice versa).
         """
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(
             trials=10,
@@ -436,14 +436,14 @@ class TestBuildStrategyRouting:
     """
 
     def test_returns_fixed_trials_when_not_adaptive(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(trials=3, convergence_metric=None)
         strategy = build_strategy(plan, MagicMock())
         assert isinstance(strategy, FixedTrialsStrategy)
 
     def test_returns_adaptive_when_convergence_set(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(trials=5, convergence_metric="time_to_first_token")
         strategy = build_strategy(plan, MagicMock())
@@ -451,7 +451,7 @@ class TestBuildStrategyRouting:
 
     def test_adaptive_max_runs_equals_plan_trials(self):
         """`AdaptiveStrategy.max_runs` is the user's hard ceiling on trials."""
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(trials=8, convergence_metric="time_to_first_token")
         strategy = build_strategy(plan, MagicMock())
@@ -459,7 +459,7 @@ class TestBuildStrategyRouting:
         assert strategy.max_runs == 8
 
     def test_fixed_trials_propagates_cooldown(self):
-        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.cli_runner._helpers import build_strategy
 
         plan = _make_plan(trials=3, convergence_metric=None)
         # `_make_plan` doesn't expose cooldown; assert on default to confirm
@@ -478,14 +478,14 @@ class TestValidateConvergenceConfig:
     """
 
     def test_no_op_when_not_adaptive(self):
-        from aiperf._cli_runner_helpers import validate_convergence_config
+        from aiperf.cli_runner._helpers import validate_convergence_config
 
         plan = _make_plan(trials=3, convergence_metric=None)
         # Must not raise even with export_level=summary etc.
         validate_convergence_config(plan)
 
     def test_distribution_with_summary_export_raises(self):
-        from aiperf._cli_runner_helpers import validate_convergence_config
+        from aiperf.cli_runner._helpers import validate_convergence_config
 
         plan = _make_plan(
             trials=5,
@@ -500,7 +500,7 @@ class TestValidateConvergenceConfig:
             validate_convergence_config(plan)
 
     def test_distribution_with_records_export_passes(self):
-        from aiperf._cli_runner_helpers import validate_convergence_config
+        from aiperf.cli_runner._helpers import validate_convergence_config
 
         plan = _make_plan(
             trials=5,
@@ -512,7 +512,7 @@ class TestValidateConvergenceConfig:
 
     def test_ci_width_with_summary_export_passes(self):
         """Only DISTRIBUTION mode requires per-request data; CI-width is fine on summary."""
-        from aiperf._cli_runner_helpers import validate_convergence_config
+        from aiperf.cli_runner._helpers import validate_convergence_config
 
         plan = _make_plan(
             trials=5,
@@ -523,7 +523,7 @@ class TestValidateConvergenceConfig:
         validate_convergence_config(plan)
 
     def test_cv_with_summary_export_passes(self):
-        from aiperf._cli_runner_helpers import validate_convergence_config
+        from aiperf.cli_runner._helpers import validate_convergence_config
 
         plan = _make_plan(
             trials=5,

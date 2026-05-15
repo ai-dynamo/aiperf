@@ -27,7 +27,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf._cli_runner_sweep_helpers import (
+from aiperf.cli_runner._sweep_helpers import (
     _aggregate_group_to_stats,
     _group_results_by_variation,
 )
