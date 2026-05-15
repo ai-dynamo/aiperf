@@ -127,7 +127,7 @@ class BasePublicDatasetLoader(BaseLoader):
         self.info(f"Saving {self.tag} dataset to local cache {self.cache_filepath}")
         try:
             self.cache_filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_filepath, "w") as f:
+            with open(self.cache_filepath, "w", encoding="utf-8") as f:
                 f.write(dataset)
         except Exception as e:
             raise DatasetLoaderError(f"Error saving dataset to local cache: {e}") from e
@@ -141,7 +141,7 @@ class BasePublicDatasetLoader(BaseLoader):
         """
         self.info(f"Loading {self.tag} dataset from local cache {self.cache_filepath}")
         try:
-            with open(self.cache_filepath) as f:
+            with open(self.cache_filepath, encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             raise DatasetLoaderError(

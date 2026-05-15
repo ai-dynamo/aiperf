@@ -177,7 +177,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._capped_max_osl = 0
         items: list[TraceT] = []
 
-        with open(self.filename) as f:
+        with open(self.filename, encoding="utf-8") as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue
