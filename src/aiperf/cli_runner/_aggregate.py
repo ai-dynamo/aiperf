@@ -14,7 +14,7 @@ that ends every multi-run benchmark.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,7 +136,7 @@ def _collect_priority_metrics(
 
 
 def _print_metric_block(
-    metric, display_name: str, confidence_level: float, logger: AIPerfLogger
+    metric: Any, display_name: str, confidence_level: float, logger: AIPerfLogger
 ) -> None:
     """Log mean/std/min/max/cv/CI lines for a single metric."""
     logger.info(f"\n{display_name}:")

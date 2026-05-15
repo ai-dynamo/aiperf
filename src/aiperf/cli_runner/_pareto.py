@@ -18,6 +18,8 @@ from aiperf.search_recipes._pareto_axes import ParetoAxesSpec
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkPlan
+    from aiperf.config.sweep import SweepVariation
+    from aiperf.orchestrator.models import RunResult
 
 
 def _resolve_pareto_axes(plan: BenchmarkPlan) -> ParetoAxesSpec | None:
@@ -114,9 +116,9 @@ def _extract_axis_value(
 
 
 def _aggregate_one_cell(
-    cell_results: list[Any],
-    plan: Any,
-    variation: Any,
+    cell_results: list[RunResult],
+    plan: BenchmarkPlan,
+    variation: SweepVariation,
 ) -> dict[str, Any] | None:
     """Aggregate one variation's trials into a Pareto-cell dict.
 

@@ -9,11 +9,12 @@ multi-run benchmark begins. Post-run aggregate summary lives in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkPlan
+    from aiperf.orchestrator.search_planner.base import SearchPlanner
 
 
 def log_multi_run_banner(
@@ -44,7 +45,9 @@ def log_multi_run_banner(
 
 
 def _log_search_planner_active(
-    plan: BenchmarkPlan, search_planner: Any, logger: Any
+    plan: BenchmarkPlan,
+    search_planner: SearchPlanner | None,
+    logger: AIPerfLogger,
 ) -> None:
     """Log the adaptive-search banner when a planner was built."""
     if search_planner is None:
