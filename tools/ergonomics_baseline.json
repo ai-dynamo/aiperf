@@ -3,6 +3,11 @@
   "violations": [
     [
       "file-size",
+      "src/aiperf/accuracy/graders/math.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -118,6 +123,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/gpu_telemetry/amdsmi_collector.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/gpu_telemetry/manager.py",
       ""
     ],
@@ -183,6 +193,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/post_processors/otel_metrics_results_processor.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/records_manager.py",
       ""
     ],
@@ -208,6 +228,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/timing/concurrency.py",
       ""
     ],
@@ -225,6 +250,11 @@
       "file-size",
       "src/aiperf/workers/worker.py",
       ""
+    ],
+    [
+      "function-size",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
     ],
     [
       "function-size",
@@ -325,6 +355,11 @@
       "function-size",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
       "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "function-size",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
     ],
     [
       "function-size",
@@ -753,6 +788,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "function-size",
       "src/aiperf/records/inference_result_parser.py",
       "InferenceResultParser.parse_request_record"
     ],
@@ -860,11 +900,6 @@
       "function-size",
       "src/aiperf/server_metrics/storage.py",
       "HistogramTimeSeries.append"
-    ],
-    [
-      "function-size",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.run"
     ],
     [
       "function-size",
@@ -1123,11 +1158,6 @@
     ],
     [
       "nesting-depth",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
-    ],
-    [
-      "nesting-depth",
       "src/aiperf/orchestrator/aggregation/sweep.py",
       "identify_pareto_optimal"
     ],
@@ -1185,6 +1215,11 @@
       "nesting-depth",
       "src/aiperf/plugin/types.py",
       "PluginEntry.validate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "nesting-depth",

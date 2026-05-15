@@ -335,17 +335,12 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         metadata[b"aiperf.label_count"] = str(len(label_keys)).encode("utf-8")
 
         # Metric counts by type (pre-calculated to avoid file rewrite)
-        type_counts = {"gauge": 0, "counter": 0, "histogram": 0}
+        type_counts = {"gauge": 0, "counter": 0, "histogram": 0, "unknown": 0}
         total_metrics = 0
         for time_series_collection in hierarchy.endpoints.values():
             for metric_entry in time_series_collection.metrics.values():
                 total_metrics += 1
-                if metric_entry.metric_type == PrometheusMetricType.GAUGE:
-                    type_counts["gauge"] += 1
-                elif metric_entry.metric_type == PrometheusMetricType.COUNTER:
-                    type_counts["counter"] += 1
-                elif metric_entry.metric_type == PrometheusMetricType.HISTOGRAM:
-                    type_counts["histogram"] += 1
+                type_counts[metric_entry.metric_type.value] += 1
 
         metadata[b"aiperf.metric_count"] = str(total_metrics).encode("utf-8")
         metadata[b"aiperf.metric_type_counts"] = orjson.dumps(type_counts)
@@ -446,6 +441,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                 if metric_type in (
                     PrometheusMetricType.GAUGE,
                     PrometheusMetricType.COUNTER,
+                    PrometheusMetricType.UNKNOWN,
                 ):
                     rows = self._collect_scalar_rows(
                         endpoint_url,
@@ -495,6 +491,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                 if metric_type in (
                     PrometheusMetricType.GAUGE,
                     PrometheusMetricType.COUNTER,
+                    PrometheusMetricType.UNKNOWN,
                 ):
                     rows.extend(
                         self._collect_scalar_rows(
@@ -547,7 +544,10 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             return []
 
         metric_type = metric_entry.metric_type
-        is_gauge = metric_type == PrometheusMetricType.GAUGE
+        is_gauge = metric_type in (
+            PrometheusMetricType.GAUGE,
+            PrometheusMetricType.UNKNOWN,
+        )
 
         # Infer unit for this metric
         unit = infer_unit(metric_name, metric_entry.description)

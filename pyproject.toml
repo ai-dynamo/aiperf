@@ -19,7 +19,7 @@ license-files = ["LICENSE", "ATTRIBUTIONS.md"]
 authors = [
     { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
   "async-timeout>=4.0.0; python_version < '3.11'",
@@ -38,7 +38,7 @@ dependencies = [
   "nvidia-ml-py", # Note: No version specified to be most compatible with CUDA version
   "orjson~=3.11.7",
   "pandas~=2.3.3",
-  "pillow~=12.1.1",
+  "pillow~=12.2.0",
   "plotly~=6.4.0",
   "dash~=3.1.0",
   "dash-bootstrap-components~=2.0.0",
@@ -62,7 +62,7 @@ dependencies = [
   "tqdm>=4.67.1",
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
   "uvicorn[standard]>=0.34,<1",
-  "uvloop~=0.21.0; platform_system != 'Windows'",
+  "uvloop>=0.22.1; platform_system != 'Windows'",
   "zstandard>=0.25.0",
   "crick~=0.0.8",
 ]
@@ -76,7 +76,15 @@ aiperf = "aiperf.cli:app"
 aiperf = "aiperf.plugin:plugins.yaml"
 
 [project.optional-dependencies]
+mlflow = [
+  "mlflow>=3.10.0,<4.0.0",
+]
+otel = [
+  "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
+  "opentelemetry-sdk>=1.24.0,<2.0.0",
+]
 dev = [
+  "aiperf[mlflow,otel]",
   "black>=25.1.0",
   "httpx>=0.27.0",
   "hypothesis>=6.0.0",
@@ -89,10 +97,20 @@ dev = [
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
 ]
+accuracy = [
+    # latex2sympy2-extended is co-resolved with lighteval (which pins
+    # ==1.0.6 for its math-verify integration). 1.0.6 ships the same
+    # ``latex2sympy`` API our math grader uses, so we accept the older
+    # version as long as it satisfies our import.
+    "latex2sympy2-extended>=1.0.6",
+    "lighteval>=0.13.0",
+    "sympy>=1.14.0",
+]
 
 [dependency-groups]
 dev = [
     "hypothesis>=6.152.4",
+    "pre-commit>=4.6.0",
 ]
 
 [tool.ruff]
@@ -185,4 +203,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
-ignore-words-list = "timeslice,timeslices"
+ignore-words-list = "timeslice,timeslices,optiona"

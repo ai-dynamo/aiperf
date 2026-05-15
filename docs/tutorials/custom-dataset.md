@@ -157,6 +157,20 @@ aiperf profile \
 
 The `output_length` field also works per-turn in multi_turn datasets.
 
+### Per-Request `extra`
+
+Send vendor-specific or sampling parameters per request via the `extra` field. The dict is shallow-merged into the top of the request body at dispatch. Per-line keys win over `--extra-inputs`:
+
+```bash
+cat > prompts_with_extra.jsonl << 'EOF'
+{"text": "Brainstorm a haiku.", "extra": {"temperature": 1.2, "top_p": 0.9}}
+{"text": "Explain quantum computing.", "extra": {"temperature": 0.2, "seed": 42}}
+{"text": "Summarize ML.", "extra": {"min_tokens": 50, "ignore_eos": true}}
+EOF
+```
+
+The `extra` field also works per-turn in multi_turn datasets.
+
 ---
 
 ## Multi-Turn Datasets
@@ -240,6 +254,7 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 - Each turn includes full conversation history
 - Turns execute sequentially within each conversation
 - Multiple conversations run concurrently (up to `--concurrency`)
+- Each turn supports `output_length` and `extra` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints)
 
 ---
 

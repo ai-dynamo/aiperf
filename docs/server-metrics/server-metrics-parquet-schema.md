@@ -39,7 +39,7 @@ Negative deltas (counter resets) are clamped to 0.
 |--------|------|----------|-------------|
 | `endpoint_url` | `string` | No | Prometheus endpoint URL (e.g., `http://localhost:8000/metrics`) |
 | `metric_name` | `string` | No | Metric name (e.g., `vllm:kv_cache_usage_perc`) |
-| `metric_type` | `string` | No | `gauge`, `counter`, or `histogram` |
+| `metric_type` | `string` | No | `gauge`, `counter`, `histogram`, or `unknown` (Prometheus `# TYPE foo untyped`) |
 | `unit` | `string` | Yes | Inferred unit (`seconds`, `tokens`, `requests`, `ratio`, etc.) |
 | `description` | `string` | Yes | Metric HELP text from Prometheus |
 | `timestamp_ns` | `int64` | No | Collection timestamp in nanoseconds since epoch |
@@ -122,7 +122,7 @@ Parquet file metadata (accessible via `pq.read_metadata()`) includes:
 | `aiperf.label_columns` | JSON array of label column names |
 | `aiperf.label_count` | Number of label columns |
 | `aiperf.metric_count` | Total unique metrics |
-| `aiperf.metric_type_counts` | JSON object: `{"gauge": N, "counter": N, "histogram": N}` |
+| `aiperf.metric_type_counts` | JSON object: `{"gauge": N, "counter": N, "histogram": N, "unknown": N}` |
 | `aiperf.model_names` | JSON array of model names |
 | `aiperf.concurrency` | Benchmark concurrency setting |
 | `aiperf.request_rate` | Benchmark request rate (if set) |

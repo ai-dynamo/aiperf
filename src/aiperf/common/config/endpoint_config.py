@@ -4,6 +4,7 @@
 from typing import Annotated, Literal
 
 from pydantic import (
+    AfterValidator,
     BeforeValidator,
     Field,
     SerializationInfo,
@@ -16,14 +17,17 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import EndpointDefaults
-from aiperf.common.config.config_validators import parse_str_or_list
+from aiperf.common.config.config_validators import (
+    normalize_http_urls,
+    parse_str_or_list,
+)
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
     RequestContentType,
 )
-from aiperf.common.redact import REDACTED_VALUE
+from aiperf.common.redact import REDACTED_VALUE, redact_url
 from aiperf.plugin.enums import (
     EndpointType,
     TransportType,
@@ -37,8 +41,6 @@ class EndpointConfig(BaseConfig):
     """
     A configuration class for defining endpoint related settings.
     """
-
-    _CLI_GROUP = Groups.ENDPOINT
 
     @model_validator(mode="after")
     def validate_streaming(self) -> Self:
@@ -93,7 +95,7 @@ class EndpointConfig(BaseConfig):
                 "--model",  # GenAI-Perf
                 "-m",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ]
 
@@ -108,7 +110,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.MODEL_SELECTION_STRATEGY
 
@@ -124,7 +126,7 @@ class EndpointConfig(BaseConfig):
                 "--custom-endpoint",
                 "--endpoint",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.CUSTOM_ENDPOINT
 
@@ -139,7 +141,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--endpoint-type",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.TYPE
 
@@ -154,7 +156,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--streaming",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.STREAMING
 
@@ -163,17 +165,23 @@ class EndpointConfig(BaseConfig):
         Field(
             description="Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing "
             "across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). "
-            "The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).",
+            "The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). "
+            "URLs that do not include a scheme (no `://`) have `http://` prepended automatically.",
             min_length=1,
+            # Run the validator chain on the default too — without this, a
+            # bare `--wait-for-model-timeout 30` (no `--url`) would send the
+            # un-normalized default to aiohttp and reproduce the original bug.
+            validate_default=True,
         ),
         BeforeValidator(parse_str_or_list),
+        AfterValidator(normalize_http_urls),
         CLIParameter(
             name=(
                 "--url",  # GenAI-Perf
                 "-u",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = [EndpointDefaults.URL]
 
@@ -185,7 +193,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--url-strategy",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.URL_STRATEGY
 
@@ -203,7 +211,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-timeout-seconds"),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.TIMEOUT
 
@@ -216,7 +224,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--api-key"),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.API_KEY
 
@@ -234,7 +242,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-timeout",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_TIMEOUT
 
@@ -247,7 +255,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-interval",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_INTERVAL
 
@@ -265,7 +273,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-mode",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_MODE
 
@@ -278,7 +286,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = None
 
@@ -290,7 +298,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--use-legacy-max-tokens",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_LEGACY_MAX_TOKENS
 
@@ -309,7 +317,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--use-server-token-count",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
@@ -326,7 +334,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--connection-reuse-strategy",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.CONNECTION_REUSE_STRATEGY
 
@@ -341,7 +349,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--download-video-content",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.DOWNLOAD_VIDEO_CONTENT
 
@@ -356,27 +364,44 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-content-type",),
-            group=_CLI_GROUP,
+            group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.REQUEST_CONTENT_TYPE
 
     @model_validator(mode="after")
     def validate_request_content_type(self) -> Self:
-        """Validate that multipart/form-data is only used with endpoints that support it."""
-        if (
-            self.request_content_type is None
-            or self.request_content_type == RequestContentType.APPLICATION_JSON
-        ):
-            return self
-
+        """Auto-default to multipart for requires_form_data endpoints, and
+        reject content-type/endpoint combinations that the transport cannot
+        serialize (JSON on multipart-only endpoints, or multipart on JSON-only
+        endpoints).
+        """
         from aiperf.plugin import plugins
 
         metadata = plugins.get_endpoint_metadata(self.type)
+
+        if self.request_content_type is None:
+            if metadata.requires_form_data:
+                self.request_content_type = RequestContentType.MULTIPART_FORM_DATA
+            return self
+
+        if (
+            self.request_content_type == RequestContentType.APPLICATION_JSON
+            and metadata.requires_form_data
+        ):
+            raise ValueError(
+                f"--endpoint-type {self.type} requires multipart/form-data; "
+                f"application/json is not supported on this endpoint. "
+                f"Omit --request-content-type to use the auto-default."
+            )
+
+        if self.request_content_type == RequestContentType.APPLICATION_JSON:
+            return self
+
         if not metadata.requires_form_data:
             raise ValueError(
                 f"--request-content-type {self.request_content_type} is only supported for "
-                f"endpoint types that support form-data encoding (e.g., video_generation), "
-                f"but --endpoint-type {self.type} does not support it."
+                f"endpoint types that support form-data encoding (e.g., image_edit, "
+                f"video_generation), but --endpoint-type {self.type} does not support it."
             )
         return self
 
@@ -387,3 +412,23 @@ class EndpointConfig(BaseConfig):
         if info.context and info.context.get("include_secrets"):
             return v
         return REDACTED_VALUE if v else v
+
+    @field_serializer("urls")
+    @classmethod
+    def _redact_urls(cls, v: list[str], info: SerializationInfo) -> list[str]:
+        """Strip userinfo (user:password@) from URLs during serialization.
+
+        ``profile_export_aiperf.json`` is written to the artifact directory and
+        uploaded as an MLflow run artifact (see ``MLflowDataExporter`` /
+        ``_collect_artifact_files``). Without this serializer, a URL like
+        ``http://alice:s3cret@host:8000`` round-trips verbatim into both the
+        on-disk export and the MLflow artifact tree.
+
+        The ``include_secrets`` context lets callers (runtime code that needs
+        to actually connect) bypass redaction; the HTTP client reads
+        ``endpoint.urls`` directly from the in-memory model, not from a
+        serialized form, so userinfo stays available where it's needed.
+        """
+        if info.context and info.context.get("include_secrets"):
+            return v
+        return [redact_url(url) for url in v]

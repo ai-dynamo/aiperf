@@ -141,6 +141,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
+            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.raise_for_status = Mock()
 
             if "node1" in str(url):
@@ -298,6 +299,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
+            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.raise_for_status = Mock()
             mock_response.text.return_value = mock_dcgm_response_node1
 
@@ -354,6 +356,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
+            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.raise_for_status = Mock()
             mock_response.text.return_value = "# No metrics available\n"
 
@@ -403,6 +406,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             mock_context_manager = AsyncMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
+            mock_response_obj.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response_obj.raise_for_status = Mock()
             mock_response_obj.text.return_value = mock_response
 

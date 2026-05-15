@@ -201,6 +201,7 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 | `get_transport_metadata(name)` | `TransportMetadata` | Typed transport config |
 | `get_plot_metadata(name)` | `PlotMetadata` | Typed plot config |
 | `get_service_metadata(name)` | `ServiceMetadata` | Typed service config |
+| `get_gpu_telemetry_collector_metadata(name)` | `GPUTelemetryCollectorMetadata` | Typed GPU collector config |
 
 ## Creating Custom Plugins
 
@@ -300,6 +301,7 @@ Category-specific metadata is validated against Pydantic models in `aiperf.plugi
 | `TransportMetadata` | `transport_type`, `url_schemes` |
 | `PlotMetadata` | `display_name`, `category` |
 | `ServiceMetadata` | `required`, `auto_start`, `disable_gc`, `replicable` |
+| `GPUTelemetryCollectorMetadata` | `is_local` |
 
 ## CLI Commands
 
@@ -372,6 +374,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
 | `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
+| `image_edit` | `ImageEditEndpoint` | OpenAI Image Edit (image-to-image) API; multipart upload of reference image + prompt to `/v1/images/edits`. Compatible with SGLang FLUX.2 unified diffusion serving. |
 | `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |

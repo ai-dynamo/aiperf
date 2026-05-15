@@ -7,8 +7,14 @@ from typing import Any, ClassVar
 
 from pydantic import Field, field_validator
 
-from aiperf.common.enums import ConversationContextMode, MediaType
+from aiperf.common.enums import (
+    ConversationBranchMode,
+    ConversationContextMode,
+    MediaType,
+)
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.branch import ConversationBranchInfo
+from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
@@ -114,6 +120,25 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="The delay of the turn in the conversation (in milliseconds).",
     )
+    branch_ids: list[str] = Field(
+        default_factory=list,
+        description="Branch IDs declared on this turn (DAG projection). "
+        "Mirrors ``Turn.branch_ids`` for ``ConversationMetadata`` consumers.",
+    )
+    has_forks: bool = Field(
+        default=False,
+        description="True if this turn triggers any FORK-mode branch. Stamped at "
+        "load time by the dag_jsonl loader's topology walk so the sticky router "
+        "can defer parent-session eviction until all forks have spawned. Stays "
+        "False on non-DAG datasets.",
+    )
+    prerequisites: list["TurnPrerequisite"] = Field(
+        default_factory=list,
+        description="Conditions gating dispatch of this turn (DAG projection). "
+        "Mirrors ``Turn.prerequisites`` so consumers of "
+        "``ConversationMetadata`` can reach prereqs without holding the full "
+        "Turn list.",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -162,6 +187,34 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
+    raw_payload: dict[str, Any] | None = Field(
+        default=None,
+        description="Complete pre-built API request payload for verbatim replay. "
+        "When set, bypasses all endpoint payload construction (format_payload) "
+        "and sends this dict directly to the transport. Populated by the "
+        "raw_payload, inputs_json, and mooncake_trace (payload mode) loaders. "
+        "Mutually exclusive with normal turn-content fields in spirit, but no "
+        "validator enforces that — loaders construct one or the other.",
+    )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        description="Non-native per-turn request-body fields (temperature, "
+        "top_p, seed, stop, vendor tunables like ignore_eos/min_tokens). "
+        "Merged into the top level of the chat-completions payload at "
+        "dispatch time, matching the OpenAI SDK's extra_body convention.",
+    )
+    prerequisites: list[TurnPrerequisite] = Field(
+        default_factory=list,
+        description="Conditions gating dispatch of this turn (DAG authoring). "
+        "Attached to the gated turn; resolved against branch_ids declared on "
+        "prior turns. Empty on non-DAG datasets.",
+    )
+    branch_ids: list[str] = Field(
+        default_factory=list,
+        description="Branch IDs declared on this turn (DAG authoring). Each "
+        "entry resolves to a ``ConversationBranchInfo`` on the parent. "
+        "Empty on non-DAG datasets.",
+    )
     audio_duration_seconds: float | None = Field(
         default=None,
         description="Duration of the audio content in seconds. Used by ASR-specific "
@@ -173,6 +226,8 @@ class Turn(AIPerfBaseModel):
         return TurnMetadata(
             timestamp_ms=self.timestamp,
             delay_ms=self.delay,
+            branch_ids=list(self.branch_ids),
+            prerequisites=list(self.prerequisites),
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -218,6 +273,10 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            raw_payload=self.raw_payload,
+            extra_body=dict(self.extra_body) if self.extra_body is not None else None,
+            prerequisites=list(self.prerequisites),
+            branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
         )
 
@@ -232,6 +291,22 @@ class ConversationMetadata(AIPerfBaseModel):
     turns: list[TurnMetadata] = Field(
         default_factory=list,
         description="The metadata of the turns in the conversation.",
+    )
+    branches: list[ConversationBranchInfo] = Field(
+        default_factory=list,
+        description="Branch descriptors (DAG projection); empty on non-DAG datasets.",
+    )
+    is_root: bool = Field(
+        default=True,
+        description="True for sampleable roots; False for fork/spawn children.",
+    )
+    agent_depth: int = Field(
+        default=0,
+        description="DAG nesting level (0 = root). Mirrors Conversation.agent_depth.",
+    )
+    parent_conversation_id: str | None = Field(
+        default=None,
+        description="DAG child's parent conversation_id; None for roots.",
     )
     accuracy_ground_truth: str | None = Field(
         default=None,
@@ -351,12 +426,53 @@ class Conversation(AIPerfBaseModel):
         "Propagated to ConversationMetadata so processors receive it via "
         "DatasetConfiguredNotification without re-loading the benchmark.",
     )
+    agent_depth: int = Field(
+        default=0,
+        description="Static DAG nesting level — 0 for sampleable roots, "
+        "``parent_depth + 1`` for fork-spawned descendants. Stamped by the "
+        "dag_jsonl loader's topology walk; non-DAG conversations stay at 0. "
+        "The sampler treats ``agent_depth == 0`` as the root predicate.",
+    )
+    branches: list[ConversationBranchInfo] = Field(
+        default_factory=list,
+        description="Branch descriptors (DAG authoring). Empty on non-DAG datasets.",
+    )
+    is_root: bool = Field(
+        default=True,
+        description="True for sampleable roots; False for fork/spawn children.",
+    )
+    parent_conversation_id: str | None = Field(
+        default=None,
+        description="DAG child's parent conversation_id; None for roots.",
+    )
 
     def metadata(self) -> ConversationMetadata:
-        """Get the metadata of the conversation."""
+        """Project this Conversation into its DatasetMetadata form.
+
+        Used by loaders to invoke ``validate_for_orchestrator_v1`` without
+        round-tripping through DatasetManager.
+        """
+        modes = {b.branch_id: b.mode for b in self.branches}
+        turn_metas = [
+            TurnMetadata(
+                timestamp_ms=t.timestamp,
+                delay_ms=t.delay,
+                branch_ids=list(t.branch_ids),
+                has_forks=any(
+                    modes.get(bid) == ConversationBranchMode.FORK
+                    for bid in t.branch_ids
+                ),
+                prerequisites=list(t.prerequisites),
+            )
+            for t in self.turns
+        ]
         return ConversationMetadata(
             conversation_id=self.session_id,
-            turns=[turn.metadata() for turn in self.turns],
+            turns=turn_metas,
+            branches=list(self.branches),
+            is_root=self.is_root,
+            agent_depth=self.agent_depth,
+            parent_conversation_id=self.parent_conversation_id,
             accuracy_ground_truth=self.accuracy_ground_truth,
             accuracy_task=self.accuracy_task,
         )

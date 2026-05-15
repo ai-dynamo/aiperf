@@ -295,8 +295,9 @@ plot:
 
 gpu_telemetry_collector:
   protocol: aiperf.gpu_telemetry.protocols:GPUTelemetryCollectorProtocol
+  metadata_class: aiperf.plugin.schema.schemas:GPUTelemetryCollectorMetadata
   enum: GPUTelemetryCollectorType
   description: |
     GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
-    Supports DCGM HTTP endpoints and pynvml Python library.
+    Supports DCGM HTTP endpoints and plugin-defined local collectors.
     One-to-one mapping based on gpu_telemetry_collector configuration.

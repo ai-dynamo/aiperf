@@ -106,12 +106,15 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
+        errored: bool = False,
     ) -> bool:
         """Atomically increment returned count.
 
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
+            errored: Whether the request returned with a non-None error. Used to
+                surface fault-injected error counts in the phase-complete log.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -123,7 +126,7 @@ class PhaseProgressTracker:
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(is_final_turn, cancelled)
+        return self._counter.increment_returned(is_final_turn, cancelled, errored)
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.

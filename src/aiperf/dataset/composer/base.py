@@ -153,7 +153,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         Args:
             turn: The turn object to finalize.
         """
-        turn.model = self._select_model_name()
+        if turn.model is None:
+            turn.model = self._select_model_name()
         self._set_max_tokens(turn)
 
         # Clear cached sequence lengths for this turn to free memory

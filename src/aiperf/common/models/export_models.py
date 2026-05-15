@@ -8,6 +8,7 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
 
 # =============================================================================
@@ -19,9 +20,12 @@ class JsonMetricResult(AIPerfBaseModel):
     """The result values of a single metric for JSON export.
 
     NOTE:
-    This model has been designed to mimic the structure of the GenAI-Perf JSON output
-    as closely as possible. Be careful not to add or remove fields that are not present in the
-    GenAI-Perf JSON output.
+    The shape of this model originates from GenAI-Perf JSON output for
+    downstream-tool compatibility. New fields may be added when AIPerf
+    surfaces information GenAI-Perf does not (e.g. `count`, `sum` added in
+    schema 1.1). When adding a field, bump `JsonExportData.SCHEMA_VERSION`
+    and document the field in `docs/reference/json-export-schema.md`. Do
+    not remove or rename existing fields without a matching schema bump.
     """
 
     unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
@@ -38,6 +42,23 @@ class JsonMetricResult(AIPerfBaseModel):
     min: int | float | None = None
     max: int | float | None = None
     std: float | None = None
+    count: int | None = Field(
+        default=None,
+        description=(
+            "Number of records contributing to this metric's distribution. "
+            "Present only for record-type metrics; omitted for derived/aggregate "
+            "scalar metrics where the count would trivially be 1 and risks being "
+            "misread as the request count."
+        ),
+    )
+    sum: int | float | None = Field(
+        default=None,
+        description=(
+            "Sum of all metric values across records. Present for record-type "
+            "metrics with at least one observation; absent for derived/aggregate "
+            "metrics whose value is itself the computed total or rate."
+        ),
+    )
 
 
 # =============================================================================
@@ -130,7 +151,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.0"
+    SCHEMA_VERSION: ClassVar[str] = "1.1"
 
     schema_version: str | None = Field(
         default=None,
@@ -175,3 +196,11 @@ class JsonExportData(AIPerfBaseModel):
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description=(
+            "DAG branch orchestration counters (children spawned/completed/"
+            "errored/truncated, parents suspended/resumed). Present only on "
+            "DAG-shaped runs; absent for non-DAG benchmarks."
+        ),
+    )

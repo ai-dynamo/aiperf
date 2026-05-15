@@ -16,8 +16,6 @@ class TokenizerConfig(BaseConfig):
     A configuration class for defining tokenizer related settings.
     """
 
-    _CLI_GROUP = Groups.TOKENIZER
-
     name: Annotated[
         str | None,
         Field(
@@ -32,7 +30,7 @@ class TokenizerConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--tokenizer"),
-            group=_CLI_GROUP,
+            group=Groups.TOKENIZER,
         ),
     ] = TokenizerDefaults.NAME
 
@@ -45,7 +43,7 @@ class TokenizerConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--tokenizer-revision"),
-            group=_CLI_GROUP,
+            group=Groups.TOKENIZER,
         ),
     ] = TokenizerDefaults.REVISION
 
@@ -58,7 +56,7 @@ class TokenizerConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--tokenizer-trust-remote-code"),
-            group=_CLI_GROUP,
+            group=Groups.TOKENIZER,
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE
 

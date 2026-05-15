@@ -280,7 +280,11 @@ class EndpointMetadata(BaseModel):
     )
     requires_form_data: bool = Field(
         default=False,
-        description="Whether endpoint supports multipart/form-data request encoding.",
+        description=(
+            "True for endpoints that require multipart/form-data (binary uploads), "
+            "e.g., video_generation, image_edit. EndpointConfig consumes this flag "
+            "to auto-select the request encoding."
+        ),
     )
     requires_inline_media: bool = Field(
         default=False,
@@ -444,4 +448,19 @@ class ServiceMetadata(BaseModel):
     replicable: bool = Field(
         default=False,
         description="Whether the service can have multiple instances running in parallel.",
+    )
+
+
+class GPUTelemetryCollectorMetadata(BaseModel):
+    """Config-time metadata for GPU telemetry collector plugins.
+
+    Local collectors set ``is_local`` so ``--gpu-telemetry <name>`` is treated
+    as an in-process collector keyword instead of a DCGM URL. Native binding
+    validation lives on the collector class itself via ``validate_environment``
+    so each implementation owns its own dependency check.
+    """
+
+    is_local: bool = Field(
+        default=False,
+        description="Whether this collector runs in-process against the local host.",
     )

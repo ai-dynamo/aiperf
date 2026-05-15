@@ -52,6 +52,9 @@ class CompletionsEndpoint(BaseEndpoint):
         if extra:
             payload.update(extra)
 
+        if turn.extra_body:
+            payload.update(turn.extra_body)
+
         if (
             model_endpoint.endpoint.streaming
             and model_endpoint.endpoint.use_server_token_count

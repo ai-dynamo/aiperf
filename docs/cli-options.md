@@ -138,7 +138,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -148,9 +148,9 @@ Enable streaming responses. When enabled, the server streams tokens incrementall
 
 #### `-u`, `--url` `<list>`
 
-Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).
+Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
 <br/>_Constraints: min: 1_
-<br/>_Default: `['localhost:8000']`_
+<br/>_Default: `['http://localhost:8000']`_
 
 #### `--url-strategy` `<str>`
 
@@ -248,6 +248,10 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets.
 <br/>_Flag (no value required)_
 
+#### `--no-fixed-schedule`
+
+Disable automatic promotion of timestamped trace datasets to fixed-schedule timing mode. When set, AIPerf honors the explicit `--concurrency` / `--request-rate` selection even for trace datasets containing timestamps. Useful when re-running a captured trace with a different load pattern than the one it was originally captured under.
+
 #### `--fixed-schedule-auto-offset`
 
 Automatically normalize timestamps in fixed schedule by shifting all timestamps so the first timestamp becomes 0. When enabled, benchmark starts immediately with the timing pattern preserved. When disabled, timestamps are used as absolute offsets from benchmark start. Mutually exclusive with `--fixed-schedule-start-offset`.
@@ -275,7 +279,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -691,6 +695,36 @@ Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_ex
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
 
+#### `--export-outputs-json`
+
+Export per-request model responses to outputs.json for downstream post-processing.
+<br/>_Flag (no value required)_
+
+#### `--mlflow-tracking-uri` `<str>`
+
+MLflow Tracking Server URI used for post-run uploads (e.g., http://localhost:5000). When set, AIPerf uploads params, metrics, tags, and artifacts (including plots) to MLflow after profiling completes.
+
+#### `--mlflow-experiment` `<str>`
+
+MLflow experiment name for post-run uploads. Requires --mlflow-tracking-uri to be set.
+<br/>_Default: `aiperf`_
+
+#### `--mlflow-run-name` `<str>`
+
+Optional MLflow run name for post-run uploads. If omitted, AIPerf derives a name from benchmark metadata.
+
+#### `--mlflow-tag` `<list>`
+
+Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf) or as JSON string.
+
+#### `--mlflow-artifact-glob` `<list>`
+
+Optional artifact glob patterns for MLflow upload, relative to --output-artifact-dir. Can be specified multiple times. If not set, sensible defaults include exports and plot files.
+
+#### `--mlflow-parent-run-id` `<str>`
+
+Optional MLflow run id to attach this run to as a child (passed through to mlflow.start_run(parent_run_id=...)). Applied only when a new MLflow run is created; ignored on live-run reuse because MLflow pins the parent at creation time.
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -840,6 +874,11 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
 <br/>_Constraints: > 0_
 
+#### `--inter-turn-delay-cap-seconds` `<float>`
+
+Optional cap on per-turn delay_ms in seconds. Used by the dag_jsonl loader to bound long sleeps in trace replays. None (default) leaves authored delays uncapped.
+<br/>_Constraints: > 0_
+
 ### Parameter Sweep
 
 #### `--parameter-sweep-mode` `<str>`
@@ -934,13 +973,13 @@ Number of few-shot examples to include in the prompt. 0 means zero-shot evaluati
 
 #### `--accuracy-enable-cot`
 
-Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.
+Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
 
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -955,11 +994,27 @@ Enable verbose output for accuracy evaluation, showing per-problem grading detai
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, (2) 'amdsmi' to use local amdsmi library for AMD ROCm GPUs, (3) 'dashboard' for realtime dashboard mode, (4) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (5) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
 Disable GPU telemetry collection entirely.
+
+#### `--otel-url` `<str>`
+
+Enable real-time metric streaming to an OpenTelemetry collector via OTLP. Requires the AIPerf otel extra (`aiperf[otel]`). Accepts one collector URL. The value can be a collector base URL or full OTLP metrics endpoint. If no path is specified, '/v1/metrics' is appended automatically. Examples: --otel-url localhost:4318 | --otel-url http://collector:4318.
+
+#### `--stream` `<list>`
+
+Select which AIPerf telemetry domains to stream over OTel. Valid values: 'metrics', 'timing', or 'default'. 'default' streams both metrics and timing domains. If omitted and --otel-url is set, default behavior is used. Examples: --stream metrics | --stream timing | --stream default | --stream metrics timing.
+
+#### `--otel-resource-attributes` `<list>`
+
+Custom OTel resource attributes as key=value pairs. Merged into the default resource attributes on every exported metric. Examples: --otel-resource-attributes team=inference | --otel-resource-attributes env=prod,region=us-west-2.
+
+#### `--gen-ai-provider` `<str>`
+
+Explicit value for the gen_ai.provider.name OTel attribute. When unset, AIPerf auto-infers from the endpoint URL host; falls back to '_OTHER' if no match. Example: --gen-ai-provider openai.
 
 ### Server Metrics
 
@@ -1073,6 +1128,12 @@ aiperf plot --config my_plots.yaml
 
 # Show detailed error tracebacks
 aiperf plot --verbose
+
+# Generate plots and upload them to the MLflow run from mlflow_export.json
+aiperf plot --paths artifacts/my-run --mlflow-upload
+
+# Generate plots and upload to an explicit MLflow run
+aiperf plot --paths artifacts/my-run --mlflow-upload --mlflow-tracking-uri http://127.0.0.1:5000 --mlflow-run-id <run_id>
 ```
 
 #### `--paths`, `--empty-paths` `<list>`
@@ -1109,6 +1170,18 @@ Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.
 <br/>_Default: `8050`_
+
+#### `--mlflow-upload`, `--no-mlflow-upload`
+
+Upload generated PNG plot artifacts to an existing MLflow run. Mutually exclusive with --dashboard.
+
+#### `--mlflow-tracking-uri` `<str>`
+
+Optional MLflow tracking URI override for plot upload.
+
+#### `--mlflow-run-id` `<str>`
+
+Optional MLflow run id override for plot upload.
 
 <hr/>
 

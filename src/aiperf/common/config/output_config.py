@@ -19,8 +19,6 @@ class OutputConfig(BaseConfig):
     A configuration class for defining output related settings.
     """
 
-    _CLI_GROUP = Groups.OUTPUT
-
     artifact_directory: Annotated[
         Path,
         Field(
@@ -33,7 +31,7 @@ class OutputConfig(BaseConfig):
                 "--output-artifact-dir",
                 "--artifact-dir",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT,
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
@@ -49,7 +47,7 @@ class OutputConfig(BaseConfig):
                 "--profile-export-prefix",
                 "--profile-export-file",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT,
         ),
     ] = None
 
@@ -63,7 +61,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--export-level", "--profile-export-level"),
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT,
         ),
     ] = OutputDefaults.EXPORT_LEVEL
 
@@ -76,7 +74,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--slice-duration"),
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT,
         ),
     ] = OutputDefaults.SLICE_DURATION
 
@@ -89,7 +87,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name="--export-http-trace",
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT,
         ),
     ] = OutputDefaults.EXPORT_HTTP_TRACE
 
@@ -102,9 +100,20 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name="--show-trace-timing",
-            group=_CLI_GROUP,
+            group=Groups.OUTPUT,
         ),
     ] = OutputDefaults.SHOW_TRACE_TIMING
+
+    export_outputs_json: Annotated[
+        bool,
+        Field(
+            description="Export per-request model responses to outputs.json for downstream post-processing.",
+        ),
+        CLIParameter(
+            name="--export-outputs-json",
+            group=Groups.OUTPUT,
+        ),
+    ] = False
 
     _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
     _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -131,6 +140,15 @@ class OutputConfig(BaseConfig):
     _server_metrics_export_parquet_file: Path = (
         OutputDefaults.SERVER_METRICS_EXPORT_PARQUET_FILE
     )
+
+    @model_validator(mode="after")
+    def validate_export_outputs_json(self) -> Self:
+        """Validate that export_outputs_json is compatible with the export level."""
+        if self.export_outputs_json and self.export_level == ExportLevel.SUMMARY:
+            raise ValueError(
+                "--export-outputs-json requires --export-level records or raw"
+            )
+        return self
 
     @model_validator(mode="after")
     def set_export_filenames(self) -> Self:
@@ -187,6 +205,10 @@ class OutputConfig(BaseConfig):
     @property
     def profile_export_csv_file(self) -> Path:
         return self.artifact_directory / self._profile_export_csv_file
+
+    @property
+    def outputs_json_file(self) -> Path:
+        return self.artifact_directory / OutputDefaults.OUTPUTS_JSON_FILE
 
     @property
     def profile_export_json_file(self) -> Path:

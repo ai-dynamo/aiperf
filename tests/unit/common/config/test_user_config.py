@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import sys
 from pathlib import Path
 from unittest.mock import mock_open, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.config import (
     ConversationConfig,
@@ -32,6 +34,7 @@ from aiperf.plugin.enums import (
     GPUTelemetryCollectorType,
     TimingMode,
 )
+from tests.harness import mock_plugin
 
 # =============================================================================
 # Test Helpers
@@ -324,6 +327,216 @@ class TestGPUTelemetryConfig:
         assert config.endpoint.streaming is True
         assert config.endpoint.model_names == ["test-model"]
 
+    def test_amdsmi_collector_selected_when_amdsmi_keyword_provided(self) -> None:
+        """`--gpu-telemetry amdsmi` selects the AMDSMI collector type."""
+        # Inject a fake amdsmi module so the import_module probe succeeds
+        # without requiring ROCm installed on the test host.
+        sys.modules["amdsmi"] = type(sys)("amdsmi")
+        try:
+            config = make_config(gpu_telemetry=["amdsmi"])
+            assert (
+                config._gpu_telemetry_collector_type == GPUTelemetryCollectorType.AMDSMI
+            )
+        finally:
+            sys.modules.pop("amdsmi", None)
+
+    def test_conflicting_local_collector_keywords_raise(self) -> None:
+        """Passing both `pynvml` and `amdsmi` raises rather than last-wins."""
+        sys.modules["amdsmi"] = type(sys)("amdsmi")
+        sys.modules["pynvml"] = type(sys)("pynvml")
+        try:
+            with pytest.raises(
+                ValidationError, match="Conflicting local GPU telemetry collectors"
+            ):
+                make_config(gpu_telemetry=["pynvml", "amdsmi"])
+        finally:
+            sys.modules.pop("amdsmi", None)
+            sys.modules.pop("pynvml", None)
+
+    def test_amdsmi_with_dcgm_url_raises(self) -> None:
+        """Combining --gpu-telemetry amdsmi with a DCGM URL raises a clear error."""
+        sys.modules["amdsmi"] = type(sys)("amdsmi")
+        try:
+            with pytest.raises(
+                ValidationError, match="Cannot use amdsmi with DCGM URLs"
+            ):
+                make_config(gpu_telemetry=["amdsmi", "http://localhost:9400"])
+        finally:
+            sys.modules.pop("amdsmi", None)
+
+    def test_amdsmi_missing_module_yields_install_hint(self) -> None:
+        """validate_environment surfaces the install hint when amdsmi is absent."""
+        from aiperf.gpu_telemetry import amdsmi_collector as amdsmi_mod
+
+        with (
+            patch.object(amdsmi_mod, "amdsmi", None),
+            pytest.raises(ValidationError, match="amdsmi package not installed"),
+        ):
+            make_config(gpu_telemetry=["amdsmi"])
+
+    def test_amdsmi_native_lib_oserror_yields_install_hint(self) -> None:
+        """validate_environment surfaces the install hint when amdsmi native lib fails to load."""
+        from aiperf.gpu_telemetry import amdsmi_collector as amdsmi_mod
+
+        # The module-level try/except already coerces ImportError/OSError into
+        # ``amdsmi is None``; validate_environment then raises the hint.
+        with (
+            patch.object(amdsmi_mod, "amdsmi", None),
+            pytest.raises(ValidationError, match="amdsmi package not installed"),
+        ):
+            make_config(gpu_telemetry=["amdsmi"])
+
+    def test_invalid_gpu_telemetry_item_message_has_no_leading_comma_without_local_collectors(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "aiperf.common.config.user_config._local_collector_keywords",
+                return_value={},
+            ),
+            pytest.raises(ValidationError) as exc_info,
+        ):
+            make_config(gpu_telemetry=["not_a_real_keyword"])
+
+        assert "Valid options are: 'dashboard', '.csv' file, and URLs." in str(
+            exc_info.value
+        )
+        assert "Valid options are: ," not in str(exc_info.value)
+
+    def test_selection_with_runtime_local_collector(self) -> None:
+        fake_name = "fake_local_gpu"
+        fake_enum_member = "FAKE_LOCAL_GPU"
+        validated_environment = False
+
+        class FakeLocalCollector:
+            @classmethod
+            def validate_environment(cls) -> None:
+                nonlocal validated_environment
+                validated_environment = True
+
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with mock_plugin(
+                "gpu_telemetry_collector",
+                fake_name,
+                FakeLocalCollector,
+                metadata={"is_local": True},
+            ):
+                config = make_config(gpu_telemetry=[fake_name])
+                assert config.gpu_telemetry_collector_type == GPUTelemetryCollectorType(
+                    fake_name
+                )
+                assert validated_environment is True
+        finally:
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
+
+    def test_runtime_local_collector_validation_error_surfaces(self) -> None:
+        fake_name = "fake_broken_gpu"
+        fake_enum_member = "FAKE_BROKEN_GPU"
+
+        class FakeBrokenCollector:
+            @classmethod
+            def validate_environment(cls) -> None:
+                raise RuntimeError("fake_broken_gpu bindings are not installed")
+
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with (
+                mock_plugin(
+                    "gpu_telemetry_collector",
+                    fake_name,
+                    FakeBrokenCollector,
+                    metadata={"is_local": True},
+                ),
+                pytest.raises(
+                    ValidationError, match="fake_broken_gpu bindings are not installed"
+                ),
+            ):
+                make_config(gpu_telemetry=[fake_name])
+        finally:
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
+
+    def test_conflict_detection_with_runtime_local_collector(self) -> None:
+        fake_name = "fake_local_gpu"
+        fake_enum_member = "FAKE_LOCAL_GPU"
+
+        class FakeLocalCollector:
+            @classmethod
+            def validate_environment(cls) -> None:
+                """No-op; fake collector has no native bindings to probe."""
+
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with mock_plugin(
+                "gpu_telemetry_collector",
+                fake_name,
+                FakeLocalCollector,
+                metadata={"is_local": True},
+            ):
+                sys.modules["pynvml"] = type(sys)("pynvml")
+                try:
+                    with pytest.raises(
+                        ValidationError,
+                        match="Conflicting local GPU telemetry collectors",
+                    ):
+                        make_config(gpu_telemetry=["pynvml", fake_name])
+                finally:
+                    sys.modules.pop("pynvml", None)
+        finally:
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
+
+    def test_local_vs_url_guardrail_for_runtime_local_collector(self) -> None:
+        fake_name = "fake_local_gpu"
+        fake_enum_member = "FAKE_LOCAL_GPU"
+
+        class FakeLocalCollector:
+            @classmethod
+            def validate_environment(cls) -> None:
+                """No-op; fake collector has no native bindings to probe."""
+
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with (
+                mock_plugin(
+                    "gpu_telemetry_collector",
+                    fake_name,
+                    FakeLocalCollector,
+                    metadata={"is_local": True},
+                ),
+                pytest.raises(
+                    ValidationError,
+                    match=f"Cannot use {fake_name} with DCGM URLs",
+                ),
+            ):
+                make_config(gpu_telemetry=[fake_name, "http://localhost:9400"])
+        finally:
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
+
+    def test_invalid_item_message_includes_runtime_keyword(self) -> None:
+        fake_name = "fake_local_gpu"
+        fake_enum_member = "FAKE_LOCAL_GPU"
+
+        class FakeLocalCollector:
+            @classmethod
+            def validate_environment(cls) -> None:
+                """No-op; fake collector has no native bindings to probe."""
+
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with mock_plugin(
+                "gpu_telemetry_collector",
+                fake_name,
+                FakeLocalCollector,
+                metadata={"is_local": True},
+            ):
+                with pytest.raises(
+                    ValidationError, match=f"Invalid GPU telemetry item.*'{fake_name}'"
+                ) as exc_info:
+                    make_config(gpu_telemetry=["not_a_real_keyword"])
+                assert f"'{fake_name}'" in str(exc_info.value)
+        finally:
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
+
     def test_urls_extraction(self):
         """Test that only http URLs are extracted from gpu_telemetry list."""
         config = make_config(
@@ -495,10 +708,356 @@ class TestGPUTelemetryConfig:
         with pytest.raises(ValueError, match="Invalid GPU telemetry item"):
             make_config(gpu_telemetry=[invalid_item])
 
+
+class TestIsLocalhostUrl:
+    """Direct tests for the `_is_localhost_url` private helper.
+
+    `EndpointConfig` now prepends `http://` to scheme-less URLs (fix for the
+    readiness-probe bug). This helper has to recognize both the pre- and
+    post-normalization forms — including the IPv6-without-brackets edge case
+    that pre-existed the fix and would otherwise have regressed.
+    """
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # localhost / 127.0.0.1 — common forms
+            pytest.param("localhost", True, id="bare_localhost"),
+            pytest.param("localhost:8000", True, id="localhost_port"),
+            pytest.param("http://localhost", True, id="localhost_http"),
+            pytest.param("http://localhost:8000", True, id="localhost_http_port"),
+            pytest.param("https://localhost:8443", True, id="localhost_https_port"),
+            pytest.param("127.0.0.1", True, id="bare_127"),
+            pytest.param("127.0.0.1:8000", True, id="127_port"),
+            pytest.param("http://127.0.0.1:8000", True, id="127_http_port"),
+            # IPv6 ::1 with brackets — well-formed
+            pytest.param("[::1]:8000", True, id="ipv6_bracketed_port"),
+            pytest.param("http://[::1]:8000", True, id="ipv6_bracketed_http"),
+            pytest.param("https://[::1]:8443", True, id="ipv6_bracketed_https"),
+            # IPv6 ::1 without brackets — pre- and post-normalization forms
+            pytest.param("::1:8000", True, id="ipv6_bare_pre_normalization"),
+            pytest.param("http://::1:8000", True, id="ipv6_bare_post_normalization"),
+            pytest.param(
+                "https://::1:8443", True, id="ipv6_bare_https_post_normalization"
+            ),
+            # External hosts — must NOT match localhost
+            pytest.param("remote-server:8000", False, id="remote_host"),
+            pytest.param("http://remote-server:8000", False, id="remote_host_http"),
+            pytest.param("192.168.1.100:8000", False, id="lan_ipv4"),
+            pytest.param("http://192.168.1.100:8000", False, id="lan_ipv4_http"),
+            pytest.param("http://example.com", False, id="public_dns"),
+        ],
+    )
+    def test_is_localhost_url(self, url: str, expected: bool) -> None:
+        from aiperf.common.config.user_config import _is_localhost_url
+
+        assert _is_localhost_url(url) is expected
+
     def test_unknown_item_with_valid_items_raises_error(self):
         """Test that unknown items mixed with valid items still raise an error."""
         with pytest.raises(ValueError, match="Invalid GPU telemetry item"):
             make_config(gpu_telemetry=["dashboard", "unknown_option"])
+
+
+# =============================================================================
+# OTel Streaming Configuration Tests
+# =============================================================================
+
+
+class TestOTelStreamingConfig:
+    """Tests for OTel streaming configuration parsing and validation."""
+
+    def test_disabled_by_default(self):
+        """OTel streaming is disabled when no collector URL is provided."""
+        config = make_config()
+        assert config.otel_collector_enabled is False
+        assert config.otel_metrics_url is None
+        assert config.otel_stream_metrics_enabled is True
+        assert config.otel_stream_timing_enabled is True
+
+    @pytest.mark.parametrize(
+        "otel_url,expected_url",
+        [
+            ("collector:4318", "http://collector:4318/v1/metrics"),
+            ("http://collector:4318", "http://collector:4318/v1/metrics"),
+            (
+                "http://collector:4318/v1/metrics",
+                "http://collector:4318/v1/metrics",
+            ),
+            ("https://collector:4318/otlp", "https://collector:4318/otlp/v1/metrics"),
+        ],
+    )
+    def test_url_normalization(self, otel_url: str, expected_url: str):
+        """Collector URL is normalized to an OTLP metrics endpoint."""
+        config = make_config(otel_url=otel_url)
+        assert config.otel_collector_enabled is True
+        assert config.otel_metrics_url == expected_url
+
+    @pytest.mark.parametrize("invalid_otel_url", ["", "   "])
+    def test_invalid_empty_url(self, invalid_otel_url: str):
+        """Empty collector URL is rejected."""
+        with pytest.raises(ValueError, match="--otel-url cannot be empty"):
+            make_config(otel_url=invalid_otel_url)
+
+    @pytest.mark.parametrize(
+        "invalid_otel_url",
+        ["ftp://collector:4318", "file://collector:4318"],
+    )
+    def test_invalid_otel_scheme(self, invalid_otel_url: str):
+        """Unsupported collector URL schemes are rejected."""
+        with pytest.raises(ValueError, match="Invalid --otel-url value"):
+            make_config(otel_url=invalid_otel_url)
+
+    def test_grpc_scheme_error_names_http_https(self):
+        """Rejecting grpc:// must tell the user http/https are the supported schemes.
+
+        Regression for the manual-verify checklist item B4 where users reach for
+        grpc://collector:4317 (the OTLP/gRPC default port) and need to know AIPerf
+        ships only the OTLP/HTTP exporter.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"[Oo]nly http and https schemes are supported.*'grpc'",
+        ):
+            make_config(otel_url="grpc://collector:4317")
+
+    @pytest.mark.parametrize(
+        "bare_port_url",
+        [
+            param("http://:4318", id="scheme-colon-port"),
+            param("https://:4318", id="https-scheme-colon-port"),
+        ],
+    )  # fmt: skip
+    def test_empty_hostname_is_rejected(self, bare_port_url: str):
+        """urlparse('http://:4318') has truthy netloc=':4318' but hostname=None.
+        The validator must require a non-empty hostname so bare-port URLs don't
+        slip through and create a malformed OTLP endpoint.
+        """
+        with pytest.raises(ValueError, match="Invalid --otel-url value"):
+            make_config(otel_url=bare_port_url)
+
+    @pytest.mark.parametrize(
+        "stream_value,metrics_enabled,timing_enabled",
+        [
+            ("metrics", True, False),
+            ("timing", False, True),
+            ("default", True, True),
+            (["metrics", "timing"], True, True),
+            (["metrics", "timing", "default"], True, True),
+        ],
+    )
+    def test_otel_stream_selection(
+        self,
+        stream_value: str | list[str],
+        metrics_enabled: bool,
+        timing_enabled: bool,
+    ):
+        """OTel stream selection parses into metrics/timing flags."""
+        config = make_config(
+            otel_url="collector:4318",
+            stream=stream_value,
+        )
+        assert config.otel_stream_metrics_enabled is metrics_enabled
+        assert config.otel_stream_timing_enabled is timing_enabled
+
+    @pytest.mark.parametrize(
+        "stream_value,error_pattern",
+        [
+            ("unknown", "Invalid --stream value"),
+            ("both", "Valid options are: metrics, timing, default"),
+            ("none", "Valid options are: metrics, timing, default"),
+            (["metrics", "bad"], "Invalid --stream value"),
+        ],
+    )
+    def test_otel_stream_invalid_values(
+        self, stream_value: str | list[str], error_pattern: str
+    ):
+        """Invalid OTel stream selections are rejected."""
+        with pytest.raises(ValueError, match=error_pattern):
+            make_config(
+                otel_url="collector:4318",
+                stream=stream_value,
+            )
+
+    def test_otel_stream_defaults_to_both_when_unset_with_otel_url(self):
+        """Omitting --stream keeps both domains enabled."""
+        config = make_config(otel_url="collector:4318")
+        assert config.otel_stream_metrics_enabled is True
+        assert config.otel_stream_timing_enabled is True
+
+    @pytest.mark.parametrize(
+        "resource_attrs,bad_token",
+        [
+            param(["team"], "team", id="missing-equals"),
+            param(["=prod"], "=prod", id="empty-key"),
+            param(["team="], "team=", id="empty-value"),
+            param(["env=prod,team"], "team", id="missing-equals-in-comma-list"),
+            param(["env=prod,=us-west"], "=us-west", id="empty-key-in-comma-list"),
+            param(["env=prod,team="], "team=", id="empty-value-in-comma-list"),
+        ],
+    )  # fmt: skip
+    def test_otel_resource_attributes_rejects_malformed_entries(
+        self, resource_attrs: list[str], bad_token: str
+    ):
+        """Regression: --otel-resource-attributes is documented as key=value,
+        but malformed entries were previously accepted silently — missing ``=``
+        was dropped, ``=prod`` emitted an empty key, and ``team=`` emitted an
+        empty value. Each must now raise a ValueError pinpointing the bad token.
+        """
+        with pytest.raises(ValueError, match=r"--otel-resource-attributes"):
+            make_config(
+                otel_url="collector:4318",
+                otel_resource_attributes=resource_attrs,
+            )
+
+    def test_otel_resource_attributes_accepts_well_formed_entries(self):
+        """Well-formed comma-separated and repeated entries still parse."""
+        config = make_config(
+            otel_url="collector:4318",
+            otel_resource_attributes=["team=inference", "env=prod,region=us-west-2"],
+        )
+        assert config.otel_custom_resource_attributes == {
+            "team": "inference",
+            "env": "prod",
+            "region": "us-west-2",
+        }
+
+    @pytest.mark.parametrize(
+        "secondary_kwargs",
+        [
+            param({"stream": "metrics"}, id="stream"),
+            param({"otel_resource_attributes": ["env=prod"]}, id="resource-attrs"),
+            param({"gen_ai_provider": "my-provider"}, id="gen-ai-provider"),
+        ],
+    )  # fmt: skip
+    def test_otel_secondary_flags_require_otel_url(
+        self, secondary_kwargs: dict[str, object]
+    ):
+        """--stream, --otel-resource-attributes, and --gen-ai-provider are
+        consumed only by the OTel pipeline. Setting any of them without
+        --otel-url is a silent no-op, so the validator rejects it.
+        Regression for --gen-ai-provider being silently ignored.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"--stream, --otel-resource-attributes, and --gen-ai-provider",
+        ):
+            make_config(**secondary_kwargs)
+
+
+class TestMLflowConfig:
+    """Tests for MLflow post-run export configuration parsing and validation."""
+
+    def test_disabled_by_default(self):
+        config = make_config()
+        assert config.mlflow_enabled is False
+        assert config.mlflow_tracking_uri is None
+
+    @pytest.mark.parametrize(
+        "tracking_uri,experiment,run_name",
+        [
+            ("http://localhost:5000", "aiperf", None),
+            (" https://mlflow.internal ", " perf-runs ", " nightly "),
+        ],
+    )
+    def test_mlflow_normalization(
+        self, tracking_uri: str, experiment: str, run_name: str | None
+    ):
+        config = make_config(
+            mlflow_tracking_uri=tracking_uri,
+            mlflow_experiment=experiment,
+            mlflow_run_name=run_name,
+        )
+        assert config.mlflow_enabled is True
+        assert config.mlflow_tracking_uri == tracking_uri.strip()
+        assert config.mlflow_experiment == experiment.strip()
+        if run_name is None:
+            assert config.mlflow_run_name is None
+        else:
+            assert config.mlflow_run_name == run_name.strip()
+
+    @pytest.mark.parametrize("invalid_uri", ["", "   "])
+    def test_mlflow_tracking_uri_cannot_be_empty(self, invalid_uri: str):
+        with pytest.raises(ValueError, match="--mlflow-tracking-uri cannot be empty"):
+            make_config(mlflow_tracking_uri=invalid_uri)
+
+    def test_mlflow_experiment_cannot_be_empty_when_enabled(self):
+        with pytest.raises(
+            ValueError,
+            match="--mlflow-experiment cannot be empty when --mlflow-tracking-uri is set",
+        ):
+            make_config(
+                mlflow_tracking_uri="http://localhost:5000",
+                mlflow_experiment="   ",
+            )
+
+    def test_mlflow_tags_parse_to_dict(self):
+        config = make_config(
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_tags="team:perf,env:ci",
+        )
+        assert config.mlflow_tags_dict == {"team": "perf", "env": "ci"}
+
+    def test_mlflow_artifact_glob_defaults(self):
+        config = make_config(mlflow_tracking_uri="http://localhost:5000")
+        assert config.mlflow_resolved_artifact_globs
+        assert "**/*.png" in config.mlflow_resolved_artifact_globs
+
+    def test_mlflow_artifact_glob_override(self):
+        config = make_config(
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_artifact_globs=["reports/*.json", "plots/*.png"],
+        )
+        assert config.mlflow_resolved_artifact_globs == [
+            "reports/*.json",
+            "plots/*.png",
+        ]
+
+    def test_mlflow_artifact_glob_entries_are_stripped(self):
+        config = make_config(
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_artifact_globs=[" reports/*.json ", " plots/*.png "],
+        )
+        assert config.mlflow_resolved_artifact_globs == [
+            "reports/*.json",
+            "plots/*.png",
+        ]
+
+    def test_mlflow_artifact_glob_empty_entry_is_rejected(self):
+        with pytest.raises(
+            ValueError, match="--mlflow-artifact-glob entries cannot be empty"
+        ):
+            make_config(
+                mlflow_tracking_uri="http://localhost:5000",
+                mlflow_artifact_globs=["reports/*.json", "   "],
+            )
+
+    def test_mlflow_tracking_uri_without_enable_flag_auto_enables(self):
+        config = make_config(mlflow_tracking_uri="http://localhost:5000")
+        assert config.mlflow_enabled is True
+        assert config.mlflow_tracking_uri == "http://localhost:5000"
+
+    @pytest.mark.parametrize(
+        "secondary_kwargs",
+        [
+            param({"mlflow_experiment": "pre-seeded-experiment"}, id="experiment"),
+            param({"mlflow_run_name": "my-run"}, id="run-name"),
+            param({"mlflow_tags": "team:perf"}, id="tags"),
+            param({"mlflow_artifact_globs": ["plots/*.png"]}, id="artifact-globs"),
+            param({"mlflow_parent_run_id": "parent-123"}, id="parent-run-id"),
+        ],
+    )  # fmt: skip
+    def test_mlflow_secondary_flags_require_tracking_uri(
+        self, secondary_kwargs: dict[str, object]
+    ):
+        """Secondary MLflow flags without --mlflow-tracking-uri are a silent no-op,
+        so the validator rejects them — mirrors the OTel secondary-flag behavior.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"require --mlflow-tracking-uri to be set",
+        ):
+            make_config(**secondary_kwargs)
 
 
 # =============================================================================
