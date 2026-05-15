@@ -273,7 +273,7 @@ jobs:
           echo "Successfully synced dev docs to docs-website branch"
 
       - name: Publish Docs
-        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
+        if: steps.ctx.outputs.is_main == 'true' && (steps.changes.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch')
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         working-directory: docs-checkout/fern
@@ -641,13 +641,13 @@ jobs:
           echo "Updating $DOCS_FILE to include $TAG..."
 
           # Check if version already in docs.yml
-          if yq ".products[0].versions[] | select(.display-name == \"$TAG\")" "$DOCS_FILE" | grep -q .; then
+          if yq -e ".products[0].versions[] | select(.\"display-name\" == \"$TAG\")" "$DOCS_FILE" > /dev/null 2>&1; then
             echo "Version $TAG already in docs.yml, skipping update"
             exit 0
           fi
 
           # Find the index of the "dev" entry and insert new version right after it
-          DEV_IDX=$(yq '.products[0].versions | to_entries | map(select(.value.display-name == "dev")) | .[0].key' "$DOCS_FILE")
+          DEV_IDX=$(yq '.products[0].versions | to_entries | map(select(.value."display-name" == "dev")) | .[0].key' "$DOCS_FILE")
           INSERT_IDX=$((DEV_IDX + 1))
 
           yq -i "
@@ -664,6 +664,8 @@ jobs:
           # Update the "Latest" entry to point to the new version
           yq -i ".products[0].versions[0].path = \"./versions/$TAG.yml\"" "$DOCS_FILE"
           yq -i ".products[0].versions[0].display-name = \"Latest ($TAG)\"" "$DOCS_FILE"
+          yq -i ".products[0].versions[0].slug = \"latest\"" "$DOCS_FILE"
+          yq -i ".products[0].versions[0].availability = \"stable\"" "$DOCS_FILE"
 
           echo "Updated docs.yml products/versions section:"
           yq '.products[0].versions' "$DOCS_FILE"
