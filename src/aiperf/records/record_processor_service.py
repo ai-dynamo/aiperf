@@ -26,6 +26,7 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.scenario import get_scenario
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -68,6 +69,23 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             service_config=service_config,
             user_config=user_config,
         )
+        # Cache: drop context-overflow records entirely (don't push as errors)
+        # when the active scenario uses AGENTIC_REPLAY timing. The trajectory
+        # is already terminated by the timing strategy via the separate
+        # CreditReturn path, so emitting an error record would just double-
+        # count an event we intentionally tolerate.
+        self._drop_agentic_overflow_records: bool = False
+        scenario_name = getattr(user_config, "scenario", None)
+        if scenario_name is not None:
+            try:
+                spec = get_scenario(scenario_name)
+                self._drop_agentic_overflow_records = (
+                    str(spec.timing_mode) == "agentic_replay"
+                )
+            except Exception:  # noqa: BLE001
+                # Unknown scenario names are validated elsewhere; record
+                # processing degrades to default error-emission behavior here.
+                self._drop_agentic_overflow_records = False
 
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
@@ -212,6 +230,27 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # Skip when RAW export is active -- the raw writer needs them.
         if self.user_config.output.export_level != ExportLevel.RAW:
             record.responses = None
+
+        # Drop context-overflow records from the metrics pipeline entirely
+        # when running an AGENTIC_REPLAY scenario. The timing strategy
+        # (``agentic_replay.handle_credit_return``) already terminates the
+        # trajectory on overflow via the CreditReturn path, so emitting an
+        # error record here would double-count an event we intentionally
+        # tolerate as the natural end-of-trajectory signal. No
+        # MetricRecordsMessage is pushed; downstream aggregators, exporters,
+        # error counters, and per-record JSONL never see this record.
+        if self._drop_agentic_overflow_records and getattr(
+            record, "context_overflow", False
+        ):
+            self.debug(
+                lambda r=record: (
+                    f"AGENTIC_REPLAY: dropping context-overflow record from "
+                    f"metrics pipeline (credit={r.request_info.credit_num} "
+                    f"conv={r.request_info.conversation_id} "
+                    f"turn={r.request_info.turn_index})"
+                )
+            )
+            return
 
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
