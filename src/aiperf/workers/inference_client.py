@@ -7,6 +7,8 @@ import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import orjson
+
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -100,10 +102,16 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        formatted_payload = self.endpoint.format_payload(request_info)
+        raw_payload = request_info.turns[-1].raw_payload
+        payload = (
+            raw_payload
+            if raw_payload is not None
+            else self.endpoint.format_payload(request_info)
+        )
+        request_info.payload_bytes = orjson.dumps(payload)
         return await self.transport.send_request(
             request_info,
-            payload=formatted_payload,
+            payload=payload,
             first_token_callback=first_token_callback,
         )
 
