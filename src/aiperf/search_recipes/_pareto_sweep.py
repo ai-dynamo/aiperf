@@ -4,8 +4,7 @@
 """``ParetoSweep`` recipe (closes GitHub issue #874).
 
 Sweeps paired ISL/OSL workload shapes across a concurrency list and emits
-a Pareto-frontier JSON artifact. Lives in a sibling module to keep
-``builtins.py`` under the 500-line ergonomics ceiling.
+a Pareto-frontier JSON artifact.
 """
 
 from __future__ import annotations

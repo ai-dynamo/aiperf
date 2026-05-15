@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Sampling-based sweep types (Sobol, Latin Hypercube).
 
-Split out of `sweep.py` to keep that module under the file-size cap.
 Re-exported from `aiperf.config.sweep` so external imports stay stable.
 """
 

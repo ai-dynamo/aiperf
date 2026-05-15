@@ -3,9 +3,6 @@
 """Local subprocess executor for MultiRunOrchestrator.
 
 Runs each BenchmarkRun in a fresh subprocess of aiperf.orchestrator.subprocess_runner.
-Body of MultiRunOrchestrator._execute_single_run prior to the executor-seam
-refactor, lifted here so MultiRunOrchestrator can iterate variations x trials
-through any executor (Task 8 changes the orchestrator side).
 """
 
 from __future__ import annotations

@@ -5,7 +5,6 @@
 AIPerf Configuration v2.0 - Pydantic Models
 
 Trace synthesis config used by file datasets.
-Extracted from ``dataset/config.py`` to keep that module under the file-size threshold.
 """
 
 from __future__ import annotations

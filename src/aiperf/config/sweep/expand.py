@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Sweep-config expansion helpers.
 
-Split out of ``config.py`` so the model layer stays under the 500-line
-ergonomics cap. Public re-export: ``aiperf.config.sweep.expand_sweep``.
+Public re-export: ``aiperf.config.sweep.expand_sweep``.
 """
 
 from __future__ import annotations

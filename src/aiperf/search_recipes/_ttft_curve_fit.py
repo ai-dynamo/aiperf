@@ -3,10 +3,8 @@
 
 """``TTFTCurveFit`` post-process handler for the ``prefill-ttft-curve`` recipe.
 
-Lives in a sibling module to ``post_process.py`` purely to keep that file
-under the 500-line ergonomics ceiling. The class is re-exported from
-:mod:`aiperf.search_recipes.post_process` -- consumers should import
-:class:`TTFTCurveFit` from there to match the other built-in handlers.
+Re-exported from :mod:`aiperf.search_recipes.post_process` -- consumers should
+import :class:`TTFTCurveFit` from there to match the other built-in handlers.
 """
 
 from __future__ import annotations

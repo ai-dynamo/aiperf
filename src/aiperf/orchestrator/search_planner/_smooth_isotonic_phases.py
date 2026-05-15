@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Fit / replicate / cliff-bisect step bodies for ``SmoothIsotonicSLAPlanner``.
 
-Extracted from ``smooth_isotonic.py`` to keep that module under the
-500-line ergonomics ceiling. Module-level functions taking the planner as
-the first argument; they read planner state and may mutate
-``_phase``, ``_probe_queue``, ``_candidate_x``, ``_fit_count``,
-``binding_constraint``, ``boundary_type``, ``boundary_ci_low/_hi``,
-``_convergence_reason``.
+Module-level functions taking the planner as the first argument; they read
+planner state and may mutate ``_phase``, ``_probe_queue``, ``_candidate_x``,
+``_fit_count``, ``binding_constraint``, ``boundary_type``,
+``boundary_ci_low/_hi``, ``_convergence_reason``.
 """
 
 from __future__ import annotations

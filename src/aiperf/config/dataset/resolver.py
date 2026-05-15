@@ -3,9 +3,9 @@
 
 """File-dataset resolver.
 
-Split out from ``resolvers.py`` to keep that module under the file-size limit.
 Imported and re-exported by ``resolvers`` so callers and test patches that
-reference ``aiperf.config.resolution.resolvers.DatasetResolver`` continue to work.
+reference ``aiperf.config.resolution.resolvers.DatasetResolver`` continue
+to work.
 """
 
 from __future__ import annotations

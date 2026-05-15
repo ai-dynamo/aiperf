@@ -3,10 +3,8 @@
 
 """Implementation of the ``sla_breach_knee`` post-process handler.
 
-Lives in a sibling module to ``post_process.py`` purely to keep that file
-under the 500-line ergonomics ceiling. The class is re-exported from
-``aiperf.search_recipes.post_process`` -- consumers should import
-:class:`SLABreachKnee` from there to match the other built-in handlers.
+Re-exported from ``aiperf.search_recipes.post_process`` -- consumers should
+import :class:`SLABreachKnee` from there to match the other built-in handlers.
 """
 
 from __future__ import annotations
@@ -114,11 +112,10 @@ class SLABreachKnee:
         sla_filters = list(params["sla_filters"])
         leaf = swept_param.split(".")[-1]
 
-        # Per-combination ``parameters`` dicts use leaf names
-        # (``concurrency``) since the sweep-aggregate refactor; recipes
-        # still pass ``swept_param`` as the full dotted path. Accept
-        # either form so this handler doesn't break depending on where
-        # the row originated.
+        # Per-combination ``parameters`` dicts can use either the leaf name
+        # (``concurrency``) or the full dotted path; recipes pass the full
+        # dotted path via ``swept_param``. Accept either form so this handler
+        # doesn't break depending on where the row originated.
         param_key: str
         rows = sweep_aggregate.get("per_combination_metrics") or []
         if rows and swept_param in (rows[0].get("parameters") or {}):

@@ -4,8 +4,7 @@
 """
 AIPerf Configuration v2.0 - Pydantic Models
 
-Synthetic video and embedded-audio-track configuration. Extracted from
-``content.py`` to keep that module under the file-size threshold.
+Synthetic video and embedded-audio-track configuration.
 """
 
 from __future__ import annotations

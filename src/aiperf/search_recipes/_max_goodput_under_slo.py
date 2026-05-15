@@ -5,11 +5,7 @@
 
 Closes the canonical-formulation gap to GitHub issue #883: maximizes goodput
 under simultaneous TTFT + TPOT + E2E per-request SLOs with a configurable
-attainment fraction (default 0.95).
-
-Lives in a sibling module -- and is re-exported from ``builtins.py`` -- to
-keep ``builtins.py`` under the 500-line ergonomics ceiling. Same
-sibling-split shape as ``_max_concurrency_under_sla.py``.
+attainment fraction (default 0.95). Re-exported from ``builtins.py``.
 """
 
 from __future__ import annotations

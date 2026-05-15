@@ -3,9 +3,8 @@
 
 """``ItlSurfaceFit`` post-process handler for the ``decode-itl-curve`` recipe.
 
-Lives in its own module to keep ``post_process.py`` under the 500-line
-ergonomics ceiling; re-exported from :mod:`aiperf.search_recipes.post_process`
-so the public import path matches the other built-in handlers.
+Re-exported from :mod:`aiperf.search_recipes.post_process` so the public
+import path matches the other built-in handlers.
 """
 
 from __future__ import annotations

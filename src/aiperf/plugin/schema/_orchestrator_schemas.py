@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Metadata schemas for orchestrator plugin categories.
 
-Split out of schemas.py to keep that file under the 500-line ergonomics
-ceiling. Re-exported from schemas.py so plugins.yaml references like
+Re-exported from schemas.py so plugins.yaml references like
 ``metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata``
-keep resolving — `aiperf.plugin.schema.schemas.ConvergenceCriterionMetadata`
+keep resolving - `aiperf.plugin.schema.schemas.ConvergenceCriterionMetadata`
 is still importable via the re-export.
 """
 

@@ -158,7 +158,7 @@ class MultiRunOrchestrator:
                 finishes its trials. Receives ``(variation_key, cell)`` where
                 ``variation_key`` is ``(label, tuple(sorted(values.items())))``
                 and ``cell`` is the dict produced by
-                :func:`aiperf.cli_runner._sweep_aggregate._aggregate_one_cell`.
+                :func:`aiperf.cli_runner._pareto._aggregate_one_cell`.
                 Useful for live observers (e.g. a streaming Pareto tracker).
                 Exceptions raised by the callback are caught and logged at
                 WARNING so a buggy observer cannot break the sweep.
@@ -185,7 +185,7 @@ class MultiRunOrchestrator:
         if self._cell_callback is None:
             return
         try:
-            from aiperf.cli_runner._sweep_aggregate import _aggregate_one_cell
+            from aiperf.cli_runner._pareto import _aggregate_one_cell
 
             cell = _aggregate_one_cell(cell_results, plan, variation)
             if cell is None:
@@ -409,11 +409,9 @@ class MultiRunOrchestrator:
     ) -> tuple[list[RunResult], bool]:
         """Run all trials for one variation cell in independent mode.
 
-        Factored out of :meth:`_execute_independent` to keep that function
-        under the 80-line ergonomics cap; the cell loop is the natural
-        per-iteration body. Returns ``(cell_results, aborted)`` where
-        ``aborted`` signals the caller to stop iterating further variations
-        (cancel-check fired mid-cell, or sweep failure threshold tripped).
+        Returns ``(cell_results, aborted)`` where ``aborted`` signals the
+        caller to stop iterating further variations (cancel-check fired
+        mid-cell, or sweep failure threshold tripped).
         """
         from aiperf.config.resolution.plan import BenchmarkRun
 
@@ -632,12 +630,11 @@ class MultiRunOrchestrator:
     ) -> bool:
         """Run all variations for one trial in repeated mode.
 
-        Factored out of :meth:`_execute_repeated` to land both the line and
-        complexity budgets; the per-trial body owns the inner variation
-        loop, the cancel/threshold checks, and the inter-variation cooldown.
-        Mutates ``all_results`` and ``per_variation_history`` in place.
-        Returns True when the caller must abort the outer trial loop
-        (cancelled, or sweep failure threshold tripped).
+        The per-trial body owns the inner variation loop, the cancel/threshold
+        checks, and the inter-variation cooldown. Mutates ``all_results`` and
+        ``per_variation_history`` in place. Returns True when the caller must
+        abort the outer trial loop (cancelled, or sweep failure threshold
+        tripped).
         """
         from aiperf.config.resolution.plan import BenchmarkRun
 

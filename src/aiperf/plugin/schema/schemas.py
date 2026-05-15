@@ -500,9 +500,8 @@ class GPUTelemetryCollectorMetadata(BaseModel):
 # =============================================================================
 # Re-exports
 # =============================================================================
-# New orchestrator metadata classes live in `_orchestrator_schemas.py` to keep
-# this file under the 500-line ergonomics ceiling. Re-exported here so
-# plugins.yaml references like
+# Orchestrator metadata classes live in `_orchestrator_schemas.py`; re-exported
+# here so plugins.yaml references like
 # ``metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata``
 # keep resolving.
 from aiperf.plugin.schema._orchestrator_schemas import (  # noqa: E402

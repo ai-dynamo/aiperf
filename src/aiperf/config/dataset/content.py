@@ -6,8 +6,7 @@ AIPerf Configuration v2.0 - Pydantic Models
 
 Content generation configs (prompts, prefix prompts, images, audio, rankings)
 used as building blocks inside dataset variants. Video configs live in
-``video.py``. Extracted from ``dataset/config.py`` to keep that module under
-the file-size ergonomics threshold.
+``video.py``.
 """
 
 from __future__ import annotations

@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Boundary-summary helpers for ``MonotonicSLASearchPlanner``.
 
-Extracted from ``monotonic.py`` to keep that module under the 500-line
-ergonomics ceiling. The planner owns the truth for ``feasible_max`` /
-``infeasible_min`` (latched during bisection from per-point verdict logs);
-these helpers project that latched state into the ``boundary_summary``
-shape consumed by ``write_search_history``.
+The planner owns the truth for ``feasible_max`` / ``infeasible_min``
+(latched during bisection from per-point verdict logs); these helpers
+project that latched state into the ``boundary_summary`` shape consumed
+by ``write_search_history``.
 """
 
 from __future__ import annotations

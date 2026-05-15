@@ -3,9 +3,7 @@
 
 """``MaxConcurrencyUnderSLA`` recipe (closes GitHub issue #883).
 
-Lives in a sibling module — and is re-exported from ``builtins.py`` — to keep
-``builtins.py`` under the 500-line ergonomics ceiling. Same sibling-split
-shape as ``_sla_breach_knee.py``.
+Re-exported from ``builtins.py``.
 """
 
 from __future__ import annotations

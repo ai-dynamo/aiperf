@@ -20,9 +20,8 @@ Built-in handlers:
 
 Handlers are registered under the ``search_recipe_post_process`` plugin
 category and looked up by name at the hook site. Several classes live in
-sibling ``_<name>.py`` modules to keep this file under the 500-line
-ergonomics ceiling, but are re-exported here so the public import path
-matches the other built-in handlers and ``plugins.yaml`` resolves them
+sibling ``_<name>.py`` modules and are re-exported here so the public import
+path matches the other built-in handlers and ``plugins.yaml`` resolves them
 directly.
 """
 

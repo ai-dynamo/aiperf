@@ -5,10 +5,6 @@
 ``_run_multi_benchmark`` is the entry point for sweeps and multi-trial
 plans. It wires up the orchestrator + executor + (optional) search
 planner, drives execution to completion, then aggregates and summarizes.
-
-Lives in its own module (rather than in :mod:`aiperf.cli_runner`) so test
-mocks can target the actual call site (``aiperf.cli_runner._multi_run.<name>``)
-following the standard "patch where it's looked up" rule.
 """
 
 from __future__ import annotations
@@ -131,10 +127,8 @@ def _execute_multi_benchmark(
 ) -> list[RunResult]:
     """Build the orchestrator + executor + planner and run the plan to completion.
 
-    Split out from :func:`_run_multi_benchmark` so the outer function stays
-    under the function-size ceiling. Wraps the asyncio run in a
-    try/except that re-raises after logging - exceptions are owned by the
-    caller's exit-code path.
+    Wraps the asyncio run in a try/except that re-raises after logging;
+    exceptions are owned by the caller's exit-code path.
     """
     import asyncio as _asyncio
 

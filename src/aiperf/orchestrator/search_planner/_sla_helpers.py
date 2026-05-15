@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared per-trial / per-iteration SLA-feasibility helpers.
 
-Lifted out of ``bayesian.py`` and ``monotonic.py`` so both planners share the
+Used by both ``bayesian.py`` and ``monotonic.py`` so both planners share the
 same canonical interpretation of ``SLAFilter``. Pure functions on plain inputs
 (no ``self``) so they're trivially testable and reusable from a third planner.
 

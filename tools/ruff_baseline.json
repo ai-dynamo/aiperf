@@ -222,7 +222,7 @@
     ],
     [
       "BLE001",
-      "src/aiperf/cli_runner/_sweep_aggregate.py",
+      "src/aiperf/cli_runner/_pareto.py",
       "_resolve_pareto_axes"
     ],
     [

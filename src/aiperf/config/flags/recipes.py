@@ -3,10 +3,6 @@
 
 """Search-recipe expansion helpers for the CLIConfig -> AIPerfConfig converter.
 
-Extracted from ``_converter_optionals.py`` so the recipe code path lives
-together (constants + reject/expand/override helpers) and the parent module
-stays under the 500-line ergonomics ceiling.
-
 Imported by :mod:`aiperf.config.flags._converter_optionals`; not part of the
 flags package public surface.
 """

@@ -214,8 +214,7 @@ class SweepAnalyzer:
     """Compute sweep-level statistics and analysis.
 
     Public surface is :meth:`compute`; the underscore-prefixed helpers
-    factor the orchestration so neither :meth:`compute` nor the helpers
-    exceed the 80-line ergonomics cap.
+    factor the orchestration.
     """
 
     @staticmethod
@@ -374,8 +373,7 @@ class SweepAnalyzer:
 
         Thin orchestrator over :meth:`_build_metadata`,
         :meth:`_build_per_combination_block`,
-        :meth:`_compute_best_configurations`, and :meth:`_compute_pareto`;
-        the helpers exist so each stays under the 80-line ergonomics cap.
+        :meth:`_compute_best_configurations`, and :meth:`_compute_pareto`.
 
         When ``sla_filters`` is non-empty, ``best_configurations`` is filtered
         to feasible configurations first (falling back to the full set when

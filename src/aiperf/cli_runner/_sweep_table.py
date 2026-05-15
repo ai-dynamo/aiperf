@@ -155,7 +155,7 @@ class SweepTableLogger:
         plan: BenchmarkPlan,
         logger: AIPerfLogger,
     ) -> None:
-        from aiperf.cli_runner._sweep_aggregate import _resolve_pareto_axes
+        from aiperf.cli_runner._pareto import _resolve_pareto_axes
 
         self._plan = plan
         self._logger = logger

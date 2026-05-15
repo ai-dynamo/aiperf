@@ -3,11 +3,9 @@
 
 """SLA-filter helpers for :class:`SweepAnalyzer`.
 
-Lives in a sibling module to ``sweep.py`` purely to keep both files under the
-500-line ergonomics cap. The single public entry point is
-:func:`filter_feasible`, which produces the feasible subset; the analyzer
-calls it once and routes ``best_configurations`` / ``pareto_optimal`` through
-the resulting dict.
+The single public entry point is :func:`filter_feasible`, which produces
+the feasible subset; the analyzer calls it once and routes
+``best_configurations`` / ``pareto_optimal`` through the resulting dict.
 """
 
 from __future__ import annotations

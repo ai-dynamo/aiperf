@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Boundary-summary helpers for ``SmoothIsotonicSLAPlanner``.
 
-Extracted from ``smooth_isotonic.py`` to keep that module under the
-500-line ergonomics ceiling, mirroring ``_monotonic_boundary.py``'s shape.
 The planner owns the latched ``feasible_max`` / ``infeasible_min`` and the
 smooth-isotonic-specific reporting fields (``boundary_type``,
 ``binding_constraint``, ``boundary_ci_low/_hi``); these helpers project
