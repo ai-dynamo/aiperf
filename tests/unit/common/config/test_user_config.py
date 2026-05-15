@@ -1941,3 +1941,29 @@ class TestInputFileWithSyntheticModalityWarning:
         assert "image" in warnings[0]
         assert "audio" in warnings[0]
         assert "video" in warnings[0]
+
+    def test_warns_lists_only_enabled_subset(self, caplog, fake_input_file):
+        """Two-of-three enabled modalities lists exactly those two and not the third."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                file=str(fake_input_file),
+                image=ImageConfig(
+                    batch_size=1,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                ),
+                audio=AudioConfig(
+                    batch_size=1,
+                    length=AudioLengthConfig(mean=2.0),
+                ),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        warnings = self._get_warnings(caplog)
+        assert len(warnings) == 1
+        assert "image" in warnings[0]
+        assert "audio" in warnings[0]
+        assert "video" not in warnings[0]

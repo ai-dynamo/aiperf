@@ -119,17 +119,7 @@ class TestVideoConfigWithAudio:
 
 
 class TestVideoConfigValidation:
-    """Test VideoConfig disabled-state validation."""
-
-    def test_explicit_batch_size_zero_with_dims_disable(self):
-        """`batch_size=0` overrides any dimension intent without raising."""
-        config = VideoConfig(batch_size=0, width=640, height=480)
-        assert config.videos_enabled() is False
-
-    def test_explicit_batch_size_zero_disable(self):
-        """`--video-batch-size 0` is treated as explicit disable, never raises."""
-        config = VideoConfig(batch_size=0)
-        assert config.videos_enabled() is False
+    """Behavior tests for VideoConfig validators."""
 
     def test_default_valued_does_not_raise(self):
         """Loading a config with explicit default-valued width/height must not raise."""
@@ -148,3 +138,27 @@ class TestVideoConfigValidation:
         dumped = original.model_dump()
         config = VideoConfig.model_validate(dumped)
         assert config.videos_enabled() is False
+
+    def test_batch_size_zero_is_disabled(self):
+        """`--video-batch-size 0` resolves to videos_enabled=False."""
+        config = VideoConfig(batch_size=0)
+        assert config.videos_enabled() is False
+
+    def test_batch_size_zero_with_dims_is_disabled(self):
+        """Width/height set with `batch_size=0` is treated as a valid explicit-disable."""
+        config = VideoConfig(batch_size=0, width=640, height=480)
+        assert config.videos_enabled() is False
+
+    def test_width_without_height_raises(self):
+        """Setting width but not height is rejected by validate_width_and_height."""
+        with pytest.raises(
+            ValidationError, match="Width is specified but height is not"
+        ):
+            VideoConfig(width=640)
+
+    def test_height_without_width_raises(self):
+        """Setting height but not width is rejected by validate_width_and_height."""
+        with pytest.raises(
+            ValidationError, match="Height is specified but width is not"
+        ):
+            VideoConfig(height=480)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.config import (
     ImageConfig,
@@ -86,6 +87,13 @@ class TestImageConfigValidation:
                 width=ImageWidthConfig(stddev=80.0),
             )
 
+    def test_rejects_options_when_images_disabled_height_stddev(self):
+        """Non-default height stddev alone without enabling images also raises."""
+        with pytest.raises(ValidationError, match="Image generation is disabled"):
+            ImageConfig(
+                height=ImageHeightConfig(stddev=60.0),
+            )
+
     def test_format_alone_does_not_require_images_enabled(self):
         """Setting format without dimensions is allowed (e.g., for external loaders)."""
         config = ImageConfig(format=ImageFormat.JPEG)
@@ -161,3 +169,23 @@ class TestImageSource:
             source=Path("/tmp/my_images"),
         )
         assert config.source == Path("/tmp/my_images")
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            param("noise", ImageSource.NOISE, id="enum-string-noise"),
+            param("assets", ImageSource.ASSETS, id="enum-string-assets"),
+            param("./my_images", Path("./my_images"), id="path-relative"),
+            param("/tmp/my_images", Path("/tmp/my_images"), id="path-absolute"),
+        ],
+    )  # fmt: skip
+    def test_source_str_coercion(self, raw, expected):
+        """Strings from CLI/YAML must resolve to ImageSource enum or Path."""
+        config = ImageConfig.model_validate(
+            {
+                "width": {"mean": 10},
+                "height": {"mean": 10},
+                "source": raw,
+            }
+        )
+        assert config.source == expected

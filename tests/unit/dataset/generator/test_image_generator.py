@@ -326,6 +326,36 @@ class TestImageGeneratorCustomDirectory:
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
 
+    def test_custom_directory_skips_non_image_files(self, tmp_path):
+        """Non-image entries (text, subdirs) must be skipped, not crash generation."""
+        img = Image.new("RGB", (5, 5), color="red")
+        img.save(tmp_path / "valid.png")
+        (tmp_path / "notes.txt").write_text("not an image")
+        (tmp_path / "subdir").mkdir()
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+        )
+        generator = ImageGenerator(config)
+        assert len(generator._source_images) == 1
+        result = generator.generate()
+        assert result.startswith("data:image/png;base64,")
+
+    def test_custom_directory_only_non_image_files_raises(self, tmp_path):
+        """A directory with only non-image files raises rather than silently producing nothing."""
+        (tmp_path / "notes.txt").write_text("hello")
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            source=tmp_path,
+        )
+        with pytest.raises(ValueError, match="No source images found"):
+            ImageGenerator(config)
+
     def test_custom_directory_not_found_raises(self):
         config = ImageConfig(
             width=ImageWidthConfig(mean=10, stddev=0),
