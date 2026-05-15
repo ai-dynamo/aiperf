@@ -101,7 +101,7 @@ def dag_dataset(
 
     - One conversation is the root. The remainder are leaves (no children).
     - Each non-root conversation is referenced from the root at most once.
-    - FORK targets get a unique parent. SPAWN targets may be re-used across
+    - FORK targets get a unique parent. SPAWN targets may be reused across
       conversations but not within a single turn (loader rejects dup ids).
     - If ``allow_delayed_join`` and the root has >=3 turns, a SPAWN may use
       a ``join_at`` strictly between (spawn_turn+1, num_turns-1).

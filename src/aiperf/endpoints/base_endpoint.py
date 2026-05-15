@@ -158,7 +158,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Used for conversation-level fields (``raw_tools``, ``max_tokens``,
         ``extra_body``, ``model``) that should reflect the most recent
         author intent. FORK-mode DAG children whose final turn does not
-        re-declare these fields still inherit the parent's value, instead
+        redeclare these fields still inherit the parent's value, instead
         of silently losing it. Returns ``None`` when no turn carries it.
         """
         for turn in reversed(turns):

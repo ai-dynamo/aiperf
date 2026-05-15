@@ -38,7 +38,7 @@ from aiperf.common.models import (
 )
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 
-# Re-use the fixture helpers from the existing adversarial suite to avoid
+# Reuse the fixture helpers from the existing adversarial suite to avoid
 # style drift. They are module-level pure functions, so direct import is
 # safe and idiomatic.
 from tests.unit.timing.test_branch_orchestrator_adversarial_full import (
