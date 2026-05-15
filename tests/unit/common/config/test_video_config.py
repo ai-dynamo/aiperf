@@ -8,9 +8,8 @@ from aiperf.common.config import (
     VideoAudioConfig,
     VideoAudioDefaults,
     VideoConfig,
-    VideoDefaults,
 )
-from aiperf.common.enums import VideoAudioCodec
+from aiperf.common.enums import VideoAudioCodec, VideoFormat
 
 
 class TestVideoAudioConfigDefaults:
@@ -112,8 +111,54 @@ class TestVideoConfigWithAudio:
     def test_video_config_preserves_existing_defaults(self):
         """Existing VideoConfig defaults are unchanged."""
         config = VideoConfig()
-        assert config.batch_size == VideoDefaults.BATCH_SIZE
-        assert config.duration == VideoDefaults.DURATION
-        assert config.fps == VideoDefaults.FPS
-        assert config.format == VideoDefaults.FORMAT
-        assert config.codec == VideoDefaults.CODEC
+        assert config.batch_size == 1
+        assert config.duration == 5.0
+        assert config.fps == 4
+        assert config.format == VideoFormat.WEBM
+        assert config.codec == "libvpx-vp9"
+
+
+class TestVideoConfigValidation:
+    """Behavior tests for VideoConfig validators."""
+
+    def test_default_valued_does_not_raise(self):
+        """Loading a config with explicit default-valued width/height must not raise."""
+        config = VideoConfig(
+            batch_size=1,
+            duration=5.0,
+            fps=4,
+            width=None,
+            height=None,
+        )
+        assert config.videos_enabled() is False
+
+    def test_config_yaml_roundtrip_does_not_raise(self):
+        """Round-tripping a fully-serialized default config must not raise."""
+        original = VideoConfig()
+        dumped = original.model_dump()
+        config = VideoConfig.model_validate(dumped)
+        assert config.videos_enabled() is False
+
+    def test_batch_size_zero_is_disabled(self):
+        """`--video-batch-size 0` resolves to videos_enabled=False."""
+        config = VideoConfig(batch_size=0)
+        assert config.videos_enabled() is False
+
+    def test_batch_size_zero_with_dims_is_disabled(self):
+        """Width/height set with `batch_size=0` is treated as a valid explicit-disable."""
+        config = VideoConfig(batch_size=0, width=640, height=480)
+        assert config.videos_enabled() is False
+
+    def test_width_without_height_raises(self):
+        """Setting width but not height is rejected by validate_width_and_height."""
+        with pytest.raises(
+            ValidationError, match="Width is specified but height is not"
+        ):
+            VideoConfig(width=640)
+
+    def test_height_without_width_raises(self):
+        """Setting height but not width is rejected by validate_width_and_height."""
+        with pytest.raises(
+            ValidationError, match="Height is specified but width is not"
+        ):
+            VideoConfig(height=480)

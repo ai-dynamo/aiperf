@@ -3,59 +3,32 @@
 
 import base64
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from PIL import Image
 
 from aiperf.common.config import ImageConfig, ImageHeightConfig, ImageWidthConfig
-from aiperf.common.enums import ImageFormat
+from aiperf.common.enums import ImageFormat, ImageSource
 from aiperf.dataset.generator import ImageGenerator
 
 
 @pytest.fixture
 def base_config():
-    """Base configuration for ImageGenerator tests."""
+    """Base configuration for ImageGenerator tests (pinned to ASSETS source).
+
+    The ASSETS source path exercises disk loading and source-image sampling,
+    which several tests below mock and assert against. NOISE (the default
+    source) bypasses disk entirely, so tests that need to verify file-loading
+    behavior must use ASSETS explicitly.
+    """
     return ImageConfig(
         width=ImageWidthConfig(mean=10, stddev=2),
         height=ImageHeightConfig(mean=10, stddev=2),
         format=ImageFormat.PNG,
+        source=ImageSource.ASSETS,
     )
-
-
-@pytest.fixture
-def config_random_format():
-    """Configuration with no format specified (for random format selection)."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=2),
-        height=ImageHeightConfig(mean=10, stddev=2),
-        format=ImageFormat.RANDOM,
-    )
-
-
-@pytest.fixture
-def config_fixed_dimensions():
-    """Configuration with fixed dimensions (stddev=0)."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=0),
-        height=ImageHeightConfig(mean=10, stddev=0),
-        format=ImageFormat.PNG,
-    )
-
-
-@pytest.fixture
-def mock_image() -> tuple[Mock, Mock]:
-    """Mock PIL Image object for source image."""
-    image = Mock(spec=Image.Image)
-    resized_image = Mock(spec=Image.Image)
-    image.resize.return_value = resized_image
-    return image, resized_image
-
-
-@pytest.fixture
-def test_image() -> Image.Image:
-    """Real PIL Image object for integration tests."""
-    return Image.new("RGB", (5, 5), color="red")
 
 
 @pytest.fixture
@@ -104,23 +77,6 @@ def various_configs(request):
     return request.param
 
 
-@pytest.fixture(
-    params=[
-        (1, 0, 1, 0),  # Minimum size
-        (100, 0, 50, 0),  # Fixed size
-        (200, 50, 300, 75),  # Variable size
-    ]
-)
-def dimension_params(request):
-    """Parameterized fixture providing various dimension configurations."""
-    width_mean, width_stddev, height_mean, height_stddev = request.param
-    return ImageConfig(
-        width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
-        height=ImageHeightConfig(mean=height_mean, stddev=height_stddev),
-        format=ImageFormat.PNG,
-    )
-
-
 class TestImageGenerator:
     """Comprehensive test suite for ImageGenerator class."""
 
@@ -147,104 +103,97 @@ class TestImageGenerator:
         expected_result = "data:image/png;base64,fake_base64_string"
         assert result == expected_result
 
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_with_random_format(
-        self, mock_sample_image, config_random_format, mock_image
-    ):
+    def test_generate_with_random_format(self):
         """Test generate method when format is random (random selection)."""
-        mock_sample_image.return_value = mock_image[0]
-
-        generator = ImageGenerator(config_random_format)
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=2),
+            height=ImageHeightConfig(mean=10, stddev=2),
+            format=ImageFormat.RANDOM,
+            source=ImageSource.NOISE,
+        )
+        generator = ImageGenerator(config)
         result = generator.generate()
         assert result.startswith("data:image/")
         assert "random" not in result
 
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_multiple_calls_different_results(
-        self, mock_sample_image, base_config, test_image
-    ):
+    def test_generate_multiple_calls_different_results(self):
         """Test that multiple generate calls can produce different results."""
         from aiperf.common import random_generator as rng
 
-        mock_sample_image.return_value = test_image
-
-        # Initialize global random generator to make the test deterministic
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=2),
+            height=ImageHeightConfig(mean=10, stddev=2),
+            format=ImageFormat.PNG,
+            source=ImageSource.NOISE,
+        )
         rng.reset()
         rng.init(42)
-        generator = ImageGenerator(base_config)
+        generator = ImageGenerator(config)
         image1 = generator.generate()
         image2 = generator.generate()
 
         assert image1 != image2
 
-    def test_sample_source_image_success(self, base_config, mock_file_system):
-        """Test successful sampling of source image."""
+    def test_create_from_file_success(self, base_config, mock_file_system):
+        """Test successful loading and sampling of source images."""
         mocks = mock_file_system
         mocks["mock_glob"].return_value = [
             "/path/image1.jpg",
             "/path/image2.png",
             "/path/image3.gif",
         ]
+        mocks["mock_image"].resize.return_value = mocks["mock_image"]
 
         generator = ImageGenerator(base_config)
 
-        # Verify images were pre-loaded during init
         mocks["mock_glob"].assert_called_once()
         glob_call_path = mocks["mock_glob"].call_args[0][0]
         assert "source_images" in glob_call_path and glob_call_path.endswith("*")
-        assert mocks["mock_open"].call_count == 3  # All images loaded
+        assert mocks["mock_open"].call_count == 3
 
-        # Test that sampling returns a copy
-        result = generator._sample_source_image()
-        assert result == mocks["mock_image"]  # Should be the copied mock image
+        result = generator._create_from_source_images(10, 10)
+        assert result == mocks["mock_image"]
 
-    def test_sample_source_image_no_images_found(self, base_config, mock_file_system):
+    def test_file_mode_no_images_found_raises(self, base_config, mock_file_system):
         """Test error handling when no source images are found."""
-        mock_file_system["mock_glob"].return_value = []  # No files found
+        mock_file_system["mock_glob"].return_value = []
 
-        # Error should be raised during initialization (pre-loading)
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="No source images found"):
             ImageGenerator(base_config)
 
-        assert "No source images found" in str(exc_info.value)
         mock_file_system["mock_glob"].assert_called_once()
 
-    def test_sample_source_image_single_file(self, base_config, mock_file_system):
+    def test_create_from_file_single_image(self, base_config, mock_file_system):
         """Test sampling when only one source image exists."""
         mocks = mock_file_system
         mocks["mock_glob"].return_value = ["/path/single_image.jpg"]
+        mocks["mock_image"].resize.return_value = mocks["mock_image"]
 
         generator = ImageGenerator(base_config)
 
-        # Verify single image was pre-loaded
         mocks["mock_glob"].assert_called_once()
         mocks["mock_open"].assert_called_once_with("/path/single_image.jpg")
 
-        # Test that sampling works with single image
-        result = generator._sample_source_image()
-        assert result == mocks["mock_image"]  # Should be the copied mock image
+        result = generator._create_from_source_images(10, 10)
+        assert result == mocks["mock_image"]
 
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_integration_with_real_image(
-        self, mock_sample_image, base_config, test_image
-    ):
-        """Integration test using a real image (mocked filesystem)."""
-        mock_sample_image.return_value = test_image
-
-        generator = ImageGenerator(base_config)
+    def test_generate_integration_with_real_image(self):
+        """Integration test with noise mode producing a decodable image."""
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=2),
+            height=ImageHeightConfig(mean=10, stddev=2),
+            format=ImageFormat.PNG,
+            source=ImageSource.NOISE,
+        )
+        generator = ImageGenerator(config)
         result = generator.generate()
 
-        # Verify the result is a valid data URL
         assert result.startswith("data:image/")
         assert ";base64," in result
 
-        # Verify we can decode the image
         _, base64_data = result.split(";base64,")
         decoded_data = base64.b64decode(base64_data)
         decoded_image = Image.open(BytesIO(decoded_data))
-
-        # The image should have been resized (not 50x50 anymore due to random sampling)
-        assert decoded_image.size != (50, 50)
         assert decoded_image.format in ["PNG", "JPEG"]
 
     @pytest.mark.parametrize(
@@ -254,60 +203,198 @@ class TestImageGenerator:
             (ImageFormat.JPEG, "data:image/jpeg;base64,"),
         ],
     )
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_different_formats(
-        self, mock_sample_image, image_format, expected_prefix, test_image
-    ):
+    def test_generate_different_formats(self, image_format, expected_prefix):
         """Test generate method with different image formats."""
         config = ImageConfig(
             width=ImageWidthConfig(mean=100, stddev=0),
             height=ImageHeightConfig(mean=100, stddev=0),
             format=image_format,
+            source=ImageSource.NOISE,
         )
+        generator = ImageGenerator(config)
+        result = generator.generate()
+        assert result.startswith(expected_prefix)
 
-        mock_sample_image.return_value = test_image
-
+    @pytest.mark.parametrize(
+        "width_mean, width_stddev, height_mean, height_stddev",
+        [
+            (1, 0, 1, 0),
+            (100, 0, 50, 0),
+            (200, 50, 300, 75),
+        ],
+    )
+    def test_generate_various_dimensions(
+        self, width_mean, width_stddev, height_mean, height_stddev
+    ):
+        """Test generate method with various dimension configurations."""
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
+            height=ImageHeightConfig(mean=height_mean, stddev=height_stddev),
+            format=ImageFormat.PNG,
+            source=ImageSource.NOISE,
+        )
         generator = ImageGenerator(config)
         result = generator.generate()
 
-        assert result.startswith(expected_prefix)
-
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_various_dimensions(
-        self, mock_sample_image, dimension_params, test_image
-    ):
-        """Test generate method with various dimension configurations."""
-        mock_sample_image.return_value = test_image
-
-        generator = ImageGenerator(dimension_params)
-        result = generator.generate()
-
-        # Verify it's a valid data URL
         assert result.startswith("data:image/png;base64,")
-
-        # Decode and verify the image
         _, base64_data = result.split(";base64,")
         decoded_data = base64.b64decode(base64_data)
         decoded_image = Image.open(BytesIO(decoded_data))
-
-        # We can verify it's a valid image
         assert decoded_image.size[0] > 0
         assert decoded_image.size[1] > 0
 
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_deterministic_image_generation(
-        self, mock_sample_image, base_config, test_image
-    ):
+    def test_deterministic_image_generation(self):
         """Test that image generation is deterministic with same seed."""
         from aiperf.common import random_generator as rng
 
-        mock_sample_image.return_value = test_image
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=2),
+            height=ImageHeightConfig(mean=10, stddev=2),
+            format=ImageFormat.PNG,
+            source=ImageSource.NOISE,
+        )
 
         def generate_with_seed(seed):
             rng.reset()
             rng.init(seed)
-            generator = ImageGenerator(base_config)
+            generator = ImageGenerator(config)
             return generator.generate()
 
-        # Generate with same seed twice - should be identical
         assert generate_with_seed(12345) == generate_with_seed(12345)
+
+
+class TestImageGeneratorNoiseMode:
+    """Tests for noise source mode."""
+
+    @pytest.fixture
+    def noise_config(self):
+        return ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=ImageSource.NOISE,
+        )
+
+    def test_init_noise_mode_skips_disk(self, noise_config):
+        generator = ImageGenerator(noise_config)
+        assert not hasattr(generator, "_source_images")
+
+    def test_generate_noise_returns_valid_data_url(self, noise_config):
+        generator = ImageGenerator(noise_config)
+        result = generator.generate()
+        assert result.startswith("data:image/png;base64,")
+
+    def test_noise_generates_correct_dimensions(self, noise_config):
+        generator = ImageGenerator(noise_config)
+        result = generator.generate()
+        _, base64_data = result.split(";base64,")
+        decoded = base64.b64decode(base64_data)
+        img = Image.open(BytesIO(decoded))
+        assert img.size == (10, 10)
+
+    def test_noise_deterministic_with_same_seed(self, noise_config):
+        from aiperf.common import random_generator as rng
+
+        def generate_with_seed(seed):
+            rng.reset()
+            rng.init(seed)
+            generator = ImageGenerator(noise_config)
+            return generator.generate()
+
+        assert generate_with_seed(42) == generate_with_seed(42)
+
+    def test_noise_produces_different_images_per_call(self, noise_config):
+        generator = ImageGenerator(noise_config)
+        results = [generator.generate() for _ in range(5)]
+        assert len(set(results)) == 5
+
+
+class TestImageGeneratorCustomDirectory:
+    """Tests for custom directory source mode."""
+
+    def test_custom_directory_loads_images(self, tmp_path):
+        img = Image.new("RGB", (5, 5), color="blue")
+        img.save(tmp_path / "test.png")
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+        )
+        generator = ImageGenerator(config)
+        result = generator.generate()
+        assert result.startswith("data:image/png;base64,")
+
+    def test_custom_directory_skips_non_image_files(self, tmp_path):
+        """Non-image entries (text, subdirs) must be skipped, not crash generation."""
+        img = Image.new("RGB", (5, 5), color="red")
+        img.save(tmp_path / "valid.png")
+        (tmp_path / "notes.txt").write_text("not an image")
+        (tmp_path / "subdir").mkdir()
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+        )
+        generator = ImageGenerator(config)
+        assert len(generator._source_images) == 1
+        result = generator.generate()
+        assert result.startswith("data:image/png;base64,")
+
+    def test_custom_directory_only_non_image_files_raises(self, tmp_path):
+        """A directory with only non-image files raises rather than silently producing nothing."""
+        (tmp_path / "notes.txt").write_text("hello")
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            source=tmp_path,
+        )
+        with pytest.raises(ValueError, match="No source images found"):
+            ImageGenerator(config)
+
+    def test_custom_directory_not_found_raises(self):
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            source=Path("/nonexistent/dir"),
+        )
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            ImageGenerator(config)
+
+    def test_custom_directory_is_file_raises(self, tmp_path):
+        file_path = tmp_path / "not_a_dir.txt"
+        file_path.write_text("hello")
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            source=file_path,
+        )
+        with pytest.raises(NotADirectoryError, match="is not a directory"):
+            ImageGenerator(config)
+
+    def test_custom_directory_empty_raises(self, tmp_path):
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            source=empty_dir,
+        )
+        with pytest.raises(ValueError, match="No source images found"):
+            ImageGenerator(config)
+
+
+class TestImageGeneratorDisabled:
+    """Tests for disabled image generation."""
+
+    def test_disabled_images_skips_init(self):
+        config = ImageConfig()
+        generator = ImageGenerator(config)
+        assert generator.config.images_enabled() is False
+        assert not hasattr(generator, "_dimensions_rng")

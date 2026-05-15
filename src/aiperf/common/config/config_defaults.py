@@ -6,14 +6,10 @@ from pathlib import Path
 
 from aiperf.common.enums import (
     AIPerfLogLevel,
-    AudioFormat,
     ConnectionReuseStrategy,
     ExportLevel,
-    ImageFormat,
     ModelSelectionStrategy,
     ServerMetricsFormat,
-    VideoFormat,
-    VideoSynthType,
 )
 from aiperf.plugin.enums import (
     ArrivalPattern,
@@ -84,39 +80,6 @@ class RankingsDefaults:
     PASSAGES_PROMPT_TOKEN_STDDEV = 0
     QUERY_PROMPT_TOKEN_MEAN = 550
     QUERY_PROMPT_TOKEN_STDDEV = 0
-
-
-@dataclass(frozen=True)
-class AudioDefaults:
-    BATCH_SIZE = 1
-    LENGTH_MEAN = 0.0
-    LENGTH_STDDEV = 0.0
-    FORMAT = AudioFormat.WAV
-    DEPTHS = [16]
-    SAMPLE_RATES = [16.0]
-    NUM_CHANNELS = 1
-
-
-@dataclass(frozen=True)
-class ImageDefaults:
-    BATCH_SIZE = 1
-    WIDTH_MEAN = 0.0
-    WIDTH_STDDEV = 0.0
-    HEIGHT_MEAN = 0.0
-    HEIGHT_STDDEV = 0.0
-    FORMAT = ImageFormat.PNG
-
-
-@dataclass(frozen=True)
-class VideoDefaults:
-    BATCH_SIZE = 1
-    DURATION = 5.0
-    FPS = 4
-    WIDTH = None
-    HEIGHT = None
-    SYNTH_TYPE = VideoSynthType.MOVING_SHAPES
-    FORMAT = VideoFormat.WEBM
-    CODEC = "libvpx-vp9"
 
 
 @dataclass(frozen=True)

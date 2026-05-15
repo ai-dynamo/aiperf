@@ -262,6 +262,17 @@ class ImageFormat(CaseInsensitiveStrEnum):
     """Randomly select PNG or JPEG for each image."""
 
 
+class ImageSource(CaseInsensitiveStrEnum):
+    """Source image generation mode for multimodal benchmarking."""
+
+    ASSETS = "assets"
+    """Load source images from the bundled assets/source_images directory."""
+
+    NOISE = "noise"
+    """Generate random noise images on the fly. Produces diverse, unique images
+    without requiring files on disk."""
+
+
 class IPVersion(CaseInsensitiveStrEnum):
     """IP version for HTTP socket connections."""
 

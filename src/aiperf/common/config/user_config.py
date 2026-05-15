@@ -1743,3 +1743,33 @@ class UserConfig(BaseConfig):
         """Validate accuracy benchmarking configuration."""
         # Stub: validation logic will be added when accuracy mode is implemented
         return self
+
+    @model_validator(mode="after")
+    def warn_synthetic_modality_options_with_input_file(self) -> Self:
+        """Warn when --input-file is combined with enabled synthetic multimodal generation.
+
+        Synthetic image/audio/video generation is only driven by the synthetic composer
+        path. When --input-file is set, the custom composer reads modality content from
+        the dataset file and the synthetic generation options are silently ignored. Surface
+        a warning so the user does not assume the synthetic options took effect.
+        """
+        if self.input.file is None:
+            return self
+
+        ignored = []
+        if self.input.image.images_enabled():
+            ignored.append(
+                "image (--image-batch-size, --image-width-mean, --image-height-mean)"
+            )
+        if self.input.audio.audio_enabled():
+            ignored.append("audio (--audio-batch-size, --audio-length-mean)")
+        if self.input.video.videos_enabled():
+            ignored.append("video (--video-batch-size, --video-width, --video-height)")
+
+        if ignored:
+            _logger.warning(
+                "--input-file is set, so synthetic multimodal generation options will "
+                f"be ignored: {', '.join(ignored)}. Multimodal content will be read from "
+                "the dataset file instead."
+            )
+        return self

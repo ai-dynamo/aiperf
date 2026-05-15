@@ -9,9 +9,14 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.config import (
+    AudioConfig,
+    AudioLengthConfig,
     ConversationConfig,
     EndpointConfig,
     EndpointDefaults,
+    ImageConfig,
+    ImageHeightConfig,
+    ImageWidthConfig,
     InputConfig,
     LoadGeneratorConfig,
     OutputConfig,
@@ -24,6 +29,7 @@ from aiperf.common.config import (
     TurnConfig,
     TurnDelayConfig,
     UserConfig,
+    VideoConfig,
 )
 from aiperf.common.config.prompt_config import InputTokensConfig
 from aiperf.common.enums import GPUTelemetryMode
@@ -2362,3 +2368,161 @@ class TestConcurrencyListParsing:
         )
         assert config.concurrency == [10, 20, 30]
         assert config.request_count == 100
+
+
+class TestInputFileWithSyntheticModalityWarning:
+    """Test the warning when --input-file is combined with enabled synthetic modality options."""
+
+    def _get_warnings(self, caplog) -> list[str]:
+        return [
+            r.message
+            for r in caplog.records
+            if "synthetic multimodal generation options" in r.message
+        ]
+
+    @pytest.fixture
+    def fake_input_file(self, tmp_path) -> Path:
+        path = tmp_path / "dummy.jsonl"
+        path.write_text('{"text": "hello"}\n')
+        return path
+
+    def test_no_warn_when_no_input_file(self, caplog):
+        """Synthetic modality options without --input-file produce no warning."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                image=ImageConfig(
+                    batch_size=1,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                ),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        assert self._get_warnings(caplog) == []
+
+    def test_no_warn_when_input_file_without_enabled_modalities(
+        self, caplog, fake_input_file
+    ):
+        """--input-file alone with default modality config produces no warning."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(file=str(fake_input_file)),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        assert self._get_warnings(caplog) == []
+
+    def test_warns_when_input_file_with_enabled_images(self, caplog, fake_input_file):
+        """--input-file plus enabled image synthesis emits a warning naming image options."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                file=str(fake_input_file),
+                image=ImageConfig(
+                    batch_size=1,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                ),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        warnings = self._get_warnings(caplog)
+        assert len(warnings) == 1
+        assert "image" in warnings[0]
+        assert "--image-batch-size" in warnings[0]
+
+    def test_warns_when_input_file_with_enabled_audio(self, caplog, fake_input_file):
+        """--input-file plus enabled audio synthesis emits a warning naming audio options."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                file=str(fake_input_file),
+                audio=AudioConfig(
+                    batch_size=1,
+                    length=AudioLengthConfig(mean=2.0),
+                ),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        warnings = self._get_warnings(caplog)
+        assert len(warnings) == 1
+        assert "audio" in warnings[0]
+        assert "--audio-batch-size" in warnings[0]
+
+    def test_warns_when_input_file_with_enabled_video(self, caplog, fake_input_file):
+        """--input-file plus enabled video synthesis emits a warning naming video options."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                file=str(fake_input_file),
+                video=VideoConfig(batch_size=1, width=640, height=480),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        warnings = self._get_warnings(caplog)
+        assert len(warnings) == 1
+        assert "video" in warnings[0]
+        assert "--video-batch-size" in warnings[0]
+
+    def test_warns_lists_all_enabled_modalities(self, caplog, fake_input_file):
+        """--input-file plus all three enabled modalities lists every conflict."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                file=str(fake_input_file),
+                image=ImageConfig(
+                    batch_size=1,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                ),
+                audio=AudioConfig(
+                    batch_size=1,
+                    length=AudioLengthConfig(mean=2.0),
+                ),
+                video=VideoConfig(batch_size=1, width=640, height=480),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        warnings = self._get_warnings(caplog)
+        assert len(warnings) == 1
+        assert "image" in warnings[0]
+        assert "audio" in warnings[0]
+        assert "video" in warnings[0]
+
+    def test_warns_lists_only_enabled_subset(self, caplog, fake_input_file):
+        """Two-of-three enabled modalities lists exactly those two and not the third."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        make_config(
+            input_config=InputConfig(
+                file=str(fake_input_file),
+                image=ImageConfig(
+                    batch_size=1,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                ),
+                audio=AudioConfig(
+                    batch_size=1,
+                    length=AudioLengthConfig(mean=2.0),
+                ),
+            ),
+            loadgen=LoadGeneratorConfig(request_count=1),
+        )
+        warnings = self._get_warnings(caplog)
+        assert len(warnings) == 1
+        assert "image" in warnings[0]
+        assert "audio" in warnings[0]
+        assert "video" not in warnings[0]

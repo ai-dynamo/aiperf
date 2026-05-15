@@ -7,13 +7,8 @@ import pytest
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import (
-    AudioConfig,
-    AudioLengthConfig,
     ConversationConfig,
     EndpointConfig,
-    ImageConfig,
-    ImageHeightConfig,
-    ImageWidthConfig,
     InputConfig,
     InputTokensConfig,
     PrefixPromptConfig,
@@ -80,10 +75,6 @@ class TestSyntheticDatasetComposer:
             input=InputConfig(
                 conversation=ConversationConfig(num_dataset_entries=5),
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
-                image=ImageConfig(
-                    width=ImageWidthConfig(mean=0), height=ImageHeightConfig(mean=0)
-                ),
-                audio=AudioConfig(length=AudioLengthConfig(mean=0)),
             ),
         )
 

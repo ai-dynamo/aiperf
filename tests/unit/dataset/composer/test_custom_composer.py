@@ -343,3 +343,44 @@ class TestSynthesisValidation:
 
         # Should not raise - max_isl doesn't trigger should_synthesize()
         composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+
+
+class TestCustomComposerIgnoresSyntheticMedia:
+    """The custom composer drives modality content from --input-file and must not
+    invoke the synthetic image/audio/video generators even when their options
+    are enabled on the config. This is the behavioral side of the
+    `warn_synthetic_modality_options_with_input_file` warning in UserConfig.
+    """
+
+    @patch.object(
+        __import__(
+            "aiperf.dataset.generator.image", fromlist=["ImageGenerator"]
+        ).ImageGenerator,
+        "generate",
+    )
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    @patch("builtins.open", mock_open(read_data=MOCK_SINGLE_TURN_CONTENT))
+    def test_create_dataset_does_not_invoke_image_generator(
+        self,
+        mock_check_file,
+        mock_generate,
+        custom_config,
+        mock_tokenizer,
+    ):
+        """Even with image synthesis enabled, custom composer must not call ImageGenerator.generate."""
+        from aiperf.common.config import (
+            ImageConfig,
+            ImageHeightConfig,
+            ImageWidthConfig,
+        )
+
+        custom_config.input.image = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=256),
+            height=ImageHeightConfig(mean=256),
+        )
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        composer.create_dataset()
+
+        assert mock_generate.call_count == 0

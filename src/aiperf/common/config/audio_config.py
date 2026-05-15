@@ -3,11 +3,11 @@
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
-from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.config.config_validators import parse_str_or_list_of_positive_values
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import AudioFormat
@@ -21,6 +21,7 @@ class AudioLengthConfig(BaseConfig):
     mean: Annotated[
         float,
         Field(
+            default=0.0,
             ge=0,
             description="Mean duration in seconds for synthetically generated audio files. Audio lengths follow a normal distribution "
             "around this mean (±`--audio-length-stddev`). Used when `--audio-batch-size` > 0 for multimodal benchmarking. "
@@ -32,11 +33,12 @@ class AudioLengthConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.LENGTH_MEAN
+    ]
 
     stddev: Annotated[
         float,
         Field(
+            default=0.0,
             ge=0,
             description="Standard deviation for synthetic audio duration in seconds. Creates variability in audio lengths when > 0, "
             "simulating mixed-duration audio inputs. Durations follow normal distribution. "
@@ -48,7 +50,7 @@ class AudioLengthConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.LENGTH_STDDEV
+    ]
 
 
 class AudioConfig(BaseConfig):
@@ -59,6 +61,7 @@ class AudioConfig(BaseConfig):
     batch_size: Annotated[
         int,
         Field(
+            default=1,
             ge=0,
             description="The number of audio inputs to include in each request. Supported with the `chat` endpoint type for multimodal models.",
         ),
@@ -69,13 +72,20 @@ class AudioConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.BATCH_SIZE
+    ]
 
-    length: AudioLengthConfig = AudioLengthConfig()
+    length: Annotated[
+        AudioLengthConfig,
+        Field(
+            default_factory=AudioLengthConfig,
+            description="Duration distribution for synthetic audio samples (mean and stddev in seconds).",
+        ),
+    ]
 
     format: Annotated[
         AudioFormat,
         Field(
+            default=AudioFormat.WAV,
             description="File format for generated audio files. Supports `wav` (uncompressed PCM, larger files) and `mp3` (compressed, smaller files). "
             "Format choice affects file size in multimodal requests but not audio characteristics (sample rate, bit depth, duration).",
         ),
@@ -85,11 +95,12 @@ class AudioConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.FORMAT
+    ]
 
     depths: Annotated[
         list[int],
         Field(
+            default=[16],
             min_length=1,
             description="List of audio bit depths in bits to randomly select from when generating audio files. Each audio file is assigned "
             "a random depth from this list. Common values: `8` (low quality), `16` (CD quality), `24` (professional), `32` (high-end). "
@@ -102,11 +113,12 @@ class AudioConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.DEPTHS
+    ]
 
     sample_rates: Annotated[
         list[float],
         Field(
+            default=[16.0],
             min_length=1,
             description="A list of audio sample rates to randomly select from in kHz.\n"
             "Common sample rates are 16, 44.1, 48, 96, etc.",
@@ -118,11 +130,12 @@ class AudioConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.SAMPLE_RATES
+    ]
 
     num_channels: Annotated[
         int,
         Field(
+            default=1,
             ge=1,
             le=2,
             description="Number of audio channels for synthetic audio generation. `1` = mono (single channel), `2` = stereo (left/right channels). "
@@ -135,4 +148,25 @@ class AudioConfig(BaseConfig):
             ),
             group=Groups.AUDIO_INPUT,
         ),
-    ] = AudioDefaults.NUM_CHANNELS
+    ]
+
+    @model_validator(mode="after")
+    def _validate_audio_options(self) -> Self:
+        """Validate the audio options.
+
+        Flag configs where the user supplied non-default length parameters but did not
+        enable audio. `batch_size=0` is treated as an explicit disable and always allowed,
+        and default-valued fields (e.g., from a round-tripped config file) do not trip
+        the check.
+        """
+        if self.audio_enabled() or self.batch_size == 0:
+            return self
+        if self.length.mean != 0.0 or self.length.stddev != 0.0:
+            raise ValueError(
+                "Audio generation is disabled but audio length options were provided. Please set `--audio-batch-size` and `--audio-length-mean` to enable audio generation."
+            )
+        return self
+
+    def audio_enabled(self) -> bool:
+        """Check if audio is enabled."""
+        return self.length.mean > 0 and self.batch_size > 0
