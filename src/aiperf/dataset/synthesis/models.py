@@ -5,9 +5,9 @@
 from pydantic import Field
 from typing_extensions import Self
 
-from aiperf.common.config.config_defaults import InputTokensDefaults
-from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.config.dataset.defaults import InputTokensDefaults
+from aiperf.config.dataset.trace import SynthesisConfig
 
 
 class MetricStats(AIPerfBaseModel):
@@ -28,19 +28,24 @@ class AnalysisStats(AIPerfBaseModel):
     total_requests: int = Field(description="Total number of requests in trace")
     unique_prefixes: int = Field(description="Number of unique prefix patterns")
     num_prefix_groups: int = Field(
-        description="Number of distinct shared first blocks (prefix groups)"
+        ge=0,
+        description="Number of distinct shared first blocks (prefix groups)",
     )
     cache_hit_rate: float = Field(
-        description="Theoretical cache hit rate (0.0 to 1.0) assuming infinite cache"
+        ge=0.0,
+        le=1.0,
+        description="Theoretical cache hit rate (0.0 to 1.0) assuming infinite cache",
     )
-    min_isl: int = Field(description="Minimum input sequence length")
-    max_isl: int = Field(description="Maximum input sequence length")
-    avg_isl: float = Field(description="Average input sequence length")
-    min_osl: int = Field(description="Minimum output sequence length")
-    max_osl: int = Field(description="Maximum output sequence length")
-    avg_osl: float = Field(description="Average output sequence length")
+    min_isl: int = Field(ge=0, description="Minimum input sequence length")
+    max_isl: int = Field(ge=0, description="Maximum input sequence length")
+    avg_isl: float = Field(ge=0, description="Average input sequence length")
+    min_osl: int = Field(ge=0, description="Minimum output sequence length")
+    max_osl: int = Field(ge=0, description="Maximum output sequence length")
+    avg_osl: float = Field(ge=0, description="Average output sequence length")
     prefix_reuse_ratio: float = Field(
-        description="Ratio of reused prefixes to total prefixes (0.0 to 1.0)"
+        ge=0.0,
+        le=1.0,
+        description="Ratio of reused prefixes to total prefixes (0.0 to 1.0)",
     )
     # Extended statistics matching prefix_data_generator output
     isl_stats: MetricStats | None = Field(

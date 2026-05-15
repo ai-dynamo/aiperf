@@ -134,10 +134,6 @@ api_router:
     class: aiperf.api.routers.core:CoreRouter
     description: Config, health, and readiness endpoints.
 
-  # dataset:
-  #   class: aiperf.api.routers.dataset:DatasetRouter
-  #   description: Dataset metadata and file streaming with compression support.
-
   metrics:
     class: aiperf.api.routers.metrics:MetricsRouter
     description: Real-time metrics state and Prometheus/JSON endpoints.
@@ -150,14 +146,6 @@ api_router:
     class: aiperf.api.routers.results:ResultsRouter
     description: Final benchmark results and artifact file downloads.
 
-  # static:
-  #   class: aiperf.api.routers.static:StaticRouter
-  #   description: Static HTML file serving for dashboard and index pages.
-
-  # websocket:
-  #   class: aiperf.api.routers.websocket:WebSocketRouter
-  #   description: WebSocket endpoint for real-time ZMQ message streaming.
-
   workers:
     class: aiperf.api.routers.workers:WorkersRouter
     description: Worker health tracking and /api/workers endpoint.
@@ -169,12 +157,6 @@ api_router:
 # One-to-one mapping: exactly one service manager is selected based on run_mode.
 # =============================================================================
 service_manager:
-  kubernetes:
-    class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
-    description: |
-      Kubernetes service manager for multi-node deployments. Runs each service as
-      a Kubernetes pod with ZMQ TCP communication for distributed cloud execution.
-
   multiprocessing:
     class: aiperf.controller.multiprocess_service_manager:MultiProcessServiceManager
     description: |
@@ -624,7 +606,8 @@ dataset_client_store:
     class: aiperf.dataset.memory_map_utils:MemoryMapDatasetClientStore
     description: |
       Memory-mapped file client store for zero-copy reads. Reads from memory-mapped
-      files with O(1) lookup performance.
+      files with O(1) lookup performance. In Kubernetes mode, WorkerGroupManager
+      downloads the dataset once per pod and workers use local mmap access.
 
 # =============================================================================
 # Timing Strategies
@@ -810,6 +793,53 @@ results_processor:
     description: |
       Accuracy results processor that aggregates grading results and computes
       summary accuracy metrics. Self-disables when accuracy mode is off.
+
+# =============================================================================
+# GPU Telemetry Processors
+# =============================================================================
+# GPU telemetry processors aggregate and export GPU telemetry records locally
+# within GPUTelemetryManager. One-to-many mapping.
+# =============================================================================
+gpu_telemetry_processor:
+  gpu_telemetry_accumulator:
+    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+    description: |
+      GPU telemetry accumulator that aggregates GPU telemetry records and computes
+      metrics in a hierarchical structure. Loaded when telemetry is enabled.
+
+  gpu_telemetry_jsonl_writer:
+    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
+    description: |
+      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
+      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
+      export config.
+
+# =============================================================================
+# Server Metrics Processors
+# =============================================================================
+# Server metrics processors aggregate and export Prometheus server metrics
+# records locally within ServerMetricsManager. One-to-many mapping.
+# =============================================================================
+server_metrics_processor:
+  server_metrics_accumulator:
+    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
+    description: |
+      Server metrics accumulator that aggregates Prometheus server metrics records
+      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+
+  server_metrics_jsonl_writer:
+    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
+    description: |
+      Server metrics JSONL writer that exports per-record server metrics data to
+      JSONL files in slim format.
+
+# =============================================================================
+# Artifact Publishers
+# =============================================================================
+# Artifact publishers upload exported benchmark files to remote storage backends.
+# One-to-many mapping: multiple publishers can be loaded simultaneously.
+# =============================================================================
+# artifact_publisher:
 
 # =============================================================================
 # Data Exporters
@@ -1905,3 +1935,241 @@ zmq_proxy:
     description: |
       XPUB/XSUB proxy for publish-subscribe pattern. Routes messages from PUB
       clients to SUB services with subscription management and message broadcasting.
+
+# =============================================================================
+# Search Recipes
+# =============================================================================
+# Search recipes are named presets that compile to AdaptiveSearchSweep (BO) or
+# sweep.parameters (grid) in the CLI converter (expand_search_recipe in
+# aiperf/config/v1/_converter_optionals.py + _apply_recipe_sweep_parameters in
+# aiperf/config/v1/converter.py).
+# =============================================================================
+search_recipe:
+  max-throughput-ttft-sla:
+    class: aiperf.search_recipes.builtins:MaxThroughputUnderTTFTSLA
+    description: |
+      Maximize output_token_throughput at the highest concurrency where p95 TTFT
+      stays under --ttft-sla-ms. Bayesian-optimized over concurrency.
+    metadata:
+      algorithm: bayes
+      sweep_path: phases.profiling.concurrency
+  max-throughput-itl-sla:
+    class: aiperf.search_recipes.builtins:MaxThroughputUnderITLSLA
+    description: |
+      Maximize output_token_throughput at the highest concurrency where p95 ITL
+      stays under --itl-sla-ms. Bayesian-optimized over concurrency.
+    metadata:
+      algorithm: bayes
+      sweep_path: phases.profiling.concurrency
+  concurrency-ramp:
+    class: aiperf.search_recipes.builtins:ConcurrencyRamp
+    description: |
+      Ramp concurrency log-spaced over [1, 1000] and detect the first concurrency
+      where p99 request_latency degrades past baseline * (1 + --degradation-threshold).
+    metadata:
+      algorithm: grid
+      sweep_path: phases.profiling.concurrency
+  prefill-ttft-curve:
+    class: aiperf.search_recipes.builtins:PrefillTTFTCurve
+    description: |
+      Sweep ISL log-spaced at concurrency=1; fit TTFT vs ISL with a linear
+      regression (quadratic fallback when r^2 < 0.85).
+    metadata:
+      algorithm: grid
+      sweep_path: benchmark.datasets.main.prompts.isl
+  decode-itl-curve:
+    class: aiperf.search_recipes.builtins:DecodeITLCurve
+    description: |
+      Sweep concurrency x OSL grid; fit ITL surface (axis-aligned grid with
+      nulls for unmeasured cells) and emit decode_itl_surface.json.
+    metadata:
+      algorithm: grid
+      sweep_path: benchmark.phases.profiling.concurrency,benchmark.datasets.main.prompts.osl
+  max-concurrency-under-sla:
+    class: aiperf.search_recipes.builtins:MaxConcurrencyUnderSLA
+    description: |
+      Find the highest concurrency where all SLA filters pass. Default
+      smooth-isotonic 1D SLA-saturation search; use
+      --search-style {smooth_isotonic|monotonic|bo|optuna|grid}. Closes
+      GitHub issue #883.
+    metadata:
+      algorithm: smooth_isotonic
+      sweep_path: phases.profiling.concurrency
+  pareto-sweep:
+    class: aiperf.search_recipes.builtins:ParetoSweep
+    description: |
+      Sweep paired ISL/OSL workload shapes across a concurrency list; emit
+      a Pareto frontier (request_latency p95 vs output_token_throughput avg).
+      Closes GitHub issue #874.
+  max-goodput-under-slo:
+    class: aiperf.search_recipes.builtins:MaxGoodputUnderSLO
+    description: |
+      Maximize goodput at the highest concurrency where >=X% of requests satisfy
+      simultaneous TTFT/TPOT/E2E per-request SLOs. Bayesian-optimized; canonical
+      DistServe formulation. Requires --ttft-sla-ms, --tpot-sla-ms, --e2e-sla-ms;
+      attainment fraction defaults to 0.95.
+    metadata:
+      algorithm: bayes
+      sweep_path: phases.profiling.concurrency
+
+# =============================================================================
+# Search Recipe Post-Process Handlers
+# =============================================================================
+# Handlers run after SweepAnalyzer.compute() in aggregate_sweep_and_export and
+# emit derived artifacts (curves, knee points) into sweep_aggregate/. Selected
+# indirectly via a recipe's PostProcessSpec.
+# =============================================================================
+search_recipe_post_process:
+  degradation_knee_detect:
+    class: aiperf.search_recipes.post_process:DegradationKneeDetect
+    description: |
+      Find the first swept value where the chosen metric exceeds
+      baseline * (1 + threshold_pct). Used by the concurrency-ramp recipe.
+  pareto_sweep_export:
+    class: aiperf.search_recipes.post_process:ParetoSweepExport
+    description: |
+      Emit a Pareto-frontier JSON artifact for the pareto-sweep recipe.
+      Marks each (isl, osl, concurrency) cell with a pareto_optimal flag.
+  ttft_curve_fit:
+    class: aiperf.search_recipes.post_process:TTFTCurveFit
+    description: |
+      Fit TTFT vs ISL with linear regression; refit quadratic when r^2 is
+      below the configured floor (default 0.85). Used by the
+      prefill-ttft-curve recipe.
+  itl_surface_fit:
+    class: aiperf.search_recipes.post_process:ItlSurfaceFit
+    description: |
+      Build an axis-aligned ITL(concurrency, OSL) surface from a 2D grid
+      sweep. Emits raw points + grid with nulls for unmeasured cells. Used
+      by the decode-itl-curve recipe.
+  sla_breach_knee:
+    class: aiperf.search_recipes.post_process:SLABreachKnee
+    description: |
+      Locate the SLA feasibility boundary along a swept parameter and emit
+      max_passing / first_failing values plus per-point breach detail. Used
+      by the max-concurrency-under-sla grid path.
+
+# =============================================================================
+# Convergence Criteria
+# =============================================================================
+# Convergence criteria decide when adaptive multi-run trials can stop because
+# the chosen metric has stabilized across repeated runs.
+# =============================================================================
+convergence_criterion:
+  ci_width:
+    class: aiperf.orchestrator.convergence.ci_width:CIWidthConvergence
+    description: |
+      Stops when Student's t confidence interval width relative to the metric
+      mean falls below `--convergence-threshold` (default 0.10 = 10%). Reads
+      `--confidence-level` (default 0.95).
+    metadata:
+      min_samples: 3
+      requires_confidence_level: true
+      requires_jsonl_export: false
+      metric_kinds: [continuous]
+
+  cv:
+    class: aiperf.orchestrator.convergence.cv:CVConvergence
+    description: |
+      Stops when the coefficient of variation across run-level statistic values
+      falls below `--convergence-threshold` (default 0.05 = 5%).
+    metadata:
+      min_samples: 3
+      requires_confidence_level: false
+      requires_jsonl_export: false
+      metric_kinds: [continuous]
+
+  distribution:
+    class: aiperf.orchestrator.convergence.distribution:DistributionConvergence
+    description: |
+      Stops when a two-sample Kolmogorov-Smirnov test between the latest run's
+      per-request distribution and the union of prior runs yields p > threshold.
+      Requires JSONL export (`--export-format json`).
+    metadata:
+      min_samples: 3
+      requires_confidence_level: false
+      requires_jsonl_export: true
+      metric_kinds: [continuous]
+
+# =============================================================================
+# Search Planners
+# =============================================================================
+# Search planners drive the adaptive outer loop, proposing the next variation
+# via ask() and absorbing observed metrics via tell().
+# =============================================================================
+search_planner:
+  bayesian:
+    class: aiperf.orchestrator.search_planner.bayesian:BayesianSearchPlanner
+    description: |
+      Curated adaptive-search preset. Subclass of OptunaSearchPlanner that
+      uses the optional BoTorch sampler when available, selecting
+      `optuna_acquisition=qlognei` (single-objective) or
+      `optuna_acquisition=qlognehvi` (multi-objective) automatically. When the
+      optional BoTorch stack is unavailable, the preset logs a warning and
+      falls back to Optuna's core TPE sampler so adaptive search still works
+      from the default install. Under `--search-planner=optuna`, the same
+      fallback applies only when BoTorch was implicit; explicit BoTorch sampler
+      requests raise when the optional stack is unavailable.
+    metadata:
+      supports_continuous: true
+      supports_discrete: true
+      supports_categorical: false
+      requires_initial_samples: 5
+      compatible_objective_directions: [maximize, minimize]
+      requires_extras: []
+  monotonic_sla:
+    class: aiperf.orchestrator.search_planner.monotonic:MonotonicSLASearchPlanner
+    description: |
+      1D-optimized exponential-probe + bisection planner for SLA-saturation
+      search. Mirrors perf_analyzer's `--binary-search`. O(log N) versus BO's
+      O(N) on 1D feasibility-only problems. Requires exactly one integer
+      search-space dimension and at least one SLA filter; rejects
+      multi-dimensional or empty-filter configs at construction. No
+      heavy dependencies.
+    metadata:
+      supports_continuous: false
+      supports_discrete: true
+      supports_categorical: false
+      requires_initial_samples: 0
+      compatible_objective_directions: [maximize, minimize]
+      requires_extras: []
+  smooth_isotonic:
+    class: aiperf.orchestrator.search_planner.smooth_isotonic:SmoothIsotonicSLAPlanner
+    description: |
+      1D smooth-isotonic SLA-saturation planner. Composition: PAVA denoises
+      noisy probe margins, PCHIP interpolates the denoised points, root-find
+      recovers the saturation boundary. Strictly more accurate than
+      monotonic_sla under noise; opt-in Phase-3 replicates (via
+      --sla-replicates) bound the boundary with a bootstrap CI. Cliff guard
+      reports `boundary_type: cliff` for prefill-prioritizing servers where
+      the curve is genuinely discontinuous. Same dependency footprint as
+      monotonic_sla — only scipy (already required).
+    metadata:
+      supports_continuous: false
+      supports_discrete: true
+      supports_categorical: false
+      requires_initial_samples: 0
+      compatible_objective_directions: [maximize, minimize]
+      requires_extras: []
+  optuna:
+    class: aiperf.orchestrator.search_planner.optuna_planner:OptunaSearchPlanner
+    description: |
+      Optuna-backed adaptive outer-loop planner with explicit sampler and
+      acquisition selection. Default sampler is `TPESampler` (Optuna 3.0+
+      native constraints, ships with Optuna core). `GPSampler` is
+      selectable via `--optuna-sampler gp` for native GP-EI
+      semantics with native inequality constraints (Optuna 4.2+).
+      `BoTorchSampler` is selectable via `--optuna-sampler botorch` for
+      modern qLogNEI / qLogNEHVI acquisitions; when this sampler is
+      chosen, the GP surrogate uses the Hvarfner-DSP Matern-5/2 kernel
+      (arXiv:2402.02229) automatically. Power-user entry point;
+      `--search-planner=bayesian` is the curated alternative for users
+      who don't want to choose sampler/acquisition. Optuna core is installed
+      by default; BoTorch requires the optional `botorch` extra.
+    metadata:
+      supports_continuous: true
+      supports_discrete: true
+      supports_categorical: false
+      requires_initial_samples: 5
+      compatible_objective_directions: [maximize, minimize]
+      requires_extras: []

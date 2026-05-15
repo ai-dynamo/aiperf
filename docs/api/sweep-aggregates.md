@@ -19,7 +19,7 @@ When running parameter sweeps with AIPerf (e.g., `--concurrency 10,20,30`), the 
 
 Sweep aggregates are written to different locations depending on the sweep mode:
 
-**Independent Mode** (sweep-only, no `--num-profile-runs`):
+**Sweep-only** (no `--num-profile-runs`):
 ```text
 artifacts/
   {benchmark_name}/
@@ -28,7 +28,21 @@ artifacts/
       profile_export_aiperf_sweep.csv     # Tabular format for spreadsheet analysis
 ```
 
-**Repeated Mode** (sweep with `--num-profile-runs > 1`):
+**Independent Mode** (sweep + `--num-profile-runs > 1` + `--parameter-sweep-mode independent`):
+```text
+artifacts/
+  {benchmark_name}/
+    concurrency_10/aggregate/             # Per-value confidence aggregates
+      profile_export_aiperf_aggregate.json
+      profile_export_aiperf_aggregate.csv
+    concurrency_20/aggregate/
+      ...
+    sweep_aggregate/                      # Cross-value sweep analysis
+      profile_export_aiperf_sweep.json
+      profile_export_aiperf_sweep.csv
+```
+
+**Repeated Mode** (sweep + `--num-profile-runs > 1`, default mode):
 ```text
 artifacts/
   {benchmark_name}/
@@ -43,6 +57,9 @@ artifacts/
         profile_export_aiperf_sweep.csv
 ```
 
+See [Artifact Directory Layout Reference](#artifact-directory-layout-reference)
+below for the full table of layout cases.
+
 The sweep aggregate files contain cross-value analysis including best configurations and Pareto optimal points.
 
 ---
@@ -54,8 +71,8 @@ The sweep aggregate files contain cross-value analysis including best configurat
 ```json
 {
   "aggregation_type": "sweep",
-  "num_profile_runs": 15,
-  "num_successful_runs": 15,
+  "num_profile_runs": 12,
+  "num_successful_runs": 12,
   "failed_runs": [],
   "metadata": { ... },
   "per_combination_metrics": [ ... ],
@@ -101,6 +118,10 @@ Contains information about the sweep configuration.
 |-------|------|-------------|
 | `sweep_parameters` | array | List of parameter definitions (name and values) |
 | `num_combinations` | int | Total number of parameter combinations tested |
+| `aggregation_type` | string | Always `"sweep"` (duplicated from the top-level field so consumers that key off `output["metadata"]["aggregation_type"]` work without first checking the top-level key) |
+| `sla_constraints` | object | Present only when `plan.sweep.sla_filters` is non-empty. Contains `active_filters` (list of filter dicts), `feasible_count` (int), and `infeasible_count` (int). See `src/aiperf/orchestrator/aggregation/sweep_sla_filter.py` for the filter shape. |
+
+**Note:** For QMC sweeps, `sampling_design.json` is written to `<base>/sweep_aggregate/sampling_design.json` in single-trial and independent modes. In repeated multi-run mode the sweep aggregate can live under `<base>/aggregate/sweep_aggregate/`, so the sampling design is not necessarily a sibling of the repeated-mode aggregate directory.
 
 **Sweep Parameters Structure:**
 
@@ -126,22 +147,18 @@ Contains aggregated metrics for each parameter combination. This is a list where
           "min": 95.0,
           "max": 108.0,
           "cv": 0.052,
-          "se": 2.3,
           "ci_low": 94.3,
           "ci_high": 106.7,
-          "t_critical": 2.776,
           "unit": "requests/sec"
         },
-        "ttft_p99_ms": {
+        "time_to_first_token_p99": {
           "mean": 120.5,
           "std": 8.1,
           "min": 110.2,
           "max": 132.8,
           "cv": 0.067,
-          "se": 3.6,
           "ci_low": 111.5,
           "ci_high": 129.5,
-          "t_critical": 2.776,
           "unit": "ms"
         }
       }
@@ -172,13 +189,13 @@ Contains aggregated metrics for each parameter combination. This is a list where
 | `min` | float | Minimum value observed |
 | `max` | float | Maximum value observed |
 | `cv` | float | Coefficient of variation (std/mean) |
-| `se` | float | Standard error of the mean |
 | `ci_low` | float | Lower bound of confidence interval |
 | `ci_high` | float | Upper bound of confidence interval |
-| `t_critical` | float | Critical t-value used for confidence interval |
 | `unit` | string | Unit of measurement |
 
-**Note:** For single-trial sweeps (`--num-profile-runs 1`), only `mean` and `unit` fields are present.
+**Note:** Fields `se` (standard error) and `t_critical` (critical t-value) exist on the underlying `ConfidenceMetric` dataclass and are emitted by the per-variation *confidence aggregate* (`profile_export_aiperf_aggregate.json`), but the sweep aggregate's per-combination block strips them.
+
+**Note:** For single-trial sweeps (`--num-profile-runs 1` or omitted), the per-combination metric block still emits the full field set, but the spread fields collapse to degenerate values: `std=0`, `cv=0`, `ci_low=ci_high=mean`. The single-trial projection also emits an `avg` alias of `mean` and passes through every populated percentile field (`p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99`) directly from the underlying `JsonMetricResult`.
 
 ### Best Configurations Section
 
@@ -216,7 +233,7 @@ Identifies the parameter combinations that achieved the best performance for key
 **Available Configurations:**
 
 - `best_throughput`: Highest `request_throughput_avg`
-- `best_latency_p99`: Lowest `ttft_p99_ms` (or `request_latency_p99` as fallback)
+- `best_latency_p99`: Lowest `time_to_first_token_p99` (or `request_latency_p99` as fallback)
 
 ### Pareto Optimal Section
 
@@ -234,7 +251,7 @@ Lists parameter combinations that are Pareto optimal - configurations where no o
 
 **Default Objectives:**
 - Maximize: `request_throughput_avg` (throughput)
-- Minimize: `ttft_p99_ms` (latency)
+- Minimize: `time_to_first_token_p99` (latency)
 
 A configuration is Pareto optimal if:
 - No other configuration has both higher throughput AND lower latency
@@ -280,7 +297,7 @@ The CSV file contains multiple sections separated by blank lines:
 The first section is a wide-format table with one row per parameter combination:
 
 ```csv
-concurrency,request_throughput_avg_mean,request_throughput_avg_std,request_throughput_avg_min,request_throughput_avg_max,request_throughput_avg_cv,ttft_p99_ms_mean,ttft_p99_ms_std,ttft_p99_ms_min,ttft_p99_ms_max,ttft_p99_ms_cv
+concurrency,request_throughput_avg_mean,request_throughput_avg_std,request_throughput_avg_min,request_throughput_avg_max,request_throughput_avg_cv,time_to_first_token_p99_mean,time_to_first_token_p99_std,time_to_first_token_p99_min,time_to_first_token_p99_max,time_to_first_token_p99_cv
 10,100.50,5.20,95.00,108.00,0.0520,120.50,8.10,110.20,132.80,0.0672
 20,180.30,8.50,170.00,195.00,0.0471,135.20,9.30,125.00,148.00,0.0688
 30,270.80,12.10,255.00,290.00,0.0447,155.80,11.20,142.00,172.00,0.0719
@@ -339,6 +356,8 @@ concurrency,request_rate
 40,10
 ```
 
+**Empty frontier:** When no frontier can be computed (a required objective metric is missing from the per-combination block, or every cell was filtered out by SLA constraints), the section renders a single literal `None` row beneath the `Pareto Optimal Points` header instead of the parameter-name header + rows.
+
 ### Metadata Section
 
 ```csv
@@ -354,6 +373,35 @@ Number of Successful Runs,12
 ---
 
 ## Artifact Directory Structure
+
+### Artifact Directory Layout Reference
+
+The artifact tree branches on three flags: whether a sweep is configured
+(`is_sweep`), whether multiple trials run per cell (`trials > 1`), and
+the sweep iteration order (`REPEATED` vs `INDEPENDENT`).
+
+| sweep | trials | order       | layout                                          |
+|-------|--------|-------------|-------------------------------------------------|
+| no    | 1      | -           | `<base>/`                                       |
+| no    | >1     | -           | `<base>/profile_runs/run_NNNN/`                 |
+| yes   | 1      | -           | `<base>/<dir_name>/`                            |
+| yes   | >1     | REPEATED    | `<base>/profile_runs/trial_NNNN/<dir_name>/`    |
+| yes   | >1     | INDEPENDENT | `<base>/<dir_name>/profile_runs/trial_NNNN/`    |
+| adaptive | any | -      | `<base>/search_iter_NNNN/profile_runs/run_NNNN/` |
+
+`<dir_name>` is the `{leaf_param_name}_{value}` form (e.g.
+`concurrency_10`, `request_rate_5.0`); multi-dim sweep cells join
+components with `__` (e.g. `concurrency_10__isl_512`). Inner-dir
+naming is asymmetric on purpose: the no-sweep multi-run case uses
+`run_NNNN`, the sweep + INDEPENDENT case uses `trial_NNNN`.
+
+The sweep-level aggregate path follows a parallel rule:
+
+- REPEATED + multi-run: `<base>/aggregate/sweep_aggregate/`
+- everything else (sweep-only, sweep + INDEPENDENT): `<base>/sweep_aggregate/`
+
+Per-variation aggregates land at `<base>/aggregate/<dir_name>/` in
+REPEATED mode and `<base>/<dir_name>/aggregate/` in INDEPENDENT mode.
 
 ### Repeated Mode (`--parameter-sweep-mode repeated`)
 
@@ -391,9 +439,9 @@ artifacts/
       concurrency_30/
         profile_export_aiperf_aggregate.json
         profile_export_aiperf_aggregate.csv
-    sweep_aggregate/
-      profile_export_aiperf_sweep.json
-      profile_export_aiperf_sweep.csv
+      sweep_aggregate/
+        profile_export_aiperf_sweep.json
+        profile_export_aiperf_sweep.csv
 ```
 
 **Execution Pattern:**
@@ -524,7 +572,7 @@ for combo in per_combination_metrics:
     if params in pareto_optimal:
         metrics = combo["metrics"]
         throughput = metrics["request_throughput_avg"]["mean"]
-        latency = metrics["ttft_p99_ms"]["mean"]
+        latency = metrics["time_to_first_token_p99"]["mean"]
         print(f"  {params}: {throughput:.1f} req/s, {latency:.1f} ms p99")
 ```
 
@@ -591,7 +639,7 @@ param_names = [p["name"] for p in sweep_data["metadata"]["sweep_parameters"]]
 df = df.sort_values(param_names)
 
 # Analyze
-print(df[[*param_names, "request_throughput_avg_mean", "ttft_p99_ms_mean"]])
+print(df[[*param_names, "request_throughput_avg_mean", "time_to_first_token_p99_mean"]])
 
 # Export
 df.to_csv("sweep_analysis.csv", index=False)
@@ -665,7 +713,7 @@ weights = {
 # Extract all throughputs and latencies
 combinations = sweep_data["per_combination_metrics"]
 throughputs = [c["metrics"]["request_throughput_avg"]["mean"] for c in combinations]
-latencies = [c["metrics"]["ttft_p99_ms"]["mean"] for c in combinations]
+latencies = [c["metrics"]["time_to_first_token_p99"]["mean"] for c in combinations]
 
 max_tp = max(throughputs)
 min_lat = min(latencies)
@@ -674,7 +722,7 @@ max_lat = max(latencies)
 scores = []
 for combo in combinations:
     tp = combo["metrics"]["request_throughput_avg"]["mean"]
-    lat = combo["metrics"]["ttft_p99_ms"]["mean"]
+    lat = combo["metrics"]["time_to_first_token_p99"]["mean"]
 
     # Normalize: higher is better for both
     tp_score = tp / max_tp
@@ -694,7 +742,7 @@ print(f"  Score: {best_score:.3f}")
 
 ## See Also
 
-- [Parameter Sweeping Tutorial](../tutorials/parameter-sweeping.md) - User guide with examples
+- [Parameter Sweeping Tutorial](../tutorials/sweeps.md) - User guide with examples
 - [Multi-Run Confidence Tutorial](../tutorials/multi-run-confidence.md) - Understanding confidence statistics
 - [Working with Profile Exports](../tutorials/working-with-profile-exports.md) - General export analysis
 - [CLI Options Reference](../cli-options.md) - Complete CLI documentation

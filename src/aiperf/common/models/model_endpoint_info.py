@@ -7,18 +7,23 @@ send requests to an inference server, primarily around the model, endpoint, and
 additional request payload information.
 """
 
-from typing import Any
+from __future__ import annotations
 
-from pydantic import Field
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config import EndpointDefaults, UserConfig
+from pydantic import Field, field_serializer
+
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
     RequestContentType,
 )
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
 from aiperf.plugin.enums import EndpointType, TransportType
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class ModelInfo(AIPerfBaseModel):
@@ -48,16 +53,6 @@ class ModelListInfo(AIPerfBaseModel):
         description="The strategy to use for selecting the model to use for the endpoint.",
     )
 
-    @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "ModelListInfo":
-        """Create a ModelListInfo from a UserConfig."""
-        return cls(
-            models=[
-                ModelInfo(name=model) for model in user_config.endpoint.model_names
-            ],
-            model_selection_strategy=user_config.endpoint.model_selection_strategy,
-        )
-
 
 class EndpointInfo(AIPerfBaseModel):
     """Information about an endpoint."""
@@ -86,6 +81,18 @@ class EndpointInfo(AIPerfBaseModel):
         default=[],
         description="Custom URL headers to use for the endpoint.",
     )
+
+    @field_serializer("headers", when_used="json")
+    def _redact_headers(self, value: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Redact credential-bearing header values in exported JSON artifacts.
+
+        Defense-in-depth alongside EndpointConfig._redact_headers: any future
+        exporter that dumps EndpointInfo to JSON inherits the same redaction.
+        """
+        from aiperf.common.redact import redact_header_tuples
+
+        return redact_header_tuples(value)
+
     api_key: str | None = Field(
         default=EndpointDefaults.API_KEY,
         description="API key to use for the endpoint.",
@@ -98,6 +105,7 @@ class EndpointInfo(AIPerfBaseModel):
     )
     timeout: float = Field(
         default=EndpointDefaults.TIMEOUT,
+        gt=0,
         description="The timeout in seconds for each request to the endpoint.",
     )
     extra: list[tuple[str, Any]] = Field(
@@ -136,6 +144,11 @@ class EndpointInfo(AIPerfBaseModel):
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
         "When False, only aggregate metrics are tracked (counts, totals, first/last timestamps).",
     )
+    template: TemplateConfig | None = Field(
+        default=None,
+        description="Custom template configuration for template endpoints. "
+        "Provides the Jinja2 request body and JMESPath response_field used by TemplateEndpoint.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -155,27 +168,6 @@ class EndpointInfo(AIPerfBaseModel):
             return self.base_urls[0]
         return self.base_urls[index % len(self.base_urls)]
 
-    @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
-        """Create an EndpointInfo from a UserConfig."""
-        return cls(
-            type=user_config.endpoint.type,
-            custom_endpoint=user_config.endpoint.custom_endpoint,
-            streaming=user_config.endpoint.streaming,
-            base_urls=user_config.endpoint.urls,
-            headers=user_config.input.headers,
-            extra=user_config.input.extra,
-            timeout=user_config.endpoint.timeout_seconds,
-            api_key=user_config.endpoint.api_key,
-            use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
-            use_server_token_count=user_config.endpoint.use_server_token_count,
-            connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
-            download_video_content=user_config.endpoint.download_video_content,
-            request_content_type=user_config.endpoint.request_content_type,
-            collect_trace_chunks=user_config.output.export_http_trace,
-            session_header=user_config.input.session_header,
-        )
-
 
 class ModelEndpointInfo(AIPerfBaseModel):
     """Information about a model endpoint."""
@@ -194,12 +186,35 @@ class ModelEndpointInfo(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "ModelEndpointInfo":
-        """Create a ModelEndpointInfo from a UserConfig."""
+    def from_run(cls, run: BenchmarkRun) -> ModelEndpointInfo:
+        """Create a ModelEndpointInfo from a BenchmarkRun."""
+        cfg = run.cfg
+        ep = cfg.endpoint
+        models_advanced = cfg.models
         return cls(
-            models=ModelListInfo.from_user_config(user_config),
-            endpoint=EndpointInfo.from_user_config(user_config),
-            transport=user_config.endpoint.transport,
+            models=ModelListInfo(
+                models=[ModelInfo(name=item.name) for item in models_advanced.items],
+                model_selection_strategy=models_advanced.strategy,
+            ),
+            endpoint=EndpointInfo(
+                type=ep.type,
+                custom_endpoint=getattr(ep, "path", None),
+                streaming=ep.streaming,
+                base_urls=list(ep.urls),
+                headers=list((getattr(ep, "headers", {}) or {}).items()),
+                extra=list((getattr(ep, "extra", {}) or {}).items()),
+                timeout=ep.timeout,
+                api_key=ep.api_key,
+                use_legacy_max_tokens=ep.use_legacy_max_tokens,
+                use_server_token_count=ep.use_server_token_count,
+                connection_reuse_strategy=ep.connection_reuse,
+                download_video_content=ep.download_video_content,
+                request_content_type=ep.request_content_type,
+                collect_trace_chunks=False,
+                template=getattr(ep, "template", None),
+                session_header=getattr(ep, "session_header", None),
+            ),
+            transport=ep.transport,
         )
 
     @property

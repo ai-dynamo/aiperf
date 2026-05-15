@@ -124,7 +124,7 @@ class TestMooncakeTraceExtraBody:
     def test_extra_propagates_to_turn_in_messages_mode(
         self,
         tmp_path: Path,
-        default_user_config,
+        default_cfg,
         mock_prompt_generator,
     ):
         file = tmp_path / "trace.jsonl"
@@ -141,7 +141,7 @@ class TestMooncakeTraceExtraBody:
 
         loader = MooncakeTraceDatasetLoader(
             filename=file,
-            user_config=default_user_config,
+            cfg=default_cfg,
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(loader.load_dataset())
@@ -151,7 +151,7 @@ class TestMooncakeTraceExtraBody:
     def test_extra_propagates_to_turn_in_text_input_mode(
         self,
         tmp_path: Path,
-        default_user_config,
+        default_cfg,
         mock_prompt_generator,
     ):
         file = tmp_path / "trace.jsonl"
@@ -168,7 +168,7 @@ class TestMooncakeTraceExtraBody:
 
         loader = MooncakeTraceDatasetLoader(
             filename=file,
-            user_config=default_user_config,
+            cfg=default_cfg,
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(loader.load_dataset())

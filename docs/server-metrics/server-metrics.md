@@ -14,7 +14,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 |---------|-------------|---------|
 | **Auto-discovery** | Automatically finds `/metrics` endpoint on server URL | Enabled |
 | **Collection** | Scrapes metrics every 333ms during benchmark | Enabled |
-| **Outputs** | JSON (aggregated), CSV (tabular), JSONL (time-series), Parquet (cumulative deltas) | JSON + CSV |
+| **Outputs** | JSON (aggregated), CSV (tabular), JSONL (time-series), Parquet (cumulative deltas) | JSON + CSV + Parquet |
 | **Custom endpoints** | `--server-metrics URL [URL...]` for additional endpoints | None |
 | **Disable** | `--no-server-metrics` to turn off collection | Enabled |
 | **Windowed stats** | `--slice-duration SECONDS` for time-sliced analysis | Off |
@@ -106,11 +106,11 @@ AIPerf automatically:
 3. Captures baseline metrics before warmup period begins (reference point for deltas) — also where AIPerf first parses the response and validates it as Prometheus exposition format; see [Compatibility & auto-disable](#compatibility--auto-disable) for what happens when an endpoint returns non-Prometheus content
 4. Collects metrics at configurable intervals during warmup and profiling
 5. Performs final scrape after profiling completes (captures end state)
-6. Exports selected formats (default: JSON + CSV):
+6. Exports selected formats (default: JSON + CSV + Parquet):
    - `server_metrics_export.json` - Aggregated statistics (profiling period only)
    - `server_metrics_export.csv` - Tabular format (profiling period only)
+   - `server_metrics_export.parquet` - Raw time-series with delta calculations
    - `server_metrics_export.jsonl` - Time-series data (all scrapes, opt-in only)
-   - `server_metrics_export.parquet` - Raw time-series with delta calculations (opt-in only)
 
 > [!NOTE]
 > **Custom file naming:** The `--profile-export-prefix` (or `--profile-export-file`) flag changes the prefix for all export files, including server metrics. Any file extension is automatically stripped from the provided value. For example:
@@ -125,9 +125,13 @@ AIPerf automatically:
 
 **Time filtering:** Statistics in JSON/CSV exports exclude the warmup period, showing only metrics from the profiling phase. The JSONL file contains all scrapes (including warmup) for complete time-series analysis.
 
-**Format selection:** By default, only JSON and CSV formats are generated to avoid large JSONL files. To include JSONL for time-series analysis:
+**Format selection:** By default, JSON, CSV, and Parquet formats are generated (JSONL is opt-in to avoid large files). To opt out of Parquet, or to include JSONL for time-series analysis:
 ```bash
-aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl
+# Disable Parquet (JSON + CSV only)
+aiperf profile --model MODEL ... --server-metrics-formats json csv
+
+# Add JSONL for raw time-series snapshots
+aiperf profile --model MODEL ... --server-metrics-formats json csv parquet jsonl
 ```
 
 ### Adding Custom Endpoints
@@ -151,19 +155,21 @@ aiperf profile --model MODEL ... --no-server-metrics
 ### Selecting Output Formats
 
 ```bash
-# Default: JSON + CSV only
+# Default: JSON + CSV + Parquet
 aiperf profile --model MODEL ...
 
-# Add time-series formats as needed
-aiperf profile --model MODEL ... --server-metrics-formats json csv parquet
-aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
+# Opt out of Parquet (JSON + CSV only)
+aiperf profile --model MODEL ... --server-metrics-formats json csv
+
+# Add JSONL for raw time-series snapshots
+aiperf profile --model MODEL ... --server-metrics-formats json csv parquet jsonl
 ```
 
 | Format | Use Case | Size |
 |--------|----------|------|
 | **JSON/CSV** (default) | Summary statistics, CI/CD thresholds | Small |
-| **Parquet** | SQL queries, pandas/DuckDB analytics | Compressed |
-| **JSONL** | Debugging, raw Prometheus snapshots | 10-100x larger |
+| **Parquet** (default) | SQL queries, pandas/DuckDB analytics | Compressed |
+| **JSONL** (opt-in) | Debugging, raw Prometheus snapshots | 10-100x larger |
 
 ## Compatibility & auto-disable
 
@@ -173,7 +179,7 @@ AIPerf scrapes `/metrics` at ~3 Hz and parses the response as Prometheus exposit
 - the HTTP `Content-Type` is `application/json` (the response body is never read in this case — the rejection is cheaper than parsing); or
 - the body fails to parse as Prometheus exposition format (`prometheus_client.parser.text_string_to_metric_families` raises `ValueError` — e.g. a server returns `text/plain` with garbage, or a JSON body without a content-type).
 
-**TRT-LLM `/prometheus/metrics` fallback.** Before disabling, AIPerf probes `<base>/prometheus/metrics` exactly once — TRT-LLM mounts the proper Prometheus path there when launched with `return_perf_metrics: true` (see the TRT-LLM entry in the [Quick Reference table](#quick-reference) above). If the probe succeeds, the collector swaps its URL there and the run continues with the alt endpoint. The probe is only attempted when the configured URL ends with exactly `/metrics`; URLs ending with anything else (e.g. `/prometheus/metrics`, `/v1/metrics`, `/api/metrics`) are left untouched.
+**TRT-LLM `/prometheus/metrics` fallback.** Before disabling, AIPerf probes `<base>/prometheus/metrics` exactly once — TRT-LLM mounts the proper Prometheus path there when launched with `return_perf_metrics: true` (see the TRT-LLM entry in the [Quick Reference table](#quick-reference) above). If the probe succeeds, the collector swaps its URL there and the run continues with the alt endpoint. The probe is attempted whenever the configured URL ends with `/metrics` and is not already `/prometheus/metrics` itself — so `/metrics`, `/v1/metrics`, and `/api/metrics` all trigger the fallback probe. URLs that don't end in `/metrics` (e.g. `/stats`, `/telemetry`) are left untouched, and `/prometheus/metrics` is excluded to avoid probing the same path it would swap to.
 
 **On auto-disable.** A single `WARNING` is emitted naming the endpoint and the suppression flag. Subsequent scrape cycles short-circuit, the collector emits no further log noise, and the rest of the benchmark proceeds normally — other configured endpoints (DCGM telemetry, additional `--server-metrics` URLs) are unaffected.
 
@@ -199,7 +205,7 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 ## Output Files
 
 > [!NOTE]
-> The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-directory`, default: `./artifacts/<run_info>`).
+> The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-dir` / `--output-artifact-dir`, default: `./artifacts/<run_info>`).
 
 ### 1. Time-Series: `server_metrics_export.jsonl`
 
@@ -327,9 +333,13 @@ Aggregated statistics from profiling period. Metrics from all endpoints are merg
     }
   },
   "input_config": {
-    "endpoint": { "model_names": ["Qwen/Qwen3-0.6B"], "streaming": true },
-    "loadgen": { "concurrency": 400, "request_rate": 5000.0, "request_count": 30000 },
-    "output": { "slice_duration": 5.0 }
+    "models": ["Qwen/Qwen3-0.6B"],
+    "endpoint": { "urls": ["http://localhost:8000"], "streaming": true },
+    "datasets": [{ "name": "default", "type": "synthetic", "count": 30000 }],
+    "phases": [
+      { "name": "profiling", "type": "concurrency", "concurrency": 400, "requests": 30000 }
+    ],
+    "artifacts": { "slice_duration": 5.0 }
   }
 }
 ```

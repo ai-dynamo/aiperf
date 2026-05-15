@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import MLflowDefaults
+from aiperf.config.mlflow import MLflowDefaults
 from aiperf.plot.cli_runner import (
     _resolve_mlflow_upload_target,
     _upload_generated_plots_to_mlflow,

@@ -20,8 +20,13 @@ import orjson
 import pytest
 from pytest import param
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config import (
+    ArtifactsConfig,
+    BenchmarkConfig,
+    EndpointConfig,
+    MLflowConfig,
+)
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.plugin.enums import EndpointType
@@ -30,6 +35,32 @@ from aiperf.plugin.enums import EndpointType
 def _write_artifact(path: Path, content: str = "test") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _make_mlflow_cfg(
+    tmp_path: Path,
+    *,
+    tracking_uri: str | None = "http://mlflow:5000",
+    experiment: str = "roundtrip-test",
+    parent_run_id: str | None = None,
+    artifact_globs: list[str] | None = None,
+) -> BenchmarkConfig:
+    return BenchmarkConfig(
+        model="test-model",
+        endpoint=EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.CHAT,
+        ),
+        dataset={"type": "synthetic"},
+        profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+        artifacts=ArtifactsConfig(dir=tmp_path),
+        mlflow=MLflowConfig(
+            tracking_uri=tracking_uri,
+            experiment=experiment,
+            parent_run_id=parent_run_id,
+            artifact_globs=artifact_globs,
+        ),
+    )
 
 
 def _install_fake_mlflow_with_parent_tracking() -> dict[str, Any]:
@@ -172,23 +203,15 @@ class TestMLflowMetadataRoundtripParentRunId:
         # and uploaded alongside other artifacts.
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps({}))
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-                urls=["http://localhost:8000"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="http://mlflow:5000",
-            mlflow_experiment="roundtrip-test",
-            mlflow_parent_run_id=parent_run_id,
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            parent_run_id=parent_run_id,
         )
 
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -235,25 +258,17 @@ class TestMLflowMetadataRoundtripParentRunId:
         }
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(live_metadata))
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-                urls=["http://localhost:8000"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="http://mlflow:5000",
-            mlflow_experiment="roundtrip-test",
-            mlflow_parent_run_id=parent_run_id,
-            benchmark_id=benchmark_id,
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            parent_run_id=parent_run_id,
         )
 
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
+            run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
         exporter = MLflowDataExporter(exporter_config)
         exporter._export_sync()
@@ -283,22 +298,15 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         _write_artifact(tmp_path / "plots" / "throughput.png", "fake-png")
         _write_artifact(tmp_path / "timeslices.jsonl", '{"ts":1}')
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-                urls=["http://localhost:8000"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="http://mlflow:5000",
-            mlflow_experiment="byte-equality-test",
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            experiment="byte-equality-test",
         )
 
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -328,23 +336,16 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         sample_results: ProfileResults,
     ) -> None:
         """Even with no matching artifact files, mlflow_export.json is still uploaded."""
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-                urls=["http://localhost:8000"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="http://mlflow:5000",
-            mlflow_experiment="empty-artifacts-test",
-            mlflow_artifact_globs=["nonexistent_pattern_*.xyz"],
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            experiment="empty-artifacts-test",
+            artifact_globs=["nonexistent_pattern_*.xyz"],
         )
 
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -374,22 +375,16 @@ class TestMLflowTrackingUriRedactedInMetadata:
         round-trip through the uploaded artifact)."""
         _write_artifact(tmp_path / "profile_export_aiperf.json")
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-                urls=["http://localhost:8000"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
-            mlflow_experiment="redaction-test",
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
+            experiment="redaction-test",
         )
 
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -426,24 +421,18 @@ class TestMLflowTrackingUriRedactedInMetadata:
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(live_metadata))
         _write_artifact(tmp_path / "profile_export_aiperf.json")
 
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-                urls=["http://localhost:8000"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
-            mlflow_experiment="redaction-test",
-            benchmark_id=benchmark_id,
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
+            experiment="redaction-test",
         )
 
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
+            run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
         exporter = MLflowDataExporter(exporter_config)
         exporter._export_sync()

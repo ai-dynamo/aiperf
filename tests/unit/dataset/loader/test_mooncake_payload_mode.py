@@ -8,7 +8,7 @@ import orjson
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.config.flags import CLIConfig
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 
@@ -27,8 +27,8 @@ def test_mooncake_trace_extra_defaults_to_none():
 
 
 @pytest.fixture
-def default_user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def default_cfg() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"], url="http://localhost:8000")
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ class TestMooncakeTraceLoaderPayload:
     def test_payload_traces_produce_raw_payload_turns(
         self,
         tmp_path: Path,
-        default_user_config: UserConfig,
+        default_cfg: CLIConfig,
         mock_prompt_generator,
     ):
         file = tmp_path / "trace.jsonl"
@@ -106,7 +106,7 @@ class TestMooncakeTraceLoaderPayload:
 
         loader = MooncakeTraceDatasetLoader(
             filename=file,
-            user_config=default_user_config,
+            cfg=default_cfg,
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(loader.load_dataset())
@@ -120,7 +120,7 @@ class TestMooncakeTraceLoaderPayload:
     def test_mixed_payload_and_messages_in_session_rejected(
         self,
         tmp_path: Path,
-        default_user_config: UserConfig,
+        default_cfg: CLIConfig,
         mock_prompt_generator,
     ):
         file = tmp_path / "mixed.jsonl"
@@ -146,7 +146,7 @@ class TestMooncakeTraceLoaderPayload:
 
         loader = MooncakeTraceDatasetLoader(
             filename=file,
-            user_config=default_user_config,
+            cfg=default_cfg,
             prompt_generator=mock_prompt_generator,
         )
         with pytest.raises(ValueError, match="payload.*messages|messages.*payload"):
@@ -155,7 +155,7 @@ class TestMooncakeTraceLoaderPayload:
     def test_extra_propagates_to_turn_in_payload_mode(
         self,
         tmp_path: Path,
-        default_user_config: UserConfig,
+        default_cfg: CLIConfig,
         mock_prompt_generator,
     ):
         file = tmp_path / "trace.jsonl"
@@ -173,7 +173,7 @@ class TestMooncakeTraceLoaderPayload:
 
         loader = MooncakeTraceDatasetLoader(
             filename=file,
-            user_config=default_user_config,
+            cfg=default_cfg,
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(loader.load_dataset())

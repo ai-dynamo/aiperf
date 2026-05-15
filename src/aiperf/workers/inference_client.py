@@ -19,7 +19,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, TransportType
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -63,8 +63,8 @@ class InferenceClient(AIPerfLifecycleMixin):
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
-            model_endpoint.transport = detect_transport_from_url(
-                model_endpoint.endpoint.base_url,
+            model_endpoint.transport = TransportType(
+                detect_transport_from_url(model_endpoint.endpoint.base_url)
             )
 
         # Create endpoint and transport instances

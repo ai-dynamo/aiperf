@@ -8,8 +8,8 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat, ImageSource
+from aiperf.config.dataset.content import ImageConfig
 from aiperf.dataset import utils
 from aiperf.dataset.generator.base import BaseGenerator
 
@@ -28,11 +28,11 @@ class ImageGenerator(BaseGenerator):
     - PATH: loads images from the given directory (e.g. `./source_images`)
     """
 
-    def __init__(self, config: ImageConfig, **kwargs):
+    def __init__(self, config: ImageConfig | None, **kwargs):
         super().__init__(**kwargs)
-        self.config = config
+        self.config = config if config is not None else ImageConfig()
 
-        if not config.images_enabled():
+        if not self.config.images_enabled():
             self.debug(lambda: "Images are disabled, skipping image generation")
             return
 
@@ -40,22 +40,22 @@ class ImageGenerator(BaseGenerator):
         self._dimensions_rng = rng.derive("dataset.image.dimensions")
         self._format_rng = rng.derive("dataset.image.format")
 
-        if config.source == ImageSource.ASSETS:
+        if self.config.source == ImageSource.ASSETS:
             self._source_rng = rng.derive("dataset.image.source")
             source_images_dir = (
                 Path(__file__).parent.resolve() / "assets" / "source_images"
             )
             self._source_images = self._load_source_images_from_disk(source_images_dir)
             self._create_source_image = self._create_from_source_images
-        elif config.source == ImageSource.NOISE:
+        elif self.config.source == ImageSource.NOISE:
             self._noise_rng = rng.derive("dataset.image.noise")
             self._create_source_image = self._create_from_noise
-        elif isinstance(config.source, Path):
+        elif isinstance(self.config.source, Path):
             self._source_rng = rng.derive("dataset.image.source")
-            self._source_images = self._load_source_images_from_disk(config.source)
+            self._source_images = self._load_source_images_from_disk(self.config.source)
             self._create_source_image = self._create_from_source_images
         else:
-            raise ValueError(f"Invalid source: {config.source}")
+            raise ValueError(f"Invalid source: {self.config.source}")
 
     def _load_source_images_from_disk(self, source_path: Path) -> list[Image.Image]:
         """Load source images from the given directory."""
@@ -93,11 +93,13 @@ class ImageGenerator(BaseGenerator):
             formats = [f for f in ImageFormat if f != ImageFormat.RANDOM]
             image_format = self._format_rng.choice(formats)
 
+        width_dist = self.config.width
+        height_dist = self.config.height
         width = self._dimensions_rng.sample_positive_normal_integer(
-            self.config.width.mean, self.config.width.stddev
+            int(width_dist.expected_value), int(getattr(width_dist, "stddev", 0) or 0)
         )
         height = self._dimensions_rng.sample_positive_normal_integer(
-            self.config.height.mean, self.config.height.stddev
+            int(height_dist.expected_value), int(getattr(height_dist, "stddev", 0) or 0)
         )
 
         image = self._create_source_image(width, height)

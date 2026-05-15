@@ -84,6 +84,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [OSL Mismatch Count](#osl-mismatch-count)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
+    - [Good Request Fraction](#good-request-fraction)
     - [Goodput](#goodput)
   - [Error Metrics](#error-metrics)
     - [Error Input Sequence Length](#error-input-sequence-length)
@@ -1255,7 +1256,7 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 | [vLLM](https://docs.vllm.ai/en/latest/api/vllm/sampling_params/) | `min_tokens` | Default: 0 |
 | [TensorRT-LLM](https://nvidia.github.io/TensorRT-LLM/llm-api/reference.html) | `min_tokens` | Default: 1 |
 | [SGLang](https://github.com/sgl-project/sglang) | `min_new_tokens` | Default: 0 |
-| [TGI](https://github.com/huggingface/text-generation-inference) | `min_new_tokens` | ⚠️ Unclear API support; TGI in maintenance mode |
+| [TGI](https://github.com/huggingface/text-generation-inference) | `min_new_tokens` | Unclear API support; TGI in maintenance mode |
 
 ---
 
@@ -1279,6 +1280,34 @@ good_request_count = sum(1 for r in records if r.all_slos_met)
 - Requires SLO thresholds to be configured (e.g., `--goodput`).
 - Only counts requests where ALL SLO constraints are satisfied.
 - Used to calculate Goodput metric.
+
+---
+
+### Good Request Fraction
+
+**Type:** [Derived Metric](#derived-metrics)
+
+**Tag:** `good_request_fraction`
+
+The fraction of all attempted requests that satisfied every per-request SLO. Returns a ratio in `[0.0, 1.0]`. Errored requests count toward the denominator so a backend that drops traffic under load cannot look "good" simply because the surviving requests stayed under the latency budget.
+
+**Formula:**
+```python
+attempted = request_count + error_request_count
+good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
+```
+
+**Flags:** `GOODPUT | LARGER_IS_BETTER | NO_CONSOLE`
+
+**Unit:** `RATIO` (0.0–1.0)
+
+**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
+
+**Notes:**
+- Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
+- Returns `0.0` when no requests were attempted (`request_count + error_request_count == 0`).
+- Hidden from console output (`NO_CONSOLE`); appears in JSON, CSV, and Parquet exports.
+- Powers the SLA-feasibility gate of the [`max-goodput-under-slo`](sweeping/search-recipes.md) search recipe (`good_request_fraction:avg:ge:<attainment>`); without it, the recipe filter dereferences a missing tag and Bayesian optimization treats every iteration as infeasible.
 
 ---
 

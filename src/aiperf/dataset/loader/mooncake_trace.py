@@ -58,8 +58,8 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     # Template-method hooks (see BaseTraceDatasetLoader.load_dataset)
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, line: str) -> MooncakeTrace:
-        return MooncakeTrace.model_validate_json(line)
+    def _parse_trace(self, record: dict) -> MooncakeTrace:
+        return MooncakeTrace.model_validate(record)
 
     def _group_traces(
         self, items: list[MooncakeTrace]

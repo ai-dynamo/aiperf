@@ -5,15 +5,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from fastapi import FastAPI
 from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.results import ResultsRouter
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
@@ -68,13 +65,8 @@ def make_process_records_result(
 
 
 @pytest.fixture
-def results_router(
-    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
-) -> ResultsRouter:
-    return ResultsRouter(
-        service_config=router_service_config,
-        user_config=router_user_config,
-    )
+def results_router(mock_zmq, router_benchmark_run) -> ResultsRouter:
+    return ResultsRouter(run=router_benchmark_run)
 
 
 @pytest.fixture
@@ -190,9 +182,7 @@ class TestResultsListEndpoint:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path / "nonexistent"
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path / "nonexistent"
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -208,9 +198,7 @@ class TestResultsListEndpoint:
         (tmp_path / "metrics.json").write_text('{"test": 1}')
         (tmp_path / "records.jsonl").write_text('{"id": 1}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -233,9 +221,7 @@ class TestResultsFileEndpoints:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -250,9 +236,7 @@ class TestResultsFileEndpoints:
         test_file = tmp_path / "profile_export.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/profile_export.json",
@@ -268,9 +252,7 @@ class TestResultsFileEndpoints:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -284,9 +266,7 @@ class TestResultsFileEndpoints:
         test_file = tmp_path / "metrics.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/metrics.json",
@@ -321,9 +301,7 @@ class TestResultsFileContentType:
         test_file = tmp_path / filename
         test_file.write_text("test content")
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             f"/api/results/files/{filename}",
@@ -341,9 +319,7 @@ class TestResultsFileContentType:
         test_file = tmp_path / "data.json"
         test_file.write_text('{"key": "value"}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/data.json",

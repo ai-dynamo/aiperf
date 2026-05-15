@@ -8,61 +8,64 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.models import CreditPhaseStats
 from aiperf.common.optional_dependencies import OTEL_METRICS_STREAMING_FEATURE
+from aiperf.config import (
+    BenchmarkConfig,
+)
+from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.otel_metrics_results_processor import (
     OTelMetricsResultsProcessor,
 )
+from tests.unit.conftest import make_run_from_cli
 from tests.unit.post_processors.conftest import create_metric_records_message
 
 
 @pytest.fixture
-def user_config_otel(tmp_artifact_dir) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
+def cfg_otel(tmp_artifact_dir):
+    run = make_run_from_cli(
+        CLIConfig(
             model_names=["test-model"],
-            type=EndpointType.CHAT,
-        ),
-        output=OutputConfig(
+            endpoint_type=EndpointType.CHAT,
             artifact_directory=tmp_artifact_dir,
-        ),
-        otel_url="collector:4318",
+        )
     )
+    run.cfg.otel.metrics_url = "collector:4318"
+    run.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+    run.cfg.mlflow.experiment = "aiperf-tests"
+    return run
 
 
 @pytest.fixture
-def user_config_otel_mlflow(tmp_artifact_dir) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
+def cfg_otel_mlflow(tmp_artifact_dir):
+    run = make_run_from_cli(
+        CLIConfig(
             model_names=["test-model"],
-            type=EndpointType.CHAT,
-        ),
-        output=OutputConfig(
+            endpoint_type=EndpointType.CHAT,
             artifact_directory=tmp_artifact_dir,
-        ),
-        otel_url="collector:4318",
-        mlflow_tracking_uri="http://mlflow:5000",
-        mlflow_experiment="aiperf-tests",
+        )
     )
+    run.cfg.otel.metrics_url = "collector:4318"
+    run.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+    run.cfg.mlflow.experiment = "aiperf-tests"
+    return run
 
 
 @pytest.fixture
-def user_config_mlflow_only(tmp_artifact_dir) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
+def cfg_mlflow_only(tmp_artifact_dir):
+    run = make_run_from_cli(
+        CLIConfig(
             model_names=["test-model"],
-            type=EndpointType.CHAT,
-        ),
-        output=OutputConfig(
+            endpoint_type=EndpointType.CHAT,
             artifact_directory=tmp_artifact_dir,
-        ),
-        mlflow_tracking_uri="http://mlflow:5000",
-        mlflow_experiment="aiperf-tests",
+        )
     )
+    run.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+    run.cfg.mlflow.experiment = "aiperf-tests"
+    return run
 
 
 _ORIGINAL_IMPORT = builtins.__import__
@@ -103,68 +106,63 @@ def _setup_fanout_processor(
 
 
 class TestOTelMetricsResultsProcessor:
-    def test_disabled_without_otel_or_mlflow(
-        self, service_config: ServiceConfig
-    ) -> None:
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-            )
+    def test_disabled_without_otel_or_mlflow(self) -> None:
+        cfg = make_run_from_cli(
+            CLIConfig(model_names=["test-model"], endpoint_type=EndpointType.CHAT)
         )
         with pytest.raises(PostProcessorDisabled):
             OTelMetricsResultsProcessor(
                 service_id="records-manager",
-                service_config=service_config,
-                user_config=user_config,
+                run=cfg,
             )
 
     def test_enabled_with_mlflow_without_otel_url(
         self,
-        service_config: ServiceConfig,
-        user_config_mlflow_only: UserConfig,
+        cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_mlflow_only,
+            run=cfg_mlflow_only,
         )
         assert processor._otel_metrics_url is None
         assert processor._mlflow_live_enabled is True
 
     def test_mlflow_only_does_not_require_otel_imports(
         self,
-        service_config: ServiceConfig,
-        user_config_mlflow_only: UserConfig,
+        cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
         with patch("builtins.__import__", side_effect=_import_side_effect_for_otel):
             processor = OTelMetricsResultsProcessor(
                 service_id="records-manager",
-                service_config=service_config,
-                user_config=user_config_mlflow_only,
+                run=cfg_mlflow_only,
             )
         assert processor._mlflow_live_enabled is True
 
     def test_init_dependency_failure_raises_post_processor_disabled(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        tmp_artifact_dir,
     ) -> None:
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                artifact_directory=tmp_artifact_dir,
+            )
+        )
+        run.cfg.otel.metrics_url = "collector:4318"
         with (
             patch("builtins.__import__", side_effect=_import_side_effect_for_otel),
             pytest.raises(PostProcessorDisabled) as exc_info,
         ):
             OTelMetricsResultsProcessor(
                 service_id="records-manager",
-                service_config=service_config,
-                user_config=user_config_otel,
+                run=run,
             )
         assert OTEL_METRICS_STREAMING_FEATURE in str(exc_info.value)
 
     def test_init_otel_import_failure_falls_back_to_mlflow_only(
         self,
-        service_config: ServiceConfig,
-        user_config_otel_mlflow: UserConfig,
+        cfg_otel_mlflow: BenchmarkConfig,
     ) -> None:
         """When both sinks are configured but OTel imports fail, MLflow live
         streaming must still be constructed. Regression: the parent-side OTel
@@ -174,8 +172,7 @@ class TestOTelMetricsResultsProcessor:
         with patch("builtins.__import__", side_effect=_import_side_effect_for_otel):
             processor = OTelMetricsResultsProcessor(
                 service_id="records-manager",
-                service_config=service_config,
-                user_config=user_config_otel_mlflow,
+                run=cfg_otel_mlflow,
             )
         assert processor._otel_metrics_url is None
         assert processor._mlflow_live_enabled is True
@@ -183,13 +180,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_process_result_records_histogram_values_by_metric(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -219,24 +214,22 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_process_result_skips_metrics_when_metrics_telemetry_disabled(
         self,
-        service_config: ServiceConfig,
         tmp_artifact_dir,
     ) -> None:
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
+        cfg = make_run_from_cli(
+            CLIConfig(
                 model_names=["test-model"],
-                type=EndpointType.CHAT,
-            ),
-            output=OutputConfig(
+                endpoint_type=EndpointType.CHAT,
                 artifact_directory=tmp_artifact_dir,
-            ),
-            otel_url="collector:4318",
-            stream="timing",
+            )
         )
+        cfg.cfg.otel.metrics_url = "collector:4318"
+        cfg.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+        cfg.cfg.mlflow.experiment = "aiperf-tests"
+        cfg.cfg.otel.stream_metrics_enabled = False
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config,
+            run=cfg,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -253,24 +246,22 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_process_result_skips_timing_when_timing_telemetry_disabled(
         self,
-        service_config: ServiceConfig,
         tmp_artifact_dir,
     ) -> None:
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
+        cfg = make_run_from_cli(
+            CLIConfig(
                 model_names=["test-model"],
-                type=EndpointType.CHAT,
-            ),
-            output=OutputConfig(
+                endpoint_type=EndpointType.CHAT,
                 artifact_directory=tmp_artifact_dir,
-            ),
-            otel_url="collector:4318",
-            stream="metrics",
+            )
         )
+        cfg.cfg.otel.metrics_url = "collector:4318"
+        cfg.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+        cfg.cfg.mlflow.experiment = "aiperf-tests"
+        cfg.cfg.otel.stream_timing_enabled = False
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config,
+            run=cfg,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -301,13 +292,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_process_result_records_timing_counters_and_gauge_like_metrics(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -366,13 +355,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_process_result_timing_uses_delta_values_for_cumulative_counters(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -446,13 +433,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_flush_emits_flush_event_to_fanout_queue(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -464,13 +449,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_initialize_uses_fanout_by_default(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         processor._start_fanout_process = AsyncMock()
 
@@ -481,13 +464,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_initialize_uses_fanout_for_mlflow_only(
         self,
-        service_config: ServiceConfig,
-        user_config_mlflow_only: UserConfig,
+        cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_mlflow_only,
+            run=cfg_mlflow_only,
         )
         processor._start_fanout_process = AsyncMock()
 
@@ -498,8 +479,7 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_start_fanout_failure_disables_streaming(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         class FakeQueue:
             def __init__(self) -> None:
@@ -527,8 +507,7 @@ class TestOTelMetricsResultsProcessor:
 
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         fake_context = FakeContext()
 
@@ -546,8 +525,7 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_start_fanout_failure_disables_streaming_for_mlflow_only(
         self,
-        service_config: ServiceConfig,
-        user_config_mlflow_only: UserConfig,
+        cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
         class FakeContext:
             def Queue(self, maxsize: int):  # noqa: N802
@@ -555,8 +533,7 @@ class TestOTelMetricsResultsProcessor:
 
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_mlflow_only,
+            run=cfg_mlflow_only,
         )
 
         with patch(
@@ -572,13 +549,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_process_result_fanout_emits_metric_and_timing_events(
         self,
-        service_config: ServiceConfig,
-        user_config_otel_mlflow: UserConfig,
+        cfg_otel_mlflow: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel_mlflow,
+            run=cfg_otel_mlflow,
         )
         fake_queue = _setup_fanout_processor(processor)
 
@@ -617,8 +592,7 @@ class TestOTelMetricsResultsProcessor:
 
     def test_queue_fanout_event_drops_oldest_when_queue_is_full(
         self,
-        service_config: ServiceConfig,
-        user_config_mlflow_only: UserConfig,
+        cfg_mlflow_only: BenchmarkConfig,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         class FullFakeQueue:
@@ -644,8 +618,7 @@ class TestOTelMetricsResultsProcessor:
         }
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_mlflow_only,
+            run=cfg_mlflow_only,
         )
         processor._fanout_queue = FullFakeQueue(
             events=[oldest_event, newest_queued_event],
@@ -666,8 +639,7 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_flush_and_stop_emit_fanout_control_events(
         self,
-        service_config: ServiceConfig,
-        user_config_otel_mlflow: UserConfig,
+        cfg_otel_mlflow: BenchmarkConfig,
     ) -> None:
         class FakeProcess:
             def __init__(self) -> None:
@@ -685,8 +657,7 @@ class TestOTelMetricsResultsProcessor:
 
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel_mlflow,
+            run=cfg_otel_mlflow,
         )
         fake_queue = _setup_fanout_processor(processor)
         processor._fanout_process = FakeProcess()
@@ -702,13 +673,11 @@ class TestOTelMetricsResultsProcessor:
     @pytest.mark.asyncio
     async def test_on_stop_flushes_and_stops_fanout(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         fake_queue = _setup_fanout_processor(processor)
         processor._fanout_process = None
@@ -722,13 +691,11 @@ class TestOTelMetricsResultsProcessor:
 
     def test_build_record_attributes(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         metric_record = create_metric_records_message(
             results=[{"request_latency_ns": 123_000_000}]
@@ -750,13 +717,11 @@ class TestOTelMetricsResultsProcessor:
 
     def test_coerce_metric_values_handling(
         self,
-        service_config: ServiceConfig,
-        user_config_otel: UserConfig,
+        cfg_otel: BenchmarkConfig,
     ) -> None:
         processor = OTelMetricsResultsProcessor(
             service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_otel,
+            run=cfg_otel,
         )
         assert processor.coerce_metric_values("test", 123) == [123.0]
         assert processor.coerce_metric_values("test", 123.5) == [123.5]
@@ -768,20 +733,17 @@ class TestOTelMetricsResultsProcessor:
         assert processor.coerce_metric_values("test", {"key": "value"}) == []
         assert processor.coerce_metric_values("test", None) == []
 
-    def test_build_resource_attributes_populates_model_name(
-        self, service_config: ServiceConfig, user_config_otel: UserConfig
-    ) -> None:
+    def test_build_resource_attributes_populates_model_name(self, cfg_otel) -> None:
         """Happy path: model_names[0] populates aiperf.model.name."""
         processor = OTelMetricsResultsProcessor(
             service_id="test-service",
-            user_config=user_config_otel,
-            service_config=service_config,
+            run=cfg_otel,
         )
         attrs = processor._build_resource_attributes()
         assert attrs["aiperf.model.name"] == "test-model"
 
     def test_build_resource_attributes_empty_model_names_does_not_raise(
-        self, service_config: ServiceConfig, user_config_otel: UserConfig
+        self, cfg_otel
     ) -> None:
         """Regression: empty model_names must skip aiperf.model.name instead of
         raising IndexError. EndpointConfig.model_names has no min_length=1, so
@@ -790,13 +752,12 @@ class TestOTelMetricsResultsProcessor:
         """
         processor = OTelMetricsResultsProcessor(
             service_id="test-service",
-            user_config=user_config_otel,
-            service_config=service_config,
+            run=cfg_otel,
         )
         # Mutate after construction to bypass any Field validator.
-        user_config_otel.endpoint.model_names = []
+        cfg_otel.cfg.models.items = []
         attrs = processor._build_resource_attributes()
         assert "aiperf.model.name" not in attrs
         # Other required resource attrs should still be present.
         assert attrs["service.name"] == "aiperf"
-        assert attrs["aiperf.endpoint.type"] == str(user_config_otel.endpoint.type)
+        assert attrs["aiperf.endpoint.type"] == str(cfg_otel.cfg.endpoint.type)

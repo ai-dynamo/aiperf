@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import orjson
+
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models.export_models import (
     TimesliceCollectionExportData,
     TimesliceData,
@@ -33,7 +36,7 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
 
         # Override file path for timeslice-specific output
         self._file_path = (
-            exporter_config.user_config.output.profile_export_timeslices_json_file
+            exporter_config.cfg.artifacts.profile_export_timeslices_json_file
         )
         self.trace_or_debug(
             lambda: f"Initializing TimesliceMetricsJsonExporter with config: {exporter_config}",
@@ -72,9 +75,14 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
         # Create collection with metadata
         export_data = TimesliceCollectionExportData(
             timeslices=timeslices_list,
-            input_config=self._user_config,
+            input_config=self._cfg,
         )
 
-        return export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
-        )
+        return orjson.dumps(
+            scrub_non_finite(
+                export_data.model_dump(
+                    mode="json", exclude_unset=True, exclude_none=True
+                )
+            ),
+            option=orjson.OPT_INDENT_2,
+        ).decode("utf-8")

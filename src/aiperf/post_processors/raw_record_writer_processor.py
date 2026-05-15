@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Writer for exporting raw request/response data with per-record metrics."""
 
+from __future__ import annotations
+
 import contextlib
+from typing import TYPE_CHECKING
 
 import aiofiles
 import orjson
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
@@ -21,9 +22,13 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.record_models import RecordContext, RequestInfo
 from aiperf.common.redact import redact_headers
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
@@ -39,21 +44,19 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     def __init__(
         self,
         service_id: str | None,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ):
         self.service_id = service_id or "processor"
-        self.user_config = user_config
+        self.run = run
 
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             raise PostProcessorDisabled(
-                f"RawRecordWriter processor is disabled for export level {self.user_config.output.export_level}"
+                f"RawRecordWriter processor is disabled for export level {self.run.cfg.artifacts.export_level}"
             )
 
         # Construct output file path: raw_records/raw_records_processor_{id}.jsonl
-        output_dir = (
-            user_config.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
-        )
+        output_dir = self.run.cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Each processor writes to its own file - avoids locking/contention
@@ -61,7 +64,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         safe_id = self.service_id.replace("/", "_").replace(":", "_").replace(" ", "_")
         output_file = output_dir / f"raw_records_{safe_id}.jsonl"
 
-        self._model_endpoint = ModelEndpointInfo.from_user_config(user_config)
+        self._model_endpoint = ModelEndpointInfo.from_run(run)
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self._model_endpoint.endpoint.type
         )
@@ -72,7 +75,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             output_file=output_file,
             batch_size=Environment.RECORD.RAW_EXPORT_BATCH_SIZE,
             service_id=service_id,
-            user_config=user_config,
+            run=run,
             **kwargs,
         )
 
@@ -149,15 +152,13 @@ class RawRecordAggregator(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs):
         super().__init__(**kwargs)
         self.exporter_config = exporter_config
-        if self.exporter_config.user_config.output.export_level != ExportLevel.RAW:
+        if self.exporter_config.cfg.artifacts.export_level != ExportLevel.RAW:
             raise DataExporterDisabled(
-                f"RawRecordAggregator is disabled for export level {self.exporter_config.user_config.output.export_level}"
+                f"RawRecordAggregator is disabled for export level {self.exporter_config.cfg.artifacts.export_level}"
             )
-        self.output_file = (
-            exporter_config.user_config.output.profile_export_raw_jsonl_file
-        )
+        self.output_file = exporter_config.cfg.artifacts.profile_export_raw_jsonl_file
         self.output_dir = (
-            exporter_config.user_config.output.artifact_directory
+            exporter_config.cfg.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
 
@@ -169,7 +170,7 @@ class RawRecordAggregator(AIPerfLoggerMixin):
 
     async def export(self) -> None:
         """Aggregate the raw records."""
-        if self.exporter_config.user_config.output.export_level != ExportLevel.RAW:
+        if self.exporter_config.cfg.artifacts.export_level != ExportLevel.RAW:
             return
 
         raw_record_files = list(self.output_dir.glob("raw_records_*.jsonl"))

@@ -45,9 +45,7 @@ class TimingResultsStrategy(OTelResultsStrategyProtocol):
             return
 
         attributes = self._context.build_timing_attributes(record_data)
-        attributes.update(
-            genai_semconv.cross_metric_attributes(self._context.user_config)
-        )
+        attributes.update(genai_semconv.cross_metric_attributes(self._context.cfg))
 
         # Instrument counter fields
         for metric_name, field_name in self._COUNTER_FIELDS.items():

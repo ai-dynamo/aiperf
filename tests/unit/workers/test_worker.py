@@ -5,8 +5,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
@@ -24,15 +22,13 @@ from tests.harness.fake_transport import FakeTransport as FakeTransport
 
 @pytest.fixture
 async def mock_worker(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    benchmark_run,
     fake_tokenizer: FakeTokenizer,
     skip_service_registration,
 ):
     """Create a fully initialized and started MockWorker (no SystemController needed)."""
     worker = Worker(
-        service_config=service_config,
-        user_config=user_config,
+        run=benchmark_run,
         service_id="mock-service-id",
     )
     await worker.initialize()

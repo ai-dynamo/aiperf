@@ -203,6 +203,16 @@ class ProfileResults(AIPerfBaseModel):
         default=False,
         description="Whether the profile run was cancelled early",
     )
+    successful_request_count: int = Field(
+        default=0,
+        ge=0,
+        description="The number of inference requests that returned successful responses",
+    )
+    error_request_count: int = Field(
+        default=0,
+        ge=0,
+        description="The number of inference requests that returned errors",
+    )
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique error details and their counts",

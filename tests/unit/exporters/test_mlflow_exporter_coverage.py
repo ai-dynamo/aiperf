@@ -5,46 +5,51 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import orjson
 import pytest
 from pytest import param
 
-from aiperf.common.config import OutputConfig, ServiceConfig
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import ProfileResults
+from aiperf.config import ArtifactsConfig, BenchmarkConfig, EndpointConfig, MLflowConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.exporters.mlflow_metadata import normalize_mlflow_uri
+from aiperf.plugin.enums import EndpointType
 
 
 def _make_config(
     tmp_path: Path,
     *,
-    tracking_uri: str = "http://localhost:5000",
+    tracking_uri: str | None = "http://localhost:5000",
     benchmark_id: str = "test-bench-123",
 ) -> ExporterConfig:
-    user_config = MagicMock()
-    user_config.mlflow_enabled = True
-    user_config.mlflow_tracking_uri = tracking_uri
-    user_config.mlflow_experiment = "test-exp"
-    user_config.mlflow_run_name = None
-    user_config.mlflow_parent_run_id = None
-    user_config.mlflow_tags_dict = {}
-    user_config.mlflow_resolved_artifact_globs = ["*.json", "*.csv"]
-    user_config.output = MagicMock(spec=OutputConfig)
-    user_config.output.artifact_directory = tmp_path
-    user_config.benchmark_id = benchmark_id
-    user_config.endpoint.type = "chat"
-    user_config.endpoint.model_names = ["mock-model"]
-    user_config.endpoint.urls = ["http://localhost:8000"]
-    user_config.loadgen.concurrency = 4
-    user_config.loadgen.request_rate = None
-    user_config.loadgen.request_count = 32
-    user_config.loadgen.benchmark_duration = None
-    user_config.timing_mode = "fixed_schedule"
-    user_config.cli_command = "aiperf profile ..."
+    cfg = BenchmarkConfig(
+        model="mock-model",
+        endpoint=EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.CHAT,
+            streaming=False,
+        ),
+        dataset={"type": "synthetic", "entries": 32},
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 32,
+                "concurrency": 4,
+            }
+        ],
+        artifacts=ArtifactsConfig(dir=tmp_path),
+        mlflow=MLflowConfig(
+            tracking_uri=tracking_uri,
+            experiment="test-exp",
+            artifact_globs=["*.json", "*.csv"],
+        ),
+    )
 
     results = MagicMock(spec=ProfileResults)
     results.records = []
@@ -53,10 +58,10 @@ def _make_config(
     results.was_cancelled = False
 
     return ExporterConfig(
-        user_config=user_config,
+        cfg=cfg,
         results=results,
-        service_config=ServiceConfig(),
         telemetry_results=None,
+        run=SimpleNamespace(benchmark_id=benchmark_id),
     )
 
 
@@ -246,8 +251,7 @@ class TestDisabledExporter:
     """Cover DataExporterDisabled paths."""
 
     def test_disabled_when_mlflow_not_enabled(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path)
-        config.user_config.mlflow_enabled = False
+        config = _make_config(tmp_path, tracking_uri=None)
         with pytest.raises(DataExporterDisabled):
             MLflowDataExporter(exporter_config=config)
 

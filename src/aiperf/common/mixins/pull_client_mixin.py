@@ -3,7 +3,6 @@
 
 from abc import ABC
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import (
     AIPerfHook,
@@ -26,14 +25,13 @@ class PullClientMixin(CommunicationMixin, ABC):
     def __init__(
         self,
         *,
-        service_config: ServiceConfig,
         pull_client_address: CommAddress,
         pull_client_bind: bool = False,
         max_pull_concurrency: int | None = None,
         pull_client_additional_bind_address: str | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, **kwargs)
+        super().__init__(**kwargs)
         # NOTE: The communication base class will automatically manage the pull client's lifecycle.
         self.pull_client = self.comms.create_pull_client(
             pull_client_address,

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import orjson
 import pytest
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.outputs_json_exporter import OutputsJsonExporter
 
 
@@ -77,12 +77,10 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
 def _make_exporter(tmp_path: Path) -> OutputsJsonExporter:
     """Create an OutputsJsonExporter with mocked config pointing to tmp_path."""
     config = MagicMock()
-    config.user_config.output.export_outputs_json = True
-    config.user_config.output.outputs_json_file = tmp_path / "outputs.json"
-    config.user_config.output.profile_export_jsonl_file = (
-        tmp_path / "profile_export.jsonl"
-    )
-    config.user_config.output.artifact_directory = tmp_path
+    config.cfg.artifacts.export_outputs_json = True
+    config.cfg.artifacts.outputs_json_file = tmp_path / "outputs.json"
+    config.cfg.artifacts.profile_export_jsonl_file = tmp_path / "profile_export.jsonl"
+    config.cfg.artifacts.artifact_directory = tmp_path
     return OutputsJsonExporter(config)
 
 
@@ -90,7 +88,7 @@ class TestOutputsJsonExporter:
     def test_disabled_when_flag_not_set(self, tmp_path: Path) -> None:
         """Exporter raises DataExporterDisabled when export_outputs_json is False."""
         config = MagicMock()
-        config.user_config.output.export_outputs_json = False
+        config.cfg.artifacts.export_outputs_json = False
         with pytest.raises(DataExporterDisabled):
             OutputsJsonExporter(config)
 

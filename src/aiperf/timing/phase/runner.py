@@ -23,7 +23,7 @@ from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
-from aiperf.timing.ramping import RampConfig, Ramper, RampType
+from aiperf.timing.ramping import Ramper, RamperConfig, RampType
 from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
@@ -461,7 +461,7 @@ class PhaseRunner(TaskManagerMixin):
                 f"Starting session concurrency ramp: 1 → {config.concurrency} "
                 f"over {config.concurrency_ramp_duration_sec}s"
             )
-            ramp_config = RampConfig(
+            ramp_config = RamperConfig(
                 ramp_type=RampType.LINEAR,
                 start=1,
                 target=config.concurrency,
@@ -481,7 +481,7 @@ class PhaseRunner(TaskManagerMixin):
                 f"Starting prefill concurrency ramp: 1 → {config.prefill_concurrency} "
                 f"over {config.prefill_concurrency_ramp_duration_sec}s"
             )
-            ramp_config = RampConfig(
+            ramp_config = RamperConfig(
                 ramp_type=RampType.LINEAR,
                 start=1,
                 target=config.prefill_concurrency,
@@ -507,7 +507,7 @@ class PhaseRunner(TaskManagerMixin):
                 f"Starting request rate ramp: {start_rate:.2f} → {config.request_rate} QPS "
                 f"over {config.request_rate_ramp_duration_sec}s"
             )
-            ramp_config = RampConfig(
+            ramp_config = RamperConfig(
                 ramp_type=RampType.LINEAR,
                 start=start_rate,
                 target=config.request_rate,

@@ -198,11 +198,9 @@ class TestWorkerLoadInvariants:
 class TestMultipleWorkerConcurrency:
     """Test concurrent operations across multiple workers."""
 
-    async def test_multiple_workers_independent_tracking(self, service_config):
+    async def test_multiple_workers_independent_tracking(self, benchmark_run):
         """Test that multiple workers maintain independent state correctly."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         # Register three workers
         router._workers = {
@@ -241,11 +239,9 @@ class TestMultipleWorkerConcurrency:
         assert router._workers["worker-3"].in_flight_credits == 10
         assert router._workers["worker-3"].total_completed_credits == 0
 
-    async def test_concurrent_operations_different_workers(self, service_config):
+    async def test_concurrent_operations_different_workers(self, benchmark_run):
         """Test that operations on different workers don't interfere."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._workers = {
             "worker-1": WorkerLoad(worker_id="worker-1", in_flight_credits=0),

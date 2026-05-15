@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 from pydantic import ValidationError
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import (
     ConversationBranchMode,
     ConversationContextMode,
@@ -35,7 +36,29 @@ from aiperf.dataset.loader.base_loader import BaseFileLoader, LoaderProbeData
 from aiperf.dataset.loader.dag_jsonl_models import DagConversation, DagFork, DagTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 __all__ = ["DagJsonlLoader", "DagLoadError"]
+
+
+def _resolve_delay_cap_seconds(run: BenchmarkRun | None) -> float | None:
+    """Pull ``inter_turn_delay_cap_seconds`` off the active file dataset.
+
+    DAG loading goes through the v2 plugin contract, which passes ``run``
+    (not a config object). The cap lives on the matching
+    :class:`aiperf.config.dataset.config.FileDataset` entry; standalone
+    construction (unit tests, offline tooling) passes ``run=None`` and
+    the cap defaults to disabled.
+    """
+    if run is None:
+        return None
+    from aiperf.config.dataset import FileDataset
+
+    for ds in run.cfg.datasets:
+        if isinstance(ds, FileDataset) and ds.inter_turn_delay_cap_seconds is not None:
+            return ds.inter_turn_delay_cap_seconds
+    return None
 
 
 class DagJsonlLoader(BaseFileLoader):
@@ -66,7 +89,7 @@ class DagJsonlLoader(BaseFileLoader):
     system messages after position 0.
 
     Constructor shapes:
-    - Plugin contract: ``DagJsonlLoader(filename=..., user_config=...)``
+    - Plugin contract: ``DagJsonlLoader(filename=..., run=...)``
     - Standalone: ``DagJsonlLoader(path)`` (unit tests, offline tooling).
 
     Standalone Python usage (offline tooling, tests)::
@@ -77,7 +100,7 @@ class DagJsonlLoader(BaseFileLoader):
 
     Plugin usage (the framework calls these, not user code)::
 
-        loader = DagJsonlLoader(filename=path, user_config=cfg)
+        loader = DagJsonlLoader(filename=path, run=run)
         per_session = loader.load_dataset()  # dict[session_id, list[Conversation]]
         conversations = loader.convert_to_conversations(per_session)
     """
@@ -86,21 +109,21 @@ class DagJsonlLoader(BaseFileLoader):
         self,
         filename: str | Path | None = None,
         *,
-        user_config: UserConfig | None = None,
+        run: BenchmarkRun | None = None,
         **kwargs: Any,
     ) -> None:
         if filename is None:
             raise ValueError(
                 "DagJsonlLoader requires a 'filename' (or positional path); "
-                "plugin callers pass filename=... + user_config=..., standalone "
+                "plugin callers pass filename=... + run=..., standalone "
                 "callers pass the path positionally"
             )
-        if user_config is not None:
-            super().__init__(filename=str(filename), user_config=user_config, **kwargs)
-            cap_seconds = user_config.loadgen.inter_turn_delay_cap_seconds
+        if run is not None:
+            super().__init__(filename=str(filename), run=run, **kwargs)
+            cap_seconds = _resolve_delay_cap_seconds(run)
         else:
-            # Standalone path: bypass BaseFileLoader (no user_config available).
-            self.user_config = None
+            # Standalone path: bypass BaseFileLoader (no run available).
+            self.run = None
             self.filename = str(filename)
             cap_seconds = None
         self._path = Path(filename)

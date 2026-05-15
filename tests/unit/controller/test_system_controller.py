@@ -5,15 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
-from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from aiperf.plugin.enums import AccuracyBenchmarkType
 from tests.unit.controller.conftest import MockTestException
 
 
@@ -359,15 +357,14 @@ class TestAccuracyTemperatureWarning:
         system_controller: SystemController,
         extra_inputs=None,
     ) -> SystemController:
-        system_controller.user_config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"], type=EndpointType.COMPLETIONS
-            ),
-            accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
-            input=system_controller.user_config.input.model_copy(
-                update={"extra": extra_inputs}
-            ),
+        from aiperf.config.accuracy import AccuracyConfig as V2AccuracyConfig
+
+        system_controller.run.cfg.accuracy = V2AccuracyConfig(
+            benchmark=AccuracyBenchmarkType.MMLU
         )
+        # extra_inputs in v1 is list[tuple[str, Any]]; v2 endpoint.extra mirrors
+        # the same shape (Pydantic validator coerces dict if needed).
+        system_controller.run.cfg.endpoint.extra = extra_inputs
         return system_controller
 
     def test_no_warning_when_accuracy_disabled(

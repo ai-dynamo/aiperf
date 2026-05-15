@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import traceback
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -33,6 +33,9 @@ from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records.inference_result_parser import InferenceResultParser
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class RecordProcessor(PullClientMixin, BaseComponentService):
     """RecordProcessor is responsible for processing the records and pushing them to the RecordsManager.
@@ -42,30 +45,26 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: "BenchmarkRun",
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
+            **kwargs,
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
-            user_config
-        )
+        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(self.run)
         self.inference_result_parser = InferenceResultParser(
-            service_config=service_config,
-            user_config=user_config,
+            run=self.run,
         )
 
         self.records_processors: list[RecordProcessorProtocol] = []
@@ -75,8 +74,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     PluginType.RECORD_PROCESSOR, entry.name
                 )
                 processor: RecordProcessorProtocol = ProcessorClass(
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+                    run=self.run,
                     service_id=self.service_id,
                 )
                 self.records_processors.append(processor)
@@ -111,7 +109,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Get the tokenizer for a given model."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                tokenizer_config = self.user_config.tokenizer
+                tokenizer_config = self.run.cfg.tokenizer
                 self.tokenizers[model] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
                     tokenizer_config.get_tokenizer_name_for_model(model),
@@ -182,7 +180,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         # Free raw SSE messages now that parsing extracted what it needs.
         # Skip when RAW export is active -- the raw writer needs them.
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             record.responses = None
 
         metadata = self._create_metric_record_metadata(
@@ -226,7 +224,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """
         trace_data = record.trace_data
         error = record.error
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             record.responses = None
         record.turns = None
         record.trace_data = None

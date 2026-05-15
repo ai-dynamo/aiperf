@@ -13,34 +13,38 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.config import ArtifactsConfig, BenchmarkConfig, EndpointConfig, OTelConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.strategies.genai_semconv import infer_provider_name
 
 
-def _make_user_config(
+def _make_cfg(
     urls: list[str] | None = None,
     gen_ai_provider: str | None = None,
-) -> UserConfig:
-    """Build a minimal UserConfig with the given URLs and optional provider override."""
-    endpoint_kwargs: dict = {
-        "model_names": ["test-model"],
-        "type": EndpointType.CHAT,
-        "streaming": False,
-    }
-    if urls is not None:
-        endpoint_kwargs["urls"] = urls
-
-    user_config_kwargs: dict = {
-        "endpoint": EndpointConfig(**endpoint_kwargs),
-        "gen_ai_provider": gen_ai_provider,
-    }
-    # gen_ai_provider is an OTel-only flag: the validator requires --otel-url
-    # whenever any OTel-only flag is set, so pair them in test configs.
-    if gen_ai_provider is not None:
-        user_config_kwargs["otel_url"] = "http://localhost:4318"
-    config = UserConfig(**user_config_kwargs)
-    return config
+) -> BenchmarkConfig:
+    """Build a minimal BenchmarkConfig with the given URLs and optional provider override."""
+    return BenchmarkConfig(
+        model="test-model",
+        endpoint=EndpointConfig(
+            urls=urls or ["http://localhost:8000"],
+            type=EndpointType.CHAT,
+            streaming=False,
+        ),
+        dataset={"type": "synthetic"},
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 1,
+                "concurrency": 1,
+            }
+        ],
+        artifacts=ArtifactsConfig(),
+        otel=OTelConfig(
+            gen_ai_provider=gen_ai_provider,
+            metrics_url="http://localhost:4318" if gen_ai_provider else None,
+        ),
+    )
 
 
 class TestProviderHostInference:
@@ -91,7 +95,7 @@ class TestProviderHostInference:
         ],
     )  # fmt: skip
     def test_known_host_patterns(self, url: str, expected_provider: str) -> None:
-        config = _make_user_config(urls=[url])
+        config = _make_cfg(urls=[url])
         assert infer_provider_name(config) == expected_provider
 
 
@@ -124,7 +128,7 @@ class TestExplicitOverrideWins:
     def test_explicit_override_wins(
         self, url: str, override: str, expected: str
     ) -> None:
-        config = _make_user_config(urls=[url], gen_ai_provider=override)
+        config = _make_cfg(urls=[url], gen_ai_provider=override)
         assert infer_provider_name(config) == expected
 
 
@@ -142,12 +146,12 @@ class TestUnknownHostFallback:
         ],
     )  # fmt: skip
     def test_unknown_host_returns_other(self, url: str) -> None:
-        config = _make_user_config(urls=[url])
+        config = _make_cfg(urls=[url])
         assert infer_provider_name(config) == "_OTHER"
 
 
-class TestMalformedURLFallback:
-    """Malformed URLs that cannot be parsed return '_OTHER'."""
+class TestMalformedURLValidation:
+    """Malformed URLs are rejected by real endpoint config validation."""
 
     @pytest.mark.parametrize(
         "url",
@@ -158,9 +162,9 @@ class TestMalformedURLFallback:
             param("   ", id="whitespace-only"),
         ],
     )  # fmt: skip
-    def test_malformed_url_returns_other(self, url: str) -> None:
-        config = _make_user_config(urls=[url])
-        assert infer_provider_name(config) == "_OTHER"
+    def test_malformed_url_fails_config_validation(self, url: str) -> None:
+        with pytest.raises(ValueError):
+            _make_cfg(urls=[url])
 
 
 class TestEmptyURLList:
@@ -168,5 +172,5 @@ class TestEmptyURLList:
 
     def test_default_url_returns_other(self) -> None:
         # Default URL is localhost:8000 which matches no known provider
-        config = _make_user_config()
+        config = _make_cfg()
         assert infer_provider_name(config) == "_OTHER"

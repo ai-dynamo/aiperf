@@ -9,12 +9,12 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import aiofiles
 import aiohttp
 import orjson
 from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -44,11 +44,14 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.artifacts import OutputDefaults
+from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
     DatasetBackingStoreType,
+    PhaseType,
     PluginType,
     ServiceRunType,
 )
@@ -56,6 +59,7 @@ from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
@@ -78,20 +82,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
             reply_client_bind=False,
             **kwargs,
         )
-        self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[
             str, Conversation
@@ -103,19 +104,27 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # In Kubernetes mode, use compress_only to stream directly to compressed files.
         # This avoids creating large uncompressed files on the control plane.
         # WorkerPodManagers will download compressed files and decompress locally.
-        self._compress_only = (
-            service_config.service_run_type == ServiceRunType.KUBERNETES
-        )
+        # KUBERNETES is intentionally absent from this branch's plugins.yaml,
+        # so probe via getattr.
+        self._compress_only = self._is_kubernetes_run()
 
         BackingStoreClass = plugins.get_class(
             PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
         )
         self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=user_config.benchmark_id,
+            benchmark_id=self.run.benchmark_id,
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
+
+    def _is_kubernetes_run(self) -> bool:
+        """KUBERNETES isn't always registered in this branch's plugins.yaml."""
+        kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
+        return (
+            kubernetes_run_type is not None
+            and self.run.cfg.runtime.service_run_type == kubernetes_run_type
+        )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -124,7 +133,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Configure the dataset."""
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
-            self.user_config.endpoint.type
+            self.run.cfg.endpoint.type
         )
         if endpoint_meta.tokenizes_input:
             self.info("Configuring tokenizer(s) for dataset manager")
@@ -180,8 +189,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
-        model_name = self.user_config.endpoint.model_names[0]
-        tokenizer_config = self.user_config.tokenizer
+        model_name = self.run.cfg.get_model_names()[0]
+        tokenizer_config = self.run.cfg.tokenizer
         tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
 
         # Let exceptions propagate - controller_utils will display the error panel
@@ -238,20 +247,23 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                         )
                     data = await resp.read()
 
-                img = PILImage.open(BytesIO(data))
-                if img.format is None:
-                    raise RuntimeError(
-                        f"Failed to determine image format for URL '{url}'"
+                def _decode_and_encode() -> str:
+                    img = PILImage.open(BytesIO(data))
+                    if img.format is None:
+                        raise RuntimeError(
+                            f"Failed to determine image format for URL '{url}'"
+                        )
+                    if img.format.upper() not in list(ImageFormat):
+                        raise RuntimeError(
+                            f"'{img.format}' from URL '{url}' is not a supported "
+                            f"image format: {', '.join(ImageFormat)}"
+                        )
+                    return (
+                        f"data:image/{img.format.lower()};base64,"
+                        f"{encode_image(img, img.format)}"
                     )
-                if img.format.upper() not in list(ImageFormat):
-                    raise RuntimeError(
-                        f"'{img.format}' from URL '{url}' is not a supported "
-                        f"image format: {', '.join(ImageFormat)}"
-                    )
-                url_to_data_url[url] = (
-                    f"data:image/{img.format.lower()};base64,"
-                    f"{encode_image(img, img.format)}"
-                )
+
+                url_to_data_url[url] = await asyncio.to_thread(_decode_and_encode)
 
         connector = create_tcp_connector()
         async with aiohttp.ClientSession(
@@ -320,25 +332,24 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _generate_inputs_json_file(self) -> None:
         """Generate inputs.json file in the artifact directory."""
-        file_path = (
-            self.user_config.output.artifact_directory / OutputDefaults.INPUTS_JSON_FILE
-        )
+        file_path = self.run.cfg.artifacts.dir / OutputDefaults.INPUTS_JSON_FILE
         temp_file_path = file_path.with_suffix(".tmp")
         self.info(f"Generating inputs.json file at {file_path.resolve()}")
 
         try:
             start_time = time.perf_counter()
-            file_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(file_path.parent.mkdir, parents=True, exist_ok=True)
 
-            model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
+            model_endpoint = ModelEndpointInfo.from_run(self.run)
             inputs = self._generate_input_payloads(model_endpoint)
 
-            temp_file_path.write_bytes(
-                orjson.dumps(
-                    inputs.model_dump(exclude_none=True, mode="json"),
-                    option=orjson.OPT_INDENT_2,
+            async with aiofiles.open(temp_file_path, "wb") as f:
+                await f.write(
+                    orjson.dumps(
+                        inputs.model_dump(exclude_none=True, mode="json"),
+                        option=orjson.OPT_INDENT_2,
+                    )
                 )
-            )
             temp_file_path.replace(file_path)
 
             duration = time.perf_counter() - start_time
@@ -365,7 +376,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.PUBLIC
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         self._default_context_mode = composer.get_default_context_mode()
         return await composer.create_dataset_async()
 
@@ -373,7 +384,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
@@ -382,7 +393,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         return "rankings" in endpoint_type.lower()
 
     def _load_synthetic_dataset(self) -> list[Conversation]:
-        endpoint_type = self.user_config.endpoint.type
+        endpoint_type = self.run.cfg.endpoint.type
 
         if self._is_rankings_endpoint(endpoint_type):
             composer_type = ComposerType.SYNTHETIC_RANKINGS
@@ -390,56 +401,56 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             composer_type = ComposerType.SYNTHETIC
 
         ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
     async def _load_accuracy_dataset(self) -> list[Conversation]:
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
-        from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 
-        if self.user_config.timing_mode == TimingMode.FIXED_SCHEDULE:
+        if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.run.cfg.phases):
             raise self._service_error(
                 "Accuracy mode requires sequential request order; "
                 "fixed-schedule timing is not supported in accuracy mode."
             )
 
-        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
-            self.user_config.input.dataset_sampling_strategy = (
-                DatasetSamplingStrategy.SEQUENTIAL
-            )
-        elif (
-            self.user_config.input.dataset_sampling_strategy
-            != DatasetSamplingStrategy.SEQUENTIAL
-        ):
+        # Accuracy mode requires sequential sampling on the active dataset.
+        # The sampling strategy is set explicitly on the dataset config (no
+        # silent coercion); surface a clear error if the user picked something
+        # else.
+        from aiperf.plugin.enums import DatasetSamplingStrategy
+
+        dataset = self.run.cfg.get_default_dataset()
+        sampling = getattr(dataset, "sampling", None)
+        if sampling is not None and sampling != DatasetSamplingStrategy.SEQUENTIAL:
             raise self._service_error(
                 f"Accuracy mode requires sequential request order; "
-                f"'{self.user_config.input.dataset_sampling_strategy}' sampling is not supported. "
-                f"Remove --dataset-sampling-strategy or set it to 'sequential'."
+                f"'{sampling}' sampling is not supported. "
+                f"Set the dataset's sampling strategy to 'sequential'."
             )
 
-        loader = AccuracyDatasetLoader(user_config=self.user_config)
+        loader = AccuracyDatasetLoader(run=self.run)
         return await loader.load()
 
     async def _configure_dataset(self) -> None:
-        if self.user_config is None:
-            raise self._service_error("User config is required for dataset manager")
-
         self.dataset_configured.clear()
         self._default_context_mode = None
 
-        if self.user_config.accuracy.enabled:
+        accuracy_cfg = self.run.cfg.accuracy
+        accuracy_enabled = accuracy_cfg.enabled if accuracy_cfg else False
+        default_dataset = self.run.cfg.get_default_dataset()
+
+        if accuracy_enabled:
             conversations = await self._load_accuracy_dataset()
-        elif self.user_config.input.public_dataset is not None:
+        elif isinstance(default_dataset, PublicDataset):
             conversations = await self._load_public_dataset()
-        elif (
-            self.user_config.input.custom_dataset_type is not None
-            or self.user_config.input.file is not None
+        elif isinstance(default_dataset, FileDataset) or (
+            getattr(default_dataset, "path", None) is not None
         ):
-            # Use CUSTOM composer if either:
-            # 1. custom_dataset_type is explicitly set, OR
-            # 2. input file is provided (composer will auto-infer type)
+            # Use CUSTOM composer if the dataset is file-backed (FileDataset
+            # or any composed/file-source variant exposing a `path`). The
+            # composer auto-infers the format.
             conversations = self._load_custom_dataset()
         else:
             conversations = self._load_synthetic_dataset()
@@ -450,7 +461,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ]
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
-            self.user_config.endpoint.type
+            self.run.cfg.endpoint.type
         )
         if endpoint_meta.requires_inline_media:
             await self._convert_media_urls_to_inline()
@@ -471,15 +482,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # WorkerPodManager which provides local file paths. We still send mmap_metadata
         # which has the control plane paths (ignored by workers in Kubernetes mode).
         client_metadata: DatasetClientMetadata = mmap_metadata
-        if self.service_config.service_run_type == ServiceRunType.KUBERNETES:
+        if self._is_kubernetes_run():
             self.info(
                 "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
                 "from WorkerPodManager before accessing dataset"
             )
 
+        sampling_strategy = getattr(default_dataset, "sampling", None)
         self.dataset_metadata = DatasetMetadata(
             conversations=[conversation.metadata() for conversation in conversations],
-            sampling_strategy=self.user_config.input.dataset_sampling_strategy,
+            sampling_strategy=sampling_strategy,
             default_context_mode=self._default_context_mode,
         )
         self.info(

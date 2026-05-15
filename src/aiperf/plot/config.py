@@ -6,6 +6,8 @@ Plot configuration loader for YAML-based plot definitions.
 
 Loads plot specifications from YAML files with the following priority:
 1. Custom path (if provided via --config flag)
+1.5. Per-run materialized envelope (`<artifact_dir>/.aiperf-plot-config.yaml`),
+    auto-detected from any artifact dir passed in `artifact_dirs`.
 2. User home config (~/.aiperf/plot_config.yaml) - auto-created on first run
 3. Default shipped config (src/aiperf/plot/default_plot_config.yaml)
 """
@@ -119,23 +121,39 @@ class PlotConfig:
 
     Supports loading from multiple sources with priority:
     1. Custom config path (CLI override)
+    1.5. Per-run materialized envelope auto-detected from `artifact_dirs`
     2. User home config (~/.aiperf/plot_config.yaml)
     3. Default shipped config
 
     Args:
         config_path: Optional custom path to YAML config file
+        verbose: Show detailed error tracebacks in console
+        artifact_dirs: Run/artifact directories to scan for a sibling
+            `.aiperf-plot-config.yaml` (the auto-plot callback's
+            reproducibility receipt). The first directory containing one
+            wins; the explicit `config_path` still takes precedence.
     """
 
-    def __init__(self, config_path: Path | None = None, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        config_path: Path | None = None,
+        verbose: bool = False,
+        artifact_dirs: list[Path] | None = None,
+    ) -> None:
         """
         Initialize plot configuration loader.
 
         Args:
             config_path: Optional custom path to YAML config file
             verbose: Show detailed error tracebacks in console
+            artifact_dirs: Run/artifact directories scanned for a sibling
+                `.aiperf-plot-config.yaml` materialized by the auto-plot
+                callback. Used to deliver reproducibility when re-running
+                `aiperf plot <run>` without an explicit `--config`.
         """
         self.custom_path = config_path
         self.verbose = verbose
+        self.artifact_dirs = artifact_dirs or []
         self.resolved_path = self._resolve_config_path()
         self.config = self._load_yaml()
 
@@ -145,11 +163,16 @@ class PlotConfig:
 
         Priority:
         1. Custom path via --config flag (explicit override)
+        1.5. Per-run materialized envelope at
+            `<artifact_dir>/.aiperf-plot-config.yaml`, scanned in order
+            across `self.artifact_dirs`. Lets `aiperf plot <run>` reproduce
+            the original run's plots without the source AIPerf YAML.
         2. ~/.aiperf/plot_config.yaml (auto-created from default on first run)
         3. System default (fallback only, indicates package issue)
 
         Console messages:
-        - Shows "Using config: <path>" when using customized config (Priority 1 or 2)
+        - Shows "Using config: <path>" when using customized config
+            (Priority 1, 1.5, or 2)
         - Shows creation message when auto-creating config on first run
         - Silent when using system defaults
 
@@ -168,9 +191,19 @@ class PlotConfig:
             print(f"Using config: {self.custom_path}")
             return self.custom_path
 
+        # Priority 1.5: Per-run materialized envelope receipt. The auto-plot
+        # callback writes this when an inline plot envelope is configured;
+        # picking it up here is what makes `aiperf plot <run>` reproducible
+        # on a different machine without the original AIPerf YAML.
+        for art_dir in self.artifact_dirs:
+            candidate = art_dir / ".aiperf-plot-config.yaml"
+            if candidate.exists():
+                print(f"Using config: {candidate}")
+                return candidate
+
         # Priority 2: User home config (auto-create if missing)
-        user_config = Path.home() / ".aiperf" / "plot_config.yaml"
-        if not user_config.exists():
+        user_yaml_path = Path.home() / ".aiperf" / "plot_config.yaml"
+        if not user_yaml_path.exists():
             default_config = Path(__file__).parent / "default_plot_config.yaml"
             if not default_config.exists():
                 raise FileNotFoundError(
@@ -178,17 +211,17 @@ class PlotConfig:
                     "This indicates a package installation issue."
                 )
 
-            user_config.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(default_config, user_config)
+            user_yaml_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(default_config, user_yaml_path)
 
-            print(f"\nCreated plot configuration: {user_config}")
+            print(f"\nCreated plot configuration: {user_yaml_path}")
             print(
                 "   Edit this file to customize plots (changes take effect on next run)\n"
             )
         else:
-            print(f"Using config: {user_config}")
+            print(f"Using config: {user_yaml_path}")
 
-        return user_config
+        return user_yaml_path
 
     def _load_yaml(self) -> dict:
         """
@@ -561,7 +594,7 @@ class PlotConfig:
 
         Supports two formats:
         1. Dict format: {"metric": "request_latency", "stat": "avg"}
-        2. String format (legacy): "request_latency_avg" or "request_number"
+        2. String format: "request_latency_avg" or "request_number"
 
         Args:
             metric_value: Metric as dict with 'metric' and 'stat' keys, or string shortcut

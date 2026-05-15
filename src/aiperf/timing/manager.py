@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
@@ -28,6 +30,9 @@ from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class TimingManager(BaseComponentService):
     """Service orchestrating credit issuance and request timing.
@@ -43,17 +48,17 @@ class TimingManager(BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
+            **kwargs,
         )
         self.debug("Timing manager __init__")
-        self.config = TimingConfig.from_user_config(self.user_config)
+        self.config = TimingConfig.from_run(self.run)
 
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
@@ -69,7 +74,7 @@ class TimingManager(BaseComponentService):
         # worker lifecycle. Created early to handle worker connections
         # immediately, as well as attaching to the lifecycle.
         self.sticky_router: StickyCreditRouter = StickyCreditRouter(
-            service_config=service_config,
+            run=run,
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.sticky_router)
@@ -165,7 +170,12 @@ class TimingManager(BaseComponentService):
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, _message: CommandMessage) -> None:
-        """Start credit issuance. Disables GC for stable timing."""
+        """Start credit issuance.
+
+        GC is already disabled for this process by the bootstrap path
+        (``service_metadata.disable_gc=True`` for TimingManager); see
+        ``aiperf.bootstrap``.
+        """
         if not self._phase_orchestrator:
             raise InvalidStateError("No phase orchestrator configured")
 
@@ -173,7 +183,79 @@ class TimingManager(BaseComponentService):
         self.event_loop_monitor.start()
 
         self.debug("Starting profiling")
-        self.execute_async(self._phase_orchestrator.start())
+        task = self.execute_async(self._phase_orchestrator.start())
+        task.add_done_callback(self._on_phase_orchestrator_done)
+
+    def _on_phase_orchestrator_done(self, task: asyncio.Task) -> None:
+        """Surface phase-orchestrator failures to the SystemController.
+
+        ``execute_async`` is fire-and-forget, so a phase setup error (e.g.
+        FixedScheduleStrategy rejecting an orphaned conversation with no
+        first-turn timestamp) is otherwise stored on the task and never
+        observed by the parent service. Without this hook, the run finishes
+        with zero records but a clean ``os._exit(0)``, masking real bugs.
+        Publish a ``BaseServiceErrorMessage`` so the SystemController can
+        record it in its exit-error list and exit non-zero.
+
+        Note: the orchestrator's ``_fail`` path raises ``CancelledError``
+        after recording the original exception in the orchestrator's
+        ``_exit_errors``. We therefore consult the orchestrator state
+        rather than ``task.exception()`` (which is ``None`` for cancelled
+        tasks) to decide whether the run actually failed.
+        """
+        from aiperf.common.enums import LifecycleState
+
+        orchestrator = self._phase_orchestrator
+        # task.exception() raises if the task was cancelled — guard with
+        # cancelled() first. A bare CancelledError that wasn't preceded by
+        # a real failure (e.g. user Ctrl+C) leaves the orchestrator in
+        # STOPPED, not FAILED, and we shouldn't escalate that.
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                self._publish_phase_failure(exc)
+                return
+
+        if orchestrator is not None and orchestrator.state == LifecycleState.FAILED:
+            inner = orchestrator._exit_errors[0] if orchestrator._exit_errors else None
+            err_details = inner.error_details if inner is not None else None
+            self._publish_phase_failure_from_details(err_details)
+
+    def _publish_phase_failure(self, exc: BaseException) -> None:
+        from aiperf.common.messages import BaseServiceErrorMessage
+        from aiperf.common.models.error_models import ErrorDetails
+
+        self.error(f"Phase orchestrator failed: {exc!r}")
+        self._publish_service_error_safely(
+            BaseServiceErrorMessage(
+                service_id=self.service_id,
+                error=ErrorDetails.from_exception(exc),
+            )
+        )
+
+    def _publish_phase_failure_from_details(self, details) -> None:
+        from aiperf.common.messages import BaseServiceErrorMessage
+        from aiperf.common.models.error_models import ErrorDetails
+
+        self.error(f"Phase orchestrator entered FAILED state: {details}")
+        self._publish_service_error_safely(
+            BaseServiceErrorMessage(
+                service_id=self.service_id,
+                error=details
+                or ErrorDetails(message="Phase orchestrator entered FAILED state"),
+            )
+        )
+
+    def _publish_service_error_safely(self, message) -> None:
+        try:
+            self.execute_async(self.publish(message))
+        except Exception as publish_error:
+            self.debug(
+                lambda e=publish_error: (
+                    f"Failed to publish BaseServiceErrorMessage from phase failure "
+                    f"(comms may already be down): {e!r}"
+                )
+            )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(
@@ -190,7 +272,7 @@ class TimingManager(BaseComponentService):
 
     @on_stop
     async def _timing_manager_stop(self) -> None:
-        """Stop timing manager and re-enable GC."""
+        """Stop the timing manager."""
         self.debug("Stopping timing manager")
 
         if self._phase_orchestrator:

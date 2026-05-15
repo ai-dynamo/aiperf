@@ -17,7 +17,7 @@ from rich.text import Text
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 
-console = Console()
+console = Console(stderr=True)
 
 _logger = AIPerfLogger("aiperf")
 
@@ -67,6 +67,9 @@ class exit_on_error(AbstractContextManager):
         title: The title of the error.
         exit_code: The exit code to use.
         show_traceback: Whether to show the full exception traceback. Defaults to True.
+        quiet_for: Exception types whose tracebacks should be suppressed (a clean
+            error panel is still rendered). Useful for expected user-facing errors
+            like ``ConfigurationError`` where the traceback is noise.
     """
 
     def __init__(
@@ -77,6 +80,7 @@ class exit_on_error(AbstractContextManager):
         title: str = "Error",
         exit_code: int = 1,
         show_traceback: bool = True,
+        quiet_for: tuple[type[BaseException], ...] = (),
     ):
         self.message: RenderableType = message
         self.text_color: StyleType | None = text_color
@@ -84,6 +88,7 @@ class exit_on_error(AbstractContextManager):
         self.exit_code: int = exit_code
         self.exceptions: tuple[type[BaseException], ...] = exceptions
         self.show_traceback: bool = show_traceback
+        self.quiet_for: tuple[type[BaseException], ...] = quiet_for
 
     def __enter__(self):
         return self
@@ -96,9 +101,12 @@ class exit_on_error(AbstractContextManager):
             not self.exceptions
             and not isinstance(exc_value, (SystemExit | KeyboardInterrupt))
         ) or issubclass(exc_type, self.exceptions):
-            # Only show full traceback if requested
+            # Only show full traceback if requested AND the exception is not
+            # in the quiet_for allowlist (expected errors render a clean panel only).
             # Don't show locals as they are very noisy and not useful for most errors
-            if self.show_traceback:
+            if self.show_traceback and not (
+                self.quiet_for and issubclass(exc_type, self.quiet_for)
+            ):
                 console.print_exception(
                     show_locals=False,
                     max_frames=10,

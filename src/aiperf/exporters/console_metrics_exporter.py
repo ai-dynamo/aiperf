@@ -58,7 +58,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
-        self._endpoint_type = exporter_config.user_config.endpoint.type
+        self._endpoint_type = exporter_config.cfg.endpoint.type
         self._check_enabled(exporter_config)
 
     def _check_enabled(self, exporter_config: ExporterConfig) -> None:

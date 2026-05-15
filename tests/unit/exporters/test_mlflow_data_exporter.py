@@ -15,9 +15,14 @@ from typing import Any
 import orjson
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config import (
+    ArtifactsConfig,
+    BenchmarkConfig,
+    EndpointConfig,
+    MLflowConfig,
+)
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.plugin.enums import EndpointType
@@ -26,6 +31,34 @@ from aiperf.plugin.enums import EndpointType
 def _write_artifact(path: Path, content: str = "test") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _make_mlflow_cfg(
+    tmp_path: Path,
+    *,
+    tracking_uri: str | None = "http://mlflow:5000",
+    experiment: str = "aiperf-tests",
+    run_name: str | None = None,
+    tags: str | None = None,
+    artifact_globs: list[str] | None = None,
+) -> BenchmarkConfig:
+    return BenchmarkConfig(
+        model="test-model",
+        endpoint=EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.CHAT,
+        ),
+        dataset={"type": "synthetic"},
+        profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+        artifacts=ArtifactsConfig(dir=tmp_path),
+        mlflow=MLflowConfig(
+            tracking_uri=tracking_uri,
+            experiment=experiment,
+            run_name=run_name,
+            tags=tags,
+            artifact_globs=artifact_globs,
+        ),
+    )
 
 
 def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -149,6 +182,8 @@ def sample_results() -> ProfileResults:
                 header="Request Throughput",
                 unit="req/s",
                 avg=42.5,
+                count=10,
+                sum=425.0,
             ),
             MetricResult(
                 tag="time_to_first_token",
@@ -167,18 +202,11 @@ def sample_results() -> ProfileResults:
 
 
 @pytest.fixture
-def mlflow_user_config(tmp_path: Path) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            type=EndpointType.CHAT,
-            model_names=["test-model"],
-            urls=["http://localhost:8000"],
-        ),
-        output=OutputConfig(artifact_directory=tmp_path),
-        mlflow_tracking_uri="http://mlflow:5000",
-        mlflow_experiment="aiperf-tests",
-        mlflow_run_name="nightly-run",
-        mlflow_tags=[("team", "perf"), ("env", "ci")],
+def mlflow_cfg(tmp_path: Path) -> BenchmarkConfig:
+    return _make_mlflow_cfg(
+        tmp_path,
+        run_name="nightly-run",
+        tags="team:perf,env:ci",
     )
 
 
@@ -188,14 +216,7 @@ class TestMLflowDataExporter:
     ) -> None:
         config = ExporterConfig(
             results=sample_results,
-            user_config=UserConfig(
-                endpoint=EndpointConfig(
-                    type=EndpointType.CHAT,
-                    model_names=["test-model"],
-                ),
-                output=OutputConfig(artifact_directory=tmp_path),
-            ),
-            service_config=ServiceConfig(),
+            cfg=_make_mlflow_cfg(tmp_path, tracking_uri=None),
             telemetry_results=None,
         )
         with pytest.raises(
@@ -204,11 +225,10 @@ class TestMLflowDataExporter:
         ):
             MLflowDataExporter(config)
 
-    def test_disabled_without_results(self, mlflow_user_config: UserConfig) -> None:
+    def test_disabled_without_results(self, mlflow_cfg: BenchmarkConfig) -> None:
         config = ExporterConfig(
             results=None,
-            user_config=mlflow_user_config,
-            service_config=ServiceConfig(),
+            cfg=mlflow_cfg,
             telemetry_results=None,
         )
         with pytest.raises(DataExporterDisabled, match="no profile results"):
@@ -220,7 +240,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: UserConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         _write_artifact(tmp_path / "profile_export_aiperf.json")
         _write_artifact(tmp_path / "profile_export_aiperf_timeslices.json")
@@ -231,9 +251,9 @@ class TestMLflowDataExporter:
         state = _install_fake_mlflow_modules(monkeypatch)
         config = ExporterConfig(
             results=sample_results,
-            user_config=mlflow_user_config,
-            service_config=ServiceConfig(),
+            cfg=mlflow_cfg,
             telemetry_results=None,
+            run=types.SimpleNamespace(benchmark_id="bench-upload-001"),
         )
 
         exporter = MLflowDataExporter(config)
@@ -249,6 +269,8 @@ class TestMLflowDataExporter:
 
         metric_map = {metric.key: metric.value for metric in batch["metrics"]}
         assert metric_map["request_throughput"] == 42.5
+        assert metric_map["request_throughput.count"] == 10.0
+        assert metric_map["request_throughput.sum"] == 425.0
         assert metric_map["aiperf.completed_requests"] == 10.0
         assert metric_map["aiperf.total_expected_requests"] == 12.0
         assert "time_to_first_token" not in metric_map
@@ -319,20 +341,13 @@ class TestMLflowDataExporter:
         _write_artifact(tmp_path / "plots" / "latency.png")
 
         state = _install_fake_mlflow_modules(monkeypatch)
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                type=EndpointType.CHAT,
-                model_names=["test-model"],
-            ),
-            output=OutputConfig(artifact_directory=tmp_path),
-            mlflow_tracking_uri="http://mlflow:5000",
-            mlflow_experiment="aiperf-tests",
-            mlflow_artifact_globs=["plots/**/*.png"],
+        cfg = _make_mlflow_cfg(
+            tmp_path,
+            artifact_globs=["plots/**/*.png"],
         )
         config = ExporterConfig(
             results=sample_results,
-            user_config=user_config,
-            service_config=ServiceConfig(),
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
@@ -351,12 +366,11 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: UserConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         _write_artifact(tmp_path / "profile_export_aiperf.json")
         live_run_id = "live-run-555"
-        benchmark_id = mlflow_user_config.benchmark_id
-        assert benchmark_id is not None
+        benchmark_id = "bench-live-555"
         metadata = {
             "tracking_uri": "http://mlflow:5000",
             "experiment": "aiperf-tests",
@@ -377,9 +391,9 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            user_config=mlflow_user_config,
-            service_config=ServiceConfig(),
+            cfg=mlflow_cfg,
             telemetry_results=None,
+            run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
         exporter = MLflowDataExporter(config)
         await asyncio.to_thread(exporter._export_sync)
@@ -441,7 +455,7 @@ class TestMLflowDataExporter:
         self,
         monkeypatch: pytest.MonkeyPatch,
         sample_results: ProfileResults,
-        mlflow_user_config: UserConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         for module_name in ("mlflow", "mlflow.entities", "mlflow.tracking"):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
@@ -458,8 +472,7 @@ class TestMLflowDataExporter:
         exporter = MLflowDataExporter(
             ExporterConfig(
                 results=sample_results,
-                user_config=mlflow_user_config,
-                service_config=ServiceConfig(),
+                cfg=mlflow_cfg,
                 telemetry_results=None,
             )
         )
@@ -472,7 +485,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: UserConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         """Regression: ``export()`` must terminate a hung subprocess on timeout.
 
@@ -495,8 +508,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            user_config=mlflow_user_config,
-            service_config=ServiceConfig(),
+            cfg=mlflow_cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
@@ -514,7 +526,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: UserConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         """Regression: if the spawn child dies before writing to the queue
         (spawn bootstrap failure, SIGKILL/OOM, native crash), the parent must
@@ -534,8 +546,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            user_config=mlflow_user_config,
-            service_config=ServiceConfig(),
+            cfg=mlflow_cfg,
             telemetry_results=None,
         )
         await mlflow_export_subprocess.export_with_timeout(

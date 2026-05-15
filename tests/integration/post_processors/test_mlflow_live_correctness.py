@@ -179,7 +179,7 @@ class TestMLflowLiveStreamingCorrectness:
 
         # mlflow_export.json is written by the deferred (post-run) exporter
         # and must reference the same run_id the live streamer created;
-        # benchmark_id comes from the UserConfig and is shared across both.
+        # benchmark_id comes from the BenchmarkConfig and is shared across both.
         metadata_path = result.artifacts_dir / "mlflow_export.json"
         assert metadata_path.exists(), (
             "mlflow_export.json missing — deferred exporter did not run"

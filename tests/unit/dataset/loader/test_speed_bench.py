@@ -3,21 +3,22 @@
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def cli_config() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
-async def loader(user_config: UserConfig) -> SpeedBenchLoader:
+async def loader(cli_config: CLIConfig) -> SpeedBenchLoader:
     return SpeedBenchLoader(
-        user_config=user_config,
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="nvidia/SPEED-Bench",
         hf_split="test",
         hf_subset="qualitative",
@@ -25,9 +26,9 @@ async def loader(user_config: UserConfig) -> SpeedBenchLoader:
 
 
 @pytest.fixture
-async def coding_loader(user_config: UserConfig) -> SpeedBenchLoader:
+async def coding_loader(cli_config: CLIConfig) -> SpeedBenchLoader:
     return SpeedBenchLoader(
-        user_config=user_config,
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="nvidia/SPEED-Bench",
         hf_split="test",
         hf_subset="qualitative",
@@ -195,9 +196,9 @@ class TestSpeedBenchLoaderCategoryFiltering:
         assert coding_loader.category == "coding"
         assert loader.category is None
 
-    async def test_throughput_entropy_tier_filtering(self, user_config):
+    async def test_throughput_entropy_tier_filtering(self, cli_config):
         low_entropy_loader = SpeedBenchLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="throughput_1k",
@@ -217,15 +218,13 @@ class TestSpeedBenchLoaderCategoryFiltering:
 
 @pytest.mark.asyncio
 class TestSpeedBenchLoaderStreaming:
-    async def test_non_streaming_returns_all_rows(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=3),
+    async def test_non_streaming_returns_all_rows(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = SpeedBenchLoader(
-            user_config=config,
+            run=make_run_from_cli(config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",
@@ -239,15 +238,13 @@ class TestSpeedBenchLoaderStreaming:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 10
 
-    async def test_streaming_capped_by_request_count(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=3),
+    async def test_streaming_capped_by_request_count(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = SpeedBenchLoader(
-            user_config=config,
+            run=make_run_from_cli(config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",
@@ -261,15 +258,13 @@ class TestSpeedBenchLoaderStreaming:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 3
 
-    async def test_streaming_with_category_filter(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=2),
+    async def test_streaming_with_category_filter(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            **CLIConfig(request_count=2).model_dump(exclude_unset=True),
         )
         loader = SpeedBenchLoader(
-            user_config=config,
+            run=make_run_from_cli(config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",

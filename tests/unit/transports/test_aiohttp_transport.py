@@ -152,13 +152,58 @@ class TestAioHttpTransport:
             ),
             ("localhost:8000", "/v1/chat", "http://localhost:8000/v1/chat"),
             ("https://api.example.com", "/v1/chat", "https://api.example.com/v1/chat"),
+            # Don't double-append when the user already wrote the full URL.
+            (
+                "http://localhost:8000/v1/chat/completions",
+                "/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
+            # Trailing slash on base URL must not defeat the doubling check.
+            (
+                "http://localhost:8000/v1/chat/completions/",
+                "/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
         ],
-        ids=["http-prefix", "no-scheme", "https-prefix"],
+        ids=[
+            "http-prefix",
+            "no-scheme",
+            "https-prefix",
+            "no-double-when-base-has-full-path",
+            "no-double-with-trailing-slash",
+        ],
     )
     def test_get_url(self, base_url, custom_endpoint, expected_url):
         """Test get_url with various base URLs and endpoints."""
         model_endpoint = create_model_endpoint_info(
             base_url=base_url, custom_endpoint=custom_endpoint
+        )
+
+        transport = AioHttpTransport(model_endpoint=model_endpoint)
+        request_info = create_request_info(model_endpoint)
+        url = transport.get_url(request_info)
+        assert url == expected_url
+
+    @pytest.mark.parametrize(
+        "base_url,expected_url",
+        [
+            # Plain host: append the chat path from endpoint metadata.
+            ("http://localhost:8000", "http://localhost:8000/v1/chat/completions"),
+            # /v1 base: drop the v1/ prefix on the metadata path to avoid duplication.
+            ("http://localhost:8000/v1", "http://localhost:8000/v1/chat/completions"),
+            # User already wrote the full chat URL: do not append again.
+            (
+                "http://localhost:8000/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
+        ],
+        ids=["plain-host", "v1-base", "full-chat-url"],
+    )
+    def test_get_url_metadata_path_no_doubling(self, base_url, expected_url):
+        """Metadata-driven path resolution must not double-append the path."""
+        # custom_endpoint=None forces the metadata branch.
+        model_endpoint = create_model_endpoint_info(
+            base_url=base_url, custom_endpoint=None
         )
 
         transport = AioHttpTransport(model_endpoint=model_endpoint)

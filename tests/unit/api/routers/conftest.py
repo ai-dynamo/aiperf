@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.models import MetricResult
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
+from tests.unit.conftest import make_run_from_cli
 
 
 def make_latency_metric(
@@ -34,15 +36,22 @@ def make_latency_metric(
 
 
 @pytest.fixture
-def router_service_config() -> ServiceConfig:
-    """ServiceConfig for router testing."""
-    return ServiceConfig(api_port=9999, api_host="127.0.0.1")
+def router_service_config() -> CLIConfig:
+    """CLIConfig for router testing."""
+    return CLIConfig(api_port=9999, api_host="127.0.0.1")
 
 
 @pytest.fixture
-def router_user_config() -> UserConfig:
-    """UserConfig for router testing."""
-    return UserConfig(
-        benchmark_id="test-bench",
-        endpoint=EndpointConfig(model_names=["test-model"]),
-    )
+def router_cfg() -> CLIConfig:
+    """CLIConfig for router testing."""
+    return CLIConfig(model_names=["test-model"])
+
+
+@pytest.fixture
+def router_benchmark_run(
+    router_cfg: CLIConfig, router_service_config: CLIConfig
+) -> BenchmarkRun:
+    """BenchmarkRun for router testing."""
+    run = make_run_from_cli(router_cfg)
+    run.benchmark_id = "test-bench"
+    return run

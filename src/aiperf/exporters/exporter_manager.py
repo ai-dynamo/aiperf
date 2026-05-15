@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.exceptions import (
     ConsoleExporterDisabled,
     DataExporterDisabled,
@@ -19,6 +19,9 @@ from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProt
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DataExporterType, PluginType
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class ExporterManager(AIPerfLoggerMixin):
     """
@@ -30,23 +33,21 @@ class ExporterManager(AIPerfLoggerMixin):
         self,
         *,
         results: ProfileResults,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        run: "BenchmarkRun",
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._results = results
-        self._user_config = user_config
+        self._run = run
         self._tasks: set[asyncio.Task] = set()
-        self._service_config = service_config
         self._exporter_config = ExporterConfig(
             results=self._results,
-            user_config=self._user_config,
-            service_config=self._service_config,
+            cfg=run.cfg,
             telemetry_results=telemetry_results,
             server_metrics_results=server_metrics_results,
+            run=run,
         )
 
     def _task_done_callback(self, task: asyncio.Task) -> None:

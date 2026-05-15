@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.base_trace_loader import (
+    BaseTraceDatasetLoader,
+    _has_meaningful_synthesis,
+)
 from aiperf.dataset.loader.models import BurstGPTTrace
 
 
@@ -44,7 +47,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
     # Template-method hooks (see BaseTraceDatasetLoader)
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, line: str) -> BurstGPTTrace:
+    def _parse_trace(self, record: dict) -> BurstGPTTrace:
         # BurstGPT is CSV format; load_dataset() is overridden to use csv.DictReader.
         raise NotImplementedError
 
@@ -109,7 +112,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
             )
         )
 
-        if self.user_config.input.synthesis.should_synthesize():
+        if _has_meaningful_synthesis(self._synthesis):
             data = self._apply_synthesis(data)
 
         return data

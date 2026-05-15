@@ -6,6 +6,7 @@ ci:
     - generate-cli-docs
     - generate-env-vars-docs
     - generate-plugin-artifacts
+    - generate-config-schema
     - validate-plugin-schemas
     - test-imports
     - check-agent-files-sync
@@ -75,6 +76,13 @@ repos:
         entry: make validate-plugin-schemas
         language: python
         files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/generate_plugin_artifacts\.py)$
+        pass_filenames: false
+        args: []
+      - id: generate-config-schema
+        name: generate-config-schema
+        entry: make generate-config-schema
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^tools/generate_config_schema\.py$)
         pass_filenames: false
         args: []
       - id: test-imports

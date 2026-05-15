@@ -4,29 +4,33 @@
 
 from pydantic import Field
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.config.artifacts import OutputDefaults
+from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class OutputFragment(AIPerfBaseModel):
     """A single output fragment capturing response text and request identifiers."""
 
-    session_num: int = Field(description="The session number of the request.")
-    turn_index: int = Field(description="The turn index within the conversation.")
+    session_num: int = Field(ge=0, description="The session number of the request.")
+    turn_index: int = Field(ge=0, description="The turn index within the conversation.")
     conversation_id: str = Field(description="The conversation identifier.")
     x_request_id: str = Field(description="The unique request identifier.")
     response_text: str | None = Field(
         default=None,
         description="The concatenated generated text from the model response.",
     )
-    request_start_ns: int = Field(description="Request start timestamp in nanoseconds.")
-    request_end_ns: int = Field(description="Request end timestamp in nanoseconds.")
+    request_start_ns: int = Field(
+        ge=0, description="Request start timestamp in nanoseconds."
+    )
+    request_end_ns: int = Field(
+        ge=0, description="Request end timestamp in nanoseconds."
+    )
 
 
 class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
@@ -39,18 +43,18 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
     def __init__(
         self,
         service_id: str | None,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        self.user_config = user_config
+        self.cfg = run.cfg
 
-        if not self.user_config.output.export_outputs_json:
+        if not self.cfg.artifacts.export_outputs_json:
             raise PostProcessorDisabled(
                 "OutputsJsonRecordProcessor is disabled (--export-outputs-json not set)"
             )
 
         output_dir = (
-            user_config.output.artifact_directory
+            self.cfg.artifacts.artifact_directory
             / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         )
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -70,7 +74,7 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
             output_file=output_file,
             batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
             service_id=service_id,
-            user_config=user_config,
+            cfg=self.cfg,
             **kwargs,
         )
 

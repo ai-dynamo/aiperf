@@ -20,8 +20,40 @@ from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
-from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
+
+# `create_tcp_connector` is exposed as a module attribute via __getattr__ to
+# break a circular import at module-load time:
+# `aiperf.transports.aiohttp_client` imports `AIPerfLoggerMixin` from
+# `aiperf.common.mixins`, whose package __init__ imports this module. Eagerly
+# importing `create_tcp_connector` here would close the cycle while
+# `aiohttp_client` is still partially initialized. The methods below call
+# `_resolve_create_tcp_connector()` so the import happens after module load,
+# and tests can still patch
+# `aiperf.common.mixins.base_metrics_collector_mixin.create_tcp_connector`.
+
+
+def __getattr__(name: str):
+    if name == "create_tcp_connector":
+        from aiperf.transports.aiohttp_client import (
+            create_tcp_connector as _create_tcp_connector,
+        )
+
+        globals()["create_tcp_connector"] = _create_tcp_connector
+        return _create_tcp_connector
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _resolve_create_tcp_connector():
+    """Return the current `create_tcp_connector` symbol on this module.
+
+    Goes through `getattr` so that (a) the lazy `__getattr__` import fires the
+    first time, and (b) `mock.patch(...)` overrides applied by tests are
+    honored.
+    """
+    import sys
+
+    return sys.modules[__name__].create_tcp_connector
 
 
 @dataclass(slots=True)
@@ -253,7 +285,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             connect=self._reachability_timeout,  # Fast connection timeout only
         )
         trace_config = self._create_trace_config()
-        self._connector = create_tcp_connector()
+        self._connector = _resolve_create_tcp_connector()()
         self._session = aiohttp.ClientSession(
             connector=self._connector,
             timeout=timeout,
@@ -264,11 +296,14 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     def _create_trace_config(self) -> aiohttp.TraceConfig:
         """Create TraceConfig for HTTP timing capture.
 
-        Captures:
-        - start_ns: When HTTP request headers are sent (time.time_ns)
-        - start_perf_ns: When HTTP request headers are sent (perf_counter_ns)
-        - first_byte_perf_ns: Time-to-first-byte (TTFB) - best proxy for server snapshot time (perf_counter_ns)
-        - end_perf_ns: When response is fully received (perf_counter_ns)
+        Hooks captured here:
+        - ``start_ns`` / ``start_perf_ns``: when HTTP request headers are sent
+          (set in ``_on_request_start``).
+        - ``first_byte_perf_ns``: time-to-first-byte; best proxy for the
+          server snapshot time (set in ``_on_response_chunk_received``).
+
+        Note: ``end_perf_ns`` is set by the caller in ``_fetch_metrics_text``
+        after ``response.text()`` returns, not by a TraceConfig hook.
 
         Returns:
             Configured TraceConfig instance
@@ -368,7 +403,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         else:
             # Create a temporary session for reachability check with proper connector
             timeout = aiohttp.ClientTimeout(total=self._reachability_timeout)
-            connector = create_tcp_connector()
+            connector = _resolve_create_tcp_connector()()
             try:
                 async with aiohttp.ClientSession(
                     connector=connector,
@@ -411,10 +446,13 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         collection every collection_interval seconds. The @background_task decorator
         handles automatic lifecycle management and cancellation on stop.
 
-        Uses execute_async (fire-and-forget) rather than await to enable:
-        - Consistent scrape timing (next scrape starts on schedule, not after prev completes)
-        - Concurrent scrapes when collection_interval < scrape latency
-        - Non-blocking behavior (slow scrapes don't delay subsequent scrapes)
+        Uses execute_async (fire-and-forget) rather than await so the next
+        scrape starts on schedule rather than after the previous one
+        completes; a slow scrape doesn't delay subsequent ones. When
+        ``collection_interval`` is shorter than scrape latency, multiple
+        scrapes can be in flight simultaneously — see the
+        ``IncompatibleMetricsEndpointError`` handler for the dedup +
+        last-response-hash invariant that keeps that case correct.
 
         This pattern is critical for accurate rate measurements on fast-changing
         metrics where scrape timing jitter would introduce measurement error.
@@ -494,11 +532,15 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     async def _fetch_metrics_text(self) -> FetchResult:
         """Fetch raw metrics text from the HTTP endpoint with trace timing.
 
-        Uses aiohttp TraceConfig to capture precise HTTP timing:
-        - start_ns: When request headers were sent
-        - start_perf_ns: When request headers were sent (perf_counter_ns)
-        - first_byte_perf_ns: Time-to-first-byte (TTFB) - best proxy for server snapshot time (perf_counter_ns)
-        - end_perf_ns: When response was fully received (perf_counter_ns)
+        Captures precise HTTP timing:
+        - ``start_ns`` / ``start_perf_ns``: set by the TraceConfig
+          ``on_request_start`` hook.
+        - ``first_byte_perf_ns``: set by the TraceConfig
+          ``on_response_chunk_received`` hook (TTFB; best proxy for server
+          snapshot time).
+        - ``end_perf_ns``: set here after ``response.text()`` returns (not via
+          a TraceConfig hook — aiohttp does not expose a "response fully
+          received" trace event).
 
         Returns:
             FetchResult containing raw metrics text and trace timing data

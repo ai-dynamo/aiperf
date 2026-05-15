@@ -1,0 +1,225 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Concurrency Sweep with Inline Plot Envelope
+# description: Sweep concurrency to draw a Pareto frontier, with the visualization config inlined in the same YAML.
+# category: Sweep & Multi-Run
+# tags: sweep, grid, plot, pareto, multi-run, auto-plot
+# difficulty: intermediate
+# features: grid sweep, multi-run, inline plot envelope, auto-plot
+#
+# Concurrency Sweep with Inline Plot Envelope
+# ===========================================
+# A single YAML that owns BOTH the benchmark sweep and the visualization
+# config. The top-level `plot:` block mirrors `default_plot_config.yaml`
+# 1:1 and is parsed into `PlotEnvelopeConfig` (see `src/aiperf/config/plot.py`).
+#
+# When `plot:` is set:
+#   - `~/.aiperf/plot_config.yaml` is IGNORED.
+#   - `artifacts.auto_plot` flips to True (unless explicitly False).
+#   - The auto-plot callback materializes the resolved envelope to
+#     `<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>`
+#     reproduces the same plots without re-passing `--config`.
+#
+# Alternative Form A (bare-string path, resolved relative to this YAML):
+#   plot: ./plots/baseline.yaml
+#
+# Run:
+#   aiperf profile --config sweep_with_plot.yaml
+#   # Replay with the same plots, no --config needed:
+#   aiperf plot ./artifacts/sweep_with_plot
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 15.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+  disableWarmupAfterFirst: true
+
+# --- Grid Sweep ---
+# One variation per concurrency level. With multiRun.numRuns=3 above,
+# each cell is repeated three times so the latency/throughput plots
+# carry confidence intervals.
+sweep:
+  type: grid
+  parameters:
+    # `dataset:` shorthand auto-names the sole dataset `default`.
+    # `concurrency` is bare-name sugar for `phases.profiling.concurrency`
+    # (resolves to the unique non-warmup phase below).
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: ${TIMEOUT:600.0}
+
+  dataset:
+    type: synthetic
+    entries: 2000
+    prompts:
+      isl: {mean: 1024, stddev: 50}
+      osl: {mean: 256, stddev: 25}
+
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 8
+      excludeFromResults: true
+
+    - name: profiling
+      type: concurrency
+      requests: 500
+      concurrency: 32          # Overridden by sweep
+
+  artifacts:
+    dir: ./artifacts/sweep_with_plot
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 10s         # Time-slice windows feed the timeslice_* single-run plots
+
+# =============================================================================
+# Plot Envelope (Form B: inline)
+# =============================================================================
+# Structure mirrors src/aiperf/plot/default_plot_config.yaml exactly.
+# - `visualization.*_defaults` selects which presets render automatically.
+# - Only presets defined in `*_plots` may be listed in `*_defaults`
+#   (validated at envelope-load time, not at render time).
+# - With a sweep, the plot controller auto-detects MULTI_RUN mode and renders
+#   only `multi_run_defaults`. The `single_run_defaults` listed below kick in
+#   when `aiperf plot` is pointed at a single variation directory.
+# - Headline metrics here (`output_token_throughput`, `request_throughput`,
+#   `request_latency`, `time_to_first_token`) all derive from request data
+#   and work without GPU telemetry. The `*_per_gpu` variants require a
+#   `gpuTelemetry:` block (commented below) — without it those plots
+#   silently no-op at render time.
+plot:
+  visualization:
+    # Cross-variation plots: each concurrency from the sweep becomes one
+    # point on the curve. `groups: [model]` keeps the sweep on a single
+    # line per model; `labels: [concurrency]` annotates each point.
+    multi_run_defaults:
+      - pareto_throughput_vs_latency
+      - ttft_vs_throughput
+      # - pareto_curve_throughput_per_gpu_vs_latency   # requires gpuTelemetry
+      # - latency_throughput_uncertainty               # requires gpuTelemetry
+
+    multi_run_plots:
+      pareto_throughput_vs_latency:
+        type: pareto
+        description: "Total output-token throughput vs request latency Pareto frontier"
+        x:
+          metric: request_latency
+          stat: avg
+        y:
+          metric: output_token_throughput
+          stat: avg
+        labels: [concurrency]
+        groups: [model]
+        autoscale: both
+        title: "Pareto: Output Token Throughput vs Latency"
+
+      ttft_vs_throughput:
+        type: scatter_line
+        description: "How TTFT degrades as request throughput rises"
+        x:
+          metric: time_to_first_token
+          stat: avg
+        y:
+          metric: request_throughput
+          stat: avg
+        labels: [concurrency]
+        groups: [model]
+        title: "TTFT vs Request Throughput"
+
+      # The per-GPU variants below need GPU telemetry. Uncomment the
+      # `gpuTelemetry:` block under `benchmark:` to enable, and add these
+      # names to `multi_run_defaults` above.
+      pareto_curve_throughput_per_gpu_vs_latency:
+        type: pareto
+        description: "Throughput-per-GPU vs request latency Pareto frontier (telemetry-only)"
+        x:
+          metric: request_latency
+          stat: avg
+        y:
+          metric: output_token_throughput_per_gpu
+          stat: avg
+        labels: [concurrency]
+        groups: [model]
+        title: "Pareto: Token Throughput per GPU vs Latency"
+
+      latency_throughput_uncertainty:
+        type: latency_throughput_uncertainty
+        description: "Joint 95% uncertainty ellipses across runs (telemetry-only)"
+        x:
+          metric: request_latency
+          stat: avg
+        y:
+          metric: output_token_throughput_per_gpu
+          stat: avg
+        labels: [concurrency]
+        groups: [model]
+        ci_level: 0.95
+        title: "Latency vs Throughput (95% Joint Uncertainty)"
+
+    # Single-run plots render when `aiperf plot <variation_dir>` targets a
+    # single run (e.g. `aiperf plot ./artifacts/sweep_with_plot/concurrency_16`).
+    single_run_defaults:
+      - ttft_over_time
+      - timeslices_ttft
+      - timeslices_itl
+
+    single_run_plots:
+      ttft_over_time:
+        type: scatter
+        description: "Per-request TTFT over the profiling window"
+        x: request_number
+        y: time_to_first_token
+        title: "TTFT Per Request"
+
+      timeslices_ttft:
+        type: timeslice
+        description: "Mean TTFT per 10-second window (stability check)"
+        x: Timeslice
+        y: Time to First Token
+        stat: avg
+        source: timeslices
+        title: "TTFT Across Time Slices"
+        use_slice_duration: true
+
+      timeslices_itl:
+        type: timeslice
+        description: "Mean inter-token latency per 10-second window"
+        x: Timeslice
+        y: Inter Token Latency
+        stat: avg
+        source: timeslices
+        title: "ITL Across Time Slices"
+        use_slice_duration: true
+
+  settings:
+    server_metrics_downsampling:
+      enabled: true
+      window_size_seconds: 5.0
+      aggregation_method: mean
+
+  # Optional baseline-vs-treatment grouping. When set, all multi-run
+  # plots auto-group by `experiment_group` regardless of preset-level
+  # `groups:`. Uncomment to enable.
+  # experiment_classification:
+  #   baselines:
+  #     - "*baseline*"
+  #     - "*_agg_*"
+  #   treatments:
+  #     - "*_disagg_*"
+  #     - "*kvrouter*"
+  #   default: treatment

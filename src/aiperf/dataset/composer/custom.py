@@ -3,47 +3,72 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.config import UserConfig
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationContextMode, DatasetFormat
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
+from aiperf.config.dataset import FileDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import CustomDatasetType, PluginType
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class CustomDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
-        super().__init__(config, tokenizer)
+    def __init__(self, *, run: BenchmarkRun, tokenizer: Tokenizer | None, **kwargs):
+        super().__init__(run=run, tokenizer=tokenizer, **kwargs)
+
+        dataset = run.cfg.get_default_dataset()
+        if not isinstance(dataset, FileDataset):
+            raise ValueError("CustomDatasetComposer requires a file-based dataset.")
+        self._file_dataset: FileDataset = dataset
+        self._file_path: str | None = (
+            str(dataset.path) if dataset.path is not None else None
+        )
+        self._inline_records = dataset.records
         self.loader: BaseLoader | None = None
 
     def create_dataset(self) -> list[Conversation]:
-        """Create conversations from a file or directory.
+        """Create conversations from a file, directory, or inline records.
 
         Returns:
             list[Conversation]: A list of conversation objects.
         """
         # TODO: (future) for K8s, we need to transfer file data from SC (across node)
-        check_file_exists(self.config.input.file)
+        is_inline = self._inline_records is not None
+        if not is_inline:
+            check_file_exists(Path(self._file_path))
 
-        # Auto-infer dataset type if not provided
-        dataset_type = self.config.input.custom_dataset_type
-        if dataset_type is None:
-            dataset_type = self._infer_dataset_type(self.config.input.file)
+        # Honor an explicit ``FileDataset.format`` (set via ``--custom-dataset-type``)
+        # before falling back to structural inference. ``format`` defaults to
+        # ``SINGLE_TURN``, so we use ``model_fields_set`` to distinguish "user
+        # picked single_turn" from "default applied". This is required for
+        # ``random_pool`` on JSONL files, whose schema overlaps with
+        # ``single_turn``: structural inference always picks single_turn,
+        # silently dropping the random-with-replacement sampling semantics.
+        explicit_format = self._explicit_format()
+        if explicit_format is not None:
+            dataset_type = explicit_format
+            self.info(f"Using explicit dataset format: {dataset_type}")
+        elif is_inline:
+            # Inline mode has no file to peek at for structural inference, so
+            # we trust the (defaulted-or-set) FileDataset.format directly.
+            dataset_type = self._format_to_loader_type(self._file_dataset.format)
+            self.info(f"Using inline dataset format: {dataset_type}")
+        else:
+            dataset_type = self._infer_dataset_type(self._file_path)
             self.info(f"Auto-detected dataset type: {dataset_type}")
 
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
-
-        # Set dataset sampling strategy based on inferred type if not explicitly set
-        self._set_sampling_strategy(dataset_type)
 
         self._create_loader_instance(dataset_type)
         dataset = self.loader.load_dataset()
@@ -63,6 +88,27 @@ class CustomDatasetComposer(BaseDatasetComposer):
         if self.loader is not None:
             return self.loader.get_default_context_mode()
         return None
+
+    def _explicit_format(self) -> CustomDatasetType | None:
+        """Return the user-selected loader type from ``FileDataset.format``.
+
+        Returns ``None`` when the user did not explicitly set ``format`` (so
+        structural inference should run). The CLI converter only emits
+        ``format`` when ``--custom-dataset-type`` was provided, so
+        ``model_fields_set`` membership is a reliable user-set signal.
+        """
+        if "format" not in self._file_dataset.model_fields_set:
+            return None
+        return self._format_to_loader_type(self._file_dataset.format)
+
+    @staticmethod
+    def _format_to_loader_type(fmt: DatasetFormat) -> CustomDatasetType:
+        """Map a DatasetFormat enum value to its CustomDatasetType.
+
+        Both enums mirror the custom_dataset_loader plugin registry and share
+        identical string values, so a direct value-based conversion works.
+        """
+        return CustomDatasetType(fmt.value)
 
     def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.
@@ -159,24 +205,22 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         return detected_type
 
-    def _set_sampling_strategy(self, dataset_type: CustomDatasetType) -> None:
-        """Set the dataset sampling strategy based on the dataset type.
+    def _should_synthesize(self) -> bool:
+        """Whether the user has set any trace-synthesis options on this dataset.
 
-        If the user has not explicitly set a sampling strategy, use the loader's
-        preferred strategy.
-
-        Args:
-            dataset_type: The type of custom dataset
+        Reads the ``FileDataset.synthesis`` block; any of ``speedup_ratio``,
+        ``prefix_len_multiplier``, ``prefix_root_multiplier``, or related
+        knobs differing from their identity defaults flips this on.
         """
-        if self.config.input.dataset_sampling_strategy is None:
-            LoaderClass = plugins.get_class(
-                PluginType.CUSTOM_DATASET_LOADER, dataset_type
-            )
-            preferred_strategy = LoaderClass.get_preferred_sampling_strategy()
-            self.config.input.dataset_sampling_strategy = preferred_strategy
-            self.info(
-                f"Using preferred sampling strategy for {dataset_type}: {preferred_strategy}"
-            )
+        s = self._file_dataset.synthesis
+        if s is None:
+            return False
+        return (
+            s.speedup_ratio != 1.0
+            or s.prefix_len_multiplier != 1.0
+            or s.prefix_root_multiplier != 1
+            or s.prompt_len_multiplier != 1.0
+        )
 
     def _validate_synthesis_config(self, dataset_type: CustomDatasetType) -> None:
         """Validate that synthesis options are only used with trace datasets.
@@ -187,10 +231,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Raises:
             ValueError: If synthesis options are set but dataset type is not a trace format.
         """
-        if (
-            self.config.input.synthesis.should_synthesize()
-            and not plugins.is_trace_dataset(dataset_type)
-        ):
+        if self._should_synthesize() and not plugins.is_trace_dataset(dataset_type):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
@@ -219,11 +260,26 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 kwargs["default_block_size"] = loader_metadata.default_block_size
 
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
-            kwargs["num_conversations"] = self.config.input.conversation.num
+            # ``FileDataset.entries`` is the pool size for random_pool (the
+            # converter populates it from
+            # ``input.conversation.num_dataset_entries`` / ``num`` /
+            # ``loadgen.request_count``
+            # in priority order). Pass it through so the loader produces
+            # ``entries`` distinct sampled conversations rather than the loader's
+            # default of 100. Leave None when not set so the loader applies its
+            # own default.
+            kwargs["num_conversations"] = self._file_dataset.entries
 
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
-        self.loader = LoaderClass(
-            filename=self.config.input.file,
-            user_config=self.config,
-            **kwargs,
-        )
+        if self._inline_records is not None:
+            self.loader = LoaderClass(
+                inline_records=self._inline_records,
+                run=self.run,
+                **kwargs,
+            )
+        else:
+            self.loader = LoaderClass(
+                filename=self._file_path,
+                run=self.run,
+                **kwargs,
+            )

@@ -32,17 +32,18 @@ class ProcessHealth(AIPerfBaseModel):
 
     pid: int | None = Field(
         default=None,
+        ge=0,
         description="The PID of the process",
     )
     create_time: float = Field(
-        ..., description="The creation time of the process in seconds"
+        ..., ge=0, description="The creation time of the process in seconds"
     )
-    uptime: float = Field(..., description="The uptime of the process in seconds")
+    uptime: float = Field(..., ge=0, description="The uptime of the process in seconds")
     cpu_usage: float = Field(
-        ..., description="The current CPU usage of the process in %"
+        ..., ge=0, description="The current CPU usage of the process in %"
     )
     memory_usage: int = Field(
-        ..., description="The current memory usage of the process in bytes (rss)"
+        ..., ge=0, description="The current memory usage of the process in bytes (rss)"
     )
     io_counters: IOCounters | tuple | None = Field(
         default=None,
@@ -58,5 +59,6 @@ class ProcessHealth(AIPerfBaseModel):
     )
     num_threads: int | None = Field(
         default=None,
+        ge=0,
         description="The current number of threads",
     )

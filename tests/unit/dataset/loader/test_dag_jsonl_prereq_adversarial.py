@@ -74,7 +74,7 @@ def test_terminal_fork_without_join_on_non_terminal_turn_rejected(tmp_path: Path
         ],
     )
     with pytest.raises(DagLoadError, match=r"branches but is not the last turn"):
-        DagJsonlLoader(filename=str(path), user_config=_uc()).load_dataset()
+        DagJsonlLoader(filename=str(path), cfg=_uc()).load_dataset()
 
 
 # --- 2 -----------------------------------------------------------------------
@@ -108,7 +108,7 @@ def test_spawn_and_fork_on_same_turn_emit_two_branches_distinct_suffixes(
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     ids_by_mode = {b.mode: b.branch_id for b in root.branches}
@@ -141,7 +141,7 @@ def test_spawn_on_turn_zero_emits_prereq_on_turn_one(tmp_path: Path):
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     assert not root.turns[0].prerequisites
@@ -189,7 +189,7 @@ def test_chained_spawn_join_spawn_join_across_four_turns_validates(tmp_path: Pat
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     assert [p.branch_id for p in root.turns[1].prerequisites] == ["root:0"]
@@ -277,7 +277,7 @@ def test_single_conversation_with_fork_only_branches_emits_no_prereqs(tmp_path: 
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     for c in convs:
         for t in c.turns:
@@ -309,7 +309,7 @@ def test_loader_calls_validate_for_orchestrator_v1_at_load_end(
     monkeypatch.setattr(
         "aiperf.dataset.loader.dag_jsonl.validate_for_orchestrator_v1", spy
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     loader.load_dataset()
     assert len(calls) == 1
     assert isinstance(calls[0], DatasetMetadata)
@@ -321,21 +321,21 @@ def test_loader_calls_validate_for_orchestrator_v1_at_load_end(
 
 def test_shipped_fixture_small_dag_loads_and_validates():
     path = FIXTURES_DIR / "small.dag.jsonl"
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     assert {c.session_id for c in convs} == {"root", "branchA", "branchB"}
 
 
 def test_shipped_fixture_full_dag_loads_and_validates():
     path = FIXTURES_DIR / "full.dag.jsonl"
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     assert {c.session_id for c in convs} == {"root", "branch-a", "branch-b"}
 
 
 def test_shipped_fixture_spawn_minimal_loads_and_validates():
     path = FIXTURES_DIR / "spawn_minimal.dag.jsonl"
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     by_id = {c.session_id: c for c in convs}
     assert set(by_id) == {"root", "spawned-child"}
@@ -369,7 +369,7 @@ def test_spawn_pointing_at_nonexistent_child_session_id_rejected_at_resolve(
         ],
     )
     with pytest.raises(DagLoadError, match=r"branch target 'ghost-child' not declared"):
-        DagJsonlLoader(filename=str(path), user_config=_uc()).load_dataset()
+        DagJsonlLoader(filename=str(path), cfg=_uc()).load_dataset()
 
 
 # --- 12 ----------------------------------------------------------------------
@@ -410,7 +410,7 @@ def test_branch_id_namespaced_by_conversation_id(tmp_path: Path):
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     by_id = {c.session_id: c for c in convs}
     assert by_id["alpha"].branches[0].branch_id == "alpha:0"
@@ -446,7 +446,7 @@ def test_spawn_on_non_terminal_turn_with_gated_consumer_marks_non_background(
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     assert len(root.branches) == 1
@@ -488,7 +488,7 @@ def test_terminal_spawn_with_no_following_turn_marks_background_no_prereq(
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     assert len(root.branches) == 1
@@ -526,7 +526,7 @@ def test_non_terminal_spawn_marks_branch_not_background(tmp_path: Path):
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     assert len(root.branches) == 1
@@ -584,7 +584,7 @@ def test_spawn_join_chain_with_irregular_timing_offsets_metadata_consistent(
             },
         ],
     )
-    loader = DagJsonlLoader(filename=str(path), user_config=_uc())
+    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
     convs = loader.convert_to_conversations(loader.load_dataset())
     root = next(c for c in convs if c.session_id == "root")
     meta = root.metadata()

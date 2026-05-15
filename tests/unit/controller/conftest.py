@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommandType
 from aiperf.common.messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails
@@ -29,8 +28,7 @@ def mock_service_manager() -> AsyncMock:
 
 @pytest.fixture
 def system_controller(
-    service_config: ServiceConfig,
-    user_config: UserConfig,
+    benchmark_run,
     mock_service_manager: AsyncMock,
 ) -> SystemController:
     """Create a SystemController instance with mocked dependencies."""
@@ -60,8 +58,7 @@ def system_controller(
         mock_proxy.return_value = AsyncMock()
 
         controller = SystemController(
-            user_config=user_config,
-            service_config=service_config,
+            run=benchmark_run,
             service_id="test_controller",
         )
         # Mock the stop method to avoid actual shutdown

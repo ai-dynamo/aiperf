@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
+import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -379,3 +380,58 @@ class TestInferenceClient:
         )
 
         assert result.model_name == "standalone-model"
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            param("http://127.0.0.1:8000", id="explicit-http"),
+            param("https://api.example.com", id="explicit-https"),
+        ],
+    )  # fmt: skip
+    def test_auto_detected_transport_serializes_without_pydantic_warning(
+        self, base_url, mock_http_transport_entry
+    ):
+        """InferenceClient must set transport as a TransportType enum, not a bare str.
+
+        Assigning the raw plugin name string post-validation triggers
+        PydanticSerializationUnexpectedValue at model_dump() time because the
+        field is typed TransportType | None but holds a plain str.
+        """
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=[base_url],
+            ),
+        )
+
+        def mock_get_class(protocol, name):
+            return MagicMock()
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
+        ):
+            InferenceClient(model_endpoint=model_endpoint, service_id="test-svc")
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            model_endpoint.model_dump()
+
+        pydantic_warnings = [
+            w
+            for w in captured
+            if "PydanticSerializationUnexpectedValue" in str(w.message)
+        ]
+        assert not pydantic_warnings, (
+            f"Unexpected Pydantic serialization warnings for {base_url!r}: {pydantic_warnings}"
+        )
