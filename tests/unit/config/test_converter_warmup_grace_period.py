@@ -98,3 +98,13 @@ class TestWarmupGracePeriodSuccessPaths:
         if loadgen.warmup_grace_period happened to be defaulted (None)."""
         loadgen = CLIConfig(request_count=10)
         assert build_warmup(_make_user(loadgen)) is None
+
+    def test_warmup_grace_period_alone_without_any_trigger_raises(self):
+        """Ports v1 ``validate_warmup_grace_period``: passing only
+        ``--warmup-grace-period`` (no count/sessions/duration trigger) used
+        to be a silent no-op (build_warmup returned None and dropped the
+        flag). Now it errors so the user discovers the missing trigger.
+        """
+        loadgen = CLIConfig(warmup_grace_period=5.0)
+        with pytest.raises(ValueError, match="--warmup-grace-period.*without any"):
+            build_warmup(_make_user(loadgen))

@@ -105,7 +105,7 @@ def test_cli_telemetry_flags_populate_first_class_groups() -> None:
     )
 
     benchmark = config.benchmark
-    assert benchmark.otel.metrics_url == "http://localhost:4318"
+    assert benchmark.otel.metrics_url == "http://localhost:4318/v1/metrics"
     assert benchmark.otel.stream_metrics_enabled is False
     assert benchmark.otel.stream_timing_enabled is True
     assert benchmark.otel.gen_ai_provider == "vllm"

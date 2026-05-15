@@ -110,6 +110,16 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
     """
     s = cli.model_fields_set
     if not ({"warmup_request_count", "warmup_num_sessions", "warmup_duration"} & s):
+        # No warmup trigger -> no warmup phase. Refuse to silently drop
+        # secondary warmup-only flags the user supplied.
+        if cli.warmup_grace_period is not None:
+            raise ValueError(
+                "--warmup-grace-period was supplied without any warmup "
+                "trigger; warmup runs only when --warmup-request-count, "
+                "--warmup-num-sessions, or --warmup-duration is set. Pass "
+                "--warmup-duration to enable a duration-bounded warmup with "
+                "the grace period, or drop --warmup-grace-period."
+            )
         return None
     w: dict[str, Any] = {"exclude_from_results": True}
     _warmup_count_field(w, cli)

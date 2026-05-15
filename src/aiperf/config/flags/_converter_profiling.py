@@ -84,6 +84,43 @@ def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
             prof[key] = {"duration": getattr(cli, field)}
 
 
+def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Reject CLI flags whose load-generator partner wasn't supplied.
+
+    Mirrors v1's ``validate_unused_options`` for the load-generator group:
+    catches mismatches with a targeted message before they surface as
+    generic Pydantic ``extra_forbidden`` errors against the resolved
+    phase subclass.
+    """
+    from aiperf.config.phases import PhaseType
+
+    fields_set = cli.model_fields_set
+    phase_type = prof["type"]
+
+    # --num-users only makes sense with --user-centric-rate. Without
+    # user-centric mode the resolved phase has no ``users`` field, so
+    # routing it through would crash PhaseConfig with extra_forbidden.
+    if "num_users" in fields_set and phase_type != PhaseType.USER_CENTRIC:
+        raise ValueError(
+            "--num-users requires --user-centric-rate. Pass --user-centric-rate "
+            "to enable user-centric mode, or drop --num-users to use the default "
+            "concurrency/rate timing mode."
+        )
+
+    # --request-rate-ramp-duration only ramps rate-controlled phases.
+    if "rate_ramp" in prof and phase_type not in (
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+        PhaseType.USER_CENTRIC,
+    ):
+        raise ValueError(
+            "--request-rate-ramp-duration can only be used with rate-controlled "
+            "scheduling (--request-rate or --user-centric-rate). Pass one of "
+            "those to enable rate ramping, or drop --request-rate-ramp-duration."
+        )
+
+
 def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Apply routes whose output keys only exist on a specific phase subclass.
 
@@ -120,6 +157,25 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
         prof[output_key] = getattr(cli, attr_name)
 
 
+def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
+    """Return the first CLI-set magic-list field, or None.
+
+    Mirrors v1's ``loadgen.get_sweep_parameter()`` against
+    ``CLIConfig.model_fields_set`` so the converter can refuse sweep-
+    incompatible mode combinations (fixed_schedule, trace auto-promote)
+    before they propagate into the YAML expansion stage.
+    """
+    from aiperf.config.sweep.expand import MAGIC_LIST_FIELDS
+
+    for name in cli.model_fields_set:
+        if name not in MAGIC_LIST_FIELDS:
+            continue
+        value = getattr(cli, name, None)
+        if isinstance(value, list) and len(value) > 1:
+            return (name.replace("_", "-"), value)
+    return None
+
+
 def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     from aiperf.config.phases import PhaseType
 
@@ -138,6 +194,23 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
         )
 
     _apply_dataset_aware_autodefaults(prof, cli)
+
+    # After autodefaults so the trace auto-promotion has had its chance to
+    # flip phase.type to FIXED_SCHEDULE; refuse the swept-trace combo with
+    # a single, targeted error.
+    sweep = _detect_cli_magic_sweep(cli)
+    if sweep is not None and prof["type"] == PhaseType.FIXED_SCHEDULE:
+        param_name, param_values = sweep
+        joined = ",".join(map(str, param_values))
+        raise ValueError(
+            f"Parameter sweeps (e.g., --{param_name} {joined}) cannot be "
+            "used with --fixed-schedule mode (including the auto-promotion "
+            "of trace datasets with per-record timestamps). Fixed schedule "
+            "replays exact timing patterns from the trace, which is "
+            "incompatible with varying parameter values. Use a single "
+            "parameter value, or pass --no-fixed-schedule to keep your "
+            "rate/concurrency mode and ignore the trace timestamps."
+        )
 
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
@@ -318,17 +391,23 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
 
     prof["type"] = _profiling_phase_type(cli)
 
+    _reject_orphan_load_generator_flags(prof, cli)
+
     _apply_phase_specific_routes(prof, cli)
 
     if prof["type"] == PhaseType.FIXED_SCHEDULE and "start_offset" in prof:
         prof.setdefault("auto_offset", False)
 
     # grace_period is a duration-phase concept (a tail on top of ``duration``);
-    # PhaseConfig rejects it without ``duration`` set. Drop it silently when no
-    # duration is supplied so users don't hit a confusing validation error from
-    # ``--benchmark-grace-period N`` alone.
+    # PhaseConfig rejects it without ``duration`` set. Refuse the combination
+    # loudly instead of silently dropping, so users discover the mismatch at
+    # config time rather than wondering why their cooldown didn't apply.
     if "grace_period" in prof and prof.get("duration") is None:
-        prof.pop("grace_period")
+        raise ValueError(
+            "--benchmark-grace-period requires --benchmark-duration to be set. "
+            "Grace period only applies after a duration-bounded run; drop "
+            "--benchmark-grace-period or pass --benchmark-duration as well."
+        )
 
     _validate_profiling(prof, cli)
     return prof

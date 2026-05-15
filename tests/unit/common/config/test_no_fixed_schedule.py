@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import PhaseType
@@ -156,3 +158,97 @@ class TestTraceAutoPromotion:
         prof = build_profiling(cli)
 
         assert prof["type"] != PhaseType.FIXED_SCHEDULE
+
+
+class TestSweepIncompatibleWithFixedSchedule:
+    """Parameter sweeps + fixed_schedule (explicit or auto-promoted) must error.
+
+    Ports v1 ``validate_sweep_incompatibilities``. Fixed schedule replays
+    a single timing pattern, so a magic-list sweep across concurrency /
+    request_rate / etc. is meaningless — refuse loudly rather than
+    silently running variation 0 only.
+    """
+
+    def test_explicit_fixed_schedule_plus_magic_list_concurrency_raises(self, tmp_path):
+        trace = _write_trace_file(tmp_path, [{"timestamp": 0}, {"timestamp": 100}])
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            fixed_schedule=True,
+            concurrency=[1, 2, 4],
+        )
+        with pytest.raises(ValueError, match="Parameter sweeps.*fixed-schedule"):
+            build_profiling(cli)
+
+    def test_auto_promoted_trace_plus_magic_list_concurrency_raises(self, tmp_path):
+        """Auto-promoted trace + sweep is the silent failure mode v1 errored on.
+
+        ``--concurrency`` is on BasePhaseConfig so it survives the
+        rate/users/smoothness conflict check inside the auto-promote
+        block — the sweep guard is what catches this combo.
+        """
+        trace = _write_trace_file(
+            tmp_path,
+            [
+                {"timestamp": 0, "input_length": 10},
+                {"timestamp": 100, "input_length": 20},
+            ],
+        )
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            concurrency=[1, 2, 4],
+        )
+        with pytest.raises(ValueError, match="Parameter sweeps.*fixed-schedule"):
+            build_profiling(cli)
+
+    def test_request_rate_sweep_against_trace_errors_via_conflict_guard(self, tmp_path):
+        """A magic-list request_rate trips the earlier rate/users/smoothness
+        conflict guard inside the auto-promote block (separate from the
+        sweep guard but the same end result: user gets a clear error)."""
+        trace = _write_trace_file(
+            tmp_path,
+            [{"timestamp": 0}, {"timestamp": 100}],
+        )
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            request_rate=[10.0, 20.0],
+        )
+        with pytest.raises(ValueError, match="incompatible with fixed_schedule"):
+            build_profiling(cli)
+
+    def test_no_fixed_schedule_flag_allows_sweep_with_trace(self, tmp_path):
+        """--no-fixed-schedule suppresses auto-promote, so sweep is allowed."""
+        trace = _write_trace_file(tmp_path, [{"timestamp": 0}, {"timestamp": 100}])
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            disable_auto_fixed_schedule=True,
+            concurrency=[1, 2],
+        )
+        prof = build_profiling(cli)
+        assert prof["type"] != PhaseType.FIXED_SCHEDULE
+        assert prof["concurrency"] == [1, 2]
+
+    def test_explicit_fixed_schedule_without_sweep_is_fine(self, tmp_path):
+        trace = _write_trace_file(tmp_path, [{"timestamp": 0}, {"timestamp": 100}])
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            fixed_schedule=True,
+        )
+        prof = build_profiling(cli)
+        assert prof["type"] == PhaseType.FIXED_SCHEDULE
+
+    def test_single_element_list_is_not_a_sweep(self, tmp_path):
+        """A magic-list field with one element is degenerate; allow it."""
+        trace = _write_trace_file(tmp_path, [{"timestamp": 0}, {"timestamp": 100}])
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            fixed_schedule=True,
+            concurrency=[1],
+        )
+        prof = build_profiling(cli)
+        assert prof["type"] == PhaseType.FIXED_SCHEDULE

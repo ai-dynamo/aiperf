@@ -3,7 +3,7 @@
 
 """Regression tests for phase-specific route gating in build_profiling.
 
-Covers two former bugs in ``aiperf.config.flags._converter_profiling``:
+Covers former bugs in ``aiperf.config.flags._converter_profiling``:
 
 1. ``--arrival-smoothness`` outside ``--arrival-pattern gamma`` previously
    silently routed ``smoothness`` onto a non-Gamma phase config and crashed
@@ -11,6 +11,11 @@ Covers two former bugs in ``aiperf.config.flags._converter_profiling``:
 2. ``--fixed-schedule-{auto,start,end}-offset`` without ``--fixed-schedule``
    previously either silently dropped or crashed with ``extra_forbidden``.
    Should raise a clear error.
+3. ``--benchmark-grace-period`` without ``--benchmark-duration`` previously
+   silently dropped the user's flag. Should raise.
+4. ``--num-users`` without ``--user-centric-rate`` and
+   ``--request-rate-ramp-duration`` without ``--request-rate`` previously
+   surfaced as generic Pydantic ``extra_forbidden`` errors.
 """
 
 from __future__ import annotations
@@ -164,3 +169,88 @@ class TestFixedScheduleOffsetGating:
         assert prof["type"] == PhaseType.FIXED_SCHEDULE
         assert "start_offset" not in prof
         assert "end_offset" not in prof
+
+
+# ---------------------------------------------------------------------------
+# BUG 3 — --benchmark-grace-period without --benchmark-duration
+# ---------------------------------------------------------------------------
+
+
+class TestGracePeriodRequiresDuration:
+    def test_grace_period_without_duration_raises(self):
+        loadgen = CLIConfig(benchmark_grace_period=30, request_count=10, concurrency=1)
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="--benchmark-grace-period requires --benchmark-duration"
+        ):
+            build_profiling(user)
+
+    def test_grace_period_with_duration_succeeds(self):
+        loadgen = CLIConfig(
+            benchmark_duration=60.0, benchmark_grace_period=30, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["duration"] == 60.0
+        assert prof["grace_period"] == 30
+
+
+# ---------------------------------------------------------------------------
+# BUG 4a — --num-users without --user-centric-rate
+# ---------------------------------------------------------------------------
+
+
+class TestNumUsersRequiresUserCentric:
+    def test_num_users_with_concurrency_mode_raises(self):
+        loadgen = CLIConfig(num_users=5, request_count=10, concurrency=1)
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="--num-users requires --user-centric-rate"
+        ):
+            build_profiling(user)
+
+    def test_num_users_with_request_rate_raises(self):
+        loadgen = CLIConfig(num_users=5, request_rate=100.0, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="--num-users requires --user-centric-rate"
+        ):
+            build_profiling(user)
+
+    def test_num_users_with_user_centric_succeeds(self):
+        """``--user-centric-rate`` resolves to USER_CENTRIC; --num-users flows through."""
+        loadgen = CLIConfig(
+            user_centric_rate=10.0,
+            num_users=5,
+            request_count=20,
+            conversation_turn_mean=2,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 5
+
+
+# ---------------------------------------------------------------------------
+# BUG 4b — --request-rate-ramp-duration without --request-rate
+# ---------------------------------------------------------------------------
+
+
+class TestRateRampRequiresRequestRate:
+    def test_rate_ramp_with_concurrency_mode_raises(self):
+        loadgen = CLIConfig(
+            request_rate_ramp_duration=30, request_count=10, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="--request-rate-ramp-duration.*rate-controlled"
+        ):
+            build_profiling(user)
+
+    def test_rate_ramp_with_request_rate_succeeds(self):
+        loadgen = CLIConfig(
+            request_rate=100.0, request_rate_ramp_duration=30, request_count=10
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof.get("rate_ramp") == {"duration": 30}
