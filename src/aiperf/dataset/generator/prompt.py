@@ -86,7 +86,7 @@ class PromptGenerator(BaseGenerator):
         """
         corpus_path = Path(__file__).parent / DEFAULT_CORPUS_FILE
 
-        with open(corpus_path) as f:
+        with open(corpus_path, encoding="utf-8") as f:
             lines = f.readlines()
 
         # Pre-filter empty lines for efficiency
