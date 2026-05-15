@@ -70,6 +70,7 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "connection_reuse_strategy": "connection_reuse",
     "download_video_content": "download_video_content",
     "request_content_type": "request_content_type",
+    "session_header": "session_header",
 }
 
 

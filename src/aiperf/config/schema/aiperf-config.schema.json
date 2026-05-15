@@ -51,6 +51,9 @@
         "tasks": {
           "anyOf": [
             {
+              "type": "string"
+            },
+            {
               "items": {
                 "type": "string"
               },
@@ -953,8 +956,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                          "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                          "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
                         },
                         {
                           "type": "number"
@@ -1109,8 +1112,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                          "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                          "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
                         },
                         {
                           "type": "number"
@@ -1291,8 +1294,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                          "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                          "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
                         },
                         {
                           "type": "number"
@@ -1487,8 +1490,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                          "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                          "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
                         },
                         {
                           "type": "number"
@@ -1669,8 +1672,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                          "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                          "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
                         },
                         {
                           "type": "number"
@@ -1858,8 +1861,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                          "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                          "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
                         },
                         {
                           "type": "number"
@@ -2133,64 +2136,2722 @@
           "x-singular-alias-of": "models"
         },
         "dataset": {
-          "description": "Shorthand for 'datasets'. Accepts a single value which will be converted to a list/dict. Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
-          "oneOf": [
+          "anyOf": [
             {
-              "discriminator": {
-                "propertyName": "type",
-                "mapping": {
-                  "synthetic": "#/$defs/SyntheticDataset",
-                  "file": "#/$defs/FileDataset",
-                  "public": "#/$defs/PublicDataset"
+              "additionalProperties": false,
+              "description": "Synthetic dataset configuration.\n\nGenerates prompts programmatically based on token length\nspecifications. Ideal for controlled experiments.",
+              "properties": {
+                "name": {
+                  "description": "Dataset identifier — used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "synthetic",
+                  "description": "Dataset type discriminator. Must be 'synthetic'.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "entries": {
+                  "default": 100,
+                  "description": "Total number of unique entries to generate for the dataset. Each entry represents a unique prompt with sampled ISL/OSL. Entries are reused across conversations and turns according to the sampling strategy. Higher values provide more diversity.",
+                  "minimum": 1,
+                  "title": "Entries",
+                  "type": "integer"
+                },
+                "randomSeed": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Random seed for deterministic dataset generation. When set, makes synthetic prompts, sampling, and other random operations reproducible across runs. Essential for A/B testing and debugging. Overrides global random_seed for this dataset.",
+                  "title": "Randomseed"
+                },
+                "sampling": {
+                  "$ref": "#/$defs/DatasetSamplingStrategy",
+                  "default": "sequential",
+                  "description": "Strategy for selecting entries from dataset during benchmarking. sequential: iterate in order, wrapping to start after end. random: randomly sample with replacement (entries may repeat). shuffle: random permutation without replacement, re-shuffling after exhaustion."
+                },
+                "prompts": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PromptConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Prompt/token length configuration specifying ISL, OSL, sequence distributions, and batch processing settings."
+                },
+                "prefixPrompts": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PrefixPromptConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Shared prefix configuration for KV cache testing. Generates prefix prompts that are prepended to user prompts, simulating cached context scenarios."
+                },
+                "turns": {
+                  "anyOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/FixedDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/NormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/MultimodalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/EmpiricalDistribution"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Number of request-response turns per conversation. Can be a fixed integer or {mean, stddev} distribution. Each turn consists of a user message and model response. Set to 1 for single-turn interactions. Multi-turn conversations enable testing of context retention and conversation history handling.",
+                  "title": "Turns"
+                },
+                "turnDelay": {
+                  "anyOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/FixedDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/NormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/MultimodalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/EmpiricalDistribution"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Delay in milliseconds between consecutive turns within a multi-turn conversation. Can be a fixed value or {mean, stddev} distribution. Simulates user think time between receiving a response and sending the next message. Only applies when turns > 1. Set to 0 for back-to-back turns.",
+                  "title": "Turndelay"
+                },
+                "turnDelayRatio": {
+                  "default": 1.0,
+                  "description": "Multiplier for scaling all turn delays. Applied after mean/stddev calculation: actual_delay = calculated_delay * ratio. Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.",
+                  "minimum": 0.0,
+                  "title": "Turndelayratio",
+                  "type": "number"
+                },
+                "images": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ImageConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Synthetic image configuration for multimodal vision-language testing."
+                },
+                "audio": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/AudioConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Synthetic audio configuration for multimodal speech/audio testing."
+                },
+                "video": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/VideoConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Synthetic video configuration for multimodal video understanding testing."
+                },
+                "rankings": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RankingsConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Rankings/reranking configuration for generating query-passage pairs. Only relevant for rankings endpoint types."
+                },
+                "isl": {
+                  "anyOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/FixedDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/NormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/MultimodalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/EmpiricalDistribution"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Shorthand for prompts.isl; hoisted into prompts before validation.",
+                  "title": "Isl"
+                },
+                "osl": {
+                  "anyOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/FixedDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/NormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/MultimodalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/EmpiricalDistribution"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Shorthand for prompts.osl; hoisted into prompts before validation.",
+                  "title": "Osl"
                 }
               },
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SyntheticDataset"
-                },
-                {
-                  "$ref": "#/$defs/FileDataset"
-                },
-                {
-                  "$ref": "#/$defs/PublicDataset"
-                }
-              ]
+              "required": [
+                "type"
+              ],
+              "title": "SyntheticDataset",
+              "type": "object"
             },
             {
-              "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
-              "items": {
-                "discriminator": {
-                  "propertyName": "type",
-                  "mapping": {
-                    "synthetic": "#/$defs/SyntheticDataset",
-                    "file": "#/$defs/FileDataset",
-                    "public": "#/$defs/PublicDataset"
-                  }
+              "additionalProperties": false,
+              "description": "File-based dataset configuration.\n\nLoads prompts from a local file in various formats.\nSupports trace replay and custom sampling strategies.",
+              "properties": {
+                "name": {
+                  "description": "Dataset identifier — used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
                 },
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/SyntheticDataset"
-                  },
-                  {
-                    "$ref": "#/$defs/FileDataset"
-                  },
-                  {
-                    "$ref": "#/$defs/PublicDataset"
-                  }
-                ]
+                "type": {
+                  "const": "file",
+                  "description": "Dataset type discriminator. Must be 'file'.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "path": {
+                  "anyOf": [
+                    {
+                      "format": "path",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+                  "title": "Path"
+                },
+                "records": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "additionalProperties": {
+                        "items": {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Inline benchmark records, embedded directly in the YAML config. Mutually exclusive with `path:`. The element schema is determined by `format:` (same shape as one line of the equivalent JSONL file). For `format: random_pool`, may be either a flat list (single pool) or a dict-of-lists (multi-pool, mirrors the directory-of-JSONLs file mode). All other formats require a flat list.",
+                  "title": "Records"
+                },
+                "format": {
+                  "$ref": "#/$defs/DatasetFormat",
+                  "default": "single_turn",
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                },
+                "sampling": {
+                  "$ref": "#/$defs/DatasetSamplingStrategy",
+                  "default": "sequential",
+                  "description": "Strategy for selecting entries from dataset during benchmarking. sequential: iterate in order, wrapping to start after end. random: randomly sample with replacement (entries may repeat). shuffle: random permutation without replacement, re-shuffling after exhaustion."
+                },
+                "synthesis": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/SynthesisConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+                },
+                "entries": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Limit number of records to use from file. If not specified, uses all records in the file.",
+                  "title": "Entries"
+                },
+                "randomSeed": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
+                  "title": "Randomseed"
+                },
+                "interTurnDelayCapSeconds": {
+                  "anyOf": [
+                    {
+                      "minimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
+                  "title": "Interturndelaycapseconds"
+                },
+                "osl": {
+                  "anyOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/FixedDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/NormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/MultimodalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/EmpiricalDistribution"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Output sequence length to apply when records do not specify one. Can be a fixed integer or {mean, stddev} distribution. Per-line `output_length` values in the file always take precedence.",
+                  "title": "Osl"
+                }
               },
-              "maxItems": 1,
-              "minItems": 1,
-              "title": "Datasets",
-              "type": "array"
+              "required": [
+                "type"
+              ],
+              "title": "FileDataset",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Public dataset configuration.\n\nUses well-known public benchmarking datasets that are\nautomatically downloaded and processed by AIPerf.",
+              "properties": {
+                "name": {
+                  "description": "Dataset identifier — used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "public",
+                  "description": "Dataset type discriminator. Must be 'public'.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "dataset": {
+                  "$ref": "#/$defs/PublicDatasetType",
+                  "description": "Pre-configured public dataset to download and use for benchmarking. Name of the HuggingFace public dataset enum (e.g. 'sharegpt', 'alpaca'). AIPerf automatically downloads and parses these datasets."
+                },
+                "entries": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Limit number of records to use from the dataset. If not specified, uses all available records.",
+                  "title": "Entries"
+                },
+                "randomSeed": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Random seed for deterministic sampling from the dataset. Overrides global random_seed for this dataset.",
+                  "title": "Randomseed"
+                },
+                "sampling": {
+                  "$ref": "#/$defs/DatasetSamplingStrategy",
+                  "default": "sequential",
+                  "description": "Strategy for selecting entries from dataset during benchmarking. sequential: iterate in order, wrapping to start after end. random: randomly sample with replacement (entries may repeat). shuffle: random permutation without replacement, re-shuffling after exhaustion."
+                },
+                "hfSubset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "HuggingFace dataset subset/config name override (e.g. 'sharegpt4o'). Only applies for HuggingFace-backed public dataset loaders. Takes priority over the subset defined in the plugin registry.",
+                  "title": "Hfsubset"
+                }
+              },
+              "required": [
+                "type",
+                "dataset"
+              ],
+              "title": "PublicDataset",
+              "type": "object"
             }
           ],
+          "description": "Single dataset config (normalized to a one-entry datasets list).",
           "x-singular-alias-of": "datasets"
+        },
+        "warmup": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "concurrency",
+                  "description": "Concurrency-controlled immediate dispatch.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "default": 1,
+                  "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
+                  "minimum": 1,
+                  "title": "Concurrency",
+                  "type": "integer"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "ConcurrencyPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Poisson-distributed request arrivals at the target rate.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "poisson",
+                  "description": "Poisson-distributed rate-controlled arrivals.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                }
+              },
+              "required": [
+                "type",
+                "rate"
+              ],
+              "title": "PoissonPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Gamma-distributed request arrivals with configurable smoothness.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "gamma",
+                  "description": "Gamma-distributed rate-controlled arrivals.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "smoothness": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
+                  "title": "Smoothness"
+                }
+              },
+              "required": [
+                "type",
+                "rate"
+              ],
+              "title": "GammaPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Constant-rate request arrivals (fixed inter-arrival time).",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "constant",
+                  "description": "Constant rate-controlled arrivals.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                }
+              },
+              "required": [
+                "type",
+                "rate"
+              ],
+              "title": "ConstantPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "user_centric",
+                  "description": "N users sharing a global request rate.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "users": {
+                  "description": "Number of simulated concurrent users (must be >= 1). Requests distributed across users to achieve global rate.",
+                  "minimum": 1,
+                  "title": "Users",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "type",
+                "rate",
+                "users"
+              ],
+              "title": "UserCentricPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "fixed_schedule",
+                  "description": "Replay requests at trace timestamps.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "autoOffset": {
+                  "default": true,
+                  "description": "Normalize trace timestamps to start at 0. Subtracts minimum timestamp from all entries.",
+                  "title": "Autooffset",
+                  "type": "boolean"
+                },
+                "startOffset": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Filter out trace requests before this timestamp in ms (must be >= 0).",
+                  "title": "Startoffset"
+                },
+                "endOffset": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
+                  "title": "Endoffset"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "FixedSchedulePhase",
+              "type": "object"
+            }
+          ],
+          "description": "Warmup phase shorthand. Requires profiling when used.",
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "concurrency": "#/$defs/ConcurrencyPhase",
+              "poisson": "#/$defs/PoissonPhase",
+              "gamma": "#/$defs/GammaPhase",
+              "constant": "#/$defs/ConstantPhase",
+              "user_centric": "#/$defs/UserCentricPhase",
+              "fixed_schedule": "#/$defs/FixedSchedulePhase"
+            }
+          }
+        },
+        "profiling": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "concurrency",
+                  "description": "Concurrency-controlled immediate dispatch.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "default": 1,
+                  "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
+                  "minimum": 1,
+                  "title": "Concurrency",
+                  "type": "integer"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "ConcurrencyPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Poisson-distributed request arrivals at the target rate.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "poisson",
+                  "description": "Poisson-distributed rate-controlled arrivals.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                }
+              },
+              "required": [
+                "type",
+                "rate"
+              ],
+              "title": "PoissonPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Gamma-distributed request arrivals with configurable smoothness.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "gamma",
+                  "description": "Gamma-distributed rate-controlled arrivals.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "smoothness": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
+                  "title": "Smoothness"
+                }
+              },
+              "required": [
+                "type",
+                "rate"
+              ],
+              "title": "GammaPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Constant-rate request arrivals (fixed inter-arrival time).",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "constant",
+                  "description": "Constant rate-controlled arrivals.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                }
+              },
+              "required": [
+                "type",
+                "rate"
+              ],
+              "title": "ConstantPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "user_centric",
+                  "description": "N users sharing a global request rate.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "rate": {
+                  "description": "Target request rate in requests per second (must be > 0).",
+                  "exclusiveMinimum": 0,
+                  "title": "Rate",
+                  "type": "number"
+                },
+                "rateRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "users": {
+                  "description": "Number of simulated concurrent users (must be >= 1). Requests distributed across users to achieve global rate.",
+                  "minimum": 1,
+                  "title": "Users",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "type",
+                "rate",
+                "users"
+              ],
+              "title": "UserCentricPhase",
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
+              "properties": {
+                "name": {
+                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                  "enum": [
+                    "warmup",
+                    "profiling"
+                  ],
+                  "title": "Name",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "fixed_schedule",
+                  "description": "Replay requests at trace timestamps.",
+                  "title": "Type",
+                  "type": "string"
+                },
+                "excludeFromResults": {
+                  "default": false,
+                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "title": "Excludefromresults",
+                  "type": "boolean"
+                },
+                "requests": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many requests sent (must be >= 1).",
+                  "title": "Requests"
+                },
+                "duration": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+                      "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                  "gt": 0,
+                  "title": "Duration"
+                },
+                "sessions": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Stop after this many sessions completed (must be >= 1).",
+                  "title": "Sessions"
+                },
+                "concurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                  "title": "Concurrency"
+                },
+                "concurrencyRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "prefillConcurrency": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                  "title": "Prefillconcurrency"
+                },
+                "prefillRamp": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RampConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "gracePeriod": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                  "ge": 0,
+                  "title": "Graceperiod"
+                },
+                "cancellation": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CancellationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Request cancellation testing configuration."
+                },
+                "seamless": {
+                  "default": false,
+                  "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                  "title": "Seamless",
+                  "type": "boolean"
+                },
+                "autoOffset": {
+                  "default": true,
+                  "description": "Normalize trace timestamps to start at 0. Subtracts minimum timestamp from all entries.",
+                  "title": "Autooffset",
+                  "type": "boolean"
+                },
+                "startOffset": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Filter out trace requests before this timestamp in ms (must be >= 0).",
+                  "title": "Startoffset"
+                },
+                "endOffset": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
+                  "title": "Endoffset"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "FixedSchedulePhase",
+              "type": "object"
+            }
+          ],
+          "description": "Profiling phase shorthand. Normalized to a phases entry named 'profiling'.",
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "concurrency": "#/$defs/ConcurrencyPhase",
+              "poisson": "#/$defs/PoissonPhase",
+              "gamma": "#/$defs/GammaPhase",
+              "constant": "#/$defs/ConstantPhase",
+              "user_centric": "#/$defs/UserCentricPhase",
+              "fixed_schedule": "#/$defs/FixedSchedulePhase"
+            }
+          }
         }
       },
       "required": [
-        "endpoint",
-        "phases"
+        "endpoint"
       ],
       "title": "BenchmarkConfig",
       "type": "object",
@@ -2219,6 +4880,20 @@
             {
               "required": [
                 "datasets"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "phases"
+              ]
+            },
+            {
+              "required": [
+                "profiling"
               ]
             }
           ]
@@ -2339,8 +5014,8 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
+              "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+              "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
             },
             {
               "type": "number"
@@ -2601,8 +5276,8 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
+              "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+              "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
             },
             {
               "type": "number"
@@ -3162,6 +5837,10 @@
           },
           "title": "Points",
           "type": "array"
+        },
+        "type": {
+          "const": "empirical",
+          "description": "Optional distribution type marker; stripped before concrete validation."
         }
       },
       "required": [
@@ -3380,6 +6059,19 @@
           ],
           "default": null,
           "description": "Content type for request body serialization. Default is 'application/json'. Set to 'multipart/form-data' for servers that require form-encoded requests (e.g. vLLM video generation)."
+        },
+        "sessionHeader": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
+          "title": "Sessionheader"
         },
         "waitForModelTimeout": {
           "default": 0.0,
@@ -3732,6 +6424,10 @@
               "description": "The constant value returned on every sample.",
               "title": "Value",
               "type": "number"
+            },
+            "type": {
+              "const": "fixed",
+              "description": "Optional distribution type marker; stripped before concrete validation."
             }
           },
           "required": [
@@ -3803,8 +6499,8 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
+              "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+              "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
             },
             {
               "type": "number"
@@ -4129,8 +6825,8 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
+              "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+              "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
             },
             {
               "type": "number"
@@ -4666,6 +7362,20 @@
           "$ref": "#/$defs/ImageFormat",
           "default": "jpeg",
           "description": "Image file format for generated images. png: lossless compression (larger files, best quality). jpeg: lossy compression (smaller files, good quality). random: randomly select between PNG and JPEG per image. Format affects file size in multimodal requests and encoding overhead."
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageSource"
+            },
+            {
+              "format": "path",
+              "type": "string"
+            }
+          ],
+          "default": "noise",
+          "description": "Source image generation mode (default: noise). noise: generate random noise images on the fly — no files on disk, effectively unbounded variety so servers cannot dedupe identical inputs. assets: load images from the bundled assets/source_images directory and resize them to the requested dimensions. A path string loads images from the given directory (e.g. ./source_images). Random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
+          "title": "Source"
         }
       },
       "title": "ImageConfig",
@@ -4679,6 +7389,15 @@
         "random"
       ],
       "title": "ImageFormat",
+      "type": "string"
+    },
+    "ImageSource": {
+      "description": "Source image generation mode for multimodal benchmarking.",
+      "enum": [
+        "assets",
+        "noise"
+      ],
+      "title": "ImageSource",
       "type": "string"
     },
     "IpcCommunicationConfig": {
@@ -4967,6 +7686,10 @@
             }
           ],
           "x-jinja2-supported": true
+        },
+        "type": {
+          "const": "lognormal",
+          "description": "Optional distribution type marker; stripped before concrete validation."
         }
       },
       "required": [
@@ -5028,6 +7751,24 @@
         },
         "tags": {
           "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                ]
+              }
+            },
+            {
+              "type": "string"
+            },
             {
               "additionalProperties": {
                 "type": "string"
@@ -5377,6 +8118,10 @@
           "minItems": 2,
           "title": "Peaks",
           "type": "array"
+        },
+        "type": {
+          "const": "multimodal",
+          "description": "Optional distribution type marker; stripped before concrete validation."
         }
       },
       "required": [
@@ -5485,6 +8230,10 @@
             }
           ],
           "x-jinja2-supported": true
+        },
+        "type": {
+          "const": "normal",
+          "description": "Optional distribution type marker; stripped before concrete validation."
         }
       },
       "required": [
@@ -5666,72 +8415,342 @@
       "type": "object"
     },
     "PeakEntry": {
-      "additionalProperties": false,
+      "title": "PeakEntry",
       "description": "A weighted component in a multimodal distribution.\n\nThe weight and distribution fields are written inline in YAML:\n    {mean: 128, stddev: 20, weight: 60}\n\nThe ``weight`` key is extracted before the remaining fields are parsed\nas a SamplingDistribution. Defaults to 1.0 (equal split when omitted).",
-      "properties": {
-        "distribution": {
-          "description": "The sub-distribution for this peak.",
-          "oneOf": [
-            {
-              "$ref": "#/$defs/FixedDistribution"
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "A weighted component in a multimodal distribution.\n\nThe weight and distribution fields are written inline in YAML:\n    {mean: 128, stddev: 20, weight: 60}\n\nThe ``weight`` key is extracted before the remaining fields are parsed\nas a SamplingDistribution. Defaults to 1.0 (equal split when omitted).",
+          "properties": {
+            "distribution": {
+              "description": "The sub-distribution for this peak.",
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ],
+              "title": "Distribution"
             },
-            {
-              "$ref": "#/$defs/NormalDistribution"
-            },
-            {
-              "$ref": "#/$defs/LogNormalDistribution"
-            },
-            {
-              "$ref": "#/$defs/MultimodalDistribution"
-            },
-            {
-              "$ref": "#/$defs/EmpiricalDistribution"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "title": "Distribution",
-          "x-jinja2-supported": true
-        },
-        "weight": {
-          "default": 1.0,
-          "description": "Relative weight (normalised internally).",
-          "title": "Weight",
-          "oneOf": [
-            {
+            "weight": {
               "default": 1.0,
               "description": "Relative weight (normalised internally).",
               "minimum": 0.0,
               "title": "Weight",
               "type": "number"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
+          },
+          "required": [
+            "distribution"
           ],
-          "x-jinja2-supported": true
+          "title": "PeakEntry",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Inline FixedDistribution peak with optional weight.",
+          "properties": {
+            "min": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+              "title": "Min"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive upper bound; samples above are clamped down.",
+              "title": "Max"
+            },
+            "value": {
+              "description": "The constant value returned on every sample.",
+              "title": "Value",
+              "type": "number"
+            },
+            "type": {
+              "const": "fixed",
+              "description": "Optional distribution type marker; stripped before concrete validation."
+            },
+            "weight": {
+              "default": 1.0,
+              "description": "Relative weight (normalised internally).",
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "title": "FixedDistribution",
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        {
+          "additionalProperties": false,
+          "description": "Inline NormalDistribution peak with optional weight.",
+          "properties": {
+            "min": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+              "title": "Min"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive upper bound; samples above are clamped down.",
+              "title": "Max"
+            },
+            "mean": {
+              "description": "Mean value. Must be >= 0; samples below 0 are truncated, so a negative mean would yield a degenerate distribution. Zero is allowed (e.g. OSL=0 disables output, turn_delay mean=0 disables inter-turn delay).",
+              "minimum": 0.0,
+              "title": "Mean",
+              "type": "number"
+            },
+            "stddev": {
+              "default": 0.0,
+              "description": "Standard deviation. 0 = deterministic.",
+              "minimum": 0.0,
+              "title": "Stddev",
+              "type": "number"
+            },
+            "type": {
+              "const": "normal",
+              "description": "Optional distribution type marker; stripped before concrete validation."
+            },
+            "weight": {
+              "default": 1.0,
+              "description": "Relative weight (normalised internally).",
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "mean"
+          ],
+          "title": "NormalDistribution",
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        {
+          "additionalProperties": false,
+          "description": "Inline LogNormalDistribution peak with optional weight.",
+          "properties": {
+            "min": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+              "title": "Min"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive upper bound; samples above are clamped down.",
+              "title": "Max"
+            },
+            "mean": {
+              "description": "Desired mean of the output distribution.",
+              "exclusiveMinimum": 0.0,
+              "title": "Mean",
+              "type": "number"
+            },
+            "median": {
+              "description": "Desired median. Must be <= mean. Lower median = more right skew.",
+              "exclusiveMinimum": 0.0,
+              "title": "Median",
+              "type": "number"
+            },
+            "type": {
+              "const": "lognormal",
+              "description": "Optional distribution type marker; stripped before concrete validation."
+            },
+            "weight": {
+              "default": 1.0,
+              "description": "Relative weight (normalised internally).",
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "mean",
+            "median"
+          ],
+          "title": "LogNormalDistribution",
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        {
+          "additionalProperties": false,
+          "description": "Inline MultimodalDistribution peak with optional weight.",
+          "properties": {
+            "min": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+              "title": "Min"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive upper bound; samples above are clamped down.",
+              "title": "Max"
+            },
+            "peaks": {
+              "description": "Two or more weighted sub-distributions.",
+              "items": {
+                "$ref": "#/$defs/PeakEntry"
+              },
+              "minItems": 2,
+              "title": "Peaks",
+              "type": "array"
+            },
+            "type": {
+              "const": "multimodal",
+              "description": "Optional distribution type marker; stripped before concrete validation."
+            },
+            "weight": {
+              "default": 1.0,
+              "description": "Relative weight (normalised internally).",
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "peaks"
+          ],
+          "title": "MultimodalDistribution",
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        {
+          "additionalProperties": false,
+          "description": "Inline EmpiricalDistribution peak with optional weight.",
+          "properties": {
+            "min": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+              "title": "Min"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive upper bound; samples above are clamped down.",
+              "title": "Max"
+            },
+            "points": {
+              "description": "Weighted discrete values. Weights are relative.",
+              "items": {
+                "$ref": "#/$defs/EmpiricalPoint"
+              },
+              "title": "Points",
+              "type": "array"
+            },
+            "type": {
+              "const": "empirical",
+              "description": "Optional distribution type marker; stripped before concrete validation."
+            },
+            "weight": {
+              "default": 1.0,
+              "description": "Relative weight (normalised internally).",
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "points"
+          ],
+          "title": "EmpiricalDistribution",
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
         }
-      },
-      "required": [
-        "distribution"
-      ],
-      "title": "PeakEntry",
-      "type": "object"
+      ]
     },
     "PoissonPhase": {
       "additionalProperties": false,
@@ -5787,8 +8806,8 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
+              "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+              "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
             },
             {
               "type": "number"
@@ -8036,6 +11055,64 @@
           ],
           "default": null,
           "description": "Rankings/reranking configuration for generating query-passage pairs. Only relevant for rankings endpoint types."
+        },
+        "isl": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shorthand for prompts.isl; hoisted into prompts before validation.",
+          "title": "Isl"
+        },
+        "osl": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shorthand for prompts.osl; hoisted into prompts before validation.",
+          "title": "Osl"
         }
       },
       "required": [
@@ -8366,8 +11443,8 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
+              "pattern": "^(?:\\d+(?:\\.\\d+)?\\s*(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|[hH]|[hH][rR]|[hH][oO][uU][rR])?|[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$",
+              "description": "Duration string (e.g., '30s', '5M', '2h', 'inf')."
             },
             {
               "type": "number"
@@ -8752,9 +11829,8 @@
           "description": "Audio codec for the embedded audio track. If not specified, auto-selects based on video format: aac for MP4, libvorbis for WebM. Options: aac, libvorbis, libopus."
         },
         "depth": {
-          "default": 16,
           "description": "Audio bit depth for the embedded audio track. Supported values: 8, 16, 24, or 32 bits. Higher bit depths provide greater dynamic range but increase file size.",
-          "title": "Depth",
+          "default": 16,
           "oneOf": [
             {
               "default": 16,
@@ -8767,6 +11843,15 @@
               ],
               "title": "Depth",
               "type": "integer"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "8",
+                "16",
+                "24",
+                "32"
+              ]
             },
             {
               "type": "string",

@@ -180,7 +180,7 @@ class BaseFileLoader(BaseLoader):
             return
 
         target = source if source is not None else self.filename
-        with open(target) as f:
+        with open(target, encoding="utf-8") as f:
             for lineno, line in enumerate(f, start=1):
                 if line := line.strip():
                     try:

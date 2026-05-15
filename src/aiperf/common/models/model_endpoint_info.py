@@ -134,6 +134,11 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.REQUEST_CONTENT_TYPE,
         description="Content type for request body serialization. None means application/json.",
     )
+    session_header: str | None = Field(
+        default=None,
+        description="HTTP header name to use for the per-session affinity identifier. "
+        "When set, replaces the default `X-Correlation-ID` header name with this value.",
+    )
     collect_trace_chunks: bool = Field(
         default=False,
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
@@ -207,6 +212,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 request_content_type=ep.request_content_type,
                 collect_trace_chunks=False,
                 template=getattr(ep, "template", None),
+                session_header=getattr(ep, "session_header", None),
             ),
             transport=ep.transport,
         )

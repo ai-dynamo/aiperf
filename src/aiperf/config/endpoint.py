@@ -304,6 +304,19 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    session_header: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "HTTP header name used to carry the per-session affinity identifier. "
+                "When set, replaces the default `X-Correlation-ID` header. Useful "
+                "when the inference server expects a custom session-affinity header "
+                "(e.g. `--session-header X-Session-ID`)."
+            ),
+        ),
+    ]
+
     wait_for_model_timeout: Annotated[
         float,
         Field(

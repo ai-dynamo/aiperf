@@ -223,6 +223,20 @@ class ConfigSchemaGenerator(Generator):
         if self.verbose:
             print_step("Added phases field shorthand form support")
 
+        # Add BenchmarkConfig warmup/profiling shorthand forms
+        self._add_warmup_profiling_shorthand_forms(enhanced_schema)
+        if self.verbose:
+            print_step("Added warmup/profiling shorthand form support")
+
+        # Add dataset and distribution normalizer shorthand forms
+        self._add_synthetic_dataset_shorthand_forms(enhanced_schema)
+        self._add_distribution_shorthand_forms(enhanced_schema)
+        self._add_field_before_validator_forms(enhanced_schema)
+        if self.verbose:
+            print_step(
+                "Added dataset, distribution, and field validator shorthand forms"
+            )
+
         # Add Jinja2 template support to numeric fields
         jinja2_count = self._add_jinja2_template_support(enhanced_schema)
         if self.verbose and jinja2_count > 0:
@@ -629,8 +643,13 @@ class ConfigSchemaGenerator(Generator):
                 0,
                 {
                     "type": "string",
-                    "pattern": r"^\d+(?:\.\d+)?\s*(?:s|sec|m|min|h|hr|hour)?$",
-                    "description": "Duration string (e.g., '30s', '5m', '2h').",
+                    "pattern": (
+                        r"^(?:\d+(?:\.\d+)?\s*"
+                        r"(?:[sS]|[sS][eE][cC]|[mM]|[mM][iI][nN]|"
+                        r"[hH]|[hH][rR]|[hH][oO][uU][rR])?|"
+                        r"[iI][nN][fF](?:[iI][nN][iI][tT][yY])?)$"
+                    ),
+                    "description": "Duration string (e.g., '30s', '5M', '2h', 'inf').",
                 },
             )
 
@@ -831,6 +850,255 @@ class ConfigSchemaGenerator(Generator):
                 phase_items_schema["discriminator"]
             )
         return single_phase_schema
+
+    def _phase_items_schema_from_phases_property(
+        self,
+        phases_schema: dict,
+    ) -> dict | None:
+        """Return the array item schema from a phases property schema."""
+        if isinstance(phases_schema.get("items"), dict):
+            return phases_schema["items"]
+        for variant in phases_schema.get("oneOf", []):
+            if isinstance(variant, dict) and isinstance(variant.get("items"), dict):
+                return variant["items"]
+        return None
+
+    def _add_warmup_profiling_shorthand_forms(self, schema: dict) -> None:
+        """Add BenchmarkConfig warmup/profiling shorthands accepted by normalizers."""
+        benchmark_schema = schema.get("$defs", {}).get("BenchmarkConfig", {})
+        properties = benchmark_schema.get("properties", {})
+        phases_schema = properties.get("phases")
+        if not isinstance(phases_schema, dict):
+            return
+
+        phase_items_schema = self._phase_items_schema_from_phases_property(
+            phases_schema
+        )
+        if not isinstance(phase_items_schema, dict):
+            return
+
+        single_phase_schema = self._create_single_phase_shorthand_schema(
+            schema, phase_items_schema
+        )
+        if not single_phase_schema:
+            return
+
+        properties["warmup"] = {
+            **copy.deepcopy(single_phase_schema),
+            "description": "Warmup phase shorthand. Requires profiling when used.",
+        }
+        properties["profiling"] = {
+            **copy.deepcopy(single_phase_schema),
+            "description": "Profiling phase shorthand. Normalized to a phases entry named 'profiling'.",
+        }
+
+        required = benchmark_schema.get("required", [])
+        if "phases" in required:
+            required.remove("phases")
+        all_of = benchmark_schema.setdefault("allOf", [])
+        phase_requirement = {
+            "anyOf": [
+                {"required": ["phases"]},
+                {"required": ["profiling"]},
+            ]
+        }
+        if phase_requirement not in all_of:
+            all_of.append(phase_requirement)
+
+    def _dataset_item_schema_with_optional_name(self, schema: dict) -> dict | None:
+        """Create a dataset union schema where runtime-injected name is optional."""
+        benchmark_schema = schema.get("$defs", {}).get("BenchmarkConfig", {})
+        datasets_schema = benchmark_schema.get("properties", {}).get("datasets", {})
+        item_schema = datasets_schema.get("items")
+        if not isinstance(item_schema, dict):
+            return None
+
+        defs = schema.get("$defs", {})
+        variants = item_schema.get("anyOf")
+        if not isinstance(variants, list):
+            return copy.deepcopy(item_schema)
+
+        shorthand_variants = []
+        for variant in variants:
+            ref = variant.get("$ref") if isinstance(variant, dict) else None
+            if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
+                return None
+            def_schema = defs.get(ref[len("#/$defs/") :])
+            if not isinstance(def_schema, dict):
+                return None
+            shorthand_schema = copy.deepcopy(def_schema)
+            required = shorthand_schema.get("required")
+            if isinstance(required, list) and "name" in required:
+                shorthand_schema["required"] = [
+                    item for item in required if item != "name"
+                ]
+            shorthand_variants.append(shorthand_schema)
+
+        return {
+            "anyOf": shorthand_variants,
+            "description": "Single dataset config (normalized to a one-entry datasets list).",
+        }
+
+    def _add_synthetic_dataset_shorthand_forms(self, schema: dict) -> None:
+        """Add dataset shorthands handled by BenchmarkConfig dataset normalizers."""
+        defs = schema.get("$defs", {})
+        synthetic_schema = defs.get("SyntheticDataset")
+        prompt_schema = defs.get("PromptConfig")
+        if isinstance(synthetic_schema, dict) and isinstance(prompt_schema, dict):
+            synthetic_props = synthetic_schema.setdefault("properties", {})
+            prompt_props = prompt_schema.get("properties", {})
+            for field_name in ("isl", "osl"):
+                prompt_field = prompt_props.get(field_name)
+                if isinstance(prompt_field, dict):
+                    synthetic_props[field_name] = {
+                        **copy.deepcopy(prompt_field),
+                        "description": (
+                            f"Shorthand for prompts.{field_name}; hoisted into prompts "
+                            "before validation."
+                        ),
+                    }
+
+        benchmark_schema = defs.get("BenchmarkConfig", {})
+        properties = benchmark_schema.get("properties", {})
+        if "dataset" in properties:
+            optional_name_schema = self._dataset_item_schema_with_optional_name(schema)
+            if optional_name_schema:
+                properties["dataset"] = {
+                    **optional_name_schema,
+                    "x-singular-alias-of": "datasets",
+                }
+
+    def _add_distribution_shorthand_forms(self, schema: dict) -> None:
+        """Add distribution shorthands accepted by distribution validators."""
+        defs = schema.get("$defs", {})
+        type_values = {
+            "FixedDistribution": "fixed",
+            "NormalDistribution": "normal",
+            "LogNormalDistribution": "lognormal",
+            "MultimodalDistribution": "multimodal",
+            "EmpiricalDistribution": "empirical",
+        }
+
+        for def_name, type_value in type_values.items():
+            self._add_optional_type_property(defs.get(def_name), type_value)
+
+        peak_schema = defs.get("PeakEntry")
+        if not isinstance(peak_schema, dict):
+            return
+        weight_schema = copy.deepcopy(
+            peak_schema.get("properties", {}).get(
+                "weight",
+                {"type": "number", "default": 1.0},
+            )
+        )
+        inline_variants = []
+        for def_name in type_values:
+            distribution_schema = defs.get(def_name)
+            inline_schema = self._distribution_object_variant(distribution_schema)
+            if inline_schema is None:
+                continue
+            inline_schema.setdefault("properties", {})["weight"] = weight_schema
+            inline_schema["description"] = (
+                f"Inline {def_name} peak with optional weight."
+            )
+            inline_variants.append(inline_schema)
+        if inline_variants:
+            defs["PeakEntry"] = {
+                "title": peak_schema.get("title", "PeakEntry"),
+                "description": peak_schema.get("description", ""),
+                "anyOf": [peak_schema, *inline_variants],
+            }
+
+    def _add_optional_type_property(self, schema_part: object, type_value: str) -> None:
+        """Add optional discriminator-like type property to object schema variants."""
+        if not isinstance(schema_part, dict):
+            return
+        if "anyOf" in schema_part:
+            for variant in schema_part["anyOf"]:
+                self._add_optional_type_property(variant, type_value)
+            return
+        if schema_part.get("type") != "object":
+            return
+        properties = schema_part.setdefault("properties", {})
+        properties["type"] = {
+            "const": type_value,
+            "description": "Optional distribution type marker; stripped before concrete validation.",
+        }
+
+    def _distribution_object_variant(self, schema_part: object) -> dict | None:
+        """Return a distribution object variant suitable for inline PeakEntry."""
+        if not isinstance(schema_part, dict):
+            return None
+        if "anyOf" in schema_part:
+            for variant in schema_part["anyOf"]:
+                result = self._distribution_object_variant(variant)
+                if result is not None:
+                    return result
+            return None
+        if schema_part.get("type") != "object":
+            return None
+        return copy.deepcopy(schema_part)
+
+    def _add_field_before_validator_forms(self, schema: dict) -> None:
+        """Add field-level BeforeValidator shorthand forms not visible to Pydantic JSON schema."""
+        defs = schema.get("$defs", {})
+
+        accuracy_props = defs.get("AccuracyConfig", {}).get("properties", {})
+        self._extend_any_of(accuracy_props.get("tasks"), [{"type": "string"}])
+
+        mlflow_props = defs.get("MLflowConfig", {}).get("properties", {})
+        self._extend_any_of(
+            mlflow_props.get("tags"),
+            [
+                {"type": "string"},
+                {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 2,
+                            },
+                        ]
+                    },
+                },
+            ],
+        )
+
+        video_audio_props = defs.get("VideoAudioConfig", {}).get("properties", {})
+        depth_schema = video_audio_props.get("depth")
+        if isinstance(depth_schema, dict) and "oneOf" not in depth_schema:
+            original = copy.deepcopy(depth_schema)
+            string_values = [str(value) for value in original.get("enum", [])]
+            if string_values:
+                video_audio_props["depth"] = {
+                    "description": original.get("description", ""),
+                    "default": original.get("default"),
+                    "oneOf": [original, {"type": "string", "enum": string_values}],
+                }
+
+    def _extend_any_of(self, field_schema: object, variants: list[dict]) -> None:
+        """Append variants to a field schema's anyOf/oneOf alternatives."""
+        if not isinstance(field_schema, dict):
+            return
+        key = (
+            "anyOf"
+            if "anyOf" in field_schema
+            else "oneOf"
+            if "oneOf" in field_schema
+            else None
+        )
+        if key is None:
+            original = copy.deepcopy(field_schema)
+            field_schema.clear()
+            field_schema["oneOf"] = [original, *variants]
+            return
+        existing = field_schema[key]
+        for variant in variants:
+            if variant not in existing:
+                existing.insert(0, variant)
 
     def _add_jinja2_template_support(self, schema: dict) -> int:
         """

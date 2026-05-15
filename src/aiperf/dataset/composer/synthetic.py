@@ -90,10 +90,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             not self._include_prompt
             and not self._include_image
             and not self._include_audio
+            and not self._include_video
         ):
             raise ValueError(
                 "All synthetic data are disabled. "
-                "Please enable at least one of prompt, image, or audio by "
+                "Please enable at least one of prompt, image, audio, or video by "
                 "setting the mean to a positive value."
             )
 
@@ -158,7 +159,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
                 "There were no synthetic payloads generated. "
-                "Please enable at least one of prompt, image, or audio by "
+                "Please enable at least one of prompt, image, audio, or video by "
                 "setting the mean to a positive value."
             )
 

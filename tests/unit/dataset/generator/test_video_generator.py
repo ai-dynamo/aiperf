@@ -105,7 +105,7 @@ class TestVideoGenerator:
 
     def test_generate_with_disabled_video(self):
         """Test that generate returns empty string when video is disabled."""
-        config = VideoConfig(
+        config = VideoConfig.model_construct(
             width=None,
             height=None,
             duration=1.0,

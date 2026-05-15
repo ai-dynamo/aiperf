@@ -49,6 +49,7 @@ import math
 import random
 
 import numpy as np
+from numpy.typing import DTypeLike
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import InvalidStateError
@@ -119,7 +120,13 @@ class RandomGenerator:
         """Get the seed used to initialize this generator."""
         return self._seed
 
-    def integers(self, low: int, high: int | None = None, size=None, dtype=np.int64):
+    def integers(
+        self,
+        low: int,
+        high: int | None = None,
+        size: int | tuple[int, ...] | None = None,
+        dtype: DTypeLike = np.int64,
+    ) -> int | np.ndarray:
         """Generate random integers from [low, high) using NumPy.
 
         Args:

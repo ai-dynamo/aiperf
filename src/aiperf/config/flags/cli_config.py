@@ -372,6 +372,21 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.REQUEST_CONTENT_TYPE
 
+    session_header: Annotated[
+        str | None,
+        Field(
+            description=(
+                "HTTP header name used to carry the per-session affinity identifier. "
+                "When set, replaces the default `X-Correlation-ID` header with the "
+                "provided name (e.g., `--session-header X-Session-ID`)."
+            ),
+        ),
+        CLIParameter(
+            name=("--session-header",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
     @property
     def url(self) -> str:
         """Return the first URL for backward compatibility."""

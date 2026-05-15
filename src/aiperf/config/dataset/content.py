@@ -11,9 +11,11 @@ used as building blocks inside dataset variants. Video configs live in
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Field,
     field_validator,
@@ -24,6 +26,7 @@ from typing_extensions import Self
 from aiperf.common.enums import (
     AudioFormat,
     ImageFormat,
+    ImageSource,
 )
 from aiperf.config.base import BaseConfig
 from aiperf.config.types import (
@@ -32,6 +35,25 @@ from aiperf.config.types import (
     SequenceDistributionEntry,
     validate_probability_distribution,
 )
+
+
+def _parse_image_source(value: object) -> object:
+    """Coerce ``--image-source`` input into ``ImageSource`` or ``Path``.
+
+    Accepts an ``ImageSource`` enum member, a ``Path``, or a string. Strings
+    that match an enum value resolve to the enum; anything else is treated
+    as a filesystem path to a directory of source images.
+    """
+    if isinstance(value, ImageSource):
+        return value
+    if isinstance(value, Path):
+        return value.expanduser()
+    if isinstance(value, str):
+        try:
+            return ImageSource(value)
+        except ValueError:
+            return Path(value).expanduser()
+    return value
 
 
 class PromptConfig(BaseConfig):
@@ -245,6 +267,34 @@ class ImageConfig(BaseConfig):
             "Format affects file size in multimodal requests and encoding overhead.",
         ),
     ]
+
+    source: Annotated[
+        ImageSource | Path,
+        BeforeValidator(_parse_image_source),
+        Field(
+            default=ImageSource.NOISE,
+            description="Source image generation mode (default: noise). "
+            "noise: generate random noise images on the fly — no files on disk, "
+            "effectively unbounded variety so servers cannot dedupe identical inputs. "
+            "assets: load images from the bundled assets/source_images directory and "
+            "resize them to the requested dimensions. "
+            "A path string loads images from the given directory (e.g. ./source_images). "
+            "Random-noise images are roughly incompressible, so payload bytes are larger "
+            "than equivalent natural images.",
+        ),
+    ]
+
+    def images_enabled(self) -> bool:
+        """Whether image generation is configured to produce images.
+
+        Mirrors the v1 helper used by composers/generators: requires positive
+        batch_size and positive expected width/height.
+        """
+        return (
+            self.batch_size > 0
+            and self.width.expected_value > 0
+            and self.height.expected_value > 0
+        )
 
 
 class AudioConfig(BaseConfig):

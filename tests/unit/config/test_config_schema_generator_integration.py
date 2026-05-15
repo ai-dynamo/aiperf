@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from aiperf.config import AIPerfConfig
+from aiperf.config import AIPerfConfig, load_config_from_string
 from tools.generate_config_schema import ConfigSchemaGenerator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -129,4 +130,211 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
 
     assert len(parsed.benchmark.phases) == 1
     assert parsed.benchmark.phases[0].name == "profiling"
+    _assert_schema_accepts(schema, config)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param(
+            _minimal_benchmark_config(
+                dataset={
+                    "type": "synthetic",
+                    "entries": 1,
+                    "prompts": {"isl": 512, "osl": 128},
+                },
+                datasets=None,
+            ),
+            id="singular-dataset-injects-name",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "isl": 512,
+                        "osl": 128,
+                    }
+                ]
+            ),
+            id="synthetic-dataset-top-level-isl-osl",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                phases=None,
+                warmup={"type": "concurrency", "requests": 1, "concurrency": 1},
+                profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+            ),
+            id="warmup-profiling-shorthand",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "prompts": {
+                            "isl": {"type": "fixed", "value": 512},
+                            "osl": {"type": "normal", "mean": 128, "stddev": 0},
+                        },
+                    }
+                ]
+            ),
+            id="explicit-distribution-type-keys",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "prompts": {
+                            "isl": {
+                                "peaks": [
+                                    {"mean": 128, "stddev": 10, "weight": 60},
+                                    {"mean": 512, "stddev": 20, "weight": 40},
+                                ]
+                            },
+                            "osl": 128,
+                        },
+                    }
+                ]
+            ),
+            id="multimodal-inline-peak-distributions",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                mlflow={
+                    "trackingUri": "http://mlflow:5000",
+                    "tags": "team:perf,env:test",
+                }
+            ),
+            id="mlflow-tags-string",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                accuracy={"benchmark": "mmlu", "tasks": "abstract_algebra,anatomy"}
+            ),
+            id="accuracy-tasks-string",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "prompts": {"isl": 512, "osl": 128},
+                        "video": {"audio": {"depth": "16"}},
+                    }
+                ]
+            ),
+            id="video-audio-depth-string",
+        ),
+        pytest.param(
+            _minimal_benchmark_config(
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                        "duration": "5M",
+                    }
+                ]
+            ),
+            id="duration-uppercase-unit",
+        ),
+    ],
+)  # fmt: skip
+def test_generated_schema_accepts_runtime_normalization_special_cases(
+    config: dict[str, Any],
+) -> None:
+    schema = _generated_schema()
+    config = copy.deepcopy(config)
+    benchmark = config["benchmark"]
+    for key in [key for key, value in benchmark.items() if value is None]:
+        del benchmark[key]
+
+    AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    _assert_schema_accepts(schema, config)
+
+
+@pytest.mark.parametrize(
+    ("env", "config"),
+    [
+        pytest.param(
+            {"AIPERF_TEST_URL": "http://localhost:8000/v1/chat/completions"},
+            _minimal_benchmark_config(endpoint={"urls": ["${AIPERF_TEST_URL}"]}),
+            id="env-var-string-field",
+        ),
+        pytest.param(
+            {},
+            _minimal_benchmark_config(
+                endpoint={"urls": ["${AIPERF_TEST_URL:http://localhost:8000/v1/chat/completions}"]}
+            ),
+            id="env-var-default-string-field",
+        ),
+        pytest.param(
+            {"AIPERF_TEST_CONCURRENCY": "4"},
+            _minimal_benchmark_config(
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": "${AIPERF_TEST_CONCURRENCY}",
+                    }
+                ]
+            ),
+            id="env-var-numeric-field",
+        ),
+        pytest.param(
+            {},
+            {
+                **_minimal_benchmark_config(
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
+                            "requests": "{{ targetConcurrency * 10 }}",
+                            "concurrency": "{{ targetConcurrency }}",
+                        }
+                    ],
+                ),
+                "variables": {"targetConcurrency": 4},
+            },
+            id="jinja-numeric-fields",
+        ),
+        pytest.param(
+            {},
+            {
+                **_minimal_benchmark_config(
+                    endpoint={"urls": ["{{ targetUrl }}"]},
+                ),
+                "variables": {"targetUrl": "http://localhost:8000/v1/chat/completions"},
+            },
+            id="jinja-string-field",
+        ),
+    ],
+)  # fmt: skip
+def test_generated_schema_accepts_pre_render_env_vars_and_jinja_templates(
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    config: dict[str, Any],
+) -> None:
+    schema = _generated_schema()
+    config = copy.deepcopy(config)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    yaml_content = yaml.safe_dump(config, sort_keys=False)
+
+    load_config_from_string(yaml_content)
+
     _assert_schema_accepts(schema, config)
