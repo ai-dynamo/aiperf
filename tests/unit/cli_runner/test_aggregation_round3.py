@@ -281,7 +281,8 @@ def test_invoke_callbacks_reads_setting_at_call_time(
     ``monkeypatch.setenv`` in tests would not be visible. Verify by
     flipping the env var between calls.
     """
-    from aiperf.cli_runner import CompletedRun, _invoke_callbacks
+    from aiperf.cli_runner import CompletedRun
+    from aiperf.cli_runner._callbacks import _invoke_callbacks
 
     logger = MagicMock()
 

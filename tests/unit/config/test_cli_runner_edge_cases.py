@@ -20,11 +20,11 @@ from pytest import param
 
 from aiperf.cli_runner import (
     _make_benchmark_run,
-    _print_aggregate_summary,
     _run_multi_benchmark,
     _run_single_benchmark,
     run_benchmark,
 )
+from aiperf.cli_runner._aggregate import print_aggregate_summary
 from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkPlan, BenchmarkRun
 from aiperf.config.loader import build_benchmark_plan
 
@@ -395,12 +395,12 @@ class TestMultiRunErrorPaths:
 
 
 # ============================================================
-# _print_aggregate_summary
+# print_aggregate_summary
 # ============================================================
 
 
 class TestAggregateSummary:
-    """Verify _print_aggregate_summary output."""
+    """Verify print_aggregate_summary output."""
 
     @pytest.fixture
     def mock_logger(self) -> MagicMock:
@@ -424,7 +424,7 @@ class TestAggregateSummary:
         result.metadata = {"confidence_level": 0.95}
         result.metrics = {}
 
-        _print_aggregate_summary(result, mock_logger)
+        print_aggregate_summary(result, mock_logger)
 
         warnings = self._warning_lines(mock_logger)
         assert any("Failed Runs (2):" in w for w in warnings)
@@ -455,7 +455,7 @@ class TestAggregateSummary:
         result.metadata = {"confidence_level": confidence_level}
         result.metrics = {}
 
-        _print_aggregate_summary(result, mock_logger)
+        print_aggregate_summary(result, mock_logger)
 
         info = self._info_lines(mock_logger)
         assert any(f"Confidence Level: {expected_pct}" in line for line in info)
@@ -469,7 +469,7 @@ class TestAggregateSummary:
         result.metadata = {"confidence_level": 0.95}
         result.metrics = {}
 
-        _print_aggregate_summary(result, mock_logger)
+        print_aggregate_summary(result, mock_logger)
 
         warnings = self._warning_lines(mock_logger)
         assert any("No key metrics found" in w for w in warnings)
@@ -483,7 +483,7 @@ class TestAggregateSummary:
         result.metadata = {"confidence_level": 0.95}
         result.metrics = {}
 
-        _print_aggregate_summary(result, mock_logger)
+        print_aggregate_summary(result, mock_logger)
 
         warnings = self._warning_lines(mock_logger)
         assert not any("Failed Runs" in w for w in warnings)
@@ -507,7 +507,7 @@ class TestAggregateSummary:
         result.metadata = {"confidence_level": 0.95}
         result.metrics = {"request_latency_avg": metric}
 
-        _print_aggregate_summary(result, mock_logger)
+        print_aggregate_summary(result, mock_logger)
 
         info = self._info_lines(mock_logger)
         assert any("42.1234" in line and "ms" in line for line in info)

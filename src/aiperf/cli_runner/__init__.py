@@ -20,14 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from aiperf.cli_runner._aggregate import (
-    print_aggregate_summary as _print_aggregate_summary,
-)
-from aiperf.cli_runner._callbacks import (
-    CompletedRun,
-    OnComplete,
-    _invoke_callbacks,  # noqa: F401  re-exported for tests/other internal callers
-)
+from aiperf.cli_runner._callbacks import CompletedRun, OnComplete
 from aiperf.cli_runner._multi_run import _run_multi_benchmark
 from aiperf.cli_runner._preflight import (
     _preflight_artifact_dir,
@@ -43,7 +36,6 @@ if TYPE_CHECKING:
 __all__ = [
     "CompletedRun",
     "OnComplete",
-    "_print_aggregate_summary",
     "_run_multi_benchmark",
     "_run_single_benchmark",
     "run_benchmark",
