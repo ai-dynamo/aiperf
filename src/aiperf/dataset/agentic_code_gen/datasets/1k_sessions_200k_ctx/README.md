@@ -1,6 +1,6 @@
 # Agentic Coding Dataset
 
-An agentic coding workload trace that reflects a long-context, KV-reuse-heavy usage pattern across ~1000 multi-turn sessions.
+An agentic coding workload trace that reflects a long-context, KV-reuse-heavy usage pattern across ~1000 multi-turn sessions with a maximum session ISL of ~200k tokens.
 
 ## How to Generate
 
@@ -22,7 +22,7 @@ Included in this directory:
 |---|---|
 | `manifest.json` | Distribution config + run parameters used to generate `dataset.jsonl` |
 
-Expected dataset output, user-generated via the `aiperf synthesize agentic-code` command above:
+Expected dataset, user-generated via the `aiperf synthesize agentic-code` command above:
 
 | File | Purpose |
 |---|---|
