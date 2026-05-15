@@ -82,6 +82,10 @@ navigation:
             path: ../pages-dev/tutorials/burst-gpt-trace.md
           - page: Replay SageMaker Data Capture Traces
             path: ../pages-dev/tutorials/sagemaker-data-capture.md
+          - page: Raw Payload Replay
+            path: ../pages-dev/tutorials/raw-payload-replay.md
+          - page: Inputs JSON Replay
+            path: ../pages-dev/tutorials/inputs-json-replay.md
           - page: Multi-Turn Conversations
             path: ../pages-dev/tutorials/multi-turn.md
           - page: Sequence Length Distributions for Advanced Benchmarking
@@ -150,6 +154,8 @@ navigation:
         path: ../pages-dev/benchmark-modes/timing-modes-reference.md
       - page: Trace Replay with Mooncake Traces
         path: ../pages-dev/benchmark-modes/trace-replay.md
+      - page: Conversation DAG Benchmarks
+        path: ../pages-dev/benchmark-modes/dag.md
   - section: Accuracy
     collapsed: true
     contents:
