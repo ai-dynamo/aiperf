@@ -10,10 +10,14 @@ title: NVIDIA AIPerf Documentation
 products:
   - display-name: AIPerf
     slug: /
-    path: ./versions/dev.yml
+    path: ./versions/v0.7.0.yml
     versions:
-      - display-name: dev
-        path: ./versions/dev.yml
+      - display-name: Latest (v0.7.0)
+        path: ./versions/v0.7.0.yml
+      - display-name: v0.7.0
+        path: ./versions/v0.7.0.yml
+        slug: v0.7.0
+        availability: stable
 redirects:
   - source: "/aiperf/index.html"
     destination: "/aiperf/"
