@@ -428,7 +428,7 @@ class TestGPUTelemetryConfig:
                 )
                 assert validated_environment is True
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
     def test_runtime_local_collector_validation_error_surfaces(self) -> None:
         fake_name = "fake_broken_gpu"
@@ -454,7 +454,7 @@ class TestGPUTelemetryConfig:
             ):
                 make_config(gpu_telemetry=[fake_name])
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
     def test_conflict_detection_with_runtime_local_collector(self) -> None:
         fake_name = "fake_local_gpu"
@@ -483,7 +483,7 @@ class TestGPUTelemetryConfig:
                 finally:
                     sys.modules.pop("pynvml", None)
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
     def test_local_vs_url_guardrail_for_runtime_local_collector(self) -> None:
         fake_name = "fake_local_gpu"
@@ -510,7 +510,7 @@ class TestGPUTelemetryConfig:
             ):
                 make_config(gpu_telemetry=[fake_name, "http://localhost:9400"])
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
     def test_invalid_item_message_includes_runtime_keyword(self) -> None:
         fake_name = "fake_local_gpu"
@@ -535,7 +535,7 @@ class TestGPUTelemetryConfig:
                     make_config(gpu_telemetry=["not_a_real_keyword"])
                 assert f"'{fake_name}'" in str(exc_info.value)
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
     def test_urls_extraction(self):
         """Test that only http URLs are extracted from gpu_telemetry list."""

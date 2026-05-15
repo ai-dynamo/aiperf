@@ -1130,7 +1130,7 @@ class TestGenericLocalCollectorIntegration:
                 mock_collector.initialize.assert_awaited_once()
                 mock_collector.collect_and_process_metrics.assert_awaited_once()
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
     @pytest.mark.asyncio
     async def test_configure_runtime_local_collector_from_plugin_metadata(self) -> None:
@@ -1185,7 +1185,7 @@ class TestGenericLocalCollectorIntegration:
                     == source_identifier
                 )
         finally:
-            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+            GPUTelemetryCollectorType.deregister(fake_enum_member)
 
 
 class TestAmdsmiCollectorIntegration:

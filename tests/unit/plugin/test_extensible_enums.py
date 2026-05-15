@@ -268,6 +268,26 @@ class TestRegister:
         assert fresh_enum.EXT3.value == "ext3"
 
 
+class TestDeregister:
+    """Tests for deregister() classmethod."""
+
+    def test_deregister_removes_member(self, fresh_enum):
+        """deregister() removes a runtime-registered member."""
+        fresh_enum.register("CUSTOM", "custom")
+        fresh_enum.deregister("CUSTOM")
+        assert "CUSTOM" not in fresh_enum.names()
+
+    def test_deregister_unknown_raises(self, fresh_enum):
+        """deregister() raises KeyError when the name was never registered."""
+        with pytest.raises(KeyError, match="MISSING"):
+            fresh_enum.deregister("MISSING")
+
+    def test_deregister_rejects_base_member(self, fresh_enum):
+        """deregister() refuses to drop a baked-in enum member."""
+        with pytest.raises(ValueError, match="BASE.*base enum member"):
+            fresh_enum.deregister("BASE")
+
+
 # =============================================================================
 # values() and names() Tests
 # =============================================================================
