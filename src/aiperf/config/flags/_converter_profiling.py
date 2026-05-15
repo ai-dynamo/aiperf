@@ -15,6 +15,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from aiperf.config.flags import CLIConfig
 
 
@@ -238,6 +240,67 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
         )
 
 
+def _maybe_auto_promote_trace(
+    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
+) -> None:
+    """Flip phase.type to FIXED_SCHEDULE if a trace dataset has timestamps."""
+    from aiperf.config.phases import PhaseType
+    from aiperf.plugin import plugins
+
+    dataset_type = cli.custom_dataset_type
+    if (
+        dataset_type is None
+        or file_path is None
+        or cli.disable_auto_fixed_schedule
+        or prof["type"] == PhaseType.FIXED_SCHEDULE
+        or not plugins.is_trace_dataset(str(dataset_type))
+        or not _first_record_has_timestamp(file_path)
+    ):
+        return
+
+    # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
+    # explicitly opted into a rate-controlled mode against a timestamped
+    # trace, refuse the combo loudly rather than silently dropping their
+    # flag — they almost certainly want one or the other, not both.
+    conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
+    if conflicts:
+        raise ValueError(
+            "Trace dataset has per-record timestamps and would be "
+            "auto-promoted to fixed_schedule, but the following flags "
+            f"are incompatible with fixed_schedule mode: {conflicts}. "
+            "Either drop the conflicting flags to enable auto-fixed-"
+            "schedule, or pass --no-fixed-schedule to keep your "
+            "user-selected timing mode and ignore trace timestamps."
+        )
+    prof["type"] = PhaseType.FIXED_SCHEDULE
+
+
+def _maybe_set_dag_root_sessions(
+    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
+) -> None:
+    """For dag_jsonl with no stop condition, set ``sessions`` from root count."""
+    from aiperf.plugin.enums import CustomDatasetType
+
+    dataset_type = cli.custom_dataset_type
+    is_dag = dataset_type is not None and str(dataset_type) == str(
+        CustomDatasetType.DAG_JSONL
+    )
+    if not is_dag or file_path is None:
+        return
+    if any(k in prof for k in ("requests", "duration", "sessions")):
+        return
+
+    from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
+
+    try:
+        all_ids, referenced = _collect_dag_session_and_fork_ids(str(file_path))
+    except (OSError, FileNotFoundError):
+        return
+    roots = len(all_ids - referenced)
+    if roots > 0:
+        prof["sessions"] = roots
+
+
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
     """CLI-only port of the v1 dataset-aware autodefaults.
 
@@ -259,41 +322,12 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
     Bare-string ``--custom-dataset-type`` (no ``--input-file``) is a no-op
     for I/O-dependent steps.
     """
-    from pathlib import Path
 
     from aiperf.config.phases import PhaseType
-    from aiperf.plugin import plugins
-    from aiperf.plugin.enums import CustomDatasetType
 
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
-    dataset_type = cli.custom_dataset_type
-    has_stop_condition = any(k in prof for k in ("requests", "duration", "sessions"))
 
-    # Trace auto-promotion: requires both --custom-dataset-type (to know it's
-    # a trace) and --input-file (to peek at the first record for timestamps).
-    if (
-        dataset_type is not None
-        and file_path is not None
-        and not cli.disable_auto_fixed_schedule
-        and prof["type"] != PhaseType.FIXED_SCHEDULE
-        and plugins.is_trace_dataset(str(dataset_type))
-        and _first_record_has_timestamp(file_path)
-    ):
-        # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
-        # explicitly opted into a rate-controlled mode against a timestamped
-        # trace, refuse the combo loudly rather than silently dropping their
-        # flag — they almost certainly want one or the other, not both.
-        conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
-        if conflicts:
-            raise ValueError(
-                "Trace dataset has per-record timestamps and would be "
-                "auto-promoted to fixed_schedule, but the following flags "
-                f"are incompatible with fixed_schedule mode: {conflicts}. "
-                "Either drop the conflicting flags to enable auto-fixed-"
-                "schedule, or pass --no-fixed-schedule to keep your "
-                "user-selected timing mode and ignore trace timestamps."
-            )
-        prof["type"] = PhaseType.FIXED_SCHEDULE
+    _maybe_auto_promote_trace(prof, cli, file_path)
 
     # fixed_schedule autodefault: dataset entry count -> requests.
     if (
@@ -305,20 +339,7 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
         if records > 0:
             prof["requests"] = records
 
-    # Forking-dataset autodefault: DAG roots -> sessions.
-    is_dag = dataset_type is not None and str(dataset_type) == str(
-        CustomDatasetType.DAG_JSONL
-    )
-    if is_dag and not has_stop_condition and file_path is not None:
-        from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
-
-        try:
-            all_ids, referenced = _collect_dag_session_and_fork_ids(str(file_path))
-        except (OSError, FileNotFoundError):
-            return
-        roots = len(all_ids - referenced)
-        if roots > 0:
-            prof["sessions"] = roots
+    _maybe_set_dag_root_sessions(prof, cli, file_path)
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:

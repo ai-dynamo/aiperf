@@ -55,48 +55,27 @@ def _local_collector_keywords() -> dict[str, Any]:
     }
 
 
-def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
-    """Translate ``--gpu-telemetry`` magic-list into the telemetry dict.
+def _classify_gpu_telemetry_items(
+    items: list[str],
+    *,
+    local_keywords: dict[str, Any],
+    collector_type: Any,
+    mode: Any,
+) -> tuple[Any, Any, list[str], Path | None]:
+    """Walk ``--gpu-telemetry`` items, classify each into collector/mode/url/csv.
 
-    Classifies each ``--gpu-telemetry`` item into a collector type, URLs,
-    optional metrics file, or dashboard mode. Local collector keywords are
-    discovered from plugin metadata (``is_local: true``) so adding a new
-    local backend never touches this converter.
-
-    Ports v1 ``_parse_gpu_telemetry_config``: rejects the mutex of
-    ``--no-gpu-telemetry`` + ``--gpu-telemetry``, validates the ``.csv``
-    metrics file exists at convert time, and warns when a local collector
-    is paired with non-localhost server URLs.
+    Returns the resolved ``(collector_type, mode, urls, metrics_file)``.
     """
-    from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.enums import GPUTelemetryMode
-
-    cli_set = cli.model_fields_set
-    if "no_gpu_telemetry" in cli_set and "gpu_telemetry" in cli_set:
-        raise ValueError(
-            "Cannot use both --no-gpu-telemetry and --gpu-telemetry together. "
-            "Use only one or the other."
-        )
-    if cli.no_gpu_telemetry:
-        return {"enabled": False}
-    if not cli.gpu_telemetry:
-        return {"enabled": True}
-
-    local_keywords = _local_collector_keywords()
-    urls: list[str] = []
-    metrics_file: Path | None = None
-    collector_type = cli._gpu_telemetry_collector_type
-    mode = cli._gpu_telemetry_mode
-
     from aiperf.plugin import plugins
 
-    for item in cli.gpu_telemetry:
+    urls: list[str] = []
+    metrics_file: Path | None = None
+
+    for item in items:
         lowered = item.lower()
         if lowered in local_keywords:
             selected = local_keywords[lowered]
-            # Reject mixing two different local collectors in the same call.
-            # "Local" is sourced from plugin metadata (is_local: true) so the
-            # check stays correct when a new local backend is added.
             current_is_local = plugins.get_gpu_telemetry_collector_metadata(
                 collector_type
             ).is_local
@@ -122,25 +101,66 @@ def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
                 f"{valid_kw}, 'dashboard', '.csv' file, and URLs."
             )
 
+    return collector_type, mode, urls, metrics_file
+
+
+def _warn_if_local_collector_with_remote_urls(
+    collector_type: Any, server_urls: list[str]
+) -> None:
+    """Warn when a local collector is paired with non-localhost server URLs."""
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.plugin import plugins
+
+    if not plugins.get_gpu_telemetry_collector_metadata(collector_type).is_local:
+        return
+    non_local = [u for u in server_urls if not _is_localhost_url(u)]
+    if not non_local:
+        return
+    AIPerfLogger(__name__).warning(
+        f"Using {collector_type} for GPU telemetry with non-localhost "
+        f"server URL(s): {non_local}. {collector_type} collects GPU "
+        "metrics from the local machine only. If the inference server "
+        "is running remotely, the GPU telemetry will not reflect the "
+        "server's GPU usage. Consider using DCGM mode with the "
+        "server's metrics endpoint instead."
+    )
+
+
+def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
+    """Translate ``--gpu-telemetry`` magic-list into the telemetry dict.
+
+    Classifies each ``--gpu-telemetry`` item into a collector type, URLs,
+    optional metrics file, or dashboard mode. Local collector keywords are
+    discovered from plugin metadata (``is_local: true``) so adding a new
+    local backend never touches this converter.
+
+    Ports v1 ``_parse_gpu_telemetry_config``: rejects the mutex of
+    ``--no-gpu-telemetry`` + ``--gpu-telemetry``, validates the ``.csv``
+    metrics file exists at convert time, and warns when a local collector
+    is paired with non-localhost server URLs.
+    """
+    cli_set = cli.model_fields_set
+    if "no_gpu_telemetry" in cli_set and "gpu_telemetry" in cli_set:
+        raise ValueError(
+            "Cannot use both --no-gpu-telemetry and --gpu-telemetry together. "
+            "Use only one or the other."
+        )
+    if cli.no_gpu_telemetry:
+        return {"enabled": False}
+    if not cli.gpu_telemetry:
+        return {"enabled": True}
+
+    collector_type, mode, urls, metrics_file = _classify_gpu_telemetry_items(
+        cli.gpu_telemetry,
+        local_keywords=_local_collector_keywords(),
+        collector_type=cli._gpu_telemetry_collector_type,
+        mode=cli._gpu_telemetry_mode,
+    )
+
     cli._gpu_telemetry_collector_type = collector_type
     cli._gpu_telemetry_mode = mode
 
-    # Warn when a local collector is paired with non-localhost server URLs:
-    # the local agent only measures the host machine, not the inference
-    # server's GPUs. "Local" comes from plugin metadata (``is_local: true``),
-    # same registry consulted by ``_local_collector_keywords``.
-    is_local = plugins.get_gpu_telemetry_collector_metadata(collector_type).is_local
-    if is_local and cli.urls:
-        non_local = [u for u in cli.urls if not _is_localhost_url(u)]
-        if non_local:
-            AIPerfLogger(__name__).warning(
-                f"Using {collector_type} for GPU telemetry with non-localhost "
-                f"server URL(s): {non_local}. {collector_type} collects GPU "
-                "metrics from the local machine only. If the inference server "
-                "is running remotely, the GPU telemetry will not reflect the "
-                "server's GPU usage. Consider using DCGM mode with the "
-                "server's metrics endpoint instead."
-            )
+    _warn_if_local_collector_with_remote_urls(collector_type, cli.urls or [])
 
     gpu_telemetry: dict[str, Any] = {
         "enabled": True,
@@ -243,57 +263,42 @@ def build_otel(cli: CLIConfig) -> dict[str, Any]:
     return otel
 
 
-def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
-    """Translate MLflow CLI flags into the first-class MLflow config dict.
+_MLFLOW_SECONDARY_FIELDS = (
+    "mlflow_experiment",
+    "mlflow_run_name",
+    "mlflow_tags",
+    "mlflow_parent_run_id",
+    "mlflow_artifact_globs",
+)
 
-    Ports v1 ``_validate_mlflow_config``: refuses secondary MLflow flags
-    without ``--mlflow-tracking-uri``, rejects empty strings on
-    tracking_uri/experiment/artifact_glob entries, and normalizes
-    whitespace on tracking_uri/experiment/run_name/artifact_globs.
-    """
+
+def _normalize_mlflow_artifact_globs(cli: CLIConfig) -> list[str] | None:
+    if "mlflow_artifact_globs" not in cli.model_fields_set:
+        return None
+    if cli.mlflow_artifact_globs is None:
+        return None
+    normalized: list[str] = []
+    for glob in cli.mlflow_artifact_globs:
+        stripped = glob.strip()
+        if not stripped:
+            raise ValueError("--mlflow-artifact-glob entries cannot be empty.")
+        normalized.append(stripped)
+    return normalized
+
+
+def _normalize_mlflow_tracking_uri(cli: CLIConfig) -> str | None:
+    if "mlflow_tracking_uri" not in cli.model_fields_set:
+        return None
+    if cli.mlflow_tracking_uri is None:
+        return None
+    stripped = cli.mlflow_tracking_uri.strip()
+    if not stripped:
+        raise ValueError("--mlflow-tracking-uri cannot be empty.")
+    return stripped
+
+
+def _apply_mlflow_secondary_fields(out: dict[str, Any], cli: CLIConfig) -> None:
     cli_set = cli.model_fields_set
-
-    # Normalize artifact-glob entries first so an "empty glob" error
-    # surfaces before the missing-tracking-uri error.
-    artifact_globs: list[str] | None = None
-    if "mlflow_artifact_globs" in cli_set and cli.mlflow_artifact_globs is not None:
-        normalized: list[str] = []
-        for glob in cli.mlflow_artifact_globs:
-            stripped = glob.strip()
-            if not stripped:
-                raise ValueError("--mlflow-artifact-glob entries cannot be empty.")
-            normalized.append(stripped)
-        artifact_globs = normalized
-
-    tracking_uri: str | None = None
-    if "mlflow_tracking_uri" in cli_set and cli.mlflow_tracking_uri is not None:
-        stripped_uri = cli.mlflow_tracking_uri.strip()
-        if not stripped_uri:
-            raise ValueError("--mlflow-tracking-uri cannot be empty.")
-        tracking_uri = stripped_uri
-
-    # Secondary flags require --mlflow-tracking-uri.
-    if tracking_uri is None:
-        secondary_present = any(
-            key in cli_set
-            for key in (
-                "mlflow_experiment",
-                "mlflow_run_name",
-                "mlflow_tags",
-                "mlflow_parent_run_id",
-                "mlflow_artifact_globs",
-            )
-        )
-        if secondary_present:
-            raise ValueError(
-                "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
-                "--mlflow-artifact-glob, and --mlflow-parent-run-id require "
-                "--mlflow-tracking-uri to be set."
-            )
-        return {}
-
-    out: dict[str, Any] = {"tracking_uri": tracking_uri}
-
     if "mlflow_experiment" in cli_set and cli.mlflow_experiment is not None:
         experiment = cli.mlflow_experiment.strip()
         if not experiment:
@@ -311,7 +316,35 @@ def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
         out["tags"] = cli.mlflow_tags
     if "mlflow_parent_run_id" in cli_set:
         out["parent_run_id"] = cli.mlflow_parent_run_id
+
+
+def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
+    """Translate MLflow CLI flags into the first-class MLflow config dict.
+
+    Ports v1 ``_validate_mlflow_config``: refuses secondary MLflow flags
+    without ``--mlflow-tracking-uri``, rejects empty strings on
+    tracking_uri/experiment/artifact_glob entries, and normalizes
+    whitespace on tracking_uri/experiment/run_name/artifact_globs.
+    """
+    # Normalize artifact-glob entries first so an "empty glob" error
+    # surfaces before the missing-tracking-uri error.
+    artifact_globs = _normalize_mlflow_artifact_globs(cli)
+    tracking_uri = _normalize_mlflow_tracking_uri(cli)
+
+    if tracking_uri is None:
+        secondary_present = any(
+            key in cli.model_fields_set for key in _MLFLOW_SECONDARY_FIELDS
+        )
+        if secondary_present:
+            raise ValueError(
+                "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
+                "--mlflow-artifact-glob, and --mlflow-parent-run-id require "
+                "--mlflow-tracking-uri to be set."
+            )
+        return {}
+
+    out: dict[str, Any] = {"tracking_uri": tracking_uri}
+    _apply_mlflow_secondary_fields(out, cli)
     if artifact_globs is not None:
         out["artifact_globs"] = artifact_globs
-
     return out

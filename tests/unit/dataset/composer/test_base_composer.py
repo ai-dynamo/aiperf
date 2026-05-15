@@ -130,7 +130,7 @@ class TestBaseDatasetComposer:
 
         # Sample must come from one of the configured pairs.
         assert result in [(100, 25), (200, 50)]
-        # And must be cached for re-use within the same turn.
+        # And must be cached for reuse within the same turn.
         assert composer._turn_sequence_cache[turn_id] == result
 
     def test_get_turn_sequence_lengths_without_distribution(
