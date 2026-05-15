@@ -53,6 +53,10 @@ def test_local_collector_discovered_dynamically_from_plugin_metadata() -> None:
     class FakeLocalCollector:
         """Placeholder class - never instantiated; only the registration matters."""
 
+        @classmethod
+        def validate_environment(cls) -> None:
+            """No-op: the fake collector has no native binding to probe."""
+
     # The enum is built at import time, so runtime registration via
     # mock_plugin alone is not visible to ``for member in
     # GPUTelemetryCollectorType``. Mirror the registry into the enum and
@@ -63,13 +67,7 @@ def test_local_collector_discovered_dynamically_from_plugin_metadata() -> None:
             "gpu_telemetry_collector",
             fake_name,
             FakeLocalCollector,
-            metadata={
-                "is_local": True,
-                # Use a stdlib module so the import probe succeeds without
-                # touching the patched ``import_module`` machinery.
-                "import_module": "json",
-                "install_hint": "fake collector not installed",
-            },
+            metadata={"is_local": True},
         ):
             # 1. Selection: keyword resolves to the new enum member.
             config = _make_aiperf_config(gpu_telemetry=[fake_name])

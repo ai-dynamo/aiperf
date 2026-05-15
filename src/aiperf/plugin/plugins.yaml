@@ -1073,7 +1073,7 @@ plot:
 # GPU Telemetry Collector
 # =============================================================================
 # GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
-# Supports DCGM HTTP endpoints and pynvml Python library.
+# Supports DCGM HTTP endpoints and plugin-defined local collectors.
 # One-to-one mapping based on gpu_telemetry_collector configuration.
 # =============================================================================
 gpu_telemetry_collector:
@@ -1087,7 +1087,6 @@ gpu_telemetry_collector:
       PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
     metadata:
       is_local: true
-      install_hint: "pynvml package not installed. Install with: pip install nvidia-ml-py"
   amdsmi:
     class: aiperf.gpu_telemetry.amdsmi_collector:AMDSMITelemetryCollector
     description: |
@@ -1095,10 +1094,6 @@ gpu_telemetry_collector:
       Uses the amdsmi Python library shipped with ROCm.
     metadata:
       is_local: true
-      install_hint: >-
-        amdsmi package not installed. The amdsmi Python bindings ship with ROCm;
-        install from /opt/rocm/share/amd_smi/amdsmi-*.whl or your distro's
-        amd-smi-lib package.
 
 # =============================================================================
 # Accuracy Graders

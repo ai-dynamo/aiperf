@@ -158,6 +158,16 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         collector_id: Unique identifier for this collector instance
     """
 
+    @classmethod
+    def validate_environment(cls) -> None:
+        """Verify that amdsmi bindings are importable before config succeeds."""
+        if amdsmi is None:
+            raise RuntimeError(
+                "amdsmi package not installed. The amdsmi Python bindings ship "
+                "with ROCm; install from /opt/rocm/share/amd_smi/amdsmi-*.whl "
+                "or your distro's amd-smi-lib package."
+            )
+
     def __init__(
         self,
         collection_interval: float = Environment.GPU.COLLECTION_INTERVAL,

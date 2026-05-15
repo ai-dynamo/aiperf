@@ -9,7 +9,6 @@ GPU Telemetry - Live or replayed GPU metrics collection configuration.
 
 from __future__ import annotations
 
-from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -125,14 +124,15 @@ class GpuTelemetryConfig(BaseConfig):
         - Local collectors (``is_local: true`` in plugin metadata) cannot be
           paired with DCGM URLs — they collect on the local host and the two
           modes are mutually exclusive.
-        - For local collectors, probe the declared ``import_module`` so a
-          missing native binding surfaces the plugin's ``install_hint``
-          rather than an unrelated traceback later.
+        - For local collectors, defer to the collector class's
+          ``validate_environment`` classmethod so native-binding probes live
+          alongside the implementation that needs them.
         """
         if not self.enabled:
             return self
 
         from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
 
         meta = plugins.get_gpu_telemetry_collector_metadata(self.collector)
         if not meta.is_local:
@@ -145,11 +145,12 @@ class GpuTelemetryConfig(BaseConfig):
                 "DCGM endpoints, not both."
             )
 
-        module_name = meta.import_module or str(self.collector)
+        collector_cls = plugins.get_class(
+            PluginType.GPU_TELEMETRY_COLLECTOR, str(self.collector)
+        )
         try:
-            import_module(module_name)
-        except (ImportError, OSError) as e:
-            hint = meta.install_hint or f"{module_name} package not installed."
-            raise ValueError(hint) from e
+            collector_cls.validate_environment()
+        except RuntimeError as e:
+            raise ValueError(str(e)) from e
 
         return self

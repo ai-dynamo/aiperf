@@ -53,6 +53,10 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         collector_id: Unique identifier for this collector instance
     """
 
+    @classmethod
+    def validate_environment(cls) -> None:
+        """Remote HTTP collector — no local environment to validate."""
+
     def __init__(
         self,
         dcgm_url: str,
