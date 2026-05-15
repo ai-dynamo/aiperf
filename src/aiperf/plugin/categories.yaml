@@ -295,6 +295,7 @@ plot:
 
 gpu_telemetry_collector:
   protocol: aiperf.gpu_telemetry.protocols:GPUTelemetryCollectorProtocol
+  metadata_class: aiperf.plugin.schema.schemas:GPUTelemetryCollectorMetadata
   enum: GPUTelemetryCollectorType
   description: |
     GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.

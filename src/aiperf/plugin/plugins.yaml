@@ -1055,11 +1055,20 @@ gpu_telemetry_collector:
     class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
     description: |
       PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
+    metadata:
+      is_local: true
+      install_hint: "pynvml package not installed. Install with: pip install nvidia-ml-py"
   amdsmi:
     class: aiperf.gpu_telemetry.amdsmi_collector:AMDSMITelemetryCollector
     description: |
       AMDSMI telemetry collector for AMD ROCm GPUs (Instinct MI300X, MI355X, etc.).
       Uses the amdsmi Python library shipped with ROCm.
+    metadata:
+      is_local: true
+      install_hint: >-
+        amdsmi package not installed. The amdsmi Python bindings ship with ROCm;
+        install from /opt/rocm/share/amd_smi/amdsmi-*.whl or your distro's
+        amd-smi-lib package.
 
 # =============================================================================
 # Accuracy Graders

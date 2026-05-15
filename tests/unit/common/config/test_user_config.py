@@ -393,6 +393,73 @@ class TestGPUTelemetryConfig:
         ):
             make_config(gpu_telemetry=["amdsmi"])
 
+    def test_local_collector_discovered_dynamically_from_plugin_metadata(self) -> None:
+        """A runtime-registered local collector flows through --gpu-telemetry end-to-end.
+
+        Proves the refactor's premise: classifier, conflict check, import probe, and
+        the "Invalid GPU telemetry item" error message all derive from plugin metadata
+        rather than hard-coded collector names. Registers a fake local collector via
+        ``mock_plugin``, extends the dynamic enum to mirror the registry, then walks
+        the four behaviors that should fall out for free.
+        """
+        from tests.harness import mock_plugin
+
+        fake_name = "fake_local_gpu"
+        fake_enum_member = "FAKE_LOCAL_GPU"
+
+        class FakeLocalCollector:
+            """Placeholder class — never instantiated; only the registration matters."""
+
+        # The enum is built at import time, so runtime registration via mock_plugin
+        # alone is not visible to ``for member in GPUTelemetryCollectorType``.
+        # Mirror the registry into the enum, and tear it back down afterwards.
+        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
+        try:
+            with mock_plugin(
+                "gpu_telemetry_collector",
+                fake_name,
+                FakeLocalCollector,
+                metadata={
+                    "is_local": True,
+                    # Use a stdlib module so the import probe succeeds without
+                    # touching the patched ``import_module`` machinery.
+                    "import_module": "json",
+                    "install_hint": "fake collector not installed",
+                },
+            ):
+                # 1. Selection: the new keyword resolves to the new enum member.
+                config = make_config(gpu_telemetry=[fake_name])
+                assert config.gpu_telemetry_collector_type == GPUTelemetryCollectorType(
+                    fake_name
+                )
+
+                # 2. Conflict detection generalizes to the new collector.
+                sys.modules["pynvml"] = type(sys)("pynvml")
+                try:
+                    with pytest.raises(
+                        ValidationError,
+                        match="Conflicting local GPU telemetry collectors",
+                    ):
+                        make_config(gpu_telemetry=["pynvml", fake_name])
+                finally:
+                    sys.modules.pop("pynvml", None)
+
+                # 3. Local-vs-URL guardrail generalizes to the new collector.
+                with pytest.raises(
+                    ValidationError,
+                    match=f"Cannot use {fake_name} with DCGM URLs",
+                ):
+                    make_config(gpu_telemetry=[fake_name, "http://localhost:9400"])
+
+                # 4. Error message for unrecognized items advertises the new keyword.
+                with pytest.raises(
+                    ValidationError, match=f"Invalid GPU telemetry item.*'{fake_name}'"
+                ) as exc_info:
+                    make_config(gpu_telemetry=["not_a_real_keyword"])
+                assert f"'{fake_name}'" in str(exc_info.value)
+        finally:
+            GPUTelemetryCollectorType._extensions.pop(fake_enum_member, None)
+
     def test_urls_extraction(self):
         """Test that only http URLs are extracted from gpu_telemetry list."""
         config = make_config(

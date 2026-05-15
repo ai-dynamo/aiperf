@@ -449,3 +449,49 @@ class ServiceMetadata(BaseModel):
         default=False,
         description="Whether the service can have multiple instances running in parallel.",
     )
+
+
+class GPUTelemetryCollectorMetadata(BaseModel):
+    """Metadata schema for GPU telemetry collector plugins.
+
+    Declares whether a collector runs against the local host (vs. scraping
+    remote DCGM endpoints) and, when local, the Python module that must be
+    importable for it to work plus the install hint surfaced on import
+    failure. Used by ``UserConfig`` to classify ``--gpu-telemetry`` items
+    and validate native-binding presence without hard-coding collector
+    identities into the config layer.
+
+    Local collectors are selected on the CLI by their registered plugin name
+    (e.g. ``--gpu-telemetry pynvml``); there is no separate keyword field.
+
+    Referenced by: categories.yaml gpu_telemetry_collector.metadata_class
+    Used in: plugins.yaml gpu_telemetry_collector entries
+    """
+
+    is_local: bool = Field(
+        default=False,
+        description=(
+            "Whether this collector runs in-process against the local host. "
+            "Local collectors are selected on the CLI by their plugin name "
+            "(e.g. --gpu-telemetry pynvml) and conflict with remote DCGM URLs. "
+            "Remote collectors (e.g. DCGM) take HTTP(S) endpoint URLs instead."
+        ),
+    )
+    import_module: str | None = Field(
+        default=None,
+        description=(
+            "Python module that must be importable for this collector to function. "
+            "Probed via importlib.import_module during config validation; "
+            "ImportError or OSError raises the install_hint message. "
+            "Only meaningful for local collectors. "
+            "Defaults to the plugin name when unset."
+        ),
+    )
+    install_hint: str | None = Field(
+        default=None,
+        description=(
+            "User-facing error message shown when import_module fails. "
+            "Should describe how to install the required Python bindings "
+            "(e.g. pip command or distro package name)."
+        ),
+    )
