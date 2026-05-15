@@ -227,6 +227,53 @@ class TestImageEditEndpoint:
         assert "mask" not in payload
         assert payload["size"] == "512x512"
 
+    def test_format_payload_extra_body_merged_after_endpoint_extra(self) -> None:
+        model_endpoint = create_model_endpoint(
+            EndpointType.IMAGE_EDIT,
+            model_name="black-forest-labs/FLUX.2-klein-4B",
+            extra=[("size", "512x512"), ("seed", 1)],
+        )
+        ep = create_endpoint_with_mock_transport(ImageEditEndpoint, model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["edit"])],
+            images=[Image(contents=[_PNG_DATA_URL])],
+            extra_body={"seed": 2, "guidance_scale": 4.0},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = ep.format_payload(request_info)
+
+        assert payload["size"] == "512x512"
+        assert payload["seed"] == 2
+        assert payload["guidance_scale"] == 4.0
+
+    def test_format_payload_uses_dispatching_turn(
+        self, endpoint, model_endpoint
+    ) -> None:
+        parent_turn = Turn(
+            texts=[Text(contents=["parent edit"])],
+            images=[Image(contents=[_PNG_DATA_URL])],
+            model="parent-model",
+            extra_body={"seed": 1},
+        )
+        child_turn = Turn(
+            texts=[Text(contents=["child edit"])],
+            images=[Image(contents=["https://example.com/child.png"])],
+            model="child-model",
+            extra_body={"seed": 2},
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[parent_turn, child_turn]
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == "child edit"
+        assert payload["model"] == "child-model"
+        assert payload["url"] == "https://example.com/child.png"
+        assert "image" not in payload
+        assert payload["seed"] == 2
+
     def test_format_payload_non_image_data_url_mime_ignored(
         self, endpoint, model_endpoint
     ) -> None:
@@ -287,7 +334,7 @@ class TestImageEditEndpoint:
         """Turn without a text prompt is rejected up front."""
         turn = Turn(texts=[], images=[Image(contents=[_PNG_DATA_URL])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
-        with pytest.raises(ValueError, match="requires text prompt"):
+        with pytest.raises(ValueError, match="requires a text prompt"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_no_image_raises(self, endpoint, model_endpoint) -> None:

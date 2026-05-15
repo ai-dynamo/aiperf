@@ -107,6 +107,55 @@ class TestTemplateEndpointFormatPayload:
 
         assert payload["model"] == template_model_endpoint.primary_model_name
 
+    def test_format_payload_uses_dispatching_turn(self):
+        template = '{"text": {{ text|tojson }}, "model": {{ model|tojson }}, "max_tokens": {{ max_tokens }}}'
+        model_endpoint = create_model_endpoint(
+            EndpointType.TEMPLATE,
+            extra=[("payload_template", template)],
+        )
+        endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
+        parent_turn = Turn(
+            texts=[Text(contents=["parent text"])], model="parent-model", max_tokens=10
+        )
+        child_turn = Turn(
+            texts=[Text(contents=["child text"])], model="child-model", max_tokens=20
+        )
+
+        payload = endpoint.format_payload(
+            create_request_info(
+                model_endpoint=model_endpoint, turns=[parent_turn, child_turn]
+            )
+        )
+
+        assert payload == {
+            "text": "child text",
+            "model": "child-model",
+            "max_tokens": 20,
+        }
+
+    def test_extra_body_shallow_merges_after_endpoint_extra(self):
+        template = '{"text": {{ text|tojson }}, "seed": 1}'
+        model_endpoint = create_model_endpoint(
+            EndpointType.TEMPLATE,
+            extra=[("payload_template", template), ("temperature", 0.7), ("seed", 2)],
+        )
+        endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["test"])],
+            extra_body={"seed": 3, "vendor_flag": True},
+        )
+
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        assert payload == {
+            "text": "test",
+            "temperature": 0.7,
+            "seed": 3,
+            "vendor_flag": True,
+        }
+
     def test_named_template_nv_embedqa(self):
         """Test nv-embedqa named template."""
         model_endpoint = create_model_endpoint(

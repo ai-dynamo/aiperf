@@ -762,12 +762,12 @@ def test_turn_with_prerequisites_via_explicit_metadata_phase3_accepted():
 
 
 # ---------------------------------------------------------------------------
-# 11. extra_body deeply nested round-trip
+# 11. extra deeply nested round-trip
 # ---------------------------------------------------------------------------
 
 
-def test_extra_body_deeply_nested_round_trips_through_loader(tmp_path: Path):
-    """Deeply nested ``extra_body`` survives the loader unchanged."""
+def test_extra_deeply_nested_round_trips_through_loader(tmp_path: Path):
+    """Deeply nested ``extra`` survives the loader unchanged."""
     extras = {
         "sampling": {
             "temperature": 0.7,
@@ -789,7 +789,7 @@ def test_extra_body_deeply_nested_round_trips_through_loader(tmp_path: Path):
                 "turns": [
                     {
                         "messages": [{"role": "user", "content": "u"}],
-                        "extra_body": extras,
+                        "extra": extras,
                     }
                 ],
             }

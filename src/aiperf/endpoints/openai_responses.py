@@ -185,10 +185,11 @@ class ResponsesEndpoint(BaseEndpoint):
         input_items.extend(self.build_messages(turns))
 
         # Conversation-level fields walk turns from the end so FORK-mode
-        # children whose final turn lacks max_tokens/model/tools still
-        # inherit the parent's intent.
-        model_name = self._latest_turn_attr(turns, "model")
-        extra_body = self._latest_turn_attr(turns, "extra_body")
+        # children whose final turn lacks model/tools still inherit the parent's
+        # intent. Per-request overrides stay scoped to the dispatching turn.
+        model_name = turns[-1].model
+        max_tokens = turns[-1].max_tokens
+        extra_body = turns[-1].extra_body
 
         payload: dict[str, Any] = {
             "input": input_items,
@@ -197,7 +198,7 @@ class ResponsesEndpoint(BaseEndpoint):
         }
         for key, value in (
             ("instructions", request_info.system_message or None),
-            ("max_output_tokens", self._latest_turn_attr(turns, "max_tokens")),
+            ("max_output_tokens", max_tokens),
             ("tools", self._latest_turn_attr(turns, "raw_tools")),
         ):
             if value is not None:

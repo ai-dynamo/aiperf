@@ -25,6 +25,22 @@ def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
             )
 
 
+def _has_any_modality(row: Any) -> bool:
+    """True when ``row`` has any of the multimodal content fields populated."""
+    return any(
+        (
+            row.text,
+            row.texts,
+            row.image,
+            row.images,
+            row.audio,
+            row.audios,
+            row.video,
+            row.videos,
+        )
+    )
+
+
 class SingleTurn(AIPerfBaseModel):
     """Defines the schema for single-turn data.
 
@@ -82,9 +98,9 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
-    extra_body: dict[str, Any] | None = Field(
+    extra: dict[str, Any] | None = Field(
         default=None,
-        description="Per-turn extra fields shallow-merged into the request body at dispatch time, matching the OpenAI SDK's extra_body convention. Keys override formatter defaults on collision.",
+        description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
 
     @model_validator(mode="after")
@@ -105,18 +121,7 @@ class SingleTurn(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
-        if not any(
-            [
-                self.text,
-                self.texts,
-                self.image,
-                self.images,
-                self.audio,
-                self.audios,
-                self.video,
-                self.videos,
-            ]
-        ):
+        if not _has_any_modality(self):
             raise ValueError("At least one modality must be provided")
         return self
 
@@ -199,18 +204,7 @@ class RandomPool(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "RandomPool":
         """Ensure at least one modality is provided"""
-        if not any(
-            [
-                self.text,
-                self.texts,
-                self.image,
-                self.images,
-                self.audio,
-                self.audios,
-                self.video,
-                self.videos,
-            ]
-        ):
+        if not _has_any_modality(self):
             raise ValueError("At least one modality must be provided")
         return self
 
@@ -275,9 +269,9 @@ class MooncakeTrace(AIPerfBaseModel):
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"
     )
-    extra_body: dict[str, Any] | None = Field(
+    extra: dict[str, Any] | None = Field(
         default=None,
-        description="Per-turn extra fields shallow-merged into the request body at dispatch time, matching the OpenAI SDK's extra_body convention. Keys override formatter defaults on collision.",
+        description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
 
     @model_validator(mode="after")
@@ -321,19 +315,8 @@ class MooncakeTrace(AIPerfBaseModel):
                 raise ValueError("'tools' is only allowed when 'messages' is provided")
             if not self.tools:
                 raise ValueError("'tools' must be a non-empty list")
-
-        if self.messages is None:
-            return self
-
-        if not self.messages:
-            raise ValueError("'messages' must be a non-empty list")
-
-        for i, msg in enumerate(self.messages):
-            if not isinstance(msg, dict) or "role" not in msg:
-                raise ValueError(
-                    f"Each message must have a 'role' key, but message at index {i} does not"
-                )
-
+        if self.messages is not None:
+            validate_chat_messages(self.messages)
         return self
 
 

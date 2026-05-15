@@ -92,7 +92,7 @@ Use `--custom-dataset-type dag_jsonl`. Each line of the input file is one conver
 
 ### Per-turn shape
 
-Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra_body`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
+Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
 
 ```jsonc
 {
@@ -106,7 +106,7 @@ Each turn is a flat object validated against a strict schema (`DagTurn` in `src/
   "tools": [ ... ],           // optional
 
   // --- everything else goes here ---
-  "extra_body": {
+  "extra": {
     "temperature": 0.7,
     "top_p": 0.9,
     "seed": 42,
@@ -132,9 +132,9 @@ Each turn is a flat object validated against a strict schema (`DagTurn` in `src/
 
 `spawns` entries may be plain strings or `DagSpawn` objects (`{"children": [...], "join_at": <turn_index>}`). A bare string `"x"` is shorthand for `{"children": ["x"], "join_at": <spawn_turn> + 1}` — the parent suspends immediately on the next turn. The object form lets the parent run turns `[spawn_turn+1 .. join_at-1]` concurrently with the spawned children, then gates on `join_at`. `join_at` must be strictly greater than the spawning turn index and less than the conversation's total turn count.
 
-**Native vs. extra_body.** The top-level whitelist matches AIPerf's native `Turn` concepts (`messages`, `model`, `max_tokens`, `tools`) — the same fields AIPerf already tracks per-turn for any dataset. Anything else — sampling knobs (`temperature`, `top_p`, `seed`, `stop`, `logprobs`), response shaping (`response_format`), vendor tunables (`ignore_eos`, `min_tokens`, `top_k`) — lives in `extra_body`. At dispatch time the `extra_body` keys are merged into the top level of the wire body (matching the OpenAI SDK's `extra_body=` keyword), so name them exactly as the server expects.
+**Native vs. extra.** The top-level whitelist matches AIPerf's native `Turn` concepts (`messages`, `model`, `max_tokens`, `tools`) — the same fields AIPerf already tracks per-turn for any dataset. Anything else — sampling knobs (`temperature`, `top_p`, `seed`, `stop`, `logprobs`), response shaping (`response_format`), vendor tunables (`ignore_eos`, `min_tokens`, `top_k`) — lives in `extra`. At dispatch time the `extra` keys are merged into the top level of the wire body, so name them exactly as the server expects.
 
-**What gets sent on the wire.** Structural keys (`forks`, `spawns`, `delay`) are consumed by the scheduler; every native field and everything under `extra_body` is forwarded to the chat-completions request body.
+**What gets sent on the wire.** Structural keys (`forks`, `spawns`, `delay`) are consumed by the scheduler; every native field and everything under `extra` is forwarded to the chat-completions request body.
 
 **Message shape.** Each entry in `messages` is a free-form dict — the only structural requirement is a `role` key, matching `MooncakeTrace`. `content` may be a string, a list of OpenAI multimodal parts (e.g. `[{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "..."}}]`), or omitted for assistant messages that are purely `tool_calls`. Paste whatever the server expects; AIPerf forwards it verbatim onto the wire.
 
@@ -218,7 +218,7 @@ Both shorthands may appear on the same turn. The loader disambiguates the genera
 
 ### `max_tokens` and other OpenAI fields
 
-`max_tokens`, `model`, and `tools` are AIPerf-native Turn fields and sit at the top level of the turn. For any other OpenAI chat-completions parameter — `temperature`, `top_p`, `seed`, `stop`, `response_format`, `logprobs`, etc. — put it in `extra_body`. Vendor-specific knobs (`ignore_eos`, `min_tokens`, `top_k`, …) go in the same place and are merged into the top level of the wire body at dispatch time, matching the CLI's `--extra-inputs` convention.
+`max_tokens`, `model`, and `tools` are AIPerf-native Turn fields and sit at the top level of the turn. For any other OpenAI chat-completions parameter — `temperature`, `top_p`, `seed`, `stop`, `response_format`, `logprobs`, etc. — put it in `extra`. Vendor-specific knobs (`ignore_eos`, `min_tokens`, `top_k`, …) go in the same place and are merged into the top level of the wire body at dispatch time, matching the CLI's `--extra-inputs` convention.
 
 ## Reference: accumulation semantics (pure append)
 

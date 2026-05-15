@@ -124,7 +124,7 @@ def test_message_missing_role_rejected(tmp_path):
         DagJsonlLoader(path).load()
 
 
-def test_extra_body_stored_on_turn(tmp_path):
+def test_extra_stored_on_turn(tmp_path):
     """Non-native fields (sampling params, vendor knobs) live on Turn.extra_body
     and are merged into the top of the wire body at dispatch time by the
     endpoint."""
@@ -137,7 +137,7 @@ def test_extra_body_stored_on_turn(tmp_path):
                     {
                         "messages": [{"role": "user", "content": "u"}],
                         "max_tokens": 100,
-                        "extra_body": {
+                        "extra": {
                             "temperature": 0.7,
                             "top_p": 0.9,
                             "seed": 42,
@@ -159,6 +159,28 @@ def test_extra_body_stored_on_turn(tmp_path):
         "ignore_eos": True,
         "min_tokens": 50,
     }
+
+
+def test_extra_body_rejected(tmp_path):
+    """DagTurn uses ``extra='forbid'``, so a typo'd ``extra_body`` surfaces as
+    a load-time Pydantic error rather than silently shadowing the supported
+    ``extra`` field."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "root",
+                "turns": [
+                    {
+                        "messages": [{"role": "user", "content": "u"}],
+                        "extra_body": {"temperature": 0.7},
+                    }
+                ],
+            }
+        ],
+    )
+    with pytest.raises(DagLoadError, match="extra_body"):
+        DagJsonlLoader(path).load()
 
 
 def test_flat_extras_populate_native_turn_fields(tmp_path):
@@ -193,7 +215,7 @@ def test_flat_extras_populate_native_turn_fields(tmp_path):
 
 def test_non_native_field_at_top_level_rejected(tmp_path):
     """Sampling params like `temperature` are not aiperf-native Turn fields;
-    they must go in extra_body, not at the top level of a turn."""
+    they must go in extra, not at the top level of a turn."""
     path = write_lines(
         tmp_path,
         [

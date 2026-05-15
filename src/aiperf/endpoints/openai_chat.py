@@ -60,15 +60,13 @@ class ChatEndpoint(BaseEndpoint):
             )
         messages.extend(rendered)
 
-        # Conversation-level fields (model, tools, max_tokens, extra_body)
-        # walk from the end and pick the most recent non-None value. This
-        # matters for FORK-mode DAG children whose final turn is the child
-        # user turn (typically without tools/max_tokens) but the parent
-        # turns earlier in ``turns`` carry the author's tool/limit intent.
+        # Conversation-level fields walk from the end and pick the most recent
+        # non-None value. Per-request overrides stay scoped to the dispatching
+        # turn so DAG children do not inherit parent limits or vendor knobs.
         raw_tools = self._latest_turn_attr(turns, "raw_tools")
-        max_tokens = self._latest_turn_attr(turns, "max_tokens")
-        extra_body = self._latest_turn_attr(turns, "extra_body")
-        model_name = self._latest_turn_attr(turns, "model")
+        max_tokens = turns[-1].max_tokens
+        extra_body = turns[-1].extra_body
+        model_name = turns[-1].model
 
         payload: dict[str, Any] = {
             "messages": messages,

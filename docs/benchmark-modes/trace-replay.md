@@ -51,7 +51,7 @@ Required fields for trace replay:
 - `output_length`: Number of output tokens
 - `hash_ids`: List of block hashes (optional)
 - `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
-- `extra_body`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch (matches OpenAI SDK `extra_body=` semantics); user-supplied keys win over `--extra-inputs`.
+- `extra`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch; user-supplied keys win over `--extra-inputs`.
 
 Example entry:
 

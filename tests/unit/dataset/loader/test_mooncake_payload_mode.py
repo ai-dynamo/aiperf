@@ -13,17 +13,17 @@ from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 
 
-def test_mooncake_trace_accepts_extra_body():
+def test_mooncake_trace_accepts_extra():
     t = MooncakeTrace(
         text_input="Hello",
-        extra_body={"vendor_top_k": 5, "ignore_eos": True},
+        extra={"vendor_top_k": 5, "ignore_eos": True},
     )
-    assert t.extra_body == {"vendor_top_k": 5, "ignore_eos": True}
+    assert t.extra == {"vendor_top_k": 5, "ignore_eos": True}
 
 
-def test_mooncake_trace_extra_body_defaults_to_none():
+def test_mooncake_trace_extra_defaults_to_none():
     t = MooncakeTrace(text_input="Hello")
-    assert t.extra_body is None
+    assert t.extra is None
 
 
 @pytest.fixture
@@ -152,7 +152,7 @@ class TestMooncakeTraceLoaderPayload:
         with pytest.raises(ValueError, match="payload.*messages|messages.*payload"):
             loader.convert_to_conversations(loader.load_dataset())
 
-    def test_extra_body_propagates_to_turn_in_payload_mode(
+    def test_extra_propagates_to_turn_in_payload_mode(
         self,
         tmp_path: Path,
         default_user_config: UserConfig,
@@ -165,7 +165,7 @@ class TestMooncakeTraceLoaderPayload:
                     {
                         "timestamp": 0,
                         "payload": {"prompt": "p", "max_tokens": 40},
-                        "extra_body": {"vendor_x": 1, "stream": False},
+                        "extra": {"vendor_x": 1, "stream": False},
                     }
                 )
             )

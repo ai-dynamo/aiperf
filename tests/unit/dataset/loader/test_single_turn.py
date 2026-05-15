@@ -24,16 +24,16 @@ class TestSingleTurn:
         assert data.texts is None
         assert data.type == CustomDatasetType.SINGLE_TURN
 
-    def test_single_turn_accepts_extra_body(self):
+    def test_single_turn_accepts_extra(self):
         data = SingleTurn(
             text="What is deep learning?",
-            extra_body={"top_p": 0.9, "seed": 42},
+            extra={"top_p": 0.9, "seed": 42},
         )
-        assert data.extra_body == {"top_p": 0.9, "seed": 42}
+        assert data.extra == {"top_p": 0.9, "seed": 42}
 
-    def test_single_turn_extra_body_defaults_to_none(self):
+    def test_single_turn_extra_defaults_to_none(self):
         data = SingleTurn(text="What is deep learning?")
-        assert data.extra_body is None
+        assert data.extra is None
 
     def test_create_with_multimodal_data(self):
         """Test creating SingleTurn with text and image."""
@@ -936,15 +936,13 @@ class TestSingleTurnSessionId:
         assert conversations[0].context_mode is None
 
 
-def test_single_turn_loader_propagates_extra_body_to_turn(
-    tmp_path, default_user_config
-):
+def test_single_turn_loader_propagates_extra_to_turn(tmp_path, default_user_config):
     path = tmp_path / "single.jsonl"
     path.write_text(
         json.dumps(
             {
                 "text": "Hello",
-                "extra_body": {"vendor_a": 1, "vendor_b": "x"},
+                "extra": {"vendor_a": 1, "vendor_b": "x"},
             }
         )
         + "\n"

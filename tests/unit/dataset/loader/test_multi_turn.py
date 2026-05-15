@@ -637,7 +637,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert conversations[1].turns[0].texts[0].contents == ["Second"]
 
 
-def test_multi_turn_loader_propagates_per_inner_turn_extra_body(
+def test_multi_turn_loader_propagates_per_inner_turn_extra(
     tmp_path, default_user_config
 ):
     path = tmp_path / "multi.jsonl"
@@ -646,8 +646,8 @@ def test_multi_turn_loader_propagates_per_inner_turn_extra_body(
             {
                 "session_id": "s1",
                 "turns": [
-                    {"text": "Hello", "extra_body": {"vendor_a": 1}},
-                    {"text": "Hi", "extra_body": {"vendor_b": 2}},
+                    {"text": "Hello", "extra": {"vendor_a": 1}},
+                    {"text": "Hi", "extra": {"vendor_b": 2}},
                     {"text": "Bye"},
                 ],
             }

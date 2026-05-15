@@ -116,7 +116,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 delay=trace.delay,
                 max_tokens=trace.output_length,
                 raw_payload=trace.payload,
-                extra_body=trace.extra_body,
+                extra_body=trace.extra,
             )
         if trace.messages is not None:
             return Turn(
@@ -125,11 +125,11 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 max_tokens=trace.output_length,
                 raw_messages=trace.messages,
                 raw_tools=trace.tools,
-                extra_body=trace.extra_body,
+                extra_body=trace.extra,
             )
         turn = super()._build_turn(trace, prompt)
-        if trace.extra_body is not None:
-            turn.extra_body = trace.extra_body
+        if trace.extra is not None:
+            turn.extra_body = trace.extra
         return turn
 
     # ------------------------------------------------------------------

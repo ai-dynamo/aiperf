@@ -9,7 +9,7 @@ native Turn concepts (``messages``, ``model``, ``max_tokens``, ``tools``) plus
 three structural scheduling fields (``forks``, ``spawns``, ``delay``). Every
 other OpenAI chat-completions or vendor-specific parameter — temperature,
 top_p, seed, stop, ignore_eos, min_tokens, etc. — goes in
-:attr:`DagTurn.extra_body`, matching the CLI's ``--extra-inputs`` convention.
+:attr:`DagTurn.extra`, matching the CLI's ``--extra-inputs`` convention.
 
 Messages are stored as ``list[dict[str, Any]]`` with a lightweight validator
 (non-empty, each entry must have a ``role`` key), matching ``MooncakeTrace``.
@@ -95,8 +95,8 @@ class DagTurn(AIPerfBaseModel):
 
     Top-level fields are limited to AIPerf-native Turn concepts plus DAG
     scheduling keys. Any other OpenAI or vendor-specific parameter goes in
-    ``extra_body``, where keys are merged into the top level of the wire body
-    at dispatch time (matching the OpenAI SDK's ``extra_body=`` keyword and
+    ``extra``, where keys are merged into the top level of the wire body
+    at dispatch time (matching AIPerf's CLI ``--extra-inputs`` convention and
     AIPerf's CLI ``--extra-inputs`` convention).
 
     Unknown top-level keys are rejected.
@@ -128,7 +128,7 @@ class DagTurn(AIPerfBaseModel):
     )
 
     # --- Everything else (sampling params, vendor tunables) -----------------
-    extra_body: dict[str, Any] | None = Field(
+    extra: dict[str, Any] | None = Field(
         default=None,
         description="Non-native fields sent on the wire: temperature, top_p, "
         "seed, stop, logprobs, response_format, presence/frequency_penalty, "

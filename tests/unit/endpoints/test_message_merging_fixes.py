@@ -110,7 +110,6 @@ class TestConversationLevelFieldsInheritThroughFork:
             role="user",
             texts=[Text(contents=["help"])],
             raw_tools=tools,
-            max_tokens=128,
         )
         child_turn = Turn(role="user", texts=[Text(contents=["follow up"])])
         request_info = create_request_info(
@@ -119,10 +118,36 @@ class TestConversationLevelFieldsInheritThroughFork:
         )
         payload = chat_endpoint.format_payload(request_info)
         assert payload.get("tools") == tools
-        # Streaming endpoint -> max_completion_tokens (not legacy max_tokens).
-        assert payload.get("max_completion_tokens") == 128
 
-    def test_chat_extra_body_inherits_from_parent(self, chat_endpoint):
+    def test_chat_max_tokens_does_not_inherit_from_parent(self, chat_endpoint):
+        parent_turn = Turn(
+            role="user",
+            texts=[Text(contents=["help"])],
+            max_tokens=128,
+        )
+        child_turn = Turn(role="user", texts=[Text(contents=["follow up"])])
+        request_info = create_request_info(
+            model_endpoint=chat_endpoint.model_endpoint,
+            turns=[parent_turn, child_turn],
+        )
+        payload = chat_endpoint.format_payload(request_info)
+        assert "max_completion_tokens" not in payload
+
+    def test_chat_model_does_not_inherit_from_parent(self, chat_endpoint):
+        parent_turn = Turn(
+            role="user",
+            texts=[Text(contents=["help"])],
+            model="parent-model",
+        )
+        child_turn = Turn(role="user", texts=[Text(contents=["follow up"])])
+        request_info = create_request_info(
+            model_endpoint=chat_endpoint.model_endpoint,
+            turns=[parent_turn, child_turn],
+        )
+        payload = chat_endpoint.format_payload(request_info)
+        assert payload["model"] == chat_endpoint.model_endpoint.primary_model_name
+
+    def test_chat_extra_body_does_not_inherit_from_parent(self, chat_endpoint):
         parent_turn = Turn(
             role="user",
             texts=[Text(contents=["help"])],
@@ -134,9 +159,11 @@ class TestConversationLevelFieldsInheritThroughFork:
             turns=[parent_turn, child_turn],
         )
         payload = chat_endpoint.format_payload(request_info)
-        assert payload.get("custom_flag") is True
+        assert "custom_flag" not in payload
 
-    def test_responses_inherits_max_tokens(self, responses_endpoint):
+    def test_responses_max_tokens_does_not_inherit_from_parent(
+        self, responses_endpoint
+    ):
         parent_turn = Turn(
             role="user",
             texts=[Text(contents=["help"])],
@@ -148,7 +175,21 @@ class TestConversationLevelFieldsInheritThroughFork:
             turns=[parent_turn, child_turn],
         )
         payload = responses_endpoint.format_payload(request_info)
-        assert payload.get("max_output_tokens") == 256
+        assert "max_output_tokens" not in payload
+
+    def test_responses_model_does_not_inherit_from_parent(self, responses_endpoint):
+        parent_turn = Turn(
+            role="user",
+            texts=[Text(contents=["help"])],
+            model="parent-model",
+        )
+        child_turn = Turn(role="user", texts=[Text(contents=["follow up"])])
+        request_info = create_request_info(
+            model_endpoint=responses_endpoint.model_endpoint,
+            turns=[parent_turn, child_turn],
+        )
+        payload = responses_endpoint.format_payload(request_info)
+        assert payload["model"] == responses_endpoint.model_endpoint.primary_model_name
 
 
 # ---------------------------------------------------------------------------

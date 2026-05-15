@@ -63,7 +63,7 @@ def dag_turn(
 
     ``forks`` / ``spawns`` are passed through verbatim when supplied (the
     parent strategy resolves cross-conversation references). ``allow_extras``
-    toggles whether optional keys (``delay``, ``extra_body``) get drawn.
+    toggles whether optional keys (``delay``, ``extra``) get drawn.
     """
     turn: dict[str, Any] = {
         "messages": [draw(message_dict())],
@@ -76,7 +76,7 @@ def dag_turn(
         if draw(st.booleans()):
             turn["delay"] = float(draw(st.integers(min_value=0, max_value=200)))
         if draw(st.booleans()):
-            turn["extra_body"] = {
+            turn["extra"] = {
                 "temperature": draw(st.floats(min_value=0.0, max_value=2.0))
             }
     return turn

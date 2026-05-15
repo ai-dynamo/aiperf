@@ -44,7 +44,7 @@ class DagJsonlLoader(BaseFileLoader):
     One :class:`DagConversation` per line. Each turn is a :class:`DagTurn`
     carrying a required ``messages`` array plus an explicit whitelist of
     OpenAI chat-completions fields; vendor-specific fields go in
-    ``extra_body``. Unknown top-level keys are rejected at load time.
+    ``extra``. Unknown top-level keys are rejected at load time.
 
     Structural keys describe branching/scheduling (not sent on the wire):
 
@@ -279,7 +279,7 @@ class DagJsonlLoader(BaseFileLoader):
             raw_tools=list(t.tools) if t.tools is not None else None,
             model=t.model,
             max_tokens=t.max_tokens,
-            extra_body=dict(t.extra_body) if t.extra_body is not None else None,
+            extra_body=dict(t.extra) if t.extra is not None else None,
             delay=self._delay_cap_tracker.clamp(t.delay),
         )
 

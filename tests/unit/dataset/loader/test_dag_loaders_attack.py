@@ -330,8 +330,8 @@ def test_dag_jsonl_single_empty_content_message_accepted(tmp_path: Path):
     assert convs[0].turns[0].raw_messages[0]["content"] == ""
 
 
-def test_dag_jsonl_extra_body_five_level_nested_round_trips(tmp_path: Path):
-    """Five-level-deep ``extra_body`` survives the loader byte-identically."""
+def test_dag_jsonl_extra_five_level_nested_round_trips(tmp_path: Path):
+    """Five-level-deep ``extra`` survives the loader byte-identically."""
     deep = {
         "l1": {
             "l2": {
@@ -351,7 +351,7 @@ def test_dag_jsonl_extra_body_five_level_nested_round_trips(tmp_path: Path):
                 "turns": [
                     {
                         "messages": [{"role": "user", "content": "u"}],
-                        "extra_body": deep,
+                        "extra": deep,
                     }
                 ],
             }

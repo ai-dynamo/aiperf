@@ -155,15 +155,15 @@ def test_jsonl_unknown_top_level_conversation_field_rejected_with_line_no(
     assert "definitely_not_a_field" in msg or "Extra" in msg or "forbidden" in msg
 
 
-def test_jsonl_extreme_nesting_in_extra_body_accepted(tmp_path: Path):
-    """``extra_body`` holds an arbitrary JSON-shaped dict; orjson and pydantic
+def test_jsonl_extreme_nesting_in_extra_accepted(tmp_path: Path):
+    """``extra`` holds an arbitrary JSON-shaped dict; orjson and pydantic
     handle deeply-nested dicts without recursion-error stack blow up."""
     deep: dict = {"v": 1}
     for _ in range(500):
         deep = {"nested": deep}
     line = {
         "session_id": "a",
-        "turns": [{"messages": [{"role": "user", "content": "u"}], "extra_body": deep}],
+        "turns": [{"messages": [{"role": "user", "content": "u"}], "extra": deep}],
     }
     path = _write_bytes(tmp_path, json.dumps(line).encode())
     convs = DagJsonlLoader(filename=path).load()
@@ -175,15 +175,15 @@ def test_jsonl_extreme_nesting_in_extra_body_accepted(tmp_path: Path):
     assert cur == {"v": 1}
 
 
-def test_jsonl_large_extra_body_string_accepted(tmp_path: Path):
-    """A multi-megabyte string inside ``extra_body`` survives the loader."""
+def test_jsonl_large_extra_string_accepted(tmp_path: Path):
+    """A multi-megabyte string inside ``extra`` survives the loader."""
     blob = "x" * (2 * 1024 * 1024)  # 2 MiB
     line = {
         "session_id": "a",
         "turns": [
             {
                 "messages": [{"role": "user", "content": "u"}],
-                "extra_body": {"big": blob},
+                "extra": {"big": blob},
             }
         ],
     }
@@ -839,7 +839,7 @@ def test_dag_conversation_load_then_jsonl_roundtrip_through_models(tmp_path: Pat
             {
                 "messages": [{"role": "user", "content": "u0"}],
                 "spawns": [{"children": ["c"], "join_at": 2}],
-                "extra_body": {"temperature": 0.7, "ignore_eos": True},
+                "extra": {"temperature": 0.7, "ignore_eos": True},
                 "tools": [{"type": "function", "function": {"name": "f"}}],
             },
             _basic_turn("u1"),

@@ -155,11 +155,10 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def _latest_turn_attr(turns: list[Turn], attr: str) -> Any:
         """Walk ``turns`` from the end and return the first non-None ``attr``.
 
-        Used for conversation-level fields (``raw_tools``, ``max_tokens``,
-        ``extra_body``, ``model``) that should reflect the most recent
-        author intent. FORK-mode DAG children whose final turn does not
-        redeclare these fields still inherit the parent's value, instead
-        of silently losing it. Returns ``None`` when no turn carries it.
+        Used for conversation-level fields (``raw_tools``) that should reflect
+        the most recent author intent. FORK-mode DAG children whose final turn
+        does not redeclare these fields still inherit the parent's value,
+        instead of silently losing it. Returns ``None`` when no turn carries it.
         """
         for turn in reversed(turns):
             value = getattr(turn, attr)

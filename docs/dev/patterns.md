@@ -327,33 +327,26 @@ The mixin in ``src/aiperf/endpoints/response_mixin.py`` compiles an optional
 ``endpoint.extra.response_field`` JMESPath query at construction time, with
 auto-detect fallback when the query fails or no JSON body is present.
 
-## Per-turn `extra_body`
+## Per-turn dataset `extra`
 
-Every endpoint formatter that builds a JSON request body shallow-merges
-`Turn.extra_body` into the wire body at the very end of payload
-construction, AFTER `model_endpoint.endpoint.extra`. User-supplied keys
-win on collision, matching the OpenAI SDK's `extra_body=` keyword.
+Custom dataset rows use `extra` for non-native request-body fields. Loaders map that user-facing field into internal `Turn.extra_body`. Every endpoint formatter that builds a JSON request body shallow-merges `Turn.extra_body` into the wire body at the very end of payload construction, AFTER `model_endpoint.endpoint.extra`. The merge is shallow `dict.update`; user-provided keys win on collision.
+
+**Rules new formatters and loaders must follow:**
+
+- **Dispatch-turn scoping.** Endpoint formatters read `turn.extra_body`, `turn.max_tokens`, and `turn.model` from `request_info.turns[-1]` only. Parent turns earlier in the conversation history must never leak these request-control fields into a child payload, so DAG/FORK children stay clean of parent vendor knobs, limits, or model overrides.
+- **Tools-as-system-prompt.** Only `raw_tools` walks `request_info.turns` from the end via `BaseEndpoint._latest_turn_attr`. Tool definitions behave like a system prompt and persist across a multi-turn or FORK conversation when the dispatching turn does not redeclare them.
+- **Dataset user-facing field is `extra`.** Custom dataset row schemas (`SingleTurn`, inner `MultiTurn` turns, `MooncakeTrace`, `DagTurn`) declare a per-turn `extra: dict[str, Any] | None`. Loaders translate `row.extra` into `Turn.extra_body` at construction time. `DagTurn` uses Pydantic's `extra="forbid"` so a typo'd `extra_body` is rejected at load time; the other dataset schemas are `extra="allow"` so an unrecognized `extra_body` is silently ignored — author the supported field instead.
 
 Coverage:
 
-- Single-turn formatters read `turn.extra_body` directly (where `turn`
-  is the consumed turn): `openai_completions`, `openai_embeddings` (and
-  `nim_embeddings`, which inherits `_build_payload`),
-  `openai_image_generation`, `openai_video_generation`,
-  `nim_image_retrieval`, `huggingface_generate`, `solido_rag`, and the
-  rankings family (`cohere_rankings`, `nim_rankings`, `hf_tei_rankings`)
-  via `BaseRankingsEndpoint`.
-- Multi-turn formatters use `self._latest_turn_attr(turns, "extra_body")`
-  so FORK-mode DAG children inherit a parent's `extra_body` when they
-  don't redeclare it: `openai_chat` (and `chat_embeddings`, which inherits),
-  `openai_responses`.
+- Chat-style formatters with full history flattening (`openai_chat`, `chat_embeddings` via inheritance, `openai_responses`).
+- Single-turn formatters (`openai_completions`, `openai_embeddings` and `nim_embeddings`, `openai_image_generation`, `openai_video_generation`, `openai_image_edit`, `nim_image_retrieval`, `huggingface_generate`, `solido_rag`, the rankings family via `BaseRankingsEndpoint`, and `template_endpoint`).
 
-`huggingface_generate` deliberately merges `extra_body` at the TOP level
-of the wire body (not nested under `parameters`), matching the OpenAI
-SDK's extra_body= semantics.
+`huggingface_generate` deliberately merges `extra_body` at the TOP level of the wire body (not nested under `parameters`).
 
-`raw_endpoint` and `template_endpoint` intentionally skip this merge —
-they ship the user-authored body verbatim.
+`openai_image_edit` filters reserved keys (`prompt`, `image`, `url`, `mask`) out of both endpoint extras and `extra_body` to protect the multipart upload contract.
+
+`raw_endpoint` intentionally skips this merge — it ships the user-authored `Turn.raw_payload` verbatim.
 
 ## Strategy Protocol Pattern
 

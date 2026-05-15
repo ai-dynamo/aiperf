@@ -896,7 +896,7 @@ class TestResponsesExtraBody:
         payload = responses_endpoint.format_payload(request_info)
         assert payload["vendor_top_k"] == 5
 
-    def test_extra_body_inherits_from_parent_turn(self, responses_endpoint):
+    def test_extra_body_does_not_inherit_from_parent_turn(self, responses_endpoint):
         parent = Turn(
             role="user",
             texts=[Text(contents=["help"])],
@@ -908,5 +908,4 @@ class TestResponsesExtraBody:
             turns=[parent, child],
         )
         payload = responses_endpoint.format_payload(request_info)
-        # _latest_turn_attr walks from end and picks parent's value when child has None.
-        assert payload["vendor_x"] == 1
+        assert "vendor_x" not in payload

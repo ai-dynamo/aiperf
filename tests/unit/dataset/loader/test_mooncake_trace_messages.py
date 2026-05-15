@@ -121,7 +121,7 @@ class TestMooncakeMessagesValidation:
 
 
 class TestMooncakeTraceExtraBody:
-    def test_extra_body_propagates_to_turn_in_messages_mode(
+    def test_extra_propagates_to_turn_in_messages_mode(
         self,
         tmp_path: Path,
         default_user_config,
@@ -133,7 +133,7 @@ class TestMooncakeTraceExtraBody:
                 orjson.dumps(
                     {
                         "messages": [{"role": "user", "content": "hi"}],
-                        "extra_body": {"top_k": 7},
+                        "extra": {"top_k": 7},
                     }
                 )
             )
@@ -148,7 +148,7 @@ class TestMooncakeTraceExtraBody:
         turn = conversations[0].turns[0]
         assert turn.extra_body == {"top_k": 7}
 
-    def test_extra_body_propagates_to_turn_in_text_input_mode(
+    def test_extra_propagates_to_turn_in_text_input_mode(
         self,
         tmp_path: Path,
         default_user_config,
@@ -160,7 +160,7 @@ class TestMooncakeTraceExtraBody:
                 orjson.dumps(
                     {
                         "text_input": "hi",
-                        "extra_body": {"min_tokens": 50},
+                        "extra": {"min_tokens": 50},
                     }
                 )
             )

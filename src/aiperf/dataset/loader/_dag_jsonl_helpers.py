@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.models import Conversation
 from aiperf.dataset.loader.dag_jsonl_models import DagFork
 
 
@@ -159,12 +160,11 @@ def validate_explicit_join_at(sid: str, idx: int, join_at: int, num_turns: int) 
         )
 
 
-def detect_cycles(conversations: dict[str, Any]) -> None:
+def detect_cycles(conversations: dict[str, Conversation]) -> None:
     """Reject any cycles in the branch graph with a path-trace error.
 
-    ``conversations`` maps session_id -> Conversation; the function walks
-    ``Conversation.branches`` recursively and raises ``DagLoadError`` with
-    the offending cycle path on first hit.
+    Walks ``Conversation.branches`` recursively and raises ``DagLoadError``
+    with the offending cycle path on first hit.
     """
     visited: set[str] = set()
     path_stack: list[str] = []
