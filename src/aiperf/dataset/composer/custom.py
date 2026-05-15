@@ -103,17 +103,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
     @staticmethod
     def _format_to_loader_type(fmt: DatasetFormat) -> CustomDatasetType:
-        """Map a DatasetFormat enum value to its CustomDatasetType."""
-        return {
-            DatasetFormat.SINGLE_TURN: CustomDatasetType.SINGLE_TURN,
-            DatasetFormat.MULTI_TURN: CustomDatasetType.MULTI_TURN,
-            DatasetFormat.MOONCAKE_TRACE: CustomDatasetType.MOONCAKE_TRACE,
-            DatasetFormat.RANDOM_POOL: CustomDatasetType.RANDOM_POOL,
-            DatasetFormat.BAILIAN_TRACE: CustomDatasetType.BAILIAN_TRACE,
-            DatasetFormat.BURST_GPT_TRACE: CustomDatasetType.BURST_GPT_TRACE,
-            DatasetFormat.DAG_JSONL: CustomDatasetType.DAG_JSONL,
-            DatasetFormat.SAGEMAKER_DATA_CAPTURE: CustomDatasetType.SAGEMAKER_DATA_CAPTURE,
-        }[fmt]
+        """Map a DatasetFormat enum value to its CustomDatasetType.
+
+        Both enums mirror the custom_dataset_loader plugin registry and share
+        identical string values, so a direct value-based conversion works.
+        """
+        return CustomDatasetType(fmt.value)
 
     def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.

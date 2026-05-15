@@ -85,16 +85,23 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
-          "default": 0,
+          "default": null,
           "description": "Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.",
           "title": "Nshots",
           "x-jinja2-supported": true
         },
         "enableCot": {
-          "default": false,
-          "description": "Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.",
-          "title": "Enablecot",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).",
+          "title": "Enablecot"
         },
         "grader": {
           "anyOf": [
@@ -136,44 +143,13 @@
         "exact_match",
         "math",
         "multiple_choice",
-        "code_execution"
+        "code_execution",
+        "lighteval_expr",
+        "lighteval_latex",
+        "lighteval_gpqa"
       ],
       "title": "AccuracyGraderType",
       "type": "string"
-    },
-    "AdaptiveObjective": {
-      "additionalProperties": false,
-      "description": "Optimization objective for an adaptive search.",
-      "properties": {
-        "metric": {
-          "description": "Metric tag to optimize (e.g. 'output_token_throughput').",
-          "title": "Metric",
-          "type": "string"
-        },
-        "stat": {
-          "default": "avg",
-          "description": "Statistic on the metric to use as the objective value.",
-          "enum": [
-            "avg",
-            "p50",
-            "p90",
-            "p95",
-            "p99"
-          ],
-          "title": "Stat",
-          "type": "string"
-        },
-        "direction": {
-          "$ref": "#/$defs/OptimizationDirection",
-          "description": "MAXIMIZE or MINIMIZE."
-        }
-      },
-      "required": [
-        "metric",
-        "direction"
-      ],
-      "title": "AdaptiveObjective",
-      "type": "object"
     },
     "AdaptiveSearchSweep": {
       "additionalProperties": false,
@@ -224,6 +200,19 @@
           "default": null,
           "description": "Optional post-aggregation handler emitted by a search recipe."
         },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source recipe name (audit trail when expanded via --search-recipe). Used by the live Pareto plot path to look up the recipe's pareto_axes after expansion has stripped the originating --search-recipe flag.",
+          "title": "Recipename"
+        },
         "type": {
           "const": "adaptive_search",
           "default": "adaptive_search",
@@ -234,7 +223,7 @@
         "planner": {
           "$ref": "#/$defs/SearchPlannerType",
           "default": "bayesian",
-          "description": "Outer-loop planner plugin name (bayesian | optuna | monotonic_sla)."
+          "description": "Outer-loop planner plugin name (bayesian | optuna | monotonic_sla | smooth_isotonic)."
         },
         "searchSpace": {
           "description": "Dimensions to optimize over.",
@@ -245,9 +234,22 @@
           "title": "Searchspace",
           "type": "array"
         },
-        "objective": {
-          "$ref": "#/$defs/AdaptiveObjective",
-          "description": "What to optimize and which direction."
+        "objectives": {
+          "description": "What to optimize. Length-1 = single-objective search; length-N = multi-objective search. BoTorch-backed Pareto BO requires --optuna-sampler botorch with a multi-objective acquisition like qlognehvi.",
+          "items": {
+            "$ref": "#/$defs/Objective"
+          },
+          "minItems": 1,
+          "title": "Objectives",
+          "type": "array"
+        },
+        "outcomeConstraints": {
+          "description": "Feasibility gates on non-optimized metrics. Empty = no constraints.",
+          "items": {
+            "$ref": "#/$defs/OutcomeConstraint"
+          },
+          "title": "Outcomeconstraints",
+          "type": "array"
         },
         "maxIterations": {
           "description": "Maximum BO iterations.",
@@ -275,12 +277,12 @@
         },
         "nInitialPoints": {
           "default": 5,
-          "description": "Sobol-random points before the GP fits. Must be < max_iterations.",
+          "description": "Sobol-random points before the GP fits. Must be < max_iterations for `bayesian`/`optuna` planners; ignored by 1-D SLA planners.",
           "title": "Ninitialpoints",
           "oneOf": [
             {
               "default": 5,
-              "description": "Sobol-random points before the GP fits. Must be < max_iterations.",
+              "description": "Sobol-random points before the GP fits. Must be < max_iterations for `bayesian`/`optuna` planners; ignored by 1-D SLA planners.",
               "minimum": 1,
               "title": "Ninitialpoints",
               "type": "integer"
@@ -299,13 +301,13 @@
           "x-jinja2-supported": true
         },
         "plateauWindow": {
-          "default": 5,
-          "description": "Recent-iteration window for plateau detection.",
+          "default": 8,
+          "description": "Recent-iteration window for plateau detection. Default 8 keeps the window strictly larger than ``n_initial_points`` (default 5), so the plateau test always inspects at least a few GP-driven iterations rather than tripping on the Sobol-only prefix when the initial points happen to land in a flat region.",
           "title": "Plateauwindow",
           "oneOf": [
             {
-              "default": 5,
-              "description": "Recent-iteration window for plateau detection.",
+              "default": 8,
+              "description": "Recent-iteration window for plateau detection. Default 8 keeps the window strictly larger than ``n_initial_points`` (default 5), so the plateau test always inspects at least a few GP-driven iterations rather than tripping on the Sobol-only prefix when the initial points happen to land in a flat region.",
               "minimum": 2,
               "title": "Plateauwindow",
               "type": "integer"
@@ -376,6 +378,7 @@
         "randomSeed": {
           "anyOf": [
             {
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -397,9 +400,29 @@
           "title": "Randomseed",
           "x-jinja2-supported": true
         },
-        "recipeName": {
+        "optunaSampler": {
+          "default": "botorch",
+          "description": "Optuna sampler when planner=optuna. Default ``botorch`` is the preferred Gaussian-process qLogNEI/qLogNEHVI path and requires the optional ``botorch`` extra; when this default is implicit and the optional stack is unavailable, the planner warns and falls back to ``tpe``. ``tpe`` is the dep-light Tree-Parzen estimator that ships with Optuna core. ``gp`` is Optuna's pure-GP sampler and requires torch.",
+          "enum": [
+            "gp",
+            "tpe",
+            "botorch"
+          ],
+          "title": "Optunasampler",
+          "type": "string"
+        },
+        "optunaAcquisition": {
           "anyOf": [
             {
+              "enum": [
+                "logei",
+                "qlogei",
+                "qnei",
+                "qlognei",
+                "qehvi",
+                "qnehvi",
+                "qlognehvi"
+              ],
               "type": "string"
             },
             {
@@ -407,18 +430,28 @@
             }
           ],
           "default": null,
-          "description": "Source recipe name (audit trail when expanded via --search-recipe).",
-          "title": "Recipename"
+          "description": "Acquisition override for the BoTorch sampler. None lets Optuna pick (single-objective LogEI). ``qnei`` = Letham 2017 noisy-EI; ``qlognei`` = Ament 2023 (BoTorch's strongly recommended modern default; requires botorch>=0.10). ``qehvi``/``qnehvi``/``qlognehvi`` are multi-objective hypervolume acquisitions for Pareto BO. Only meaningful when planner=optuna and optuna_sampler=botorch; ignored otherwise.",
+          "title": "Optunaacquisition"
         },
-        "optunaSampler": {
-          "default": "tpe",
-          "description": "Optuna sampler when planner=optuna.",
+        "optunaTerminator": {
+          "default": "none",
+          "description": "Optional posterior-regret stopping rule (Makarova 2022 / Ishibashi 2023; same family as Wilson 2024). Layered on top of three-signal convergence. Only meaningful when planner=optuna; ignored otherwise.",
           "enum": [
-            "gp",
-            "tpe",
-            "botorch"
+            "regret",
+            "emmr",
+            "none"
           ],
-          "title": "Optunasampler",
+          "title": "Optunaterminator",
+          "type": "string"
+        },
+        "objectivePooling": {
+          "default": "mean",
+          "description": "Per-trial percentile aggregation. ``mean`` = arithmetic mean of per-trial percentiles across trials (current default). ``pooled`` = walks each trial's profile_export.jsonl and computes np.percentile over the pooled raw-sample bag (the statistic that satisfies SLO claims; requires --export-level records). Only meaningful when objective.stat is a percentile (p50/p90/p95/p99); a no-op when stat=avg.",
+          "enum": [
+            "mean",
+            "pooled"
+          ],
+          "title": "Objectivepooling",
           "type": "string"
         },
         "monotonicStabilityTrials": {
@@ -448,12 +481,12 @@
         },
         "slaReplicates": {
           "default": 0,
-          "description": "Phase-3 replicate count override for the smooth_isotonic SLA planner. 0 = auto (Hyperband-flavored formula based on sigma_margin/threshold). >0 = fixed override. Ignored by other planners.",
+          "description": "Replicate-step trial count override for the smooth_isotonic SLA planner. 0 = auto (Hyperband-flavored formula based on sigma_margin/threshold). >0 = fixed override. Ignored by other planners.",
           "title": "Slareplicates",
           "oneOf": [
             {
               "default": 0,
-              "description": "Phase-3 replicate count override for the smooth_isotonic SLA planner. 0 = auto (Hyperband-flavored formula based on sigma_margin/threshold). >0 = fixed override. Ignored by other planners.",
+              "description": "Replicate-step trial count override for the smooth_isotonic SLA planner. 0 = auto (Hyperband-flavored formula based on sigma_margin/threshold). >0 = fixed override. Ignored by other planners.",
               "minimum": 0,
               "title": "Slareplicates",
               "type": "integer"
@@ -520,7 +553,7 @@
       },
       "required": [
         "searchSpace",
-        "objective",
+        "objectives",
         "maxIterations"
       ],
       "title": "AdaptiveSearchSweep",
@@ -538,19 +571,23 @@
           "type": "string"
         },
         "prefix": {
-          "default": "aiperf",
-          "description": "Filename prefix for all exported files. Example: 'my_run' produces 'my_run_summary.json', 'my_run_records.jsonl'.",
-          "title": "Prefix",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Base filename override applied to ALL profile and server-metrics exports. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.csv/json`, `profile_export.jsonl`, `profile_export_raw.jsonl`, `gpu_telemetry_export.jsonl`, `server_metrics_export.{jsonl,json,csv,parquet}`. Known suffixes (`_raw.jsonl`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, `_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`) are stripped from the supplied value so `--profile-export-prefix foo_raw.jsonl` still yields a clean `foo` base.",
+          "title": "Prefix"
         },
         "summary": {
           "anyOf": [
             {
               "items": {
-                "enum": [
-                  "json",
-                  "yaml"
-                ],
+                "const": "json",
                 "type": "string"
               },
               "type": "array"
@@ -560,17 +597,14 @@
               "type": "boolean"
             }
           ],
-          "description": "Summary export formats. Options: json, yaml. Set to false to disable.",
+          "description": "Summary export formats. Only 'json' is wired up to this field; the CSV summary is emitted regardless. Set to false to disable the summary JSON file only.",
           "title": "Summary"
         },
         "records": {
           "anyOf": [
             {
               "items": {
-                "enum": [
-                  "jsonl",
-                  "csv"
-                ],
+                "const": "jsonl",
                 "type": "string"
               },
               "type": "array"
@@ -580,7 +614,7 @@
               "type": "boolean"
             }
           ],
-          "description": "Per-request records export formats. Options: jsonl, csv. Set to false to disable.",
+          "description": "Per-request records export formats. Only 'jsonl' is wired up today. Set to false to disable the per-record JSONL file.",
           "title": "Records"
         },
         "raw": {
@@ -593,12 +627,6 @@
           "default": false,
           "description": "Export HTTP trace data for debugging.",
           "title": "Trace",
-          "type": "boolean"
-        },
-        "perChunkData": {
-          "default": false,
-          "description": "Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports. These arrays contain one timing value per SSE chunk and can be very large for long responses.",
-          "title": "Perchunkdata",
           "type": "boolean"
         },
         "sliceDuration": {
@@ -631,31 +659,31 @@
           "title": "Showtracetiming",
           "type": "boolean"
         },
-        "cliCommand": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "CLI command used to run the benchmark, recorded in artifacts for reproducibility. [auto-populated by the CLI runner; do not set in a CR spec \u2014 any user value is overwritten.]",
-          "title": "Clicommand"
-        },
-        "benchmarkId": {
-          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]",
-          "title": "Benchmarkid",
-          "type": "string"
-        },
         "userFiles": {
-          "description": "User-defined templated files materialized into the run directory before the benchmark begins. See docs/kubernetes/user-files.md.",
+          "description": "User-defined templated files materialized into the run directory before the benchmark begins.",
           "items": {
             "$ref": "#/$defs/UserFile"
           },
           "title": "Userfiles",
           "type": "array"
+        },
+        "autoPlot": {
+          "default": false,
+          "description": "Auto-invoke `aiperf plot` against the artifact directory after the benchmark completes. Resolved by the CLI converter from the tri-state CLI flag and the active search recipe's auto_plot_default; by the time it lands here it is a plain bool.",
+          "title": "Autoplot",
+          "type": "boolean"
+        },
+        "plotRequired": {
+          "default": false,
+          "description": "Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto_plot is True. Default False = warn and continue.",
+          "title": "Plotrequired",
+          "type": "boolean"
+        },
+        "exportOutputsJson": {
+          "default": false,
+          "description": "Export generated response text to outputs.json after the run.",
+          "title": "Exportoutputsjson",
+          "type": "boolean"
         }
       },
       "title": "ArtifactsConfig",
@@ -782,72 +810,29 @@
       "title": "AudioFormat",
       "type": "string"
     },
-    "AugmentConfig": {
-      "additionalProperties": false,
-      "description": "Configuration for augmenting file datasets with output length specifications.\n\nUsed in composed datasets where file-based prompts need OSL control.",
-      "properties": {
-        "osl": {
-          "anyOf": [
-            {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/FixedDistribution"
-                },
-                {
-                  "$ref": "#/$defs/NormalDistribution"
-                },
-                {
-                  "$ref": "#/$defs/LogNormalDistribution"
-                },
-                {
-                  "$ref": "#/$defs/MultimodalDistribution"
-                },
-                {
-                  "$ref": "#/$defs/EmpiricalDistribution"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Output sequence length to apply to augmented records. Can be a fixed integer or {mean, stddev} distribution. Behavior depends on osl_mode setting.",
-          "title": "Osl"
-        },
-        "oslMode": {
-          "$ref": "#/$defs/OslMode",
-          "default": "fill",
-          "description": "How to apply OSL to records. fill: only apply if the record lacks an existing OSL value. override: always replace existing OSL."
-        },
-        "outputDistribution": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/SequenceDistributionEntry"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Output length probability distribution. When specified, overrides the osl field. Each entry specifies {isl (ignored), osl, probability}. Probabilities must sum to 100.",
-          "title": "Outputdistribution"
-        }
-      },
-      "title": "AugmentConfig",
-      "type": "object"
-    },
     "BenchmarkConfig": {
       "additionalProperties": false,
-      "description": "Pure runtime configuration - what SystemController and services need.\n\nContains all fields required to execute a single benchmark run.\nDoes NOT include sweep, multi_run, variables, or random_seed settings\n(those live on AIPerfConfig as envelope-level cross-variation fields).\n\nRequired Sections:\n    - models: Model(s) to benchmark\n    - endpoint: Server connection settings\n    - datasets: Single-element list of dataset configuration\n    - phases: Benchmark phase configuration (single or named phases)\n\nOptional Sections:\n    - artifacts: Export and console settings\n    - slos: SLO-based quality metrics (generic dict)\n    - tokenizer: Token counting configuration\n    - gpu_telemetry: GPU metrics from DCGM endpoints\n    - server_metrics: Server metrics from Prometheus endpoints\n    - runtime: Worker and communication settings\n    - logging: Logging and debug settings\n    - accuracy: Accuracy evaluation configuration\n\nValidation:\n    The configuration is validated in several stages:\n    1. Individual field validation (types, ranges, formats)\n    2. Cross-field validation (mutual exclusivity, dependencies)\n\nEnvironment Variables:\n    Values can reference environment variables using ${VAR} syntax.\n    Optional defaults: ${VAR:default_value}\n\n    Example:\n        api_key: ${OPENAI_API_KEY}\n        api_key: ${OPENAI_API_KEY:sk-default}",
+      "description": "Pure runtime configuration - what SystemController and services need.\n\nContains all fields required to execute a single benchmark run.\nDoes NOT include sweep, multi_run, variables, or random_seed settings\n(those live on AIPerfConfig as envelope-level cross-variation fields).\n\nRequired Sections:\n    - models: Model(s) to benchmark\n    - endpoint: Server connection settings\n    - datasets: Single-element list of dataset configuration\n    - phases: Ordered list of benchmark phases. A single-dict under\n      ``phases:`` is rejected; use the envelope-level ``warmup:`` /\n      ``profiling:`` shorthand or an explicit list.\n\nOptional Sections:\n    - artifacts: Export and console settings\n    - slos: SLO-based quality metrics (generic dict)\n    - tokenizer: Token counting configuration\n    - gpu_telemetry: GPU metrics from DCGM endpoints\n    - server_metrics: Server metrics from Prometheus endpoints\n    - runtime: Worker and communication settings\n    - logging: Logging and debug settings\n    - metrics: Metrics aggregation configuration\n    - accuracy: Accuracy evaluation configuration\n\nValidation:\n    The configuration is validated in several stages:\n    1. Individual field validation (types, ranges, formats)\n    2. Cross-field validation (mutual exclusivity, dependencies)\n\nEnvironment Variables:\n    Values can reference environment variables using ${VAR} syntax.\n    Optional defaults: ${VAR:default_value}\n\n    Example:\n        api_key: ${OPENAI_API_KEY}\n        api_key: ${OPENAI_API_KEY:sk-default}",
       "properties": {
         "models": {
-          "$ref": "#/$defs/ModelsAdvanced",
-          "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
-          "x-kubernetes-preserve-unknown-fields": true
+          "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced. Accepts a model name string, list of model names, or full ModelsAdvanced config.",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Single model name (normalized to ModelsAdvanced)."
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "List of model names (normalized to ModelsAdvanced)."
+            },
+            {
+              "$ref": "#/$defs/ModelsAdvanced"
+            }
+          ]
         },
         "endpoint": {
           "$ref": "#/$defs/EndpointConfig",
@@ -861,8 +846,7 @@
               "mapping": {
                 "synthetic": "#/$defs/SyntheticDataset",
                 "file": "#/$defs/FileDataset",
-                "public": "#/$defs/PublicDataset",
-                "composed": "#/$defs/ComposedDataset"
+                "public": "#/$defs/PublicDataset"
               }
             },
             "anyOf": [
@@ -874,55 +858,1175 @@
               },
               {
                 "$ref": "#/$defs/PublicDataset"
-              },
-              {
-                "$ref": "#/$defs/ComposedDataset"
               }
             ]
           },
+          "maxItems": 1,
           "minItems": 1,
           "title": "Datasets",
-          "type": "array",
-          "maxItems": 1
+          "type": "array"
         },
         "phases": {
-          "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation.",
-          "items": {
-            "discriminator": {
-              "propertyName": "type",
-              "mapping": {
-                "concurrency": "#/$defs/ConcurrencyPhase",
-                "poisson": "#/$defs/PoissonPhase",
-                "gamma": "#/$defs/GammaPhase",
-                "constant": "#/$defs/ConstantPhase",
-                "user_centric": "#/$defs/UserCentricPhase",
-                "fixed_schedule": "#/$defs/FixedSchedulePhase"
-              }
+          "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation. Shorthand: use a single phase config directly (with 'type' key) and it is normalized to a one-entry phases list.",
+          "oneOf": [
+            {
+              "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation.",
+              "items": {
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "concurrency": "#/$defs/ConcurrencyPhase",
+                    "poisson": "#/$defs/PoissonPhase",
+                    "gamma": "#/$defs/GammaPhase",
+                    "constant": "#/$defs/ConstantPhase",
+                    "user_centric": "#/$defs/UserCentricPhase",
+                    "fixed_schedule": "#/$defs/FixedSchedulePhase"
+                  }
+                },
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ConcurrencyPhase"
+                  },
+                  {
+                    "$ref": "#/$defs/PoissonPhase"
+                  },
+                  {
+                    "$ref": "#/$defs/GammaPhase"
+                  },
+                  {
+                    "$ref": "#/$defs/ConstantPhase"
+                  },
+                  {
+                    "$ref": "#/$defs/UserCentricPhase"
+                  },
+                  {
+                    "$ref": "#/$defs/FixedSchedulePhase"
+                  }
+                ]
+              },
+              "minItems": 1,
+              "title": "Phases",
+              "type": "array"
             },
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConcurrencyPhase"
-              },
-              {
-                "$ref": "#/$defs/PoissonPhase"
-              },
-              {
-                "$ref": "#/$defs/GammaPhase"
-              },
-              {
-                "$ref": "#/$defs/ConstantPhase"
-              },
-              {
-                "$ref": "#/$defs/UserCentricPhase"
-              },
-              {
-                "$ref": "#/$defs/FixedSchedulePhase"
+            {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
+                  "properties": {
+                    "name": {
+                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "concurrency",
+                      "description": "Concurrency-controlled immediate dispatch.",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "excludeFromResults": {
+                      "default": false,
+                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "title": "Excludefromresults",
+                      "type": "boolean"
+                    },
+                    "requests": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many requests sent (must be >= 1).",
+                      "title": "Requests"
+                    },
+                    "duration": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
+                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                      "gt": 0,
+                      "title": "Duration"
+                    },
+                    "sessions": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many sessions completed (must be >= 1).",
+                      "title": "Sessions"
+                    },
+                    "concurrency": {
+                      "default": 1,
+                      "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
+                      "minimum": 1,
+                      "title": "Concurrency",
+                      "type": "integer"
+                    },
+                    "concurrencyRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "prefillConcurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                      "title": "Prefillconcurrency"
+                    },
+                    "prefillRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "gracePeriod": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                      "ge": 0,
+                      "title": "Graceperiod"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CancellationConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Request cancellation testing configuration."
+                    },
+                    "seamless": {
+                      "default": false,
+                      "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                      "title": "Seamless",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "title": "ConcurrencyPhase",
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "Poisson-distributed request arrivals at the target rate.",
+                  "properties": {
+                    "name": {
+                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "poisson",
+                      "description": "Poisson-distributed rate-controlled arrivals.",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "excludeFromResults": {
+                      "default": false,
+                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "title": "Excludefromresults",
+                      "type": "boolean"
+                    },
+                    "requests": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many requests sent (must be >= 1).",
+                      "title": "Requests"
+                    },
+                    "duration": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
+                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                      "gt": 0,
+                      "title": "Duration"
+                    },
+                    "sessions": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many sessions completed (must be >= 1).",
+                      "title": "Sessions"
+                    },
+                    "concurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                      "title": "Concurrency"
+                    },
+                    "concurrencyRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "prefillConcurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                      "title": "Prefillconcurrency"
+                    },
+                    "prefillRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "gracePeriod": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                      "ge": 0,
+                      "title": "Graceperiod"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CancellationConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Request cancellation testing configuration."
+                    },
+                    "seamless": {
+                      "default": false,
+                      "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                      "title": "Seamless",
+                      "type": "boolean"
+                    },
+                    "rate": {
+                      "description": "Target request rate in requests per second (must be > 0).",
+                      "exclusiveMinimum": 0,
+                      "title": "Rate",
+                      "type": "number"
+                    },
+                    "rateRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "rate"
+                  ],
+                  "title": "PoissonPhase",
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "Gamma-distributed request arrivals with configurable smoothness.",
+                  "properties": {
+                    "name": {
+                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "gamma",
+                      "description": "Gamma-distributed rate-controlled arrivals.",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "excludeFromResults": {
+                      "default": false,
+                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "title": "Excludefromresults",
+                      "type": "boolean"
+                    },
+                    "requests": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many requests sent (must be >= 1).",
+                      "title": "Requests"
+                    },
+                    "duration": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
+                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                      "gt": 0,
+                      "title": "Duration"
+                    },
+                    "sessions": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many sessions completed (must be >= 1).",
+                      "title": "Sessions"
+                    },
+                    "concurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                      "title": "Concurrency"
+                    },
+                    "concurrencyRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "prefillConcurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                      "title": "Prefillconcurrency"
+                    },
+                    "prefillRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "gracePeriod": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                      "ge": 0,
+                      "title": "Graceperiod"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CancellationConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Request cancellation testing configuration."
+                    },
+                    "seamless": {
+                      "default": false,
+                      "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                      "title": "Seamless",
+                      "type": "boolean"
+                    },
+                    "rate": {
+                      "description": "Target request rate in requests per second (must be > 0).",
+                      "exclusiveMinimum": 0,
+                      "title": "Rate",
+                      "type": "number"
+                    },
+                    "rateRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "smoothness": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
+                      "title": "Smoothness"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "rate"
+                  ],
+                  "title": "GammaPhase",
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "Constant-rate request arrivals (fixed inter-arrival time).",
+                  "properties": {
+                    "name": {
+                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "constant",
+                      "description": "Constant rate-controlled arrivals.",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "excludeFromResults": {
+                      "default": false,
+                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "title": "Excludefromresults",
+                      "type": "boolean"
+                    },
+                    "requests": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many requests sent (must be >= 1).",
+                      "title": "Requests"
+                    },
+                    "duration": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
+                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                      "gt": 0,
+                      "title": "Duration"
+                    },
+                    "sessions": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many sessions completed (must be >= 1).",
+                      "title": "Sessions"
+                    },
+                    "concurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                      "title": "Concurrency"
+                    },
+                    "concurrencyRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "prefillConcurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                      "title": "Prefillconcurrency"
+                    },
+                    "prefillRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "gracePeriod": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                      "ge": 0,
+                      "title": "Graceperiod"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CancellationConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Request cancellation testing configuration."
+                    },
+                    "seamless": {
+                      "default": false,
+                      "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                      "title": "Seamless",
+                      "type": "boolean"
+                    },
+                    "rate": {
+                      "description": "Target request rate in requests per second (must be > 0).",
+                      "exclusiveMinimum": 0,
+                      "title": "Rate",
+                      "type": "number"
+                    },
+                    "rateRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "rate"
+                  ],
+                  "title": "ConstantPhase",
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
+                  "properties": {
+                    "name": {
+                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "user_centric",
+                      "description": "N users sharing a global request rate.",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "excludeFromResults": {
+                      "default": false,
+                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "title": "Excludefromresults",
+                      "type": "boolean"
+                    },
+                    "requests": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many requests sent (must be >= 1).",
+                      "title": "Requests"
+                    },
+                    "duration": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
+                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                      "gt": 0,
+                      "title": "Duration"
+                    },
+                    "sessions": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many sessions completed (must be >= 1).",
+                      "title": "Sessions"
+                    },
+                    "concurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                      "title": "Concurrency"
+                    },
+                    "concurrencyRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "prefillConcurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                      "title": "Prefillconcurrency"
+                    },
+                    "prefillRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "gracePeriod": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                      "ge": 0,
+                      "title": "Graceperiod"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CancellationConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Request cancellation testing configuration."
+                    },
+                    "seamless": {
+                      "default": false,
+                      "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                      "title": "Seamless",
+                      "type": "boolean"
+                    },
+                    "rate": {
+                      "description": "Target request rate in requests per second (must be > 0).",
+                      "exclusiveMinimum": 0,
+                      "title": "Rate",
+                      "type": "number"
+                    },
+                    "rateRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "users": {
+                      "description": "Number of simulated concurrent users (must be >= 1). Requests distributed across users to achieve global rate.",
+                      "minimum": 1,
+                      "title": "Users",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "rate",
+                    "users"
+                  ],
+                  "title": "UserCentricPhase",
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
+                  "properties": {
+                    "name": {
+                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "fixed_schedule",
+                      "description": "Replay requests at trace timestamps.",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "excludeFromResults": {
+                      "default": false,
+                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "title": "Excludefromresults",
+                      "type": "boolean"
+                    },
+                    "requests": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many requests sent (must be >= 1).",
+                      "title": "Requests"
+                    },
+                    "duration": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
+                          "description": "Duration string (e.g., '30s', '5m', '2h')."
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+                      "gt": 0,
+                      "title": "Duration"
+                    },
+                    "sessions": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Stop after this many sessions completed (must be >= 1).",
+                      "title": "Sessions"
+                    },
+                    "concurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+                      "title": "Concurrency"
+                    },
+                    "concurrencyRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "prefillConcurrency": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+                      "title": "Prefillconcurrency"
+                    },
+                    "prefillRamp": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RampConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "gracePeriod": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
+                      "ge": 0,
+                      "title": "Graceperiod"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CancellationConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Request cancellation testing configuration."
+                    },
+                    "seamless": {
+                      "default": false,
+                      "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+                      "title": "Seamless",
+                      "type": "boolean"
+                    },
+                    "autoOffset": {
+                      "default": true,
+                      "description": "Normalize trace timestamps to start at 0. Subtracts minimum timestamp from all entries.",
+                      "title": "Autooffset",
+                      "type": "boolean"
+                    },
+                    "startOffset": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter out trace requests before this timestamp in ms (must be >= 0).",
+                      "title": "Startoffset"
+                    },
+                    "endOffset": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
+                      "title": "Endoffset"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "title": "FixedSchedulePhase",
+                  "type": "object"
+                }
+              ],
+              "description": "Single phase config (normalized to a one-entry phases list).",
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "concurrency": "#/$defs/ConcurrencyPhase",
+                  "poisson": "#/$defs/PoissonPhase",
+                  "gamma": "#/$defs/GammaPhase",
+                  "constant": "#/$defs/ConstantPhase",
+                  "user_centric": "#/$defs/UserCentricPhase",
+                  "fixed_schedule": "#/$defs/FixedSchedulePhase"
+                }
               }
-            ]
-          },
-          "minItems": 1,
-          "title": "Phases",
-          "type": "array"
+            }
+          ]
         },
         "artifacts": {
           "$ref": "#/$defs/ArtifactsConfig",
@@ -980,28 +2084,10 @@
           "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
         },
         "otel": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/OTelConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "OpenTelemetry metrics streaming configuration. When metrics_url is set, AIPerf exports metrics and timing records over OTLP/HTTP."
+          "$ref": "#/$defs/OTelConfig"
         },
         "mlflow": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MLflowConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "MLflow tracking and artifact-upload configuration. When tracking_uri is set, AIPerf uploads summary metrics, tags, and artifacts after the run."
+          "$ref": "#/$defs/MLflowConfig"
         },
         "runtime": {
           "$ref": "#/$defs/RuntimeConfig",
@@ -1025,27 +2111,130 @@
           ],
           "default": null,
           "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
+        },
+        "model": {
+          "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "$ref": "#/$defs/ModelsAdvanced",
+              "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
+              "x-kubernetes-preserve-unknown-fields": true
+            }
+          ],
+          "x-singular-alias-of": "models"
+        },
+        "dataset": {
+          "description": "Shorthand for 'datasets'. Accepts a single value which will be converted to a list/dict. Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+          "oneOf": [
+            {
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "synthetic": "#/$defs/SyntheticDataset",
+                  "file": "#/$defs/FileDataset",
+                  "public": "#/$defs/PublicDataset"
+                }
+              },
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SyntheticDataset"
+                },
+                {
+                  "$ref": "#/$defs/FileDataset"
+                },
+                {
+                  "$ref": "#/$defs/PublicDataset"
+                }
+              ]
+            },
+            {
+              "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+              "items": {
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "synthetic": "#/$defs/SyntheticDataset",
+                    "file": "#/$defs/FileDataset",
+                    "public": "#/$defs/PublicDataset"
+                  }
+                },
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SyntheticDataset"
+                  },
+                  {
+                    "$ref": "#/$defs/FileDataset"
+                  },
+                  {
+                    "$ref": "#/$defs/PublicDataset"
+                  }
+                ]
+              },
+              "maxItems": 1,
+              "minItems": 1,
+              "title": "Datasets",
+              "type": "array"
+            }
+          ],
+          "x-singular-alias-of": "datasets"
         }
       },
       "required": [
-        "models",
         "endpoint",
-        "datasets",
         "phases"
       ],
       "title": "BenchmarkConfig",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "model"
+              ]
+            },
+            {
+              "required": [
+                "models"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "dataset"
+              ]
+            },
+            {
+              "required": [
+                "datasets"
+              ]
+            }
+          ]
+        }
+      ]
     },
     "CancellationConfig": {
       "additionalProperties": false,
       "description": "Configuration for request cancellation testing.\n\nEnables testing server behavior when clients cancel requests mid-flight.",
       "properties": {
         "rate": {
-          "description": "Percentage of requests to cancel (0-100). 10.0 means 10%% of requests will be cancelled.",
+          "description": "Percentage of requests to cancel (0-100). 0.5 means half a percent; 10.0 means 10%% of requests will be cancelled.",
           "title": "Rate",
           "oneOf": [
             {
-              "description": "Percentage of requests to cancel (0-100). 10.0 means 10%% of requests will be cancelled.",
+              "description": "Percentage of requests to cancel (0-100). 0.5 means half a percent; 10.0 means 10%% of requests will be cancelled.",
               "maximum": 100.0,
               "minimum": 0.0,
               "title": "Rate",
@@ -1060,18 +2249,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'rate'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "delay": {
           "default": 0.0,
@@ -1105,96 +2285,16 @@
       "title": "CancellationConfig",
       "type": "object"
     },
-    "ComposedDataset": {
-      "additionalProperties": false,
-      "description": "Composed dataset configuration (unique to AIPerf).\n\nCombines file-based data with synthetic augmentation.\nThis enables advanced scenarios like:\n- Adding system prompts to existing queries\n- Testing KV cache with file-based prompts\n- Adding multimodal content to text datasets\n- Extending small datasets with padding",
-      "properties": {
-        "name": {
-          "description": "Dataset identifier \u2014 used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "type": {
-          "const": "composed",
-          "default": "composed",
-          "description": "Dataset type discriminator. Must be 'composed'.",
-          "title": "Type",
-          "type": "string"
-        },
-        "source": {
-          "$ref": "#/$defs/FileSourceConfig",
-          "description": "The base file dataset to augment."
-        },
-        "augment": {
-          "$ref": "#/$defs/AugmentConfig",
-          "description": "Augmentation configuration specifying prefixes, suffixes, OSL, multimodal content, and padding for the source data."
-        },
-        "entries": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Final dataset size after augmentation. If source has fewer entries and pad_to_count is set in augment, synthetic padding entries are generated to reach this count.",
-          "title": "Entries",
-          "x-jinja2-supported": true
-        },
-        "randomSeed": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Random seed for deterministic augmentation. Overrides global random_seed for this dataset.",
-          "title": "Randomseed",
-          "x-jinja2-supported": true
-        }
-      },
-      "required": [
-        "name",
-        "source",
-        "augment"
-      ],
-      "title": "ComposedDataset",
-      "type": "object"
-    },
     "ConcurrencyPhase": {
       "additionalProperties": false,
       "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
       "properties": {
         "name": {
-          "description": "Phase identifier \u2014 unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
-          "minLength": 1,
+          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+          "enum": [
+            "warmup",
+            "profiling"
+          ],
           "title": "Name",
           "type": "string"
         },
@@ -1206,7 +2306,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -1228,21 +2328,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'requests'."
             }
           ],
           "default": null,
           "description": "Stop after this many requests sent (must be >= 1).",
           "title": "Requests",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "duration": {
           "anyOf": [
@@ -1320,18 +2411,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'concurrency'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "concurrencyRamp": {
           "anyOf": [
@@ -1470,8 +2552,11 @@
       "description": "Constant-rate request arrivals (fixed inter-arrival time).",
       "properties": {
         "name": {
-          "description": "Phase identifier \u2014 unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
-          "minLength": 1,
+          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+          "enum": [
+            "warmup",
+            "profiling"
+          ],
           "title": "Name",
           "type": "string"
         },
@@ -1483,7 +2568,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -1505,21 +2590,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'requests'."
             }
           ],
           "default": null,
           "description": "Stop after this many requests sent (must be >= 1).",
           "title": "Requests",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "duration": {
           "anyOf": [
@@ -1594,21 +2670,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'concurrency'."
             }
           ],
           "default": null,
           "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
           "title": "Concurrency",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "concurrencyRamp": {
           "anyOf": [
@@ -1743,18 +2810,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'rate'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "rateRamp": {
           "anyOf": [
@@ -1808,17 +2866,14 @@
           "description": "Convergence criterion plugin name (ci_width|cv|distribution)."
         },
         "threshold": {
-          "default": 0.1,
-          "description": "Criterion threshold (interpretation depends on `mode`).",
-          "title": "Threshold",
-          "oneOf": [
+          "anyOf": [
             {
-              "default": 0.1,
-              "description": "Criterion threshold (interpretation depends on `mode`).",
               "exclusiveMaximum": 1,
               "exclusiveMinimum": 0,
-              "title": "Threshold",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -1831,6 +2886,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Criterion threshold (interpretation depends on `mode`). When None (default), each criterion uses its own algorithm-specific default: ci_width=0.10, cv=0.05, distribution=0.05 (KS p-value).",
+          "title": "Threshold",
           "x-jinja2-supported": true
         },
         "minRuns": {
@@ -1889,15 +2947,17 @@
       "type": "string"
     },
     "DatasetFormat": {
-      "description": "Defines the format of file-based datasets.",
       "enum": [
-        "single_turn",
-        "multi_turn",
-        "mooncake_trace",
-        "random_pool",
-        "bailian_trace",
         "burst_gpt_trace",
-        "sagemaker_data_capture"
+        "bailian_trace",
+        "mooncake_trace",
+        "raw_payload",
+        "inputs_json",
+        "dag_jsonl",
+        "sagemaker_data_capture",
+        "multi_turn",
+        "random_pool",
+        "single_turn"
       ],
       "title": "DatasetFormat",
       "type": "string"
@@ -2067,7 +3127,7 @@
             }
           ],
           "default": null,
-          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type \u2014 composes with mean/stddev/median/peaks/points/value.",
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
           "title": "Min",
           "x-jinja2-supported": true
         },
@@ -2174,11 +3234,10 @@
       "description": "Endpoint configuration for connecting to inference servers.\n\nThis section configures how AIPerf connects to and communicates\nwith the target inference server(s). It supports multiple URLs\nfor load-balanced deployments and various API types.",
       "properties": {
         "urls": {
-          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. Example: ['http://localhost:8000/v1/chat/completions']",
+          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
           "items": {
             "type": "string"
           },
-          "minItems": 1,
           "title": "Urls",
           "type": "array",
           "x-kubernetes-preserve-unknown-fields": true
@@ -2191,7 +3250,7 @@
         "type": {
           "$ref": "#/$defs/EndpointType",
           "default": "chat",
-          "description": "API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format."
+          "description": "API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format, and others — see `aiperf plugins` for the full list."
         },
         "path": {
           "anyOf": [
@@ -2219,12 +3278,12 @@
           "title": "Apikey"
         },
         "timeout": {
-          "default": 600.0,
+          "default": 21600,
           "description": "Request timeout in seconds (0 = no timeout). Requests exceeding this duration are marked as failed. Should exceed expected max response time.",
           "title": "Timeout",
           "oneOf": [
             {
-              "default": 600.0,
+              "default": 21600,
               "description": "Request timeout in seconds (0 = no timeout). Requests exceeding this duration are marked as failed. Should exceed expected max response time.",
               "minimum": 0.0,
               "title": "Timeout",
@@ -2259,7 +3318,7 @@
             }
           ],
           "default": null,
-          "description": "HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. Both are used over the URL's scheme (http:// or https://). Auto-detected from URL when unset; explicit setting overrides auto-detection."
+          "description": "Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit setting overrides auto-detection."
         },
         "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
@@ -2374,7 +3433,7 @@
         },
         "waitForModelMode": {
           "default": "inference",
-          "description": "Strategy for the readiness probe. 'inference' (default): POST a 1-token inference request to the configured endpoint; this is the strongest signal \u2014 it proves the full stack (frontend, scheduler, worker, forward pass) is live. Any HTTP status < 500 counts as ready. 'models': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). 'both': run 'models' first, then 'inference'. Only consulted when `--wait-for-model-timeout` is positive.",
+          "description": "Strategy for the readiness probe. 'inference' (default): POST a 1-token inference request to the configured endpoint; this is the strongest signal — it proves the full stack (frontend, scheduler, worker, forward pass) is live. Any HTTP status < 500 counts as ready. 'models': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). 'both': run 'models' first, then 'inference'. Only consulted when `--wait-for-model-timeout` is positive.",
           "enum": [
             "models",
             "inference",
@@ -2384,17 +3443,16 @@
           "type": "string"
         },
         "url": {
-          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. Example: ['http://localhost:8000/v1/chat/completions']",
+          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
           "oneOf": [
             {
               "type": "string"
             },
             {
-              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. Example: ['http://localhost:8000/v1/chat/completions']",
+              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
               "items": {
                 "type": "string"
               },
-              "minItems": 1,
               "title": "Urls",
               "type": "array",
               "x-kubernetes-preserve-unknown-fields": true
@@ -2406,15 +3464,19 @@
       "required": [],
       "title": "EndpointConfig",
       "type": "object",
-      "anyOf": [
+      "allOf": [
         {
-          "required": [
-            "url"
-          ]
-        },
-        {
-          "required": [
-            "urls"
+          "anyOf": [
+            {
+              "required": [
+                "url"
+              ]
+            },
+            {
+              "required": [
+                "urls"
+              ]
+            }
           ]
         }
       ]
@@ -2429,13 +3491,14 @@
         "embeddings",
         "hf_tei_rankings",
         "huggingface_generate",
-        "image_edit",
         "image_generation",
+        "image_edit",
         "video_generation",
         "image_retrieval",
         "nim_embeddings",
         "nim_rankings",
         "solido_rag",
+        "raw",
         "template"
       ],
       "title": "EndpointType",
@@ -2446,7 +3509,7 @@
       "description": "File-based dataset configuration.\n\nLoads prompts from a local file in various formats.\nSupports trace replay and custom sampling strategies.",
       "properties": {
         "name": {
-          "description": "Dataset identifier \u2014 used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
+          "description": "Dataset identifier — used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
           "minLength": 1,
           "title": "Name",
           "type": "string"
@@ -2475,6 +3538,7 @@
           "anyOf": [
             {
               "items": {
+                "additionalProperties": true,
                 "type": "object"
               },
               "type": "array"
@@ -2482,6 +3546,7 @@
             {
               "additionalProperties": {
                 "items": {
+                  "additionalProperties": true,
                   "type": "object"
                 },
                 "type": "array"
@@ -2567,6 +3632,31 @@
           "title": "Randomseed",
           "x-jinja2-supported": true
         },
+        "interTurnDelayCapSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
+          "title": "Interturndelaycapseconds",
+          "x-jinja2-supported": true
+        },
         "osl": {
           "anyOf": [
             {
@@ -2604,43 +3694,9 @@
       "title": "FileDataset",
       "type": "object"
     },
-    "FileSourceConfig": {
-      "additionalProperties": false,
-      "description": "File source configuration for composed datasets.\n\nSimplified file dataset specification used within composed\ndataset source field.",
-      "properties": {
-        "type": {
-          "const": "file",
-          "description": "Source type. Must be 'file' for composed datasets.",
-          "title": "Type",
-          "type": "string"
-        },
-        "path": {
-          "description": "Path to the source file. Can be absolute or relative.",
-          "format": "path",
-          "title": "Path",
-          "type": "string"
-        },
-        "format": {
-          "$ref": "#/$defs/DatasetFormat",
-          "default": "single_turn",
-          "description": "Dataset file format determining parsing logic. single_turn: JSONL with single exchanges. multi_turn: JSONL with conversation history. mooncake_trace: timestamped trace files."
-        },
-        "sampling": {
-          "$ref": "#/$defs/DatasetSamplingStrategy",
-          "default": "sequential",
-          "description": "Strategy for selecting entries from the source file. sequential: iterate in order. random: randomly sample with replacement. shuffle: random permutation without replacement."
-        }
-      },
-      "required": [
-        "type",
-        "path"
-      ],
-      "title": "FileSourceConfig",
-      "type": "object"
-    },
     "FixedDistribution": {
       "title": "FixedDistribution",
-      "description": "Returns a constant value on every sample. Scalars coerce to this. Can be a number (interpreted as fixed value) or a distribution object with type field.",
+      "description": "Returns a constant value on every sample. Scalars coerce to this. Can be a number (interpreted as a fixed value) or {value} object.",
       "anyOf": [
         {
           "additionalProperties": false,
@@ -2656,7 +3712,7 @@
                 }
               ],
               "default": null,
-              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type \u2014 composes with mean/stddev/median/peaks/points/value.",
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
               "title": "Min"
             },
             "max": {
@@ -2698,8 +3754,11 @@
       "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
       "properties": {
         "name": {
-          "description": "Phase identifier \u2014 unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
-          "minLength": 1,
+          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+          "enum": [
+            "warmup",
+            "profiling"
+          ],
           "title": "Name",
           "type": "string"
         },
@@ -2711,7 +3770,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -2733,21 +3792,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'requests'."
             }
           ],
           "default": null,
           "description": "Stop after this many requests sent (must be >= 1).",
           "title": "Requests",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "duration": {
           "anyOf": [
@@ -2822,21 +3872,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'concurrency'."
             }
           ],
           "default": null,
           "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
           "title": "Concurrency",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "concurrencyRamp": {
           "anyOf": [
@@ -3019,7 +4060,8 @@
     "GPUTelemetryCollectorType": {
       "enum": [
         "dcgm",
-        "pynvml"
+        "pynvml",
+        "amdsmi"
       ],
       "title": "GPUTelemetryCollectorType",
       "type": "string"
@@ -3038,8 +4080,11 @@
       "description": "Gamma-distributed request arrivals with configurable smoothness.",
       "properties": {
         "name": {
-          "description": "Phase identifier \u2014 unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
-          "minLength": 1,
+          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+          "enum": [
+            "warmup",
+            "profiling"
+          ],
           "title": "Name",
           "type": "string"
         },
@@ -3051,7 +4096,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -3073,21 +4118,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'requests'."
             }
           ],
           "default": null,
           "description": "Stop after this many requests sent (must be >= 1).",
           "title": "Requests",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "duration": {
           "anyOf": [
@@ -3162,21 +4198,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'concurrency'."
             }
           ],
           "default": null,
           "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
           "title": "Concurrency",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "concurrencyRamp": {
           "anyOf": [
@@ -3311,18 +4338,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'rate'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "rateRamp": {
           "anyOf": [
@@ -3383,11 +4401,11 @@
     },
     "GpuTelemetryConfig": {
       "title": "GpuTelemetryConfig",
-      "description": "GPU telemetry configuration for live or replayed GPU metrics collection.\n\nCollects GPU metrics through DCGM exporter endpoints by default; the\ncollector field can switch collection to local PyNVML, and mode controls\nsummary vs. realtime dashboard display.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      \u2192 GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      \u2192 GpuTelemetryConfig(urls=[\"...\"]) Can be a URL string or full config object.",
+      "description": "GPU telemetry configuration for live or replayed GPU metrics collection.\n\nCollects GPU metrics through DCGM exporter endpoints by default. The\n``collector`` field can switch to a local backend (``pynvml`` for NVIDIA,\n``amdsmi`` for AMD ROCm); ``mode`` controls summary vs. realtime dashboard\ndisplay.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      → GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → GpuTelemetryConfig(urls=[\"...\"]) Can be a URL string or full config object.",
       "anyOf": [
         {
           "additionalProperties": false,
-          "description": "GPU telemetry configuration for live or replayed GPU metrics collection.\n\nCollects GPU metrics through DCGM exporter endpoints by default; the\ncollector field can switch collection to local PyNVML, and mode controls\nsummary vs. realtime dashboard display.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      \u2192 GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      \u2192 GpuTelemetryConfig(urls=[\"...\"])",
+          "description": "GPU telemetry configuration for live or replayed GPU metrics collection.\n\nCollects GPU metrics through DCGM exporter endpoints by default. The\n``collector`` field can switch to a local backend (``pynvml`` for NVIDIA,\n``amdsmi`` for AMD ROCm); ``mode`` controls summary vs. realtime dashboard\ndisplay.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      → GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → GpuTelemetryConfig(urls=[\"...\"])",
           "properties": {
             "enabled": {
               "default": true,
@@ -3420,7 +4438,7 @@
             "collector": {
               "$ref": "#/$defs/GPUTelemetryCollectorType",
               "default": "dcgm",
-              "description": "GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or 'pynvml' for local PyNVML collection."
+              "description": "GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or a local collector (e.g. 'pynvml' for NVIDIA, 'amdsmi' for AMD ROCm) for on-host metrics collection."
             },
             "mode": {
               "$ref": "#/$defs/GPUTelemetryMode",
@@ -3503,6 +4521,19 @@
           "default": null,
           "description": "Optional post-aggregation handler emitted by a search recipe."
         },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source recipe name (audit trail when expanded via --search-recipe). Used by the live Pareto plot path to look up the recipe's pareto_axes after expansion has stripped the originating --search-recipe flag.",
+          "title": "Recipename"
+        },
         "iterationOrder": {
           "$ref": "#/$defs/SweepMode",
           "default": "repeated",
@@ -3521,19 +4552,19 @@
           "title": "Type",
           "type": "string"
         },
-        "variables": {
+        "parameters": {
           "additionalProperties": {
             "items": {},
             "type": "array"
           },
-          "description": "Variables to sweep: dot-notation path -> list of values.",
+          "description": "Parameters to sweep: dot-notation path -> list of values.",
           "minProperties": 1,
-          "title": "Variables",
+          "title": "Parameters",
           "type": "object"
         }
       },
       "required": [
-        "variables"
+        "parameters"
       ],
       "title": "GridSweep",
       "type": "object"
@@ -3673,6 +4704,172 @@
       "title": "IpcCommunicationConfig",
       "type": "object"
     },
+    "LatinHypercubeSweep": {
+      "additionalProperties": false,
+      "description": "Latin hypercube sampling — perfect marginal stratification per axis.",
+      "properties": {
+        "cooldownSeconds": {
+          "default": 0.0,
+          "description": "Cooldown between sweep variations (or BO iterations).",
+          "title": "Cooldownseconds",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Cooldown between sweep variations (or BO iterations).",
+              "minimum": 0,
+              "title": "Cooldownseconds",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "slaFilters": {
+          "description": "SLA constraints applied at trial scoring / aggregation time.",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
+          "title": "Slafilters",
+          "type": "array"
+        },
+        "postProcess": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostProcessSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional post-aggregation handler emitted by a search recipe."
+        },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source recipe name (audit trail when expanded via --search-recipe). Used by the live Pareto plot path to look up the recipe's pareto_axes after expansion has stripped the originating --search-recipe flag.",
+          "title": "Recipename"
+        },
+        "iterationOrder": {
+          "$ref": "#/$defs/SweepMode",
+          "default": "repeated",
+          "description": "Trial/variation iteration order. 'repeated': trials outer, variations inner. 'independent': variations outer, trials inner. Inapplicable to adaptive_search."
+        },
+        "sameSeed": {
+          "default": false,
+          "description": "If True, every variation reuses the envelope's random_seed. If False, each variation derives `random_seed + variation.index`.",
+          "title": "Sameseed",
+          "type": "boolean"
+        },
+        "samples": {
+          "description": "Number of variations to draw. Capped at 2**20 (1,048,576) — scipy's Sobol engine fails at 2**30 anyway, and full materialization beyond ~1M variants risks orchestrator OOM.",
+          "title": "Samples",
+          "oneOf": [
+            {
+              "description": "Number of variations to draw. Capped at 2**20 (1,048,576) — scipy's Sobol engine fails at 2**30 anyway, and full materialization beyond ~1M variants risks orchestrator OOM.",
+              "maximum": 1048576,
+              "minimum": 2,
+              "title": "Samples",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "RNG seed for reproducibility. Must be non-negative; scipy's QMC engines reject negative seeds with an opaque low-level error.",
+          "title": "Seed",
+          "x-jinja2-supported": true
+        },
+        "dimensions": {
+          "description": "Dimensions to sample over.",
+          "items": {
+            "$ref": "#/$defs/SamplingDimension"
+          },
+          "minItems": 1,
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "labelFormat": {
+          "default": "index",
+          "description": "Variation-label format. 'index' => '<type>_NNNN' (short, sortable). 'kv' => 'k1=v1, k2=v2' (grid-style).",
+          "enum": [
+            "index",
+            "kv"
+          ],
+          "title": "Labelformat",
+          "type": "string"
+        },
+        "type": {
+          "const": "latin_hypercube",
+          "default": "latin_hypercube",
+          "description": "Sweep type discriminator.",
+          "title": "Type",
+          "type": "string"
+        },
+        "optimization": {
+          "default": "random-cd",
+          "description": "LHS post-processing to reduce centered discrepancy. None = vanilla LHS.",
+          "enum": [
+            null,
+            "random-cd",
+            "lloyd"
+          ],
+          "title": "Optimization"
+        }
+      },
+      "required": [
+        "samples",
+        "dimensions"
+      ],
+      "title": "LatinHypercubeSweep",
+      "type": "object"
+    },
     "LogNormalDistribution": {
       "additionalProperties": false,
       "description": "Log-normal parameterized by mean and median (right-skewed, always positive).\n\nSkew is controlled by the mean/median ratio: larger ratio = heavier right tail.\nWhen mean == median the distribution is deterministic.\n\nInternally: sigma = sqrt(2 * log(mean / median)), mu = log(median).",
@@ -3697,7 +4894,7 @@
             }
           ],
           "default": null,
-          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type \u2014 composes with mean/stddev/median/peaks/points/value.",
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
           "title": "Min",
           "x-jinja2-supported": true
         },
@@ -3744,18 +4941,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'mean'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "median": {
           "description": "Desired median. Must be <= mean. Lower median = more right skew.",
@@ -3796,15 +4984,100 @@
         "level": {
           "$ref": "#/$defs/AIPerfLogLevel",
           "default": "INFO",
-          "description": "Global logging verbosity level (loguru-style severity ladder; TRACE most verbose, CRITICAL least). NOTICE and SUCCESS are loguru-specific intermediate levels (between INFO and WARNING) and have no equivalent in the Python stdlib `logging` module \u2014 pick INFO/WARNING/ERROR if you want stdlib-compatible severities."
+          "description": "Global logging verbosity level (loguru-style severity ladder; TRACE most verbose, CRITICAL least). NOTICE and SUCCESS are loguru-specific intermediate levels (between INFO and WARNING) and have no equivalent in the Python stdlib `logging` module — pick INFO/WARNING/ERROR if you want stdlib-compatible severities."
         }
       },
       "title": "LoggingConfig",
       "type": "object"
     },
+    "MLflowConfig": {
+      "additionalProperties": false,
+      "description": "MLflow tracking and artifact-upload configuration.",
+      "properties": {
+        "trackingUri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MLflow tracking URI.",
+          "title": "Trackinguri"
+        },
+        "experiment": {
+          "default": "aiperf",
+          "description": "MLflow experiment name.",
+          "title": "Experiment",
+          "type": "string"
+        },
+        "runName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MLflow run name.",
+          "title": "Runname"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Additional MLflow run tags to attach on upload.",
+          "title": "Tags"
+        },
+        "parentRunId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional MLflow parent run ID.",
+          "title": "Parentrunid"
+        },
+        "artifactGlobs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Artifact glob overrides for MLflow upload.",
+          "title": "Artifactglobs"
+        }
+      },
+      "title": "MLflowConfig",
+      "type": "object"
+    },
     "MetricsConfig": {
       "additionalProperties": false,
-      "description": "Configuration for benchmark metric aggregation behavior.\n\nCurrently empty \u2014 list-valued record metrics aggregate via t-digest at\nfirst-touch (see :mod:`aiperf.metrics.list_metric_aggregation`); the\nsketch compression is tunable via ``AIPERF_METRICS_TDIGEST_COMPRESSION``.\nReserved as the home for any future user-facing metric-aggregation knobs.",
+      "description": "Configuration for benchmark metric aggregation behavior.\n\nCurrently empty — list-valued record metrics aggregate via t-digest at\nfirst-touch (see :mod:`aiperf.metrics.list_metric_aggregation`); the\nsketch compression is tunable via ``AIPERF_METRICS_TDIGEST_COMPRESSION``.\nReserved as the home for any future user-facing metric-aggregation knobs.",
       "properties": {},
       "title": "MetricsConfig",
       "type": "object"
@@ -3815,6 +5088,7 @@
       "properties": {
         "name": {
           "description": "Model name or identifier as known to the inference server.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -3840,7 +5114,7 @@
             }
           ],
           "default": null,
-          "description": "Selection weight for weighted strategy (0.0-1.0). Weights are normalized across all models. Example: weight=0.7 means ~70%% of requests to this model.",
+          "description": "Selection weight for weighted strategy (0.0-1.0). Weights must sum to 1.0 (+/-0.01) across all models; they are validated, not auto-normalized. Example: weight=0.7 means ~70%% of requests to this model.",
           "title": "Weight",
           "x-jinja2-supported": true
         },
@@ -3870,7 +5144,7 @@
             }
           ],
           "default": null,
-          "description": "List of input modalities this model supports. Used with modality_aware selection strategy. Valid values: 'text', 'image', 'audio', 'video'.",
+          "description": "List of input modalities this model supports. [Currently a no-op: no selection strategy consumes this field. Accepted for forward-compatibility / declarative documentation.]",
           "title": "Modalities"
         },
         "tokenizer": {
@@ -3892,135 +5166,6 @@
       "title": "ModelItem",
       "type": "object"
     },
-    "MLflowConfig": {
-      "additionalProperties": false,
-      "description": "MLflow tracking and artifact-upload configuration.",
-      "properties": {
-        "tracking_uri": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "MLflow tracking URI."
-        },
-        "experiment": {
-          "default": "aiperf",
-          "description": "MLflow experiment name.",
-          "type": "string"
-        },
-        "run_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "MLflow run name."
-        },
-        "tags": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Additional MLflow run tags to attach on upload."
-        },
-        "parent_run_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional MLflow parent run ID."
-        },
-        "artifact_globs": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Artifact glob overrides for MLflow upload."
-        }
-      },
-      "title": "MLflowConfig",
-      "type": "object"
-    },
-    "OTelConfig": {
-      "additionalProperties": false,
-      "description": "OpenTelemetry metrics streaming configuration.",
-      "properties": {
-        "metrics_url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "OTLP/HTTP metrics endpoint URL."
-        },
-        "stream_metrics_enabled": {
-          "default": true,
-          "description": "Stream metric records to OTel.",
-          "type": "boolean"
-        },
-        "stream_timing_enabled": {
-          "default": true,
-          "description": "Stream timing records to OTel.",
-          "type": "boolean"
-        },
-        "custom_resource_attributes": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "description": "Custom OTel resource attributes.",
-          "type": "object"
-        },
-        "gen_ai_provider": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "GenAI semantic convention provider override."
-        }
-      },
-      "title": "OTelConfig",
-      "type": "object"
-    },
     "ModelSelectionStrategy": {
       "description": "Strategy for selecting the model to use for the request.",
       "enum": [
@@ -4033,12 +5178,12 @@
     },
     "ModelsAdvanced": {
       "additionalProperties": false,
-      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nmodality-aware selection, or per-model tokenizer overrides.",
+      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nor per-model tokenizer overrides.",
       "properties": {
         "strategy": {
           "$ref": "#/$defs/ModelSelectionStrategy",
           "default": "round_robin",
-          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights, modality_aware routes by input type."
+          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights."
         },
         "items": {
           "description": "List of model configurations. At least one model required.",
@@ -4062,12 +5207,12 @@
       "properties": {
         "numRuns": {
           "default": 1,
-          "description": "Upper bound on trials per variation. When `convergence` is set, trials may stop earlier; this is the hard ceiling.",
+          "description": "Upper bound on trials per variation. When `convergence` is set, trials may stop earlier; this is the hard ceiling. Cap matches `BenchmarkPlan.trials` so programmatic plan assembly cannot exceed what user-facing config validation allows.",
           "title": "Numruns",
           "oneOf": [
             {
               "default": 1,
-              "description": "Upper bound on trials per variation. When `convergence` is set, trials may stop earlier; this is the hard ceiling.",
+              "description": "Upper bound on trials per variation. When `convergence` is set, trials may stop earlier; this is the hard ceiling. Cap matches `BenchmarkPlan.trials` so programmatic plan assembly cannot exceed what user-facing config validation allows.",
               "maximum": 10,
               "minimum": 1,
               "title": "Numruns",
@@ -4088,12 +5233,13 @@
         },
         "cooldownSeconds": {
           "default": 0.0,
-          "description": "Cooldown between trials within a single variation.",
+          "description": "Cooldown between trials within a single variation. Capped at 24h to surface typos like `1e18` at config-load time rather than blocking the orchestrator inside ``asyncio.sleep``.",
           "title": "Cooldownseconds",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Cooldown between trials within a single variation.",
+              "description": "Cooldown between trials within a single variation. Capped at 24h to surface typos like `1e18` at config-load time rather than blocking the orchestrator inside ``asyncio.sleep``.",
+              "maximum": 86400,
               "minimum": 0,
               "title": "Cooldownseconds",
               "type": "number"
@@ -4143,6 +5289,12 @@
           "title": "Setconsistentseed",
           "type": "boolean"
         },
+        "varySeedPerTrial": {
+          "default": false,
+          "description": "When True, derive a distinct seed for each trial of a variation via SHA-256 over `(envelope_seed, variation.label, trial)`. When False (default), all trials of a variation share the variation's seed. Off gives pure-runtime variance for confidence statistics; on captures end-to-end variance including per-trial workload sampling.",
+          "title": "Varyseedpertrial",
+          "type": "boolean"
+        },
         "disableWarmupAfterFirst": {
           "default": true,
           "description": "Skip warmup on trials 2..N of a variation (steady-state measurement).",
@@ -4167,7 +5319,7 @@
     },
     "MultimodalDistribution": {
       "additionalProperties": false,
-      "description": "Weighted mixture of N peaks (N >= 2).\n\nYAML:\n    isl:\n      peaks:\n        - {mean: 128, stddev: 20, weight: 60}\n        - {mean: 2048, median: 1800, weight: 40}\n    # Equal split \u2014 omit weight:\n    isl:\n      peaks:\n        - {mean: 128, stddev: 20}\n        - {mean: 2048, median: 1800}\n        - {mean: 8192, median: 4096}",
+      "description": "Weighted mixture of N peaks (N >= 2).\n\nYAML:\n    isl:\n      peaks:\n        - {mean: 128, stddev: 20, weight: 60}\n        - {mean: 2048, median: 1800, weight: 40}\n    # Equal split — omit weight:\n    isl:\n      peaks:\n        - {mean: 128, stddev: 20}\n        - {mean: 2048, median: 1800}\n        - {mean: 8192, median: 4096}",
       "properties": {
         "min": {
           "anyOf": [
@@ -4189,7 +5341,7 @@
             }
           ],
           "default": null,
-          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type \u2014 composes with mean/stddev/median/peaks/points/value.",
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
           "title": "Min",
           "x-jinja2-supported": true
         },
@@ -4258,7 +5410,7 @@
             }
           ],
           "default": null,
-          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type \u2014 composes with mean/stddev/median/peaks/points/value.",
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
           "title": "Min",
           "x-jinja2-supported": true
         },
@@ -4287,11 +5439,12 @@
           "x-jinja2-supported": true
         },
         "mean": {
-          "description": "Mean value.",
+          "description": "Mean value. Must be >= 0; samples below 0 are truncated, so a negative mean would yield a degenerate distribution. Zero is allowed (e.g. OSL=0 disables output, turn_delay mean=0 disables inter-turn delay).",
           "title": "Mean",
           "oneOf": [
             {
-              "description": "Mean value.",
+              "description": "Mean value. Must be >= 0; samples below 0 are truncated, so a negative mean would yield a degenerate distribution. Zero is allowed (e.g. OSL=0 disables output, turn_delay mean=0 disables inter-turn delay).",
+              "minimum": 0.0,
               "title": "Mean",
               "type": "number"
             },
@@ -4304,18 +5457,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'mean'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "stddev": {
           "default": 0.0,
@@ -4350,8 +5494,120 @@
       "type": "object",
       "x-kubernetes-preserve-unknown-fields": true
     },
+    "OTelConfig": {
+      "additionalProperties": false,
+      "description": "OpenTelemetry metrics streaming configuration.",
+      "properties": {
+        "metricsUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OTLP/HTTP metrics endpoint URL.",
+          "title": "Metricsurl"
+        },
+        "streamMetricsEnabled": {
+          "default": true,
+          "description": "Stream metric records to OTel.",
+          "title": "Streammetricsenabled",
+          "type": "boolean"
+        },
+        "streamTimingEnabled": {
+          "default": true,
+          "description": "Stream timing records to OTel.",
+          "title": "Streamtimingenabled",
+          "type": "boolean"
+        },
+        "customResourceAttributes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Custom OTel resource attributes.",
+          "title": "Customresourceattributes",
+          "type": "object"
+        },
+        "genAiProvider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "GenAI semantic convention provider override.",
+          "title": "Genaiprovider"
+        }
+      },
+      "title": "OTelConfig",
+      "type": "object"
+    },
+    "Objective": {
+      "additionalProperties": false,
+      "description": "Single optimization objective.\n\nMultiple ``Objective`` entries on an ``AdaptiveSearchSweep`` enable\nPareto Bayesian optimization (e.g. qlognehvi / qnehvi / qehvi). A\nlength-1 list is single-objective BO.",
+      "properties": {
+        "metric": {
+          "description": "Metric tag to optimize (e.g. 'output_token_throughput').",
+          "title": "Metric",
+          "type": "string"
+        },
+        "stat": {
+          "default": "avg",
+          "description": "Statistic on the metric.",
+          "enum": [
+            "avg",
+            "p50",
+            "p90",
+            "p95",
+            "p99"
+          ],
+          "title": "Stat",
+          "type": "string"
+        },
+        "direction": {
+          "$ref": "#/$defs/OptimizationDirection",
+          "description": "MAXIMIZE or MINIMIZE."
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Pareto reference point for hypervolume computation. Trials worse than this on this objective do not contribute to hypervolume. When None, auto-derived from the worst observed value among Sobol initial points. Ignored for single-objective runs.",
+          "title": "Threshold",
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "metric",
+        "direction"
+      ],
+      "title": "Objective",
+      "type": "object"
+    },
     "OptimizationDirection": {
-      "description": "Direction of optimization for a metric.\n\nMembers:\n    MAXIMIZE: Higher values are preferred (e.g. throughput, goodput).\n    MINIMIZE: Lower values are preferred (e.g. latency, TTFT, p99).\n\nDefined here for the parameter-sweeping feature. Ideally this would\nbe a property of BaseMetric itself; until then sweep objectives carry\nit explicitly.\n\nExample:\n    >>> OptimizationDirection.MAXIMIZE == \"maximize\"\n    True",
+      "description": "Direction of optimization for a metric.\n\nMAXIMIZE: Higher values are preferred (e.g. throughput, goodput).\nMINIMIZE: Lower values are preferred (e.g. latency, TTFT, p99).",
       "enum": [
         "maximize",
         "minimize"
@@ -4359,14 +5615,55 @@
       "title": "OptimizationDirection",
       "type": "string"
     },
-    "OslMode": {
-      "description": "Defines how output sequence length is handled in composed datasets.",
-      "enum": [
-        "fill",
-        "override"
+    "OutcomeConstraint": {
+      "additionalProperties": false,
+      "description": "Feasibility gate on a metric the optimizer is *not* optimizing.\n\nDistinct from ``Objective.threshold`` (Pareto reference point) and from\n``SLAFilter`` (post-hoc filter on benchmark eligibility). An outcome\nconstraint masks BoTorch acquisition: candidates predicted to violate\nit are downweighted.",
+      "properties": {
+        "metric": {
+          "description": "Metric tag to constrain.",
+          "title": "Metric",
+          "type": "string"
+        },
+        "op": {
+          "description": "Comparison operator.",
+          "enum": [
+            "<=",
+            ">=",
+            "=="
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "bound": {
+          "description": "Threshold value.",
+          "title": "Bound",
+          "oneOf": [
+            {
+              "description": "Threshold value.",
+              "title": "Bound",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "metric",
+        "op",
+        "bound"
       ],
-      "title": "OslMode",
-      "type": "string"
+      "title": "OutcomeConstraint",
+      "type": "object"
     },
     "PeakEntry": {
       "additionalProperties": false,
@@ -4441,8 +5738,11 @@
       "description": "Poisson-distributed request arrivals at the target rate.",
       "properties": {
         "name": {
-          "description": "Phase identifier \u2014 unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
-          "minLength": 1,
+          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+          "enum": [
+            "warmup",
+            "profiling"
+          ],
           "title": "Name",
           "type": "string"
         },
@@ -4454,7 +5754,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -4476,21 +5776,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'requests'."
             }
           ],
           "default": null,
           "description": "Stop after this many requests sent (must be >= 1).",
           "title": "Requests",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "duration": {
           "anyOf": [
@@ -4565,21 +5856,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'concurrency'."
             }
           ],
           "default": null,
           "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
           "title": "Concurrency",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "concurrencyRamp": {
           "anyOf": [
@@ -4714,18 +5996,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'rate'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "rateRamp": {
           "anyOf": [
@@ -4761,10 +6034,10 @@
     },
     "PostProcessSpec": {
       "additionalProperties": false,
-      "description": "Post-aggregation hook spec emitted by a search recipe.\n\nPhase 1 declares the type only; Phase 3 wires it into\n``aggregate_sweep_and_export`` via a ``SEARCH_RECIPE_POST_PROCESS`` plugin\ncategory.\n\nExample: ``PostProcessSpec(handler=\"ttft_sla_curve\", params={\"sla_ms\": 200},\noutput_filename=\"ttft_sla_curve.json\")``.",
+      "description": "Post-aggregation hook spec emitted by a search recipe.\n\nResolved through the ``search_recipe_post_process`` plugin category and\ninvoked by ``aggregate_sweep_and_export`` after per-variation aggregation.\n\nExample: ``PostProcessSpec(handler=\"ttft_sla_curve\", params={\"sla_ms\": 200},\noutput_filename=\"ttft_sla_curve.json\")``.",
       "properties": {
         "handler": {
-          "description": "Registered post-process handler name. Looked up via the search_recipe_post_process plugin category in Phase 3.",
+          "description": "Registered post-process handler name. Looked up in the ``search_recipe_post_process`` plugin category.",
           "title": "Handler",
           "type": "string"
         },
@@ -4774,15 +6047,15 @@
           "title": "Params",
           "type": "object"
         },
-        "outputFilename": {
-          "description": "Filename (relative to ``sweep_aggregate/`` under the artifact dir) to write the handler's output to. Must end in ``.json`` and contain no path separators -- the hook joins it with ``sweep_aggregate/`` and refuses to escape that directory.",
-          "title": "Outputfilename",
+        "output_filename": {
+          "description": "Filename (relative to ``sweep_aggregate/`` under the artifact dir) to write the handler's output to. Must end in ``.json`` and contain no path separators -- the hook joins it with ``sweep_aggregate/`` and refuses to escape that directory. NUL bytes and dot-only stems are also rejected.",
+          "title": "Output Filename",
           "type": "string"
         }
       },
       "required": [
         "handler",
-        "outputFilename"
+        "output_filename"
       ],
       "title": "PostProcessSpec",
       "type": "object"
@@ -4925,7 +6198,7 @@
             }
           ],
           "default": null,
-          "description": "Input sequence length in tokens. Can be a fixed integer (e.g., 512) or distribution {mean: 512, stddev: 50}. AIPerf generates prompts with lengths following a normal distribution around the mean (\u00b1stddev). Ignored when sequence_distribution is specified.",
+          "description": "Input sequence length in tokens. Can be a fixed integer (e.g., 512) or distribution {mean: 512, stddev: 50}. AIPerf generates prompts with lengths following a normal distribution around the mean (±stddev). Ignored when sequence_distribution is specified.",
           "title": "Isl"
         },
         "osl": {
@@ -5032,7 +6305,7 @@
       "description": "Public dataset configuration.\n\nUses well-known public benchmarking datasets that are\nautomatically downloaded and processed by AIPerf.",
       "properties": {
         "name": {
-          "description": "Dataset identifier \u2014 used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
+          "description": "Dataset identifier — used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
           "minLength": 1,
           "title": "Name",
           "type": "string"
@@ -5400,7 +6673,7 @@
         "serviceRunType": {
           "$ref": "#/$defs/ServiceRunType",
           "default": "multiprocessing",
-          "description": "Execution mode. multiprocessing: local multi-process (default for `aiperf profile`). kubernetes: distributed across pods. [operator-managed under AIPerfJob \u2014 the operator forces 'kubernetes' on the controller pod; do not set this in a CR spec.]"
+          "description": "Execution mode. multiprocessing: local multi-process (default for `aiperf profile`). kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces 'kubernetes' on the controller pod; do not set this in a CR spec.]"
         },
         "communication": {
           "anyOf": [
@@ -5568,7 +6841,7 @@
     },
     "SLAFilter": {
       "additionalProperties": false,
-      "description": "SLA constraint applied to BO scoring or grid filtering.\n\nA trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.\nPhase 2 wires this into ``BayesianSearchPlanner`` for soft-penalty BO\nscoring and into ``write_search_history`` for lexicographic\nfeasibility-first best-result selection.\n\nLives in ``aiperf.config`` rather than ``aiperf.search_recipes`` because\n``AdaptiveSearchSweep`` carries a ``list[SLAFilter]`` field; the inverse\nlocation would force a circular import. Re-exported from\n``aiperf.search_recipes._base`` for ergonomic recipe authoring.\n\nExample: enforce p95 TTFT under 200 ms via\n``SLAFilter(metric_tag=\"time_to_first_token\", stat=\"p95\", op=\"lt\", threshold=200.0)``.",
+      "description": "SLA constraint applied to BO scoring or grid filtering.\n\nA trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.\n``BayesianSearchPlanner`` consumes these for soft-penalty BO scoring and\n``write_search_history`` consumes them for lexicographic\nfeasibility-first best-result selection.\n\nLives in ``aiperf.config`` rather than ``aiperf.search_recipes`` because\n``AdaptiveSearchSweep`` carries a ``list[SLAFilter]`` field; the inverse\nlocation would force a circular import. Re-exported from\n``aiperf.search_recipes._base`` for ergonomic recipe authoring.\n\nExample: enforce p95 TTFT under 200 ms via\n``SLAFilter(metric_tag=\"time_to_first_token\", stat=\"p95\", op=\"lt\", threshold=200.0)``.",
       "properties": {
         "metricTag": {
           "description": "Metric tag to filter on, e.g. 'time_to_first_token'. Must match a key in RunResult.summary_metrics produced by the run.",
@@ -5630,6 +6903,104 @@
       "title": "SLAFilter",
       "type": "object"
     },
+    "SamplingDimension": {
+      "additionalProperties": false,
+      "description": "One dimension of a QMC sampling space.\n\nUsed by `SobolSweep` and `LatinHypercubeSweep`. Distinct from\n`SearchSpaceDimension` (BO) — same path/lo/hi grammar, but native\n`choices` support and explicit `scale` validation.\n\nPath is a dotted path of the form `phases.profiling.concurrency` —\nthe same grammar accepted by `_set_nested_value`.",
+      "properties": {
+        "path": {
+          "description": "Dotted-path into BenchmarkConfig.",
+          "title": "Path",
+          "type": "string"
+        },
+        "lo": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive lower bound (with hi).",
+          "title": "Lo",
+          "x-jinja2-supported": true
+        },
+        "hi": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive upper bound (with lo).",
+          "title": "Hi",
+          "x-jinja2-supported": true
+        },
+        "scale": {
+          "default": "linear",
+          "description": "Mapping from unit cube to value.",
+          "enum": [
+            "linear",
+            "log"
+          ],
+          "title": "Scale",
+          "type": "string"
+        },
+        "kind": {
+          "default": "real",
+          "description": "Output type after mapping.",
+          "enum": [
+            "int",
+            "real"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "choices": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Discrete value list. Mutually exclusive with (lo, hi).",
+          "title": "Choices"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "SamplingDimension",
+      "type": "object"
+    },
     "ScenarioSweep": {
       "additionalProperties": false,
       "description": "Scenario sweep - hand-picked configurations deep-merged with base.",
@@ -5679,6 +7050,19 @@
           "default": null,
           "description": "Optional post-aggregation handler emitted by a search recipe."
         },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source recipe name (audit trail when expanded via --search-recipe). Used by the live Pareto plot path to look up the recipe's pareto_axes after expansion has stripped the originating --search-recipe flag.",
+          "title": "Recipename"
+        },
         "iterationOrder": {
           "$ref": "#/$defs/SweepMode",
           "default": "repeated",
@@ -5726,7 +7110,7 @@
     },
     "SearchSpaceDimension": {
       "additionalProperties": false,
-      "description": "One dimension of the BO search space.\n\n`path` is a dotted path of the form `phases.profiling.concurrency` \u2014\nthe same grammar accepted by `aiperf.config.sweep._set_nested_value`.",
+      "description": "One dimension of the BO search space.\n\n`path` is a dotted path of the form `phases.profiling.concurrency` —\nthe same grammar accepted by `aiperf.config.sweep._set_nested_value`.",
       "properties": {
         "path": {
           "description": "Dotted-path into BenchmarkConfig (e.g. 'phases.profiling.concurrency').",
@@ -5785,6 +7169,16 @@
             "real"
           ],
           "title": "Kind",
+          "type": "string"
+        },
+        "prior": {
+          "default": "uniform",
+          "description": "Sampling prior for BO/Optuna planners. 'uniform' draws Sobol/random samples linearly across [lo, hi]; 'log-uniform' draws them log-spaced. Use 'log-uniform' when a parameter spans orders of magnitude (e.g. concurrency in [1, 1000]) so the initial-points phase covers low and high decades evenly. Requires lo > 0. Ignored by planners that do not draw initial points (monotonic, smooth_isotonic) where the search procedure is structurally adaptive rather than sampling-based.",
+          "enum": [
+            "uniform",
+            "log-uniform"
+          ],
+          "title": "Prior",
           "type": "string"
         }
       },
@@ -5963,11 +7357,11 @@
     },
     "ServerMetricsConfig": {
       "title": "ServerMetricsConfig",
-      "description": "Server metrics configuration for Prometheus scraping.\n\nCollects server-side operational metrics (queue depth, KV cache utilization,\nbatch sizes, GPU memory) from Prometheus endpoints exposed by inference servers\nlike vLLM, TensorRT-LLM, or Triton.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9090/metrics\"\n      \u2192 ServerMetricsConfig(enabled=True, urls=[\"http://localhost:9090/metrics\"])\n    - Singular url field: {url: \"...\"}\n      \u2192 ServerMetricsConfig(urls=[\"...\"]) Can be a URL string or full config object.",
+      "description": "Server metrics configuration for Prometheus scraping.\n\nCollects server-side operational metrics (queue depth, KV cache utilization,\nbatch sizes, GPU memory) from Prometheus endpoints exposed by inference servers\nlike vLLM, TensorRT-LLM, or Triton.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9090/metrics\"\n      → ServerMetricsConfig(enabled=True, urls=[\"http://localhost:9090/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → ServerMetricsConfig(urls=[\"...\"]) Can be a URL string or full config object.",
       "anyOf": [
         {
           "additionalProperties": false,
-          "description": "Server metrics configuration for Prometheus scraping.\n\nCollects server-side operational metrics (queue depth, KV cache utilization,\nbatch sizes, GPU memory) from Prometheus endpoints exposed by inference servers\nlike vLLM, TensorRT-LLM, or Triton.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9090/metrics\"\n      \u2192 ServerMetricsConfig(enabled=True, urls=[\"http://localhost:9090/metrics\"])\n    - Singular url field: {url: \"...\"}\n      \u2192 ServerMetricsConfig(urls=[\"...\"])",
+          "description": "Server metrics configuration for Prometheus scraping.\n\nCollects server-side operational metrics (queue depth, KV cache utilization,\nbatch sizes, GPU memory) from Prometheus endpoints exposed by inference servers\nlike vLLM, TensorRT-LLM, or Triton.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9090/metrics\"\n      → ServerMetricsConfig(enabled=True, urls=[\"http://localhost:9090/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → ServerMetricsConfig(urls=[\"...\"])",
           "properties": {
             "enabled": {
               "default": true,
@@ -6062,7 +7456,7 @@
       "type": "object"
     },
     "ServerMetricsDiscoveryMode": {
-      "description": "Mode for discovering server metrics endpoints in distributed environments.\n\nControls how AIPerf discovers Prometheus /metrics endpoints for server metrics collection.",
+      "description": "Mode for discovering server metrics endpoints in distributed environments.",
       "enum": [
         "auto",
         "kubernetes",
@@ -6084,14 +7478,175 @@
     },
     "ServiceRunType": {
       "enum": [
-        "kubernetes",
         "multiprocessing"
       ],
       "title": "ServiceRunType",
       "type": "string"
     },
+    "SobolSweep": {
+      "additionalProperties": false,
+      "description": "Sobol quasi-Monte-Carlo sweep — low-discrepancy joint coverage.\n\nNote on ``scramble=False``: scipy's raw Sobol sequence starts at the\norigin (the first row is exactly all-zeros), so the first variant\nwill land on ``(lo, lo, ...)`` for every dimension. With small\n``samples`` this produces degenerate corner-only coverage. Prefer\nthe default ``scramble=True`` (Owen-scrambled) unless you have a\nspecific reason to want raw Sobol points.",
+      "properties": {
+        "cooldownSeconds": {
+          "default": 0.0,
+          "description": "Cooldown between sweep variations (or BO iterations).",
+          "title": "Cooldownseconds",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Cooldown between sweep variations (or BO iterations).",
+              "minimum": 0,
+              "title": "Cooldownseconds",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "slaFilters": {
+          "description": "SLA constraints applied at trial scoring / aggregation time.",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
+          "title": "Slafilters",
+          "type": "array"
+        },
+        "postProcess": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostProcessSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional post-aggregation handler emitted by a search recipe."
+        },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source recipe name (audit trail when expanded via --search-recipe). Used by the live Pareto plot path to look up the recipe's pareto_axes after expansion has stripped the originating --search-recipe flag.",
+          "title": "Recipename"
+        },
+        "iterationOrder": {
+          "$ref": "#/$defs/SweepMode",
+          "default": "repeated",
+          "description": "Trial/variation iteration order. 'repeated': trials outer, variations inner. 'independent': variations outer, trials inner. Inapplicable to adaptive_search."
+        },
+        "sameSeed": {
+          "default": false,
+          "description": "If True, every variation reuses the envelope's random_seed. If False, each variation derives `random_seed + variation.index`.",
+          "title": "Sameseed",
+          "type": "boolean"
+        },
+        "samples": {
+          "description": "Number of variations to draw. Capped at 2**20 (1,048,576) — scipy's Sobol engine fails at 2**30 anyway, and full materialization beyond ~1M variants risks orchestrator OOM.",
+          "title": "Samples",
+          "oneOf": [
+            {
+              "description": "Number of variations to draw. Capped at 2**20 (1,048,576) — scipy's Sobol engine fails at 2**30 anyway, and full materialization beyond ~1M variants risks orchestrator OOM.",
+              "maximum": 1048576,
+              "minimum": 2,
+              "title": "Samples",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "RNG seed for reproducibility. Must be non-negative; scipy's QMC engines reject negative seeds with an opaque low-level error.",
+          "title": "Seed",
+          "x-jinja2-supported": true
+        },
+        "dimensions": {
+          "description": "Dimensions to sample over.",
+          "items": {
+            "$ref": "#/$defs/SamplingDimension"
+          },
+          "minItems": 1,
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "labelFormat": {
+          "default": "index",
+          "description": "Variation-label format. 'index' => '<type>_NNNN' (short, sortable). 'kv' => 'k1=v1, k2=v2' (grid-style).",
+          "enum": [
+            "index",
+            "kv"
+          ],
+          "title": "Labelformat",
+          "type": "string"
+        },
+        "type": {
+          "const": "sobol",
+          "default": "sobol",
+          "description": "Sweep type discriminator.",
+          "title": "Type",
+          "type": "string"
+        },
+        "scramble": {
+          "default": true,
+          "description": "Owen-scrambled Sobol (recommended). False = raw Sobol sequence.",
+          "title": "Scramble",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "samples",
+        "dimensions"
+      ],
+      "title": "SobolSweep",
+      "type": "object"
+    },
     "SweepMode": {
-      "description": "Execution order for sweep + confidence composition.\n\nREPEATED: for trial in trials: for value in values\n    All values tested per trial before moving to next trial.\n    Path: base_dir/profile_runs/trial_0001/concurrency_10/\n\nINDEPENDENT: for value in values: for trial in trials\n    All trials completed per value before moving to next value.\n    Path: base_dir/concurrency_10/profile_runs/trial_0001/",
+      "description": "Execution order for sweep + confidence composition.\n\nREPEATED: for trial in trials: for value in values\n    All values tested per trial before moving to next trial.\n\nINDEPENDENT: for value in values: for trial in trials\n    All trials completed per value before moving to next value.",
       "enum": [
         "independent",
         "repeated"
@@ -6262,7 +7817,7 @@
       "description": "Synthetic dataset configuration.\n\nGenerates prompts programmatically based on token length\nspecifications. Ideal for controlled experiments.",
       "properties": {
         "name": {
-          "description": "Dataset identifier \u2014 used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
+          "description": "Dataset identifier — used in result file paths. Defaults to 'default' for the singular `dataset:` shorthand.",
           "minLength": 1,
           "title": "Name",
           "type": "string"
@@ -6417,7 +7972,7 @@
             {
               "default": 1.0,
               "description": "Multiplier for scaling all turn delays. Applied after mean/stddev calculation: actual_delay = calculated_delay * ratio. Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.",
-              "exclusiveMinimum": 0.0,
+              "minimum": 0.0,
               "title": "Turndelayratio",
               "type": "number"
             },
@@ -6736,8 +8291,7 @@
     },
     "TransportType": {
       "enum": [
-        "http",
-        "http2"
+        "http"
       ],
       "title": "TransportType",
       "type": "string"
@@ -6763,8 +8317,11 @@
       "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
       "properties": {
         "name": {
-          "description": "Phase identifier \u2014 unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
-          "minLength": 1,
+          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
+          "enum": [
+            "warmup",
+            "profiling"
+          ],
           "title": "Name",
           "type": "string"
         },
@@ -6776,7 +8333,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -6798,21 +8355,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'requests'."
             }
           ],
           "default": null,
           "description": "Stop after this many requests sent (must be >= 1).",
           "title": "Requests",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "duration": {
           "anyOf": [
@@ -6887,21 +8435,12 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'concurrency'."
             }
           ],
           "default": null,
           "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
           "title": "Concurrency",
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "concurrencyRamp": {
           "anyOf": [
@@ -7036,18 +8575,9 @@
               "type": "string",
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "description": "List of values to sweep over for 'rate'."
             }
           ],
-          "x-jinja2-supported": true,
-          "x-sweep-field": true
+          "x-jinja2-supported": true
         },
         "rateRamp": {
           "anyOf": [
@@ -7106,7 +8636,7 @@
       "type": "object"
     },
     "UserFile": {
-      "description": "One user-declared output file rendered into the run directory before benchmark start.\n\nPath is relative to the run directory; subdirectories are allowed; absolute\npaths and any segment equal to '..' are rejected. Content is rendered with\njinja2 against a documented context (variables: + system-injected names);\nsee docs/kubernetes/user-files.md.",
+      "description": "One user-declared output file rendered into the run directory before benchmark start.\n\nPath is relative to the run directory; subdirectories are allowed; absolute\npaths and any segment equal to '..' are rejected. Content is rendered with\njinja2 against a documented context (variables: + system-injected names).",
       "properties": {
         "path": {
           "description": "Output path relative to the run directory. Subdirectories allowed. Absolute paths and any segment equal to '..' are rejected.",
@@ -7387,7 +8917,7 @@
         "format": {
           "$ref": "#/$defs/VideoFormat",
           "default": "webm",
-          "description": "Container format for generated video files. webm: VP9 codec, BSD-licensed, recommended for open-source workflows. mp4: H.264/H.265, widely compatible. avi: legacy, larger files. mkv: Matroska, flexible container. Format affects compatibility, file size, and encoding options."
+          "description": "Container format for generated video files. webm: VP9 codec, BSD-licensed, recommended for open-source workflows. mp4: H.264/H.265, widely compatible. Format affects compatibility, file size, and encoding options."
         },
         "codec": {
           "default": "libvpx-vp9",
@@ -7425,8 +8955,106 @@
       ],
       "title": "VideoSynthType",
       "type": "string"
+    },
+    "ZipSweep": {
+      "additionalProperties": false,
+      "description": "Zip sweep — parameters paired element-wise (lockstep).\n\nLike ``GridSweep`` but uses ``zip(strict=True)`` instead of Cartesian\nproduct. All parameter lists must have identical length. Use when you\nwant N runs each setting a coordinated tuple of fields, without the\nNxM blow-up of grid. Canonical use case: paired ISL/OSL.",
+      "properties": {
+        "cooldownSeconds": {
+          "default": 0.0,
+          "description": "Cooldown between sweep variations (or BO iterations).",
+          "title": "Cooldownseconds",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Cooldown between sweep variations (or BO iterations).",
+              "minimum": 0,
+              "title": "Cooldownseconds",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "slaFilters": {
+          "description": "SLA constraints applied at trial scoring / aggregation time.",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
+          "title": "Slafilters",
+          "type": "array"
+        },
+        "postProcess": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostProcessSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional post-aggregation handler emitted by a search recipe."
+        },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source recipe name (audit trail when expanded via --search-recipe). Used by the live Pareto plot path to look up the recipe's pareto_axes after expansion has stripped the originating --search-recipe flag.",
+          "title": "Recipename"
+        },
+        "iterationOrder": {
+          "$ref": "#/$defs/SweepMode",
+          "default": "repeated",
+          "description": "Trial/variation iteration order. 'repeated': trials outer, variations inner. 'independent': variations outer, trials inner. Inapplicable to adaptive_search."
+        },
+        "sameSeed": {
+          "default": false,
+          "description": "If True, every variation reuses the envelope's random_seed. If False, each variation derives `random_seed + variation.index`.",
+          "title": "Sameseed",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "zip",
+          "default": "zip",
+          "description": "Sweep type discriminator.",
+          "title": "Type",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "items": {},
+            "type": "array"
+          },
+          "description": "Parameters to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
+          "minProperties": 1,
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "parameters"
+      ],
+      "title": "ZipSweep",
+      "type": "object"
     }
   },
+  "additionalProperties": false,
   "description": "JSON Schema for AIPerf YAML configuration files. This schema enables IDE autocompletion and validation for AIPerf benchmark configurations. Schema version: 2.0.0",
   "properties": {
     "schemaVersion": {
@@ -7447,8 +9075,11 @@
             "propertyName": "type",
             "mapping": {
               "grid": "#/$defs/GridSweep",
+              "zip": "#/$defs/ZipSweep",
               "scenarios": "#/$defs/ScenarioSweep",
-              "adaptive_search": "#/$defs/AdaptiveSearchSweep"
+              "adaptive_search": "#/$defs/AdaptiveSearchSweep",
+              "sobol": "#/$defs/SobolSweep",
+              "latin_hypercube": "#/$defs/LatinHypercubeSweep"
             }
           },
           "anyOf": [
@@ -7456,10 +9087,19 @@
               "$ref": "#/$defs/GridSweep"
             },
             {
+              "$ref": "#/$defs/ZipSweep"
+            },
+            {
               "$ref": "#/$defs/ScenarioSweep"
             },
             {
               "$ref": "#/$defs/AdaptiveSearchSweep"
+            },
+            {
+              "$ref": "#/$defs/SobolSweep"
+            },
+            {
+              "$ref": "#/$defs/LatinHypercubeSweep"
             }
           ]
         },
@@ -7468,12 +9108,17 @@
         }
       ],
       "default": null,
-      "description": "Sweep configuration for parameter exploration. Supports grid (Cartesian product), scenarios (hand-picked), and sequential (ordered) sweep strategies.",
+      "description": "Sweep configuration for parameter exploration. Supports grid (Cartesian product), zip (lock-stepped axes), scenarios (hand-picked), sobol / latin_hypercube (QMC sampling), and adaptive_search (Bayesian / monotonic outer-loop) strategies.",
       "title": "Sweep"
     },
     "multiRun": {
       "$ref": "#/$defs/MultiRunConfig",
       "description": "Multi-run benchmarking configuration for statistical reporting. When num_runs > 1, executes multiple runs and computes aggregate statistics."
+    },
+    "plot": {
+      "default": null,
+      "description": "Plot configuration for this run/sweep. When set, ``~/.aiperf/plot_config.yaml`` is ignored. May be a bare-string path to a plot YAML (resolved relative to the AIPerf config file's directory, or absolute), or an inline mapping mirroring ``default_plot_config.yaml``. Presence implies ``artifacts.auto_plot=True`` unless explicitly set False.",
+      "title": "Plot"
     },
     "variables": {
       "additionalProperties": true,
@@ -7484,6 +9129,7 @@
     "randomSeed": {
       "anyOf": [
         {
+          "minimum": 0,
           "type": "integer"
         },
         {
@@ -7501,9 +9147,15 @@
         }
       ],
       "default": null,
-      "description": "Global random seed for reproducibility. Base seed for per-variation derivation in sweep mode (variation N gets base + N).",
+      "description": "Global random seed for reproducibility. Base seed for per-variation derivation in sweep mode (variation N gets base + N). Must be non-negative; numpy and scipy reject negative seeds.",
       "title": "Randomseed",
       "x-jinja2-supported": true
+    },
+    "noSweepTable": {
+      "default": false,
+      "description": "Suppress the per-cell streaming sweep table during multi-variation sweeps. Auto-suppressed when stdout is non-interactive, when the dashboard UI is active, or for single-cell sweeps.",
+      "title": "Nosweeptable",
+      "type": "boolean"
     }
   },
   "required": [
@@ -7514,10 +9166,11 @@
   "$comment": "Auto-generated by tools/generate_config_schema.py. Do not edit manually.",
   "x-taplo": {
     "initKeys": [
-      "models",
-      "endpoint",
-      "datasets",
-      "phases"
+      "benchmark",
+      "sweep",
+      "multiRun",
+      "variables",
+      "randomSeed"
     ]
   }
 }

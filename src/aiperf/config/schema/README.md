@@ -45,9 +45,19 @@ Or configure workspace settings in `.vscode/settings.json`:
 
 ## Maintenance
 
-The schema in `aiperf-config.schema.json` is currently **hand-maintained on this branch**. When `AIPerfConfig`/`BenchmarkConfig` Pydantic models change, the schema must be updated by hand to match.
+The schema in `aiperf-config.schema.json` is generated from the `AIPerfConfig`/`BenchmarkConfig` Pydantic models by `tools/generate_config_schema.py`. When config models change, regenerate it with:
 
-A Pydantic-driven generator (`tools/generate_config_schema.py`) exists on the `ajc/k8s-rework` branch but has not yet been ported here. Until it is, treat the JSON file as the IDE-facing artifact and the Pydantic models as the source of truth — if the two disagree, the Pydantic models win.
+```bash
+make generate-config-schema
+```
+
+Before committing config-model or generator changes, verify the checked-in schema is current with:
+
+```bash
+make check-config-schema
+```
+
+Treat the Pydantic models as the source of truth — if the generated JSON file and the models disagree, update the generator or regenerate the schema so they match.
 
 ## Schema Features
 

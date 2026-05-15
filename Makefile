@@ -21,10 +21,10 @@
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
-		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
-		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
-		generate-all-plugin-files generate-all-docs test-stress stress-tests \
-		test-fern-docs internal-help help \
+		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
+		check-config-schema generate-plugin-enums generate-plugin-overloads \
+		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
+		generate-all-docs test-stress stress-tests test-fern-docs internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -291,6 +291,12 @@ generate-cli-docs: #? generate the CLI documentation.
 
 generate-env-vars-docs: #? generate the environment variables documentation.
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
+
+generate-config-schema: #? generate JSON Schema for AIPerf YAML config files.
+	$(activate_venv) && python -m tools.generate_config_schema $(args)
+
+check-config-schema: #? check if the AIPerf config JSON Schema is up-to-date.
+	$(activate_venv) && python -m tools.generate_config_schema --check $(args)
 
 generate-plugin-enums: #? generate the plugin enum stubs (enums.py and enums.pyi).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py --enums
