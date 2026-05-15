@@ -54,6 +54,22 @@ class TimingConfig(AIPerfBaseModel):
         description="User-configured random seed. Used by AGENTIC_REPLAY to derive "
         "deterministic per-trace start-turn indices for trajectories.",
     )
+    trajectory_start_min_ratio: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="AGENTIC_REPLAY: lower bound (inclusive) on the random "
+        "per-trajectory start position, as a fraction of the trace's total "
+        "turn count.",
+    )
+    trajectory_start_max_ratio: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="AGENTIC_REPLAY: upper bound (inclusive) on the random "
+        "per-trajectory start position, as a fraction of the trace's total "
+        "turn count. Effective per-trace ceiling is min(int(max_ratio * n), n - 2).",
+    )
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> TimingConfig:
@@ -81,6 +97,8 @@ class TimingConfig(AIPerfBaseModel):
             url_selection_strategy=user_config.endpoint.url_selection_strategy,
             concurrency=loadgen.concurrency,
             random_seed=user_config.input.random_seed,
+            trajectory_start_min_ratio=loadgen.trajectory_start_min_ratio,
+            trajectory_start_max_ratio=loadgen.trajectory_start_max_ratio,
         )
 
 

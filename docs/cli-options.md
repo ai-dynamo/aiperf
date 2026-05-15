@@ -768,6 +768,18 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
 
+#### `--trajectory-start-min-ratio` `<float>`
+
+AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed. Default 0.0 keeps the prior behavior where every trajectory could start at turn 0.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+<br/>_Default: `0.0`_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup. Default 0.7 preserves the previously hardcoded value.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+<br/>_Default: `0.7`_
+
 #### `--concurrency` `<str>`
 
 Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.

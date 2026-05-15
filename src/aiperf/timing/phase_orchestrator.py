@@ -139,6 +139,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 dataset_sampler=self._dataset_sampler,
                 concurrency=config.concurrency,
                 random_seed=config.random_seed if config.random_seed is not None else 0,
+                start_min_ratio=config.trajectory_start_min_ratio,
+                start_max_ratio=config.trajectory_start_max_ratio,
             )
         else:
             self._conversation_source = ConversationSource(
