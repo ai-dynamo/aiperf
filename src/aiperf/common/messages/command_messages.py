@@ -193,7 +193,7 @@ class StartRealtimeTelemetryCommand(CommandMessage):
 class SpawnWorkersCommand(CommandMessage):
     command: CommandTypeT = CommandType.SPAWN_WORKERS
 
-    num_workers: int = Field(..., description="Number of workers to spawn")
+    num_workers: int = Field(..., gt=0, description="Number of workers to spawn")
 
 
 class ShutdownWorkersCommand(CommandMessage):
@@ -228,6 +228,7 @@ class ShutdownWorkersCommand(CommandMessage):
     )
     num_workers: int | None = Field(
         default=None,
+        gt=0,
         description="Number of workers to shutdown if worker_ids is not provided.",
     )
 
@@ -244,12 +245,13 @@ class ProcessRecordsCommand(CommandMessage):
 
 
 class ProfileConfigureCommand(CommandMessage):
-    """Data to send with the profile configure command."""
+    """Trigger PROFILE_CONFIGURE in receiving services.
+
+    Carries no payload: every receiving service was spawned with the
+    same `BenchmarkRun` and reads from `self.run.cfg` directly.
+    """
 
     command: CommandTypeT = CommandType.PROFILE_CONFIGURE
-
-    # TODO: Define this type
-    config: Any = Field(..., description="Configuration for the profile")
 
 
 class ProfileStartCommand(CommandMessage):

@@ -12,6 +12,7 @@ from typing import Any
 import orjson
 import pytest
 
+from aiperf.config.mlflow import MLflowConfig
 from aiperf.post_processors.otel_streaming_fanout import (
     OTelStreamingFanoutConfig,
     run_otel_streaming_fanout,
@@ -126,11 +127,14 @@ def _build_config(
         export_timeout_millis=1000,
         max_batch_records=max_batch_records,
         resource_attributes={"service.name": "aiperf"},
-        mlflow_tracking_uri="http://mlflow:5000",
-        mlflow_experiment="aiperf-tests",
-        mlflow_run_name="live-test",
-        mlflow_tags={"team": "perf"},
-        mlflow_parent_run_id=None,
+        mlflow=MLflowConfig(
+            tracking_uri="http://mlflow:5000",
+            experiment="aiperf-tests",
+            run_name="live-test",
+            tags="team:perf",
+            parent_run_id=None,
+            artifact_globs=None,
+        ),
         benchmark_id="bench-1",
         metadata_file=tmp_path / "mlflow_export.json",
     )
@@ -349,6 +353,11 @@ def test_run_fanout_invalid_payload_logs_warning_and_continues(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    import logging
+
+    caplog.set_level(
+        logging.WARNING, logger="aiperf.post_processors.otel_streaming_fanout"
+    )
     otel_state: dict[str, Any] = {}
     install_fake_otel_modules(monkeypatch, otel_state)
 
@@ -371,11 +380,14 @@ def test_run_fanout_invalid_payload_logs_warning_and_continues(
         export_timeout_millis=1000,
         max_batch_records=500,
         resource_attributes={"service.name": "aiperf"},
-        mlflow_tracking_uri=None,
-        mlflow_experiment="aiperf-tests",
-        mlflow_run_name=None,
-        mlflow_tags={},
-        mlflow_parent_run_id=None,
+        mlflow=MLflowConfig(
+            tracking_uri=None,
+            experiment="aiperf-tests",
+            run_name=None,
+            tags=None,
+            parent_run_id=None,
+            artifact_globs=None,
+        ),
         benchmark_id=None,
         metadata_file=tmp_path / "mlflow_export.json",
     )
@@ -404,11 +416,14 @@ def test_run_fanout_redacts_tracking_uri_userinfo_in_metadata(
         export_timeout_millis=1000,
         max_batch_records=500,
         resource_attributes={"service.name": "aiperf"},
-        mlflow_tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
-        mlflow_experiment="aiperf-tests",
-        mlflow_run_name="live-test",
-        mlflow_tags={},
-        mlflow_parent_run_id=None,
+        mlflow=MLflowConfig(
+            tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
+            experiment="aiperf-tests",
+            run_name="live-test",
+            tags=None,
+            parent_run_id=None,
+            artifact_globs=None,
+        ),
         benchmark_id="bench-1",
         metadata_file=tmp_path / "mlflow_export.json",
     )

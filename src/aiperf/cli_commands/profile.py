@@ -2,17 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI command for running the Profile subcommand."""
 
+from __future__ import annotations
+
 from cyclopts import App
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.flags import CLIConfig
 
 app = App(name="profile")
 
 
 @app.default
 def profile(
-    user_config: UserConfig,
-    service_config: ServiceConfig | None = None,
+    *,
+    cli_config: CLIConfig,
 ) -> None:
     """Run the Profile subcommand.
 
@@ -42,48 +44,29 @@ def profile(
         aiperf profile --model your_model --url localhost:8000 --goodput "request_latency:250 inter_token_latency:10"
 
     Args:
-        user_config: User configuration for the benchmark
-        service_config: Service configuration options
+        cli_config: Cyclopts-populated CLIConfig DTO carrying every CLI flag
+            (benchmark inputs and service-runtime knobs).
     """
     from aiperf.cli_utils import exit_on_error
+    from aiperf.config.loader.errors import ConfigurationError
 
-    with exit_on_error(title="Error Running AIPerf System"):
-        from aiperf.cli_runner import run_system_controller
-        from aiperf.common.config.loader import load_service_config
+    with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
+        from aiperf.config.flags.resolver import resolve_config
+        from aiperf.config.loader import build_benchmark_plan
 
-        service_config = service_config or load_service_config()
+        # ``resolve_config`` handles both paths: CLI-only (no config_file)
+        # and YAML+CLI merge (YAML is the base, explicitly-set CLI flags like
+        # ``--search-recipe`` / ``--ttft-sla-ms`` / ``--ui`` overlay on top).
+        # The merge order matters: a CLI-supplied recipe must reach the
+        # converter even when the YAML omits one.
+        config_file = cli_config.config_file
+        config = resolve_config(cli_config, config_file)
+        plan = build_benchmark_plan(config)
 
-        if user_config.endpoint.wait_for_model_timeout > 0:
-            import asyncio
-            import logging
+    with exit_on_error(
+        title="Error Running AIPerf System",
+        quiet_for=(ConfigurationError,),
+    ):
+        from aiperf.cli_runner import run_benchmark
 
-            from aiperf.common.readiness_probe import wait_for_endpoint
-
-            # The probe runs before `run_system_controller` (which installs
-            # rich logging), so there are no handlers attached yet. Install
-            # a basic stderr handler so probe log messages are visible.
-            if not logging.getLogger().handlers:
-                logging.basicConfig(
-                    level=logging.INFO,
-                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                )
-
-            raw_headers = user_config.input.headers or []
-            headers = {str(k): str(v) for k, v in raw_headers}
-            if user_config.endpoint.api_key:
-                headers["Authorization"] = f"Bearer {user_config.endpoint.api_key}"
-
-            asyncio.run(
-                wait_for_endpoint(
-                    urls=user_config.endpoint.urls,
-                    model_names=user_config.endpoint.model_names,
-                    mode=user_config.endpoint.wait_for_model_mode,
-                    endpoint_type=str(user_config.endpoint.type),
-                    custom_endpoint=user_config.endpoint.custom_endpoint,
-                    timeout_s=user_config.endpoint.wait_for_model_timeout,
-                    interval_s=user_config.endpoint.wait_for_model_interval,
-                    headers=headers,
-                )
-            )
-
-        run_system_controller(user_config, service_config)
+        run_benchmark(plan)

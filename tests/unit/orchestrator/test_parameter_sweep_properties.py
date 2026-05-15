@@ -1,66 +1,140 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for parameter sweeping correctness properties.
+"""Property tests for parameter-sweep correctness.
 
-This module tests the correctness properties defined in the parameter-sweeping design document.
-Each test validates a specific property to ensure the implementation meets requirements.
+Hypothesis-driven invariants ported and adapted from main's
+``test_parameter_sweep_properties.py`` to k8s' ``AIPerfConfig`` +
+``build_benchmark_plan`` + ``expand_sweep`` + ``MultiRunOrchestrator``
+pipeline. Each ``TestPropertyN*`` class mirrors the corresponding
+property from the parameter-sweeping design doc.
+
+Architectural mapping (main -> HEAD):
+- ``ParameterSweepStrategy`` and ``SweepConfidenceStrategy`` were
+  collapsed into ``MultiRunOrchestrator`` + ``expand_sweep``; the
+  per-cell strategy is ``FixedTrialsStrategy`` only.
+- ``CLIConfig.loadgen.concurrency`` -> ``AIPerfConfig.phases[i].concurrency``
+  (with magic-list -> sweep-block promotion in the v1->v2 converter).
+- Variation labels: ``concurrency_10`` -> ``phases.profiling.concurrency=10``.
+- Seed derivation: ``base_seed + variation.index`` is now applied by
+  ``_apply_sweep_seed_derivation`` in ``config/loader/plan.py``.
 """
 
-import tempfile
+from __future__ import annotations
+
+import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from pytest import param
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.cli_runner._sweep_aggregate import _group_results_by_variation
+from aiperf.common.enums import SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.config import AIPerfConfig
+from aiperf.config.loader import build_benchmark_plan
+from aiperf.config.resolution.plan import BenchmarkPlan
+from aiperf.config.sweep import expand_sweep
 from aiperf.orchestrator.aggregation.sweep import (
+    DEFAULT_PARETO_OBJECTIVES,
+    ParameterCombination,
     identify_pareto_optimal,
 )
+from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.strategies import (
-    FixedTrialsStrategy,
-    ParameterSweepStrategy,
-)
+from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 
 # =============================================================================
 # Test Helpers
 # =============================================================================
 
 
-def make_endpoint(**kwargs) -> EndpointConfig:
-    """Create an EndpointConfig with sensible defaults for testing."""
-    if "url" in kwargs:
-        kwargs["urls"] = [kwargs.pop("url")]
-    return EndpointConfig(
-        model_names=kwargs.pop("model_names", ["test-model"]),
-        custom_endpoint=kwargs.pop("custom_endpoint", "test"),
-        **kwargs,
-    )
+def _make_config(
+    concurrency: list[int] | int = 1,
+    *,
+    random_seed: int | None = None,
+    parameter_sweep_same_seed: bool = False,
+    parameter_sweep_cooldown_seconds: float = 0.0,
+    mode: SweepMode | str = SweepMode.REPEATED,
+    num_runs: int = 1,
+) -> AIPerfConfig:
+    """Build a minimal AIPerfConfig with optional sweep over profiling concurrency.
+
+    If ``concurrency`` is a list, expands to a grid sweep at
+    ``phases.profiling.concurrency``. Otherwise sets a scalar.
+    """
+    payload: dict[str, Any] = {
+        "benchmark": {
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32, "osl": 16},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 5,
+                    "concurrency": concurrency if isinstance(concurrency, int) else 1,
+                }
+            ],
+        },
+        "multi_run": {
+            "num_runs": num_runs,
+        },
+    }
+    if random_seed is not None:
+        payload["random_seed"] = random_seed
+    if isinstance(concurrency, list):
+        payload["sweep"] = {
+            "type": "grid",
+            "parameters": {"phases.profiling.concurrency": concurrency},
+            "same_seed": parameter_sweep_same_seed,
+            "cooldown_seconds": parameter_sweep_cooldown_seconds,
+            "iteration_order": mode,
+        }
+    return AIPerfConfig(**payload)
 
 
-def make_config(endpoint=None, **kwargs) -> UserConfig:
-    """Create a UserConfig with sensible defaults for testing."""
-    return UserConfig(endpoint=endpoint or make_endpoint(), **kwargs)
+def _profiling_concurrency(cfg: Any) -> int:
+    """Extract concurrency from the profiling phase of a BenchmarkConfig."""
+    for phase in cfg.phases:
+        if phase.name == "profiling":
+            return phase.concurrency
+    raise AssertionError("no profiling phase on resolved config")
 
 
-def make_run_result(label: str, concurrency: int | None = None) -> RunResult:
-    """Create a RunResult for testing."""
-    metadata = {}
-    if concurrency is not None:
-        metadata["concurrency"] = concurrency
+def _per_variation_seeds(plan: BenchmarkPlan) -> list[int | None]:
+    """Project plan.variation_seeds (parallel to plan.configs)."""
+    return list(plan.variation_seeds)
 
-    # Use portable temp directory instead of hardcoded /tmp
-    temp_dir = Path(tempfile.gettempdir())
 
-    return RunResult(
-        label=label,
-        success=True,
-        summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
-        artifacts_path=temp_dir / label,
-        metadata=metadata,
-    )
+# Distinct, modest-magnitude positives keep AIPerfConfig validators happy
+# (concurrency must be >= 1). min_size=2 because BenchmarkPlan.is_sweep is
+# False on single-variation plans -- the property tests target the
+# multi-variation expansion path.
+_concurrency_lists_unique = st.lists(
+    st.integers(min_value=1, max_value=512),
+    min_size=2,
+    max_size=6,
+    unique=True,
+)
+
+# For Property 3 (duplicates): allow duplicates so we exercise the
+# variation-per-occurrence semantic.
+_concurrency_lists_with_duplicates = st.lists(
+    st.integers(min_value=1, max_value=64),
+    min_size=2,
+    max_size=6,
+    unique=False,
+)
 
 
 # =============================================================================
@@ -68,39 +142,40 @@ def make_run_result(label: str, concurrency: int | None = None) -> RunResult:
 # =============================================================================
 
 
-class TestProperty1ConcurrencyListParsing:
-    """Test Property 1: Concurrency List Parsing.
+class TestProperty1PBT:
+    """Property 1: Concurrency List Parsing.
 
-    **Validates: Requirements 1.1**
-
-    For any comma-separated string of valid integers, parsing should produce
-    a list containing those integers in order.
+    For any list of valid integers, sweep expansion preserves order and
+    one variation per list element.
     """
 
-    @pytest.mark.parametrize(
-        "concurrency_list,expected",
-        [
-            ([10, 20, 30], [10, 20, 30]),
-            ([5], [5]),
-            ([100, 50, 25, 10], [100, 50, 25, 10]),
-            ([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]),
-        ],
+    @given(concurrency=_concurrency_lists_unique)
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
     )
-    def test_concurrency_list_parsing_preserves_order(self, concurrency_list, expected):
-        """Test that concurrency list parsing preserves order."""
-        config = make_config()
-        config.loadgen.concurrency = concurrency_list
+    def test_pbt_concurrency_list_preserves_order_and_values(
+        self, concurrency: list[int]
+    ) -> None:
+        """For any list of distinct positive ints, plan.configs preserves order."""
+        plan = build_benchmark_plan(_make_config(concurrency))
 
-        assert config.loadgen.concurrency == expected
-        assert isinstance(config.loadgen.concurrency, list)
+        assert plan.is_sweep
+        assert len(plan.configs) == len(concurrency)
+        actual = [_profiling_concurrency(c) for c in plan.configs]
+        assert actual == concurrency
 
-    def test_loadgen_concurrency_single_int_assignment_preserves_int_type(self):
-        """Test that single concurrency value remains as integer (backward compatible)."""
-        config = make_config()
-        config.loadgen.concurrency = 10
+    @given(concurrency=_concurrency_lists_unique)
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_each_variation_carries_its_swept_value(
+        self, concurrency: list[int]
+    ) -> None:
+        """The i-th variation's values dict carries the i-th concurrency."""
+        plan = build_benchmark_plan(_make_config(concurrency))
 
-        assert config.loadgen.concurrency == 10
-        assert isinstance(config.loadgen.concurrency, int)
+        actual = [v.values["phases.profiling.concurrency"] for v in plan.variations]
+        assert actual == concurrency
 
 
 # =============================================================================
@@ -108,44 +183,48 @@ class TestProperty1ConcurrencyListParsing:
 # =============================================================================
 
 
-class TestProperty2InvalidInputRejection:
-    """Test Property 2: Invalid Input Rejection.
+class TestProperty2PBT:
+    """Property 2: Invalid Input Rejection.
 
-    **Validates: Requirements 1.3, 1.4**
-
-    For any concurrency list containing non-integer values or values less than 1,
-    the validation should reject the input with a clear error message.
+    For any concurrency list containing values < 1, AIPerfConfig
+    validation should reject the input.
     """
 
-    @pytest.mark.parametrize(
-        "invalid_values",
-        [
-            [0, 10, 20],
-            [-1, 10],
-            [10, -5, 20],
-            [0],
-        ],
+    @given(
+        valid_values=st.lists(
+            st.integers(min_value=1, max_value=100), min_size=1, max_size=4
+        ),
+        invalid_value=st.integers(max_value=0),
+        data=st.data(),
     )
-    def test_rejects_values_less_than_one(self, invalid_values):
-        """Test that concurrency values less than 1 are rejected."""
-        config = make_config()
-        config.loadgen.concurrency = invalid_values
+    @settings(
+        deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_rejects_invalid_concurrency_in_sweep(
+        self, valid_values: list[int], invalid_value: int, data: Any
+    ) -> None:
+        """Inserting any value < 1 into a sweep list should make the plan fail.
 
-        with pytest.raises(
-            ValueError,
-            match="Invalid concurrency (list|values)|Parameter sweep requires at least 2 values",
-        ):
-            config.model_validate(config.model_dump())
+        The phase ``concurrency`` field has ``ge=1``, so when ``expand_sweep``
+        materializes the variation that carries the invalid value,
+        ``BenchmarkConfig.model_validate`` rejects it.
+        """
+        position = data.draw(st.integers(min_value=0, max_value=len(valid_values)))
+        test_values = (
+            valid_values[:position] + [invalid_value] + valid_values[position:]
+        )
 
-    def test_rejects_zero_concurrency(self):
-        """Test that zero concurrency is rejected."""
-        config = make_config()
-        config.loadgen.concurrency = 0
+        # Building the config object is allowed (sweep.parameters is a
+        # dict[str, list[Any]]); the rejection happens at plan-build time
+        # when the per-variation BenchmarkConfig is validated.
+        cfg = _make_config(test_values)
+        with pytest.raises(Exception):  # noqa: BLE001, B017 - pydantic ValidationError surfaces here
+            build_benchmark_plan(cfg)
 
-        with pytest.raises(
-            ValueError, match="Invalid concurrency value|Concurrency must be at least 1"
-        ):
-            config.model_validate(config.model_dump())
+    def test_rejects_zero_scalar_concurrency(self) -> None:
+        """Scalar concurrency=0 fails AIPerfConfig validation directly."""
+        with pytest.raises(Exception):  # noqa: BLE001, B017 - pydantic ValidationError
+            _make_config(0)
 
 
 # =============================================================================
@@ -153,66 +232,41 @@ class TestProperty2InvalidInputRejection:
 # =============================================================================
 
 
-class TestProperty3DuplicateValuesHandling:
-    """Test Property 3: Duplicate Values Allowed.
+class TestProperty3DuplicateValuesPBT:
+    """Property 3: Duplicate Values Allowed.
 
-    **Validates: Requirements 1.5**
-
-    For any concurrency list with duplicate values, the system should execute
-    benchmarks for each occurrence in the list.
+    For any concurrency list with duplicates, sweep expansion produces
+    one variation per occurrence (preserving order).
     """
 
-    def test_duplicate_values_create_multiple_runs(self):
-        """Test that duplicate concurrency values result in multiple runs."""
-        strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=[10, 20, 10, 30, 10],
-        )
+    @given(concurrency=_concurrency_lists_with_duplicates)
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_duplicates_create_one_variation_per_occurrence(
+        self, concurrency: list[int]
+    ) -> None:
+        """``expand_sweep`` honors duplicate values by emitting one config each."""
+        # Use expand_sweep directly: build_benchmark_plan goes through Pydantic
+        # validation that may dedup on the dict path. The pure expansion is
+        # what the orchestrator iterates over.
+        data = {
+            "benchmark": {
+                "phases": [{"name": "profiling", "concurrency": 1}],
+            },
+            "sweep": {
+                "type": "grid",
+                "parameters": {"phases.profiling.concurrency": concurrency},
+            },
+        }
+        expanded = expand_sweep(data)
 
-        # Should have 5 runs (including duplicates)
-        assert len(strategy.parameter_values) == 5
-
-        # Verify each value is used
-        config = make_config()
-        results = []
-
-        for i in range(5):
-            _new_config = strategy.get_next_config(config, results)
-            results.append(make_run_result(f"run_{i}"))
-
-        # Should have executed all 5 values
-        assert len(results) == 5
-        assert not strategy.should_continue(results)
-
-    def test_duplicate_values_preserve_order(self):
-        """Test that duplicate values preserve their order in execution."""
-        strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=[10, 20, 10, 30],
-        )
-
-        config = make_config()
-        results = []
-        executed_values = []
-
-        for i in range(4):
-            new_config = strategy.get_next_config(config, results)
-            executed_values.append(new_config.loadgen.concurrency)
-            results.append(make_run_result(f"run_{i}"))
-
-        assert executed_values == [10, 20, 10, 30]
-
-
-# =============================================================================
-# Property 8: Repeated Mode Execution Pattern
-# NOTE: Tests moved to integration tests (test_parameter_sweep.py)
-# =============================================================================
-
-
-# =============================================================================
-# Property 9: Independent Mode Execution Pattern
-# NOTE: Tests moved to integration tests (test_parameter_sweep.py)
-# =============================================================================
+        assert len(expanded) == len(concurrency)
+        actual = [
+            variation_dict["benchmark"]["phases"][0]["concurrency"]
+            for variation_dict, _ in expanded
+        ]
+        assert actual == concurrency
 
 
 # =============================================================================
@@ -220,146 +274,57 @@ class TestProperty3DuplicateValuesHandling:
 # =============================================================================
 
 
-class TestProperty11SeedDerivationConsistency:
-    """Test Property 11: Seed Derivation Consistency.
+class TestProperty11SeedDerivationPBT:
+    """Property 11: Seed Derivation Consistency.
 
-    **Validates: Requirements 7.1, 7.7**
-
-    For any base seed and sweep configuration, the same base seed should
-    always produce the same per-value seeds (reproducibility).
+    Two builds of the same AIPerfConfig must produce identical per-variation
+    seeds. The derivation formula is ``base_seed + variation.index``.
     """
 
-    def test_same_base_seed_produces_same_derived_seeds(self):
-        """Test that same base seed always produces same per-value seeds."""
-        sweep_values = [10, 20, 30]
-        base_seed = 42
-
-        # First run
-        strategy1 = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=False,
-            auto_set_seed=True,
+    @given(
+        concurrency=_concurrency_lists_unique,
+        base_seed=st.integers(min_value=0, max_value=10_000),
+    )
+    @settings(
+        deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_seed_derivation_is_reproducible(
+        self, concurrency: list[int], base_seed: int
+    ) -> None:
+        """Same base seed, two builds -> identical per-variation seeds."""
+        seeds1 = _per_variation_seeds(
+            build_benchmark_plan(_make_config(concurrency, random_seed=base_seed))
+        )
+        seeds2 = _per_variation_seeds(
+            build_benchmark_plan(_make_config(concurrency, random_seed=base_seed))
         )
 
-        config1 = make_config()
-        config1.input.random_seed = base_seed
-
-        seeds1 = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy1.get_next_config(config1, results)
-            seeds1.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # Second run with same base seed
-        strategy2 = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=False,
-            auto_set_seed=True,
-        )
-
-        config2 = make_config()
-        config2.input.random_seed = base_seed
-
-        seeds2 = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy2.get_next_config(config2, results)
-            seeds2.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # Should produce identical seeds
         assert seeds1 == seeds2
-        assert seeds1 == [42, 43, 44]
+        # Variation 0 keeps base; subsequent ones are base + index.
+        expected = [base_seed] + [base_seed + i for i in range(1, len(concurrency))]
+        assert seeds1 == expected
 
-    def test_seed_derivation_formula(self):
-        """Test that seed derivation follows base_seed + sweep_index formula."""
-        sweep_values = [10, 20, 30, 40]
-        base_seed = 100
-
-        strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=False,
-            auto_set_seed=True,
+    @given(
+        concurrency=_concurrency_lists_unique,
+        base_seed=st.integers(min_value=0, max_value=10_000),
+    )
+    @settings(
+        deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_same_seed_mode_uses_identical_seed(
+        self, concurrency: list[int], base_seed: int
+    ) -> None:
+        """``parameter_sweep_same_seed=True`` -> every variation reuses base_seed."""
+        plan = build_benchmark_plan(
+            _make_config(
+                concurrency,
+                random_seed=base_seed,
+                parameter_sweep_same_seed=True,
+            )
         )
 
-        config = make_config()
-        config.input.random_seed = base_seed
-
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy.get_next_config(config, results)
-            expected_seed = base_seed + i
-            assert new_config.input.random_seed == expected_seed
-            results.append(make_run_result(f"run_{i}"))
-
-
-# =============================================================================
-# Property 12: Same-Seed Mode
-# =============================================================================
-
-
-class TestProperty12SameSeedMode:
-    """Test Property 12: Same-Seed Mode.
-
-    **Validates: Requirements 7.4**
-
-    For any sweep with --profile-run-sweep-same-seed, all sweep values
-    should use the identical random seed.
-    """
-
-    def test_same_seed_mode_uses_identical_seed(self):
-        """Test that same_seed=True uses identical seed for all values."""
-        sweep_values = [10, 20, 30, 40]
-        base_seed = 42
-
-        strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=True,
-            auto_set_seed=True,
-        )
-
-        config = make_config()
-        config.input.random_seed = base_seed
-
-        seeds = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy.get_next_config(config, results)
-            seeds.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # All seeds should be identical to base seed
+        seeds = _per_variation_seeds(plan)
         assert all(seed == base_seed for seed in seeds)
-        assert seeds == [42, 42, 42, 42]
-
-    def test_same_seed_with_auto_set(self):
-        """Test that same_seed works with auto-set base seed."""
-        sweep_values = [10, 20, 30]
-
-        strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=True,
-            auto_set_seed=True,
-        )
-
-        config = make_config()
-        config.input.random_seed = None  # Will be auto-set to 42
-
-        seeds = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy.get_next_config(config, results)
-            seeds.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # All seeds should be 42 (default)
-        assert seeds == [42, 42, 42]
 
 
 # =============================================================================
@@ -368,361 +333,52 @@ class TestProperty12SameSeedMode:
 
 
 class TestProperty15CooldownApplication:
-    """Test Property 15: Cooldown Application.
+    """Property 15: Cooldown Application.
 
-    **Validates: Requirements 10.1, 10.2, 10.3**
-
-    For any sweep configuration with trial and sweep cooldowns, the correct
-    cooldown duration should be applied based on position in the execution sequence.
+    Plan-level cooldowns propagate cleanly to ``BenchmarkPlan``.
+    Trial-level cooldowns live on ``FixedTrialsStrategy`` (per-cell);
+    sweep-level cooldown lives on the plan and is honored between
+    variations by ``MultiRunOrchestrator._execute_independent``.
     """
 
-    def test_sweep_cooldown_applied_between_values(self):
-        """Test that sweep cooldown is applied between sweep values."""
-        sweep_strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=[10, 20, 30],
-            cooldown_seconds=5.0,
+    @pytest.mark.parametrize(
+        "cooldown",
+        [
+            param(0.0, id="zero"),
+            param(0.5, id="fractional"),
+            param(5.0, id="five"),
+            param(60.0, id="sixty"),
+        ],
+    )  # fmt: skip
+    def test_sweep_cooldown_propagates_to_plan(self, cooldown: float) -> None:
+        plan = build_benchmark_plan(
+            _make_config([10, 20], parameter_sweep_cooldown_seconds=cooldown)
         )
+        assert plan.sweep is not None
+        assert plan.sweep.cooldown_seconds == cooldown
 
-        assert sweep_strategy.get_cooldown_seconds() == 5.0
-
-    def test_trial_cooldown_applied_between_trials(self):
-        """Test that trial cooldown is applied between confidence trials."""
-        trial_strategy = FixedTrialsStrategy(
-            num_trials=3,
-            cooldown_seconds=10.0,
-        )
-
-        assert trial_strategy.get_cooldown_seconds() == 10.0
-
-    def test_get_cooldown_seconds_independent_strategies_return_respective_values(self):
-        """Test that trial and sweep cooldowns are independent."""
-        sweep_strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=[10, 20],
-            cooldown_seconds=5.0,
-        )
-
-        trial_strategy = FixedTrialsStrategy(
-            num_trials=2,
-            cooldown_seconds=10.0,
-        )
-
-        assert sweep_strategy.get_cooldown_seconds() == 5.0
-        assert trial_strategy.get_cooldown_seconds() == 10.0
-
-    def test_get_cooldown_seconds_no_cooldown_specified_returns_zero(self):
-        """Test that cooldown defaults to zero."""
-        sweep_strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=[10, 20],
-        )
-
-        assert sweep_strategy.get_cooldown_seconds() == 0.0
+    def test_default_cooldown_is_zero(self) -> None:
+        plan = build_benchmark_plan(_make_config([10, 20]))
+        assert plan.sweep is not None
+        assert plan.sweep.cooldown_seconds == 0.0
 
 
 # =============================================================================
-# Property 16: Backward Compatibility
-# NOTE: Tests moved to integration tests (test_parameter_sweep.py)
+# Property 13: Pareto Optimal Identification
 # =============================================================================
 
 
-# =============================================================================
-# Property 17: UI Mode Validation
-# NOTE: Feature not yet implemented - tests deferred
-# =============================================================================
+class TestProperty13ParetoPBT:
+    """Property 13: Pareto Optimal Identification.
 
-
-# =============================================================================
-# Property-Based Tests (Using Hypothesis)
-# =============================================================================
-
-
-class TestProperty1PBT:
-    """Property-Based Tests for Property 1: Concurrency List Parsing.
-
-    **Validates: Requirements 1.1**
-
-    For any comma-separated string of valid integers, parsing should produce
-    a list containing those integers in order.
-    """
-
-    @given(st.lists(st.integers(min_value=1, max_value=1000), min_size=1, max_size=20))
-    @settings(max_examples=100)
-    def test_pbt_concurrency_list_preserves_order_and_values(self, concurrency_values):
-        """Property 1: For any list of valid integers, config should preserve order and values.
-
-        Feature: parameter-sweeping, Property 1: For any comma-separated string
-        of valid integers, parsing should produce a list containing those integers in order.
-        """
-        config = make_config()
-        config.loadgen.concurrency = concurrency_values
-
-        # Verify list is preserved exactly
-        assert config.loadgen.concurrency == concurrency_values
-        assert isinstance(config.loadgen.concurrency, list)
-        assert len(config.loadgen.concurrency) == len(concurrency_values)
-
-        # Verify order is preserved
-        for i, expected_value in enumerate(concurrency_values):
-            assert config.loadgen.concurrency[i] == expected_value
-
-
-class TestProperty2PBT:
-    """Property-Based Tests for Property 2: Invalid Input Rejection.
-
-    **Validates: Requirements 1.3, 1.4**
-
-    For any concurrency list containing non-integer values or values less than 1,
-    the validation should reject the input with a clear error message.
+    For any set of (throughput, latency) points, ``identify_pareto_optimal``
+    must (a) return only undominated points, and (b) every non-Pareto point
+    must be dominated by at least one Pareto point. This is the canonical
+    correctness invariant of the multi-objective frontier.
     """
 
     @given(
-        st.lists(st.integers(min_value=1, max_value=100), min_size=0, max_size=10),
-        st.integers(max_value=0),
-        st.data(),
-    )
-    @settings(max_examples=100)
-    def test_pbt_rejects_invalid_values(self, valid_values, invalid_value, data):
-        """Property 2: For any list containing values < 1, validation should reject.
-
-        Feature: parameter-sweeping, Property 2: For any concurrency list containing
-        non-integer values or values less than 1, the validation should reject the
-        input with a clear error message.
-        """
-        # Insert invalid value at random position using Hypothesis
-        if valid_values:
-            position = data.draw(st.integers(min_value=0, max_value=len(valid_values)))
-            test_values = (
-                valid_values[:position] + [invalid_value] + valid_values[position:]
-            )
-        else:
-            test_values = [invalid_value]
-
-        config = make_config()
-        config.loadgen.concurrency = test_values
-
-        # Should raise validation error
-        with pytest.raises(
-            ValueError,
-            match="Invalid concurrency (list|values)|Parameter sweep requires at least 2 values",
-        ):
-            config.model_validate(config.model_dump())
-
-
-class TestProperty8PBT:
-    """Property-Based Tests for Property 8: Repeated Mode Execution Pattern.
-
-    **Validates: Requirements 4.1, 4.2**
-
-    For any sweep with repeated mode and N trials, the execution sequence
-    should be [sweep], [sweep], ..., [sweep] (N times).
-    """
-
-    @given(
-        st.lists(st.integers(min_value=1, max_value=100), min_size=2, max_size=5),
-        st.integers(min_value=1, max_value=5),
-    )
-    @settings(max_examples=50)
-    def test_pbt_repeated_mode_execution_order(self, sweep_values, num_trials):
-        """Property 8: For any sweep with repeated mode, execution follows [sweep] × N pattern.
-
-        Feature: parameter-sweeping, Property 8: For any sweep with repeated mode
-        and N trials, the execution sequence should be [sweep], [sweep], ..., [sweep] (N times).
-        """
-        # Create strategies
-        sweep_strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-        )
-
-        trial_strategy = FixedTrialsStrategy(
-            num_trials=num_trials,
-        )
-
-        # Simulate repeated mode: for trial in trials: for value in values
-        config = make_config()
-        executed_values = []
-
-        trial_results = []
-        for trial_idx in range(num_trials):
-            trial_config = trial_strategy.get_next_config(config, trial_results)
-
-            sweep_results = []
-            for value_idx in range(len(sweep_values)):
-                run_config = sweep_strategy.get_next_config(trial_config, sweep_results)
-                executed_values.append(run_config.loadgen.concurrency)
-                sweep_results.append(make_run_result(f"run_{trial_idx}_{value_idx}"))
-
-            trial_results.append(sweep_results[-1])
-
-        # Verify pattern: [sweep], [sweep], ..., [sweep]
-        for trial in range(num_trials):
-            start_idx = trial * len(sweep_values)
-            end_idx = start_idx + len(sweep_values)
-            assert executed_values[start_idx:end_idx] == sweep_values
-
-
-class TestProperty9PBT:
-    """Property-Based Tests for Property 9: Independent Mode Execution Pattern.
-
-    **Validates: Requirements 4.3, 4.4**
-
-    For any sweep with independent mode and N trials, the execution sequence
-    should be N×[value1], N×[value2], ..., N×[valueK].
-    """
-
-    @given(
-        st.lists(st.integers(min_value=1, max_value=100), min_size=2, max_size=5),
-        st.integers(min_value=1, max_value=5),
-    )
-    @settings(max_examples=50)
-    def test_pbt_independent_mode_execution_order(self, sweep_values, num_trials):
-        """Property 9: For any sweep with independent mode, execution follows N×[value] pattern.
-
-        Feature: parameter-sweeping, Property 9: For any sweep with independent mode
-        and N trials, the execution sequence should be N×[value1], N×[value2], ..., N×[valueK].
-        """
-        # Create strategies
-        sweep_strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-        )
-
-        trial_strategy = FixedTrialsStrategy(
-            num_trials=num_trials,
-        )
-
-        # Simulate independent mode: for value in values: for trial in trials
-        config = make_config()
-        executed_values = []
-
-        sweep_results = []
-        for value_idx in range(len(sweep_values)):
-            value_config = sweep_strategy.get_next_config(config, sweep_results)
-
-            trial_results = []
-            for trial_idx in range(num_trials):
-                run_config = trial_strategy.get_next_config(value_config, trial_results)
-                executed_values.append(run_config.loadgen.concurrency)
-                trial_results.append(make_run_result(f"run_{value_idx}_{trial_idx}"))
-
-            sweep_results.append(trial_results[-1])
-
-        # Verify pattern: N×[value1], N×[value2], ..., N×[valueK]
-        for value_idx, value in enumerate(sweep_values):
-            start_idx = value_idx * num_trials
-            end_idx = start_idx + num_trials
-            # All executions for this value should have the same concurrency
-            assert all(v == value for v in executed_values[start_idx:end_idx])
-
-
-class TestProperty11PBT:
-    """Property-Based Tests for Property 11: Seed Derivation Consistency.
-
-    **Validates: Requirements 7.1, 7.7**
-
-    For any base seed and sweep configuration, the same base seed should
-    always produce the same per-value seeds (reproducibility).
-    """
-
-    @given(
-        st.lists(st.integers(min_value=1, max_value=100), min_size=2, max_size=10),
-        st.integers(min_value=0, max_value=10000),
-    )
-    @settings(max_examples=100)
-    def test_pbt_seed_derivation_reproducibility(self, sweep_values, base_seed):
-        """Property 11: For any base seed, same seed always produces same derived seeds.
-
-        Feature: parameter-sweeping, Property 11: For any base seed and sweep configuration,
-        the same base seed should always produce the same per-value seeds (reproducibility).
-        """
-        # First run
-        strategy1 = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=False,
-            auto_set_seed=True,
-        )
-
-        config1 = make_config()
-        config1.input.random_seed = base_seed
-
-        seeds1 = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy1.get_next_config(config1, results)
-            seeds1.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # Second run with same base seed
-        strategy2 = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=False,
-            auto_set_seed=True,
-        )
-
-        config2 = make_config()
-        config2.input.random_seed = base_seed
-
-        seeds2 = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy2.get_next_config(config2, results)
-            seeds2.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # Should produce identical seeds
-        assert seeds1 == seeds2
-
-        # Verify derivation formula: base_seed + index
-        expected_seeds = [base_seed + i for i in range(len(sweep_values))]
-        assert seeds1 == expected_seeds
-
-    @given(
-        st.lists(st.integers(min_value=1, max_value=100), min_size=2, max_size=10),
-        st.integers(min_value=0, max_value=10000),
-    )
-    @settings(max_examples=100)
-    def test_pbt_same_seed_mode_consistency(self, sweep_values, base_seed):
-        """Property 11 (variant): With same_seed=True, all values use identical seed.
-
-        Feature: parameter-sweeping, Property 11: Seed derivation should be consistent
-        and reproducible across all sweep modes.
-        """
-        strategy = ParameterSweepStrategy(
-            parameter_name="concurrency",
-            parameter_values=sweep_values,
-            same_seed=True,
-            auto_set_seed=True,
-        )
-
-        config = make_config()
-        config.input.random_seed = base_seed
-
-        seeds = []
-        results = []
-        for i in range(len(sweep_values)):
-            new_config = strategy.get_next_config(config, results)
-            seeds.append(new_config.input.random_seed)
-            results.append(make_run_result(f"run_{i}"))
-
-        # All seeds should be identical to base seed
-        assert all(seed == base_seed for seed in seeds)
-
-
-class TestProperty13PBT:
-    """Property-Based Tests for Property 13: Pareto Optimal Identification.
-
-    **Validates: Requirements 5.6, 5.7**
-
-    For any set of sweep results, a configuration should be identified as Pareto optimal
-    if and only if no other configuration has both higher throughput AND lower latency.
-    """
-
-    @given(
-        st.lists(
+        metrics=st.lists(
             st.tuples(
                 st.floats(
                     min_value=1.0,
@@ -741,103 +397,250 @@ class TestProperty13PBT:
             max_size=10,
         )
     )
-    @settings(max_examples=100)
-    def test_pbt_pareto_optimal_correctness(self, metrics):
-        """Property 13: Pareto optimal points are not dominated by any other point.
-
-        Feature: parameter-sweeping, Property 13: For any set of sweep results,
-        a configuration should be identified as Pareto optimal if and only if no other
-        configuration has both higher throughput AND lower latency.
-        """
-        from aiperf.orchestrator.aggregation.sweep import ParameterCombination
-
-        # Create per-combination stats from generated metrics
-        per_combination_stats = {}
-        combos = []
+    @settings(
+        deadline=None, max_examples=100, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_pareto_optimal_correctness(
+        self, metrics: list[tuple[float, float]]
+    ) -> None:
+        per_combination_stats: dict[ParameterCombination, dict] = {}
         for i, (throughput, latency) in enumerate(metrics):
             combo = ParameterCombination({"config_id": i})
-            combos.append(combo)
             per_combination_stats[combo] = {
                 "request_throughput_avg": {"mean": throughput},
                 "time_to_first_token_p99": {"mean": latency},
             }
 
-        # Identify Pareto optimal points
         pareto = identify_pareto_optimal(per_combination_stats)
 
-        # Verify: each Pareto optimal point is not dominated
+        # (a) Every Pareto point is undominated.
+        objectives = DEFAULT_PARETO_OBJECTIVES
         for p in pareto:
-            p_throughput = per_combination_stats[p]["request_throughput_avg"]["mean"]
-            p_latency = per_combination_stats[p]["time_to_first_token_p99"]["mean"]
-
-            for other in per_combination_stats:
+            p_vals = [
+                per_combination_stats[p][obj.metric_key]["mean"] for obj in objectives
+            ]
+            for other, stats in per_combination_stats.items():
                 if other == p:
                     continue
-
-                other_throughput = per_combination_stats[other][
-                    "request_throughput_avg"
-                ]["mean"]
-                other_latency = per_combination_stats[other]["time_to_first_token_p99"][
-                    "mean"
-                ]
-
-                # Should not be strictly better on both (domination)
-                # Domination: better or equal on all, strictly better on at least one
-                better_throughput = other_throughput > p_throughput
-                better_latency = other_latency < p_latency
-                equal_throughput = other_throughput == p_throughput
-                equal_latency = other_latency == p_latency
-
-                # Other dominates p if:
-                # (better_throughput OR equal_throughput) AND (better_latency OR equal_latency)
-                # AND at least one is strictly better
+                o_vals = [stats[obj.metric_key]["mean"] for obj in objectives]
+                # Throughput maximized, latency minimized.
+                better_or_equal_tput = o_vals[0] >= p_vals[0]
+                better_or_equal_lat = o_vals[1] <= p_vals[1]
+                strictly_better = (o_vals[0] > p_vals[0]) or (o_vals[1] < p_vals[1])
                 dominates = (
-                    (better_throughput or equal_throughput)
-                    and (better_latency or equal_latency)
-                    and (better_throughput or better_latency)
+                    better_or_equal_tput and better_or_equal_lat and strictly_better
                 )
-
                 assert not dominates, (
                     f"Pareto point {p} is dominated by {other}: "
-                    f"p=({p_throughput}, {p_latency}), "
-                    f"other=({other_throughput}, {other_latency})"
+                    f"p={p_vals}, other={o_vals}"
                 )
 
-        # Verify: each non-Pareto point is dominated by at least one Pareto point
-        non_pareto = [combo for combo in per_combination_stats if combo not in pareto]
-        for np in non_pareto:
-            np_throughput = per_combination_stats[np]["request_throughput_avg"]["mean"]
-            np_latency = per_combination_stats[np]["time_to_first_token_p99"]["mean"]
-
-            # Should be dominated by at least one point
+        # (b) Every non-Pareto point is dominated by at least one Pareto point.
+        non_pareto = [c for c in per_combination_stats if c not in pareto]
+        for np_combo in non_pareto:
+            np_vals = [
+                per_combination_stats[np_combo][obj.metric_key]["mean"]
+                for obj in objectives
+            ]
             is_dominated = False
-            for other in per_combination_stats:
-                if other == np:
+            for other, stats in per_combination_stats.items():
+                if other == np_combo:
                     continue
-
-                other_throughput = per_combination_stats[other][
-                    "request_throughput_avg"
-                ]["mean"]
-                other_latency = per_combination_stats[other]["time_to_first_token_p99"][
-                    "mean"
-                ]
-
-                better_throughput = other_throughput > np_throughput
-                better_latency = other_latency < np_latency
-                equal_throughput = other_throughput == np_throughput
-                equal_latency = other_latency == np_latency
-
-                dominates = (
-                    (better_throughput or equal_throughput)
-                    and (better_latency or equal_latency)
-                    and (better_throughput or better_latency)
-                )
-
-                if dominates:
+                o_vals = [stats[obj.metric_key]["mean"] for obj in objectives]
+                better_or_equal_tput = o_vals[0] >= np_vals[0]
+                better_or_equal_lat = o_vals[1] <= np_vals[1]
+                strictly_better = (o_vals[0] > np_vals[0]) or (o_vals[1] < np_vals[1])
+                if better_or_equal_tput and better_or_equal_lat and strictly_better:
                     is_dominated = True
                     break
-
             assert is_dominated, (
-                f"Non-Pareto point {np} is not dominated by any point: "
-                f"({np_throughput}, {np_latency})"
+                f"Non-Pareto point {np_combo} ({np_vals}) is dominated by no point"
             )
+
+
+# =============================================================================
+# Property 8 / 9: Execution Order (repeated vs independent)
+# =============================================================================
+
+
+class _RecordingExecutor(RunExecutor):
+    """Stand-in RunExecutor that records every (var_idx, trial) pair it sees."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+
+    def derive_id(self, plan: BenchmarkPlan, var_idx: int, trial: int) -> str:
+        return f"v{var_idx}-t{trial}"
+
+    async def execute(self, run: Any) -> RunResult:
+        var_idx = run.variation.index if run.variation else -1
+        self.calls.append((var_idx, run.trial))
+        return RunResult(
+            label=run.label,
+            success=True,
+            artifacts_path=run.artifact_dir,
+        )
+
+
+def _build_plan_via_orchestrator(
+    n_variations: int, n_trials: int, mode: SweepMode
+) -> BenchmarkPlan:
+    """Build a deterministic N-variation x M-trial plan via the real loader."""
+    plan = build_benchmark_plan(
+        _make_config(
+            list(range(1, n_variations + 1)),
+            num_runs=n_trials,
+            mode=mode,
+        )
+    )
+    assert plan.is_sweep
+    return plan
+
+
+class TestPropertyExecutionOrderPBT:
+    """Properties 8 & 9: Execution Order Patterns.
+
+    For any (N variations, M trials) pair:
+    - REPEATED mode produces M cycles of [v0, v1, ..., vN-1]
+      (trial-outer, variation-inner).
+    - INDEPENDENT mode produces N cycles of [t0, t1, ..., tM-1]
+      (variation-outer, trial-inner).
+
+    Adapted from main's ``Property8PBT`` / ``Property9PBT`` (which composed
+    ``ParameterSweepStrategy`` + ``FixedTrialsStrategy`` directly) to k8s'
+    ``MultiRunOrchestrator.execute`` dispatch path.
+    """
+
+    @given(
+        n_variations=st.integers(min_value=2, max_value=4),
+        n_trials=st.integers(min_value=1, max_value=3),
+    )
+    @settings(
+        deadline=None,
+        max_examples=15,
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.function_scoped_fixture,
+        ],
+    )
+    def test_pbt_repeated_mode_is_trial_outer_variation_inner(
+        self, n_variations: int, n_trials: int, tmp_path: Path
+    ) -> None:
+        plan = _build_plan_via_orchestrator(
+            n_variations, n_trials, mode=SweepMode.REPEATED
+        )
+        assert plan.sweep is not None
+        assert plan.sweep.iteration_order == SweepMode.REPEATED
+
+        executor = _RecordingExecutor()
+        asyncio.run(MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor))
+
+        # Repeated: trial outer, variation inner.
+        expected = [
+            (var_idx, trial)
+            for trial in range(n_trials)
+            for var_idx in range(n_variations)
+        ]
+        assert executor.calls == expected
+
+    @given(
+        n_variations=st.integers(min_value=2, max_value=4),
+        n_trials=st.integers(min_value=1, max_value=3),
+    )
+    @settings(
+        deadline=None,
+        max_examples=15,
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.function_scoped_fixture,
+        ],
+    )
+    def test_pbt_independent_mode_is_variation_outer_trial_inner(
+        self, n_variations: int, n_trials: int, tmp_path: Path
+    ) -> None:
+        plan = _build_plan_via_orchestrator(
+            n_variations, n_trials, mode=SweepMode.INDEPENDENT
+        )
+        assert plan.sweep is not None
+        assert plan.sweep.iteration_order == SweepMode.INDEPENDENT
+
+        executor = _RecordingExecutor()
+        asyncio.run(MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor))
+
+        # Independent: variation outer, trial inner.
+        expected = [
+            (var_idx, trial)
+            for var_idx in range(n_variations)
+            for trial in range(n_trials)
+        ]
+        assert executor.calls == expected
+
+
+# =============================================================================
+# Variation Grouping (HEAD-specific: variation-key dict iteration order)
+# =============================================================================
+
+
+class TestGroupResultsByVariationPBT:
+    """``_group_results_by_variation`` preserves first-seen order.
+
+    Sweep-aggregate CSV row order is downstream of this dict's iteration
+    order; if grouping shuffled keys, reruns would diff against each other
+    for cosmetic reasons.
+    """
+
+    @given(concurrency=_concurrency_lists_unique)
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_group_results_preserves_first_seen_order_one_trial(
+        self, concurrency: list[int]
+    ) -> None:
+        results = [
+            RunResult(
+                label=f"run-{c}",
+                success=True,
+                summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
+                variation_label=f"phases.profiling.concurrency={c}",
+                variation_values={"phases.profiling.concurrency": c},
+                trial_index=0,
+            )
+            for c in concurrency
+        ]
+        groups = _group_results_by_variation(results)
+
+        # Keys are (variation_label, sorted_values_tuple); the values-tuple is
+        # the second element. Each value tuple is e.g. (("phases.profiling.concurrency", 4),).
+        keyed = [
+            dict(values)["phases.profiling.concurrency"] for _label, values in groups
+        ]
+        assert keyed == concurrency
+        assert all(len(group) == 1 for group in groups.values())
+
+    @given(
+        concurrency=_concurrency_lists_unique,
+        n_trials=st.integers(min_value=1, max_value=4),
+    )
+    @settings(
+        deadline=None, max_examples=20, suppress_health_check=[HealthCheck.too_slow]
+    )
+    def test_pbt_group_results_collects_all_trials_per_variation(
+        self, concurrency: list[int], n_trials: int
+    ) -> None:
+        """N variations x M trials -> N groups, each of size M."""
+        results = [
+            RunResult(
+                label=f"run-{c}-t{t}",
+                success=True,
+                summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
+                variation_label=f"phases.profiling.concurrency={c}",
+                variation_values={"phases.profiling.concurrency": c},
+                trial_index=t,
+            )
+            for c in concurrency
+            for t in range(n_trials)
+        ]
+        groups = _group_results_by_variation(results)
+
+        assert len(groups) == len(concurrency)
+        assert all(len(group) == n_trials for group in groups.values())

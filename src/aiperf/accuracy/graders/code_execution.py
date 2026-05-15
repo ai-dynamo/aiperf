@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+
 """Code-execution grader for LiveCodeBench, backed by lighteval's CodegenMetric.
 
 In the trt-llm benchmark recipe, ``lcb:codegeneration`` is graded by
@@ -33,13 +34,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _log = logging.getLogger(__name__)
 
@@ -84,8 +87,8 @@ class CodeExecutionGrader(BaseGrader):
     raised an exception during execution.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
         if not _HAS_LIGHTEVAL_LCB:
             raise RuntimeError(_MISSING_LIGHTEVAL_HINT)
 

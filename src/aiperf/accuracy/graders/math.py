@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+
 """Math grader for numeric, algebraic, and LaTeX answer equivalence.
 
 Ported faithfully from the trt-llm benchmark recipe's
@@ -38,12 +39,14 @@ import logging
 import re
 from fractions import Fraction
 from math import isclose
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.graders._math_strip import strip_string
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _log = logging.getLogger(__name__)
 
@@ -512,8 +515,8 @@ class MathGrader(BaseGrader):
     correct, matching ``MultipleChoiceGrader``'s convention.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
 
     def _extract_with_flag(self, response_text: str) -> tuple[str, bool]:
         """Return ``(answer, unparsed)``.

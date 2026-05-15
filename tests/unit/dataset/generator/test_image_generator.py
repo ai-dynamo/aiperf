@@ -9,26 +9,88 @@ from unittest.mock import Mock, patch
 import pytest
 from PIL import Image
 
-from aiperf.common.config import ImageConfig, ImageHeightConfig, ImageWidthConfig
 from aiperf.common.enums import ImageFormat, ImageSource
+from aiperf.config.dataset.content import ImageConfig
+from aiperf.config.distributions import NormalDistribution
 from aiperf.dataset.generator import ImageGenerator
+
+# v1 had separate ImageWidthConfig / ImageHeightConfig dataclasses; v2 uses
+# a single SamplingDistribution (Normal/Fixed/...). Tests authored against
+# v1 still spell out the per-axis shape, so alias here so they keep reading
+# naturally without rewriting every callsite.
+ImageWidthConfig = NormalDistribution
+ImageHeightConfig = NormalDistribution
+
+
+def make_image_config(
+    *,
+    width_mean: float,
+    width_stddev: float,
+    height_mean: float,
+    height_stddev: float,
+    image_format: ImageFormat = ImageFormat.PNG,
+    source: ImageSource | Path = ImageSource.ASSETS,
+    batch_size: int = 1,
+) -> ImageConfig:
+    """Build a v2 ImageConfig from mean/stddev parameters.
+
+    Defaults ``source`` to ``ASSETS`` so disk-loading and source-image sampling
+    paths are exercised by these tests. NOISE bypasses disk entirely, so tests
+    that need to verify file-loading behavior must keep the ASSETS default.
+    Defaults ``batch_size`` to 1 so ``images_enabled()`` is True and the
+    generator's RNGs and source dispatch run; tests that want a disabled
+    ImageConfig should construct it directly.
+    """
+    return ImageConfig(
+        width=NormalDistribution(mean=width_mean, stddev=width_stddev),
+        height=NormalDistribution(mean=height_mean, stddev=height_stddev),
+        format=image_format,
+        source=source,
+        batch_size=batch_size,
+    )
 
 
 @pytest.fixture
-def base_config():
-    """Base configuration for ImageGenerator tests (pinned to ASSETS source).
-
-    The ASSETS source path exercises disk loading and source-image sampling,
-    which several tests below mock and assert against. NOISE (the default
-    source) bypasses disk entirely, so tests that need to verify file-loading
-    behavior must use ASSETS explicitly.
-    """
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=2),
-        height=ImageHeightConfig(mean=10, stddev=2),
-        format=ImageFormat.PNG,
-        source=ImageSource.ASSETS,
+def base_config() -> ImageConfig:
+    """Base configuration for ImageGenerator tests."""
+    return make_image_config(
+        width_mean=10, width_stddev=2, height_mean=10, height_stddev=2
     )
+
+
+@pytest.fixture
+def config_random_format() -> ImageConfig:
+    """Configuration with random format selection."""
+    return make_image_config(
+        width_mean=10,
+        width_stddev=2,
+        height_mean=10,
+        height_stddev=2,
+        image_format=ImageFormat.RANDOM,
+    )
+
+
+@pytest.fixture
+def config_fixed_dimensions() -> ImageConfig:
+    """Configuration with fixed dimensions (stddev=0)."""
+    return make_image_config(
+        width_mean=10, width_stddev=0, height_mean=10, height_stddev=0
+    )
+
+
+@pytest.fixture
+def mock_image() -> tuple[Mock, Mock]:
+    """Mock PIL Image object for source image."""
+    image = Mock(spec=Image.Image)
+    resized_image = Mock(spec=Image.Image)
+    image.resize.return_value = resized_image
+    return image, resized_image
+
+
+@pytest.fixture
+def test_image() -> Image.Image:
+    """Real PIL Image object for integration tests."""
+    return Image.new("RGB", (5, 5), color="red")
 
 
 @pytest.fixture
@@ -55,26 +117,50 @@ def mock_file_system():
 
 @pytest.fixture(
     params=[
-        ImageConfig(
-            width=ImageWidthConfig(mean=50, stddev=5),
-            height=ImageHeightConfig(mean=75, stddev=8),
-            format=ImageFormat.JPEG,
+        dict(
+            width_mean=50,
+            width_stddev=5,
+            height_mean=75,
+            height_stddev=8,
+            image_format=ImageFormat.JPEG,
         ),
-        ImageConfig(
-            width=ImageWidthConfig(mean=200, stddev=20),
-            height=ImageHeightConfig(mean=150, stddev=15),
-            format=ImageFormat.RANDOM,
+        dict(
+            width_mean=200,
+            width_stddev=20,
+            height_mean=150,
+            height_stddev=15,
+            image_format=ImageFormat.RANDOM,
         ),
-        ImageConfig(
-            width=ImageWidthConfig(mean=1024, stddev=0),
-            height=ImageHeightConfig(mean=768, stddev=0),
-            format=ImageFormat.PNG,
+        dict(
+            width_mean=1024,
+            width_stddev=0,
+            height_mean=768,
+            height_stddev=0,
+            image_format=ImageFormat.PNG,
         ),
     ]
 )
-def various_configs(request):
+def various_configs(request) -> ImageConfig:
     """Parameterized fixture providing various ImageConfig configurations."""
-    return request.param
+    return make_image_config(**request.param)
+
+
+@pytest.fixture(
+    params=[
+        (1, 0, 1, 0),  # Minimum size
+        (100, 0, 50, 0),  # Fixed size
+        (200, 50, 300, 75),  # Variable size
+    ]
+)
+def dimension_params(request) -> ImageConfig:
+    """Parameterized fixture providing various dimension configurations."""
+    width_mean, width_stddev, height_mean, height_stddev = request.param
+    return make_image_config(
+        width_mean=width_mean,
+        width_stddev=width_stddev,
+        height_mean=height_mean,
+        height_stddev=height_stddev,
+    )
 
 
 class TestImageGenerator:
@@ -106,6 +192,7 @@ class TestImageGenerator:
     def test_generate_with_random_format(self):
         """Test generate method when format is random (random selection)."""
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.RANDOM,
@@ -121,6 +208,7 @@ class TestImageGenerator:
         from aiperf.common import random_generator as rng
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.PNG,
@@ -180,6 +268,7 @@ class TestImageGenerator:
     def test_generate_integration_with_real_image(self):
         """Integration test with noise mode producing a decodable image."""
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.PNG,
@@ -205,10 +294,12 @@ class TestImageGenerator:
     )
     def test_generate_different_formats(self, image_format, expected_prefix):
         """Test generate method with different image formats."""
-        config = ImageConfig(
-            width=ImageWidthConfig(mean=100, stddev=0),
-            height=ImageHeightConfig(mean=100, stddev=0),
-            format=image_format,
+        config = make_image_config(
+            width_mean=100,
+            width_stddev=0,
+            height_mean=100,
+            height_stddev=0,
+            image_format=image_format,
             source=ImageSource.NOISE,
         )
         generator = ImageGenerator(config)
@@ -228,6 +319,7 @@ class TestImageGenerator:
     ):
         """Test generate method with various dimension configurations."""
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
             height=ImageHeightConfig(mean=height_mean, stddev=height_stddev),
             format=ImageFormat.PNG,
@@ -248,6 +340,7 @@ class TestImageGenerator:
         from aiperf.common import random_generator as rng
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=2),
             height=ImageHeightConfig(mean=10, stddev=2),
             format=ImageFormat.PNG,
@@ -269,6 +362,7 @@ class TestImageGeneratorNoiseMode:
     @pytest.fixture
     def noise_config(self):
         return ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
@@ -317,6 +411,7 @@ class TestImageGeneratorCustomDirectory:
         img.save(tmp_path / "test.png")
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
@@ -334,6 +429,7 @@ class TestImageGeneratorCustomDirectory:
         (tmp_path / "subdir").mkdir()
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
@@ -349,6 +445,7 @@ class TestImageGeneratorCustomDirectory:
         (tmp_path / "notes.txt").write_text("hello")
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=tmp_path,
@@ -358,6 +455,7 @@ class TestImageGeneratorCustomDirectory:
 
     def test_custom_directory_not_found_raises(self):
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=Path("/nonexistent/dir"),
@@ -370,6 +468,7 @@ class TestImageGeneratorCustomDirectory:
         file_path.write_text("hello")
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=file_path,
@@ -382,6 +481,7 @@ class TestImageGeneratorCustomDirectory:
         empty_dir.mkdir()
 
         config = ImageConfig(
+            batch_size=1,
             width=ImageWidthConfig(mean=10, stddev=0),
             height=ImageHeightConfig(mean=10, stddev=0),
             source=empty_dir,

@@ -2308,6 +2308,7 @@ class TestParameterSweep:
         # 6. All required fields are present and have correct types
         # 7. Mathematical relationships between fields are validated
 
+    @pytest.mark.slow
     async def test_sweep_level_statistics(
         self,
         cli: AIPerfCLI,
@@ -2344,7 +2345,10 @@ class TestParameterSweep:
                 --request-count 10 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
-            """
+            """,
+            # Solo runtime ~141s; default 200s budget is too tight under
+            # parallel xdist load (12 cells × per-cell startup overhead).
+            timeout=420.0,
         )
 
         # Verify successful execution
@@ -2849,10 +2853,14 @@ class TestParameterSweep:
         plot_log = plot_dir / "aiperf_plot.log"
         assert plot_log.exists(), "Plot log should be created"
 
-        # Verify plot log shows runs were detected
+        # Verify plot log shows runs were detected. With trials>1 the plot
+        # surfaces one aggregate cell per concurrency value (the canonical
+        # per-cell view) rather than one entry per individual trial; see
+        # commit e4f2b3a75 ("feat(plot): support sweep aggregate dirs ...")
+        # which made trials>1 sweeps load via the aggregate/ tree.
         log_content = plot_log.read_text()
-        assert "Found 6 unique run directories" in log_content, (
-            "Plot should detect 6 run directories (2 trials × 3 concurrency values)"
+        assert "Found 3 unique run directories" in log_content, (
+            "Plot should detect 3 aggregate cells (one per concurrency value)"
         )
         assert "MULTI_RUN mode" in log_content, (
             "Plot should detect multi-run mode for sweep"

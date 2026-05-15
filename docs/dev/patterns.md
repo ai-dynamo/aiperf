@@ -21,16 +21,30 @@ app.command("aiperf.cli_commands.profile:app", name="profile")
 ```python
 # aiperf/cli_commands/profile.py — thin command definition
 from cyclopts import App
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.flags import CLIConfig
 
 app = App(name="profile")
 
 @app.default
-def profile(user_config: UserConfig, service_config: ServiceConfig | None = None) -> None:
+def profile(*, cli_config: CLIConfig) -> None:
     """Run the Profile subcommand."""
-    from aiperf.cli_runner import run_system_controller  # heavy import deferred
+    from aiperf.cli_utils import exit_on_error
+    from aiperf.config.loader.errors import ConfigurationError
 
-    run_system_controller(user_config, service_config)
+    with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
+        from aiperf.config.flags.resolver import resolve_config
+        from aiperf.config.loader import build_benchmark_plan
+
+        config = resolve_config(cli_config, cli_config.config_file)
+        plan = build_benchmark_plan(config)
+
+    with exit_on_error(
+        title="Error Running AIPerf System",
+        quiet_for=(ConfigurationError,),
+    ):
+        from aiperf.cli_runner import run_benchmark  # heavy import deferred
+
+        run_benchmark(plan)
 ```
 
 **Conventions:**
@@ -39,6 +53,67 @@ def profile(user_config: UserConfig, service_config: ServiceConfig | None = None
 - Keep module-level imports minimal; heavy deps go inside the function body.
 - Heavy implementation logic lives in a `cli.py` inside the owning domain
   package (e.g. `aiperf/plugin/cli.py`), lazily imported at call time.
+
+## Adding a New CLI Flag
+
+CLIConfig is a flat DTO — every CLI flag is a top-level field on
+`CLIConfig` with an `Annotated[...]` annotation that carries Pydantic
+metadata + the cyclopts CLI binding. **Never add a new nested config
+class.** Disambiguate collisions with a section prefix
+(e.g. `image_batch_size` vs `audio_batch_size`).
+
+```python
+# src/aiperf/config/flags/cli_config.py — add the field in its section block
+my_new_flag: Annotated[
+    int | None,
+    Field(
+        ge=1,
+        description="One-line user-facing description rendered in --help "
+        "and docs/cli-options.md. Mention units, defaults, and obvious "
+        "interactions with other flags.",
+    ),
+    CLIParameter(
+        name=("--my-new-flag",),       # CLI flag name (independent of attr name)
+        group=Groups.LOAD_GENERATOR,   # cyclopts --help group; pick from list below
+    ),
+] = None
+```
+
+**Pick a `Groups.X` from `src/aiperf/config/cli_parameter.py`:**
+
+`ENDPOINT`, `INPUT`, `FIXED_SCHEDULE`, `GOODPUT`, `OUTPUT`, `HTTP_TRACE`,
+`TOKENIZER`, `LOAD_GENERATOR`, `WARMUP`, `USER_CENTRIC`,
+`REQUEST_CANCELLATION`, `CONVERSATION_INPUT`, `ISL`, `OSL`, `PROMPT`,
+`PREFIX_PROMPT`, `RANKINGS`, `SYNTHESIS`, `AUDIO_INPUT`, `IMAGE_INPUT`,
+`VIDEO_INPUT`, `SERVICE`, `SERVER_METRICS`, `GPU_TELEMETRY`, `UI`,
+`WORKERS`, `ZMQ_COMMUNICATION`, `ACCURACY`, `MULTI_RUN`.
+
+If none fit, prefer adding a new `Groups.X` constant in
+`src/aiperf/config/cli_parameter.py` over reusing an unrelated group.
+
+Then:
+
+1. Add the attr name to the appropriate `<SECTION>_FIELDS` frozenset in
+   `src/aiperf/config/flags/_section_fields.py` so the resolver/converter
+   can scope `cli.model_fields_set & <SECTION>_FIELDS` queries.
+2. If the flag maps to an existing `AIPerfConfig` key, add an entry to that section's
+   field map (e.g. `_ENDPOINT_FIELD_MAP` in `_converter_endpoint.py`).
+   Otherwise, read it directly in the relevant `_converter_*.py` builder.
+3. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
+   `make generate-env-vars-docs` if you also added a corresponding env var.
+4. Add a unit test under `tests/unit/config/` constructing
+   `CLIConfig(my_new_flag=...)` and asserting the converter emits the
+   right `AIPerfConfig` shape.
+5. The disjointedness invariant in
+   `tests/unit/config/v1/test_section_fields.py` will catch any
+   cross-section name collision automatically.
+
+**CLI flag DTO charter (enforced):**
+- No validators on CLIConfig fields. `BeforeValidator(parse_str_or_list)` for
+  CLI input coercion is fine; domain validation (range checks across fields,
+  cross-field constraints) lives on `AIPerfConfig`, not CLIConfig.
+- The CLI-to-envelope converter is the only module outside `cli_commands/` that may
+  read `CLIConfig` attributes.
 
 ## Service Pattern
 
@@ -64,8 +139,7 @@ service:
 ```
 
 **Config types:**
-- `ServiceConfig`: infrastructure (ZMQ ports, logging level)
-- `UserConfig`: benchmark params (endpoints, loadgen settings)
+- `CLIConfig`: unified CLI input DTO carrying both benchmark params (endpoints, loadgen) and service-runtime knobs (ZMQ ports, logging level)
 
 ## Model Pattern
 
@@ -85,11 +159,11 @@ class Record(AIPerfBaseModel):
 Messages require `message_type` field and handler decorator:
 
 ```python
-from aiperf.common.messages import Message
+from aiperf.common.messages import Message, MessageTypeT
 from aiperf.common.hooks import on_message
 
 class MyMsg(Message):
-    message_type: MessageType = MessageType.MY_MSG
+    message_type: MessageTypeT = MessageType.MY_MSG
     data: list[Record] = Field(description="Records to process")
 
 # In service class:
@@ -163,6 +237,110 @@ self.debug(lambda: f"Processing {len(self._items())} items")
 # Cheap - direct string is fine
 self.info("Starting service")
 ```
+
+## NaN/Inf Discipline Pattern
+
+NaN/+inf/-inf in metric data corrupts downstream artifacts in three ways:
+`orjson.dumps` (and Pydantic `model_dump_json`) silently coerce them to JSON
+`null`, which is indistinguishable from "metric was missing"; CSV writers
+emit literal `"nan"`/`"inf"` strings that pandas/duckdb parse
+inconsistently; and `np.mean`/`np.std`/`polyfit` poison downstream decision
+logic (Pareto fronts, BO acquisition maxima, plateau detectors) without
+raising.
+
+The `aiperf.common.finite` module centralizes the discipline as four
+primitives. Use them at every numeric boundary.
+
+### `FiniteFloat` for Pydantic metric fields
+
+```python
+from pydantic import Field
+from aiperf.common.finite import FiniteFloat
+from aiperf.common.models import AIPerfBaseModel
+
+class MetricSummary(AIPerfBaseModel):
+    mean: FiniteFloat = Field(description="Sample mean (must be finite)")
+    std: FiniteFloat | None = Field(
+        default=None,
+        description="Sample stddev; None means insufficient samples",
+    )
+    p99: FiniteFloat | None = Field(
+        default=None,
+        description="99th percentile latency in ms; None means no samples",
+    )
+```
+
+The `AfterValidator` rejects NaN/+inf/-inf at config-load and
+`model_validate` time with a debuggable message. For
+finite-or-explicitly-missing semantics, use `FiniteFloat | None` — the
+validator only fires when a non-None value is provided.
+
+### `scrub_non_finite` before every JSON exporter
+
+```python
+import orjson
+from aiperf.common.finite import scrub_non_finite
+
+def export_records_json(records: list[Record], out_path: Path) -> None:
+    payload = {"records": [r.model_dump() for r in records]}
+    out_path.write_bytes(orjson.dumps(scrub_non_finite(payload)))
+```
+
+`scrub_non_finite` recursively walks `dict`/`list`/`tuple` containers and
+rewrites non-finite numeric values to `None`. It leaves `str`/`bytes`/`bool`
+alone and handles numpy scalar types correctly (`numpy.float32`,
+`numpy.float64`).
+
+### `is_finite_value` for the canonical finiteness check
+
+```python
+from aiperf.common.finite import is_finite_value
+
+def maybe_record_throughput(value: float) -> None:
+    if not is_finite_value(value):
+        self.warning(lambda: f"Skipping non-finite throughput: {value!r}")
+        return
+    self._records.append(value)
+```
+
+Use `is_finite_value` instead of `math.isfinite` or `not math.isnan`:
+`isinstance(x, float)` misses numpy scalar types on some numpy versions,
+and `math.isfinite` raises on non-numeric inputs.
+
+### `nan_safe_mean` / `nan_safe_std` for aggregation
+
+```python
+from aiperf.common.finite import nan_safe_mean, nan_safe_std
+
+# Partial-failure samples may contain NaN; np.mean would propagate.
+samples = [r.latency_ms for r in records]  # may contain NaN
+mean = nan_safe_mean(samples)               # None if no finite values
+std = nan_safe_std(samples, ddof=1)         # None if < 2 finite values
+```
+
+Both functions return `None` (not NaN) when the input has too few finite
+values, so callers can distinguish "no data" from "data averaged to NaN".
+
+### Don't: the bug pattern these primitives prevent
+
+```python
+# WRONG: raw float field accepts NaN silently
+class BadSummary(AIPerfBaseModel):
+    p99: float = Field(description="99th percentile latency")  # accepts NaN
+
+# WRONG: orjson silently coerces NaN/inf to JSON null
+out_path.write_bytes(orjson.dumps({"p99": float("nan")}))
+# Result on disk: {"p99": null}  -- indistinguishable from "missing"
+
+# WRONG: np.mean propagates NaN through Pareto/BO downstream
+import numpy as np
+mean = float(np.mean([1.0, 2.0, float("nan")]))  # NaN, poisons callers
+```
+
+Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py`
+reject all three patterns for new code; see
+[`global-invariants.md`](global-invariants.md) for the full contract and
+the baseline-ratchet mechanism.
 
 ## Testing Pattern
 
@@ -307,6 +485,52 @@ cov = np.array([[4.0, 1.0], [1.0, 9.0]])
 vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=0.95)
 # Returns list of (x, y) tuples forming a closed polygon
 ```
+
+
+## Plot Envelope (`plot:`)
+
+`AIPerfConfig` accepts an optional top-level `plot:` key that fully describes
+which plots are rendered after the run. Two forms are supported:
+
+```yaml
+# Form A: bare-string path reference (resolved relative to the AIPerf YAML's directory)
+plot: ./plots/baseline.yaml
+```
+
+```yaml
+# Form B: inline mapping (mirrors src/aiperf/plot/default_plot_config.yaml)
+plot:
+  visualization:
+    multi_run_defaults: [pareto_curve_throughput_per_gpu_vs_latency]
+    single_run_defaults: [ttft_over_time]
+    multi_run_plots:
+      pareto_curve_throughput_per_gpu_vs_latency:
+        type: pareto
+        x: {metric: request_latency, stat: avg}
+        y: {metric: output_token_throughput_per_gpu, stat: avg}
+        labels: [concurrency]
+        groups: [model]
+    single_run_plots:
+      ttft_over_time:
+        type: scatter
+        x: request_number
+        y: time_to_first_token
+  settings:
+    server_metrics_downsampling:
+      enabled: true
+      window_size_seconds: 5.0
+      aggregation_method: mean
+  experiment_classification:
+    baselines: ["*baseline*"]
+    treatments: ["*treatment*"]
+```
+
+When `plot:` is set, `~/.aiperf/plot_config.yaml` is ignored and
+`artifacts.auto_plot` flips to `True` unless explicitly `false`. The auto-plot
+callback writes the resolved envelope to `<artifact_dir>/.aiperf-plot-config.yaml`
+as a reproducibility receipt, so `aiperf plot <run>` later picks it up
+automatically without needing the original AIPerf YAML. Pydantic models live in
+`src/aiperf/config/plot.py`.
 
 ## Validator Pattern
 
@@ -475,7 +699,7 @@ flowchart LR
 
 ```python
 import multiprocessing as mp
-from aiperf.common.config import Environment
+from aiperf.common.environment import Environment
 
 event_queue = mp.Queue(maxsize=Environment.OTEL.MAX_BUFFERED_RECORDS)  # default 10 000
 ```

@@ -10,11 +10,12 @@ from typing import Any, cast
 
 import orjson
 
-from aiperf.common.config import MLflowDefaults
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.optional_dependencies import mlflow_dependency_message
 from aiperf.common.redact import redact_cli_command, redact_url
+from aiperf.config.mlflow import MLflowDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.mlflow_metadata import (
     MLflowExportMetadata,
@@ -36,9 +37,14 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         # without re-plumbing through kwargs.
         self._exporter_config = exporter_config
         self._results = exporter_config.results
-        self._user_config = exporter_config.user_config
+        self._cfg = exporter_config.cfg
+        self._benchmark_id = (
+            exporter_config.run.benchmark_id
+            if exporter_config.run is not None
+            else None
+        )
 
-        if not self._user_config.mlflow_enabled:
+        if not self._cfg.mlflow.enabled:
             raise DataExporterDisabled(
                 "MLflow export is disabled (set --mlflow-tracking-uri to enable)."
             )
@@ -47,11 +53,11 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 "MLflow export is disabled (no profile results available)."
             )
 
-        self._tracking_uri = self._user_config.mlflow_tracking_uri
-        self._experiment_name = self._user_config.mlflow_experiment
-        self._run_name = self._user_config.mlflow_run_name
-        self._artifact_directory = self._user_config.output.artifact_directory
-        self._artifact_globs = self._user_config.mlflow_resolved_artifact_globs
+        self._tracking_uri = self._cfg.mlflow.tracking_uri
+        self._experiment_name = self._cfg.mlflow.experiment
+        self._run_name = self._cfg.mlflow.run_name
+        self._artifact_directory = self._cfg.artifacts.artifact_directory
+        self._artifact_globs = self._cfg.mlflow.resolved_artifact_globs
         self._metadata_file = (
             self._artifact_directory / MLflowDefaults.EXPORT_METADATA_FILE
         )
@@ -201,12 +207,12 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         if reused_live_run:
             # On reuse, carry forward the parent_run_id from the live metadata.
             resolved_parent_run_id: str | None = existing_metadata.get("parent_run_id")
-            cli_parent = self._user_config.mlflow_parent_run_id
+            cli_parent = self._cfg.mlflow.parent_run_id
             if cli_parent and cli_parent != resolved_parent_run_id:
                 self.info("parent_run_id ignored on live-run reuse")
             run_context = mlflow.start_run(run_id=existing_live_run_id)
         else:
-            resolved_parent_run_id = self._user_config.mlflow_parent_run_id
+            resolved_parent_run_id = self._cfg.mlflow.parent_run_id
             # Fresh run: compute the name up front so _start_new_run can pass it
             # to mlflow.start_run. Reused runs keep the name MLflow already stored.
             new_run_name = self._run_name or self._derive_default_run_name()
@@ -315,16 +321,15 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         return "RESOURCE_DOES_NOT_EXIST" in repr(exc)
 
     def _derive_default_run_name(self) -> str:
-        benchmark_id = self._user_config.benchmark_id
-        if benchmark_id:
-            return f"aiperf-{benchmark_id[:8]}"
+        if self._benchmark_id:
+            return f"aiperf-{self._benchmark_id[:8]}"
         return f"aiperf-{int(time.time())}"
 
     # Statistic fields on JsonMetricResult / MetricResult that are pushed to
     # MLflow. The exporter skips fields that are None, so listing a superset is
     # safe — metrics that don't produce a given percentile simply omit it. Keep
     # in sync with JsonMetricResult in common/models/export_models.py.
-    _STAT_FIELDS = ("avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max", "std")  # fmt: skip
+    _STAT_FIELDS = ("avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max", "std", "count", "sum")  # fmt: skip
 
     def _build_metric_payload(self) -> dict[str, float]:
         payload: dict[str, float] = {}
@@ -350,30 +355,29 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
     def _build_param_payload(self) -> dict[str, str]:
         params: dict[str, str] = {
-            "endpoint.type": str(self._user_config.endpoint.type),
-            "endpoint.models": ",".join(self._user_config.endpoint.model_names),
+            "endpoint.type": str(self._cfg.endpoint.type),
+            "endpoint.models": ",".join(self._cfg.get_model_names()),
             "endpoint.urls": ",".join(
-                redact_url(url) for url in self._user_config.endpoint.urls
+                redact_url(url) for url in self._cfg.endpoint.urls
             ),
-            "timing.mode": str(self._user_config.timing_mode),
-            "output.artifact_directory": str(
-                self._user_config.output.artifact_directory
-            ),
+            "output.artifact_directory": str(self._cfg.artifacts.artifact_directory),
         }
 
-        if self._user_config.loadgen.concurrency is not None:
-            params["loadgen.concurrency"] = str(self._user_config.loadgen.concurrency)
-        if self._user_config.loadgen.request_rate is not None:
-            params["loadgen.request_rate"] = str(self._user_config.loadgen.request_rate)
-        loadgen = self._user_config.loadgen
-        if loadgen.request_count is not None:
-            params["loadgen.request_count"] = str(loadgen.request_count)
-        if loadgen.benchmark_duration is not None:
-            params["loadgen.benchmark_duration"] = str(loadgen.benchmark_duration)
-        if self._user_config.cli_command:
-            params["aiperf.cli_command"] = redact_cli_command(
-                self._user_config.cli_command
-            )
+        profiling_phases = self._cfg.get_profiling_phases()
+        if profiling_phases:
+            phase = profiling_phases[0]
+            params["timing.mode"] = str(phase.type)
+            if getattr(phase, "concurrency", None) is not None:
+                params["loadgen.concurrency"] = str(phase.concurrency)
+            if getattr(phase, "request_rate", None) is not None:
+                params["loadgen.request_rate"] = str(phase.request_rate)
+            if phase.requests is not None:
+                params["loadgen.request_count"] = str(phase.requests)
+            if phase.duration is not None:
+                params["loadgen.benchmark_duration"] = str(phase.duration)
+        cli_command = getattr(self._cfg, "cli_command", None)
+        if cli_command:
+            params["aiperf.cli_command"] = redact_cli_command(cli_command)
 
         return params
 
@@ -384,9 +388,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "aiperf.version": aiperf_version,
             "aiperf.was_cancelled": str(self._results.was_cancelled).lower(),
         }
-        if self._user_config.benchmark_id:
-            tags["benchmark_id"] = self._user_config.benchmark_id
-        tags.update(self._user_config.mlflow_tags_dict)
+        if self._benchmark_id:
+            tags["benchmark_id"] = self._benchmark_id
+        tags.update(self._cfg.mlflow.tags_dict)
         return tags
 
     def _collect_artifact_files(self) -> list[Path]:
@@ -450,7 +454,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         ):
             return None
 
-        current_benchmark_id = self._user_config.benchmark_id
+        current_benchmark_id = self._benchmark_id
         if (
             not isinstance(metadata_benchmark_id, str)
             or metadata_benchmark_id != current_benchmark_id
@@ -481,7 +485,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "experiment": self._experiment_name,
             "run_id": run_id,
             "run_name": run_name,
-            "benchmark_id": self._user_config.benchmark_id,
+            "benchmark_id": self._benchmark_id,
             "parent_run_id": parent_run_id,
             "live_streaming": live_streaming,
             "reused_live_run": reused_live_run,
@@ -491,7 +495,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "uploaded_artifacts": uploaded_artifacts,
             "exported_at_ns": time.time_ns(),
         }
-        payload = orjson.dumps(metadata, option=orjson.OPT_INDENT_2)
+        payload = orjson.dumps(scrub_non_finite(metadata), option=orjson.OPT_INDENT_2)
         # Atomic write: write to temp file then rename to avoid corruption
         # on crash or power loss mid-write.
         tmp_file = self._metadata_file.with_suffix(".json.tmp")

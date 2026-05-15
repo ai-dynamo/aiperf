@@ -22,6 +22,14 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## CLI RUNNER
+
+CLI runner post-run callback behavior. Controls whether OnComplete callback exceptions abort the run after all callbacks attempt or are isolated and logged. Default is isolated so that a single misbehaving callback (e.g. auto-plot in strict mode, third-party hook) cannot bypass the deliberate ``os._exit`` hang-protection that guards against multiprocessing/ZMQ teardown hangs in the parent process.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_RAISE_ON_CALLBACK_ERROR` | `False` | — | When true, re-raise the first OnComplete callback exception after running all remaining callbacks but before os._exit. Provides a strict-mode contract where a callback raise propagates out of the runner. When false (default) the exception is logged with full traceback, the exit code is forced non-zero, and the process still terminates via os._exit so leftover ZMQ/multiprocessing state cannot hang the interpreter. |
+
 ## APISERVER
 
 API server settings. Controls the host and port of the API server.
@@ -43,15 +51,6 @@ Compression settings for streaming file transfers. Controls chunk size and compr
 | `AIPERF_COMPRESSION_ZSTD_LEVEL` | `3` | ≥ 1, ≤ 22 | Zstandard compression level (1=fastest, 22=best compression, default: 3) |
 | `AIPERF_COMPRESSION_GZIP_LEVEL` | `6` | ≥ 1, ≤ 9 | Gzip compression level (1=fastest, 9=best compression, default: 6) |
 
-## CONFIG
-
-Configuration file paths for distributed deployments. Controls paths to configuration files loaded by services running in containers. These are primarily used by `aiperf service` when running in Kubernetes.
-
-| Environment Variable | Default | Constraints | Description |
-|----------------------|---------|-------------|-------------|
-| `AIPERF_CONFIG_SERVICE_FILE` | `None` | — | Path to service configuration JSON/YAML file. Default: /etc/aiperf/service_config.json in Kubernetes deployments. |
-| `AIPERF_CONFIG_USER_FILE` | `None` | — | Path to user configuration JSON/YAML file. Default: /etc/aiperf/user_config.json in Kubernetes deployments. |
-
 ## DAG
 
 Settings for DAG benchmark mode (`dag_jsonl` input type).
@@ -71,6 +70,7 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
+| `AIPERF_DATASET_INLINE_RECORDS_WARN_THRESHOLD` | `500` | ≥ 1 | Soft warning threshold for the number of inline `records:` entries on a `FileDataset`. When total inline records exceed this value, the config loader logs a warning suggesting the user move the dataset to a JSONL file. No hard cap. |
 
 ## GPU
 
@@ -161,6 +161,18 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
+
+## SEARCHPLANNER
+
+Adaptive-search planner tunables. Controls precision targets, warmup-phase injection, and request-count presets for the smooth-isotonic and monotonic SLA-saturation search planners. All values are read at planner-construction or iteration-mutate time, so changes take effect on the next search run.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_SEARCH_PLANNER_SLA_PRECISION_DEFAULT` | `0.05` | > 0.0, &lt; 1.0 | Default SLA boundary search precision target. The bisection / smooth-isotonic bracket halts when (infeasible_min - feasible_max) / infeasible_min < this value, and the cliff detector requires bracket_gap > this * x_hi to report a cliff. 5% mirrors perf_analyzer's --binary-search default. |
+| `AIPERF_SEARCH_PLANNER_DEFAULT_WARMUP_SECONDS` | `30.0` | > 0.0, ≤ 100000.0 | Smooth-isotonic SLA planner: default warmup phase duration in seconds injected into each iteration's cfg when ``cfg.sla_warmup_seconds`` is unset. Spec calls for max(30s, 3*inter-batch-time) but inter-batch-time is unknown at planner-time, so 30s is the safe floor. Must be strictly positive: zero defeats the cold-KV-cache rationale that motivates the floor. |
+| `AIPERF_SEARCH_PLANNER_FIRST_PROBE_WARMUP_FLOOR` | `60.0` | > 0.0, ≤ 100000.0 | Smooth-isotonic SLA planner: minimum warmup duration in seconds for the first probe at each swept-dim value. Cold KV-cache and CUDA-graph compilation cost is largest the first time we hit a given concurrency, so floor that probe at 60s. Must be strictly positive: zero defeats the cold-KV-cache rationale. |
+| `AIPERF_SEARCH_PLANNER_REPLICATE_WARMUP_FLOOR` | `15.0` | > 0.0, ≤ 100000.0 | Smooth-isotonic SLA planner: minimum warmup duration in seconds for replicate probes at an already-probed swept-dim value. Replicates reuse the warm KV-cache / CUDA-graph state, so a shorter warmup suffices. Must be strictly positive: zero defeats the floor. |
+| `AIPERF_SEARCH_PLANNER_SLA_PRECISION_REQUESTS` | `{'tight': 10000, 'normal': 1000, 'coarse': 300}` | — | Mapping from ``cfg.sla_precision`` preset name to the ``phases.profiling.requests`` value injected when the user did not set ``requests`` explicitly on the profiling phase. Drives p99 CI width. Each value must be strictly positive — zero/negative request counts surface as iteration-time failures otherwise. Override via JSON, e.g. ``AIPERF_SEARCH_PLANNER_SLA_PRECISION_REQUESTS='{"tight": 20000}'``. |
 
 ## SERVERMETRICS
 
@@ -269,6 +281,8 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
 | `AIPERF_ZMQ_SNDTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket send timeout in milliseconds (default: 5 minutes) |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_INTVL` | `10` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes for ZMQ connections |
+| `AIPERF_ZMQ_EVENT_BUS_PROXY_FRONTEND_PORT` | `5663` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy frontend (producers connect here). Single source of truth for the non-k8s comm configs (TCP, dual-bind); k8s pod manifests pull the same value via ``K8sEnvironment.PORTS.EVENT_BUS_PROXY_PUB_FRONTEND`` (defaults match). |
+| `AIPERF_ZMQ_EVENT_BUS_PROXY_BACKEND_PORT` | `5664` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy backend (subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``. |
 
 ## DEV
 

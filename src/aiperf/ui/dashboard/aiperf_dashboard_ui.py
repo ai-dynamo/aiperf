@@ -17,7 +17,7 @@ from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 if TYPE_CHECKING:
     import multiprocessing
 
-    from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.controller.system_controller import SystemController
 
 
@@ -38,22 +38,18 @@ class AIPerfDashboardUI(BaseAIPerfUI):
     def __init__(
         self,
         log_queue: multiprocessing.Queue,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         controller: SystemController,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             controller=controller,
             **kwargs,
         )
         self.controller = controller
-        self.service_config = service_config
-        self.app: AIPerfTextualApp = AIPerfTextualApp(
-            service_config=service_config, controller=controller
-        )
+        self.run = run
+        self.app: AIPerfTextualApp = AIPerfTextualApp(run=run, controller=controller)
         # Setup the log consumer to consume log records from the shared log queue
         self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
         self.attach_child_lifecycle(self.log_consumer)  # type: ignore

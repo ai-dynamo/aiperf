@@ -238,6 +238,61 @@ def redact_cli_command(cmd: str) -> str:
     return cmd
 
 
+_CLI_COMMAND_SENSITIVE_TOKENS = ("api-key", "api_key", "authorization", "token")
+
+
+def _redact_cli_args(args: list) -> list:
+    """Token-wise redaction for --api-key-shaped flags. Helper for build_cli_command."""
+    out: list = []
+    redact_next = False
+    for arg in args:
+        if redact_next:
+            out.append(REDACTED_VALUE)
+            redact_next = False
+            continue
+        if isinstance(arg, str) and arg.startswith("-"):
+            name = arg.lstrip("-").lower()
+            key, _, inline = name.partition("=")
+            if any(tok in key for tok in _CLI_COMMAND_SENSITIVE_TOKENS):
+                if inline:
+                    out.append(f"{arg.split('=', 1)[0]}={REDACTED_VALUE}")
+                else:
+                    out.append(arg)
+                    redact_next = True
+                continue
+        out.append(arg)
+    return out
+
+
+def build_cli_command() -> str:
+    """Synthesize the redacted CLI command string from `sys.argv`.
+
+    Used as `default_factory` for `BenchmarkRun.cli_command` so that runs auto-
+    capture the launching command (for reproducibility in
+    `profile_export_aiperf.json`). `_redact_cli_args` handles --api-key-shaped
+    flags token-wise; `redact_cli_command` then catches sensitive
+    --header/-H values (Authorization, X-API-Key, etc.) at the assembled-string
+    level so the canonical cli_command stored in JSON exports is never the
+    source of a credential leak.
+    """
+    import sys
+
+    from aiperf.config.loader.parsing import coerce_value
+
+    args = [coerce_value(x) for x in sys.argv[1:]]
+    redacted = _redact_cli_args(args)
+    cmd = " ".join(
+        ["aiperf"]
+        + [
+            f"'{x}'"
+            if isinstance(x, str) and not x.startswith("-") and x != "profile"
+            else str(x)
+            for x in redacted
+        ]
+    )
+    return redact_cli_command(cmd)
+
+
 def redact_url(url: str) -> str:
     """Strip userinfo (user:password@) from a URL to prevent credential leakage.
 

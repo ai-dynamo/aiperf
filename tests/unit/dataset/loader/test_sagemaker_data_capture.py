@@ -11,11 +11,13 @@ import orjson
 import pytest
 
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.sagemaker_data_capture import (
     SageMakerDataCaptureLoader,
     _decode_payload,
     _parse_iso8601_to_ms,
 )
+from tests.unit.conftest import make_run_from_cli
 
 
 def _make_capture_record(
@@ -177,13 +179,13 @@ class TestParseTrace:
     """Tests for _parse_trace method."""
 
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
+        from aiperf.config.flags.cli_config import CLIConfig
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         prompt_gen = MagicMock()
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=prompt_gen,
         )
 
@@ -191,19 +193,19 @@ class TestParseTrace:
         loader = self._make_loader(tmp_path)
         messages = [{"role": "user", "content": "What is 2+2?"}]
         line = _make_capture_record(messages=messages)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.messages == messages
 
     def test_parse_trace_extracts_timestamp(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(inference_time="2026-04-29T00:03:18Z")
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.timestamp == _parse_iso8601_to_ms("2026-04-29T00:03:18Z")
 
     def test_parse_trace_extracts_max_tokens_from_input(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(max_tokens=100, completion_tokens=15)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length == 100
 
     def test_parse_trace_output_length_is_none_when_no_max_tokens(
@@ -211,25 +213,25 @@ class TestParseTrace:
     ) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(max_tokens=None, completion_tokens=42)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length is None
 
     def test_parse_trace_extracts_prompt_tokens(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(prompt_tokens=128)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.input_length == 128
 
     def test_parse_trace_extracts_event_id(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(event_id="abc-123")
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.event_id == "abc-123"
 
     def test_parse_trace_handles_base64_encoding(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(input_encoding="BASE64", output_encoding="BASE64")
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.messages == [{"role": "user", "content": "Hello"}]
 
     def test_parse_trace_rejects_missing_messages(self, tmp_path: Path) -> None:
@@ -240,24 +242,20 @@ class TestParseTrace:
         ).decode()
         line = orjson.dumps(record).decode()
         with pytest.raises(DatasetLoaderError, match="no 'messages' key"):
-            loader._parse_trace(line)
+            loader._parse_trace(orjson.loads(line))
 
 
 class TestLoadDataset:
     """Tests for load_dataset with file and directory input."""
 
     def _make_loader(
-        self, path: Path, user_config: Any = None
+        self, path: Path, cli_config: Any = None
     ) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = user_config or UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"])
-        )
+        config = cli_config or CLIConfig(model_names=["test-model"])
         prompt_gen = MagicMock()
         return SageMakerDataCaptureLoader(
             filename=path,
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=prompt_gen,
         )
 
@@ -336,18 +334,25 @@ class TestLoadDataset:
         data = loader.load_dataset()
         assert len(data) == 2
 
+    def test_invalid_json_line_raises_dataset_loader_error(
+        self, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "capture.jsonl"
+        f.write_bytes(b"not valid json {{{\n")
+        loader = self._make_loader(f)
+        with pytest.raises(DatasetLoaderError, match="Invalid JSON"):
+            loader.load_dataset()
+
 
 class TestBuildTurn:
     """Tests for _build_turn producing Turn with raw_messages."""
 
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         prompt_gen = MagicMock()
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=prompt_gen,
         )
 
@@ -411,13 +416,12 @@ class TestGroupTraces:
     """Tests for _group_traces assigning unique session IDs."""
 
     def test_group_traces_assigns_unique_session_ids(self, tmp_path: Path) -> None:
-        from aiperf.common.config import EndpointConfig, UserConfig
         from aiperf.dataset.loader.models import SageMakerDataCaptureTrace
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         loader = SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
         traces = [
@@ -440,12 +444,10 @@ class TestParseTraceEdgeCases:
     """Tests for _parse_trace edge cases."""
 
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -470,7 +472,7 @@ class TestParseTraceEdgeCases:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length is None
         assert trace.input_length is None
         assert trace.messages == [{"role": "user", "content": "hi"}]
@@ -503,7 +505,7 @@ class TestParseTraceEdgeCases:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length == 200
 
     def test_parse_trace_csv_output_encoding_gives_none_usage(
@@ -531,7 +533,7 @@ class TestParseTraceEdgeCases:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.input_length is None
         assert trace.output_length is None
 
@@ -552,12 +554,10 @@ class TestSynthesisHooks:
     """Tests for synthesis-related hooks."""
 
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -637,16 +637,12 @@ class TestTimestampZeroAlignment:
     """Tests for zero-alignment of absolute epoch timestamps."""
 
     def _make_loader(
-        self, path: Path, user_config: Any = None
+        self, path: Path, cli_config: Any = None
     ) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = user_config or UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"])
-        )
+        config = cli_config or CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=path,
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -672,12 +668,10 @@ class TestToolsSupport:
     """Tests for tools field extraction and replay."""
 
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
 
@@ -718,13 +712,13 @@ class TestToolsSupport:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.tools == tools
 
     def test_parse_trace_tools_none_when_absent(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.tools is None
 
     def test_build_turn_passes_raw_tools(self, tmp_path: Path) -> None:
@@ -751,27 +745,18 @@ class TestParseTraceErrorPaths:
     """Tests for _parse_trace error handling with DatasetLoaderError."""
 
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = CLIConfig(model_names=["test-model"])
         return SageMakerDataCaptureLoader(
             filename=str(tmp_path / "test.jsonl"),
-            user_config=config,
+            run=make_run_from_cli(config),
             prompt_generator=MagicMock(),
         )
-
-    def test_parse_trace_invalid_json_raises_dataset_loader_error(
-        self, tmp_path: Path
-    ) -> None:
-        loader = self._make_loader(tmp_path)
-        with pytest.raises(DatasetLoaderError, match="Invalid JSON"):
-            loader._parse_trace("not valid json {{{")
 
     def test_parse_trace_missing_event_metadata_raises_dataset_loader_error(
         self, tmp_path: Path
     ) -> None:
         loader = self._make_loader(tmp_path)
-        record = orjson.dumps({"captureData": {}}).decode()
+        record = {"captureData": {}}
         with pytest.raises(DatasetLoaderError, match="missing required field"):
             loader._parse_trace(record)
 
@@ -779,14 +764,12 @@ class TestParseTraceErrorPaths:
         self, tmp_path: Path
     ) -> None:
         loader = self._make_loader(tmp_path)
-        record = orjson.dumps(
-            {
-                "eventMetadata": {
-                    "eventId": "test",
-                    "inferenceTime": "2026-04-29T00:00:00Z",
-                }
+        record = {
+            "eventMetadata": {
+                "eventId": "test",
+                "inferenceTime": "2026-04-29T00:00:00Z",
             }
-        ).decode()
+        }
         with pytest.raises(DatasetLoaderError, match="captureData.endpointInput"):
             loader._parse_trace(record)
 
@@ -799,31 +782,10 @@ class TestParseTraceErrorPaths:
         assert len(data) == 0
 
 
-class TestCountDatasetEntriesDirectory:
-    """Test that _count_dataset_entries handles directories for SageMaker captures."""
-
-    def test_count_entries_in_directory(self, tmp_path: Path) -> None:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        hour_00 = tmp_path / "2026" / "04" / "29" / "00"
-        hour_01 = tmp_path / "2026" / "04" / "29" / "01"
-        hour_00.mkdir(parents=True)
-        hour_01.mkdir(parents=True)
-        (hour_00 / "a.jsonl").write_text(
-            _make_capture_record() + "\n" + _make_capture_record() + "\n"
-        )
-        (hour_01 / "b.jsonl").write_text(_make_capture_record() + "\n")
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.file = tmp_path
-        assert config._count_dataset_entries() == 3
-
-    def test_count_entries_single_file(self, tmp_path: Path) -> None:
-        from aiperf.common.config import EndpointConfig, UserConfig
-
-        f = tmp_path / "capture.jsonl"
-        f.write_text(_make_capture_record() + "\n" + _make_capture_record() + "\n")
-
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.file = f
-        assert config._count_dataset_entries() == 2
+# Removed: TestCountDatasetEntriesDirectory. The original tests called
+# CLIConfig._count_dataset_entries(), which existed on v1 CLIConfig but was
+# dropped in the v1->v2 config migration. The equivalent v2 helper
+# DatasetResolver._count_records_and_sessions operates on a single file (not
+# a directory) and is invoked by AIPerfConfig validation, not as a public
+# CLIConfig method. There's no v2 path that mirrors the original "count
+# JSONL entries across a SageMaker date-partitioned directory tree" call.

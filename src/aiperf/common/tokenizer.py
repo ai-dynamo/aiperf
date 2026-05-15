@@ -11,7 +11,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 
@@ -409,47 +409,87 @@ class Tokenizer:
             )
 
         try:
-            # Silence tokenizer warning on import and first use
             with (
                 contextlib.redirect_stdout(io.StringIO()),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
-                from transformers import AutoTokenizer
-
-                # Offline mode or cached: skip network, load from local cache
-                if _is_offline_mode() or _is_hf_cached(name, revision=revision):
-                    tokenizer_instance = cls._from_pretrained_local(
-                        AutoTokenizer.from_pretrained,
-                        name,
-                        trust_remote_code=trust_remote_code,
-                        revision=revision,
-                    )
-                    tokenizer_instance._resolved_name = name
-                    return tokenizer_instance
-
-                # Online mode (not cached): resolve alias then load
-                resolved_name = name
-                if resolve_alias:
-                    result = cls.resolve_alias(name)
-                    resolved_name = result.resolved_name
-                    if result.is_ambiguous:
-                        raise AmbiguousTokenizerNameError(name, result.suggestions)
-
-                tokenizer_cls = cls()
-                tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
-                    resolved_name,
+                return cls._load_from_hub(
+                    name,
                     trust_remote_code=trust_remote_code,
                     revision=revision,
+                    resolve_alias=resolve_alias,
                 )
-                tokenizer_cls._resolved_name = resolved_name
-                tokenizer_cls._apply_kwarg_overrides()
         except AmbiguousTokenizerNameError:
             raise
         except Exception as e:
             raise TokenizerError(
-                f"Failed to load tokenizer '{name}'", tokenizer_name=name
+                f"Failed to load tokenizer '{name}': {type(e).__name__}: {e}",
+                tokenizer_name=name,
             ) from e
-        return tokenizer_cls
+
+    @classmethod
+    def _load_from_hub(
+        cls,
+        name: str,
+        *,
+        trust_remote_code: bool,
+        revision: str,
+        resolve_alias: bool,
+    ) -> "Tokenizer":
+        from transformers import AutoTokenizer
+
+        if _is_offline_mode():
+            tokenizer_instance = cls._from_pretrained_local(
+                AutoTokenizer.from_pretrained,
+                name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+            )
+            tokenizer_instance._resolved_name = name
+            return tokenizer_instance
+
+        # Cache warm (online): skip alias resolution since the cached name is
+        # already canonical, but keep ``local_files_only`` off so transformers
+        # can perform 404 probes for repo-relative files that legitimately
+        # don't exist (tokenizer-only repos lack ``config.json`` —
+        # ``local_files_only=True`` mistakes the missing file for a missing
+        # cache and surfaces a misleading "Cannot connect to HuggingFace Hub"
+        # error).
+        if _is_hf_cached(name, revision=revision):
+            return cls._build_with_kwargs(
+                AutoTokenizer.from_pretrained(
+                    name,
+                    trust_remote_code=trust_remote_code,
+                    revision=revision,
+                ),
+                resolved_name=name,
+            )
+
+        resolved_name = name
+        if resolve_alias:
+            result = cls.resolve_alias(name)
+            resolved_name = result.resolved_name
+            if result.is_ambiguous:
+                raise AmbiguousTokenizerNameError(name, result.suggestions)
+
+        return cls._build_with_kwargs(
+            AutoTokenizer.from_pretrained(
+                resolved_name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+            ),
+            resolved_name=resolved_name,
+        )
+
+    @classmethod
+    def _build_with_kwargs(
+        cls, hf_tokenizer: Any, *, resolved_name: str
+    ) -> "Tokenizer":
+        tokenizer_instance = cls()
+        tokenizer_instance._tokenizer = hf_tokenizer
+        tokenizer_instance._resolved_name = resolved_name
+        tokenizer_instance._apply_kwarg_overrides()
+        return tokenizer_instance
 
     @staticmethod
     def _find_cached_model_for_alias(name: str) -> str | None:
@@ -476,7 +516,14 @@ class Tokenizer:
         trust_remote_code: bool = False,
         revision: str = "main",
     ) -> "Tokenizer":
-        """Load a tokenizer from local cache (offline mode)."""
+        """Load a tokenizer from local cache (offline mode).
+
+        Resolves the cached snapshot directory via ``snapshot_download(
+        local_files_only=True)`` and points ``AutoTokenizer`` at that local
+        path. Loading via a path skips the ``config.json`` round-trip that
+        normally fails for tokenizer-only repos when transformers is forced
+        to ``local_files_only=True``.
+        """
         # Workaround for transformers 4.57+ bug: _patch_mistral_regex
         # calls model_info() even with local_files_only=True
         import huggingface_hub
@@ -487,31 +534,49 @@ class Tokenizer:
         _original_model_info = huggingface_hub.model_info
         huggingface_hub.model_info = lambda *a, **kw: _OfflineModelInfo()
         try:
+            local_path = cls._resolve_local_snapshot(name, revision)
             tokenizer_cls = cls()
-            try:
-                tokenizer_cls._tokenizer = from_pretrained_func(
-                    name,
-                    trust_remote_code=trust_remote_code,
-                    revision=revision,
-                    local_files_only=True,
-                )
-            except Exception:
-                # Cache may be under a resolved alias name (e.g. "gpt2" cached
-                # as "openai-community/gpt2"). Scan cache for a match.
-                cached_id = cls._find_cached_model_for_alias(name)
-                if cached_id is None:
-                    raise
-                _logger.debug(f"Retrying offline load with cached alias: {cached_id}")
-                tokenizer_cls._tokenizer = from_pretrained_func(
-                    cached_id,
-                    trust_remote_code=trust_remote_code,
-                    revision=revision,
-                    local_files_only=True,
-                )
+            tokenizer_cls._tokenizer = from_pretrained_func(
+                local_path,
+                trust_remote_code=trust_remote_code,
+            )
             tokenizer_cls._apply_kwarg_overrides()
             return tokenizer_cls
         finally:
             huggingface_hub.model_info = _original_model_info
+
+    @classmethod
+    def _resolve_local_snapshot(cls, name: str, revision: str) -> str:
+        """Return the on-disk snapshot directory for *name* @ *revision*.
+
+        Tries the canonical repo ID first, then alias matches (e.g. ``gpt2``
+        cached as ``openai-community/gpt2``). Raises ``OSError`` with a clear
+        message if no local snapshot exists.
+        """
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        candidates = [name]
+        if "/" not in name:
+            cached_alias = cls._find_cached_model_for_alias(name)
+            if cached_alias is not None and cached_alias != name:
+                candidates.append(cached_alias)
+
+        last_err: Exception | None = None
+        for candidate in candidates:
+            try:
+                return snapshot_download(
+                    candidate,
+                    revision=revision,
+                    local_files_only=True,
+                )
+            except LocalEntryNotFoundError as e:
+                last_err = e
+        raise OSError(
+            f"Tokenizer '{name}' (revision '{revision}') is not present in the "
+            f"HuggingFace cache. Run online once to populate the cache, or unset "
+            f"HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE."
+        ) from last_err
 
     @classmethod
     def _from_tiktoken(cls, encoding_name: str = _BUILTIN_ENCODING) -> "Tokenizer":

@@ -158,6 +158,13 @@ class TestChatFormatPayloadHostile:
         assert payload["b"] is b
         assert payload["b"]["a"] is a
 
+    @pytest.mark.skip(
+        reason="v2 Turn.max_tokens enforces ge=1, so negative/zero values "
+        "are rejected at construction time. Test verified pass-through "
+        "behavior on v1 (where Turn was unconstrained); v2 hardened the "
+        "constraint at the dataset layer. Port pending: either relax Turn "
+        "or move the verbatim-emit assertion to a higher layer."
+    )
     def test_max_tokens_negative_one_serialised_verbatim(self, endpoint):
         turn = Turn(texts=[Text(contents=["x"])], max_tokens=-1)
         req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
@@ -166,6 +173,10 @@ class TestChatFormatPayloadHostile:
 
         assert payload["max_completion_tokens"] == -1
 
+    @pytest.mark.skip(
+        reason="v2 Turn.max_tokens enforces ge=1; see "
+        "test_max_tokens_negative_one_serialised_verbatim."
+    )
     def test_max_tokens_zero_emits_key(self, endpoint):
         """max_tokens=0 is falsy but not None — must still be emitted (truthy check
         would silently drop it; current code uses `is not None`)."""

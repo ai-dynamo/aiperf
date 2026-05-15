@@ -9,7 +9,6 @@ All settings can be configured via environment variables with the AIPERF_ prefix
 Structure:
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
-    Environment.CONFIG.*         - Configuration file paths for distributed deployments
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.GPU.*            - GPU telemetry collection
@@ -19,6 +18,7 @@ Structure:
     Environment.MLFLOW.*         - MLflow export settings
     Environment.OTEL.*           - OTel metrics streaming
     Environment.RECORD.*         - Record processing
+    Environment.SEARCH_PLANNER.* - Adaptive-search planner tunables
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
     Environment.TIMING.*         - Timing manager settings
@@ -46,7 +46,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.config_validators import (
+from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
 )
@@ -118,26 +118,29 @@ class _CompressionSettings(BaseSettings):
     )
 
 
-class _ConfigSettings(BaseSettings):
-    """Configuration file paths for distributed deployments.
+class _CLIRunnerSettings(BaseSettings):
+    """CLI runner post-run callback behavior.
 
-    Controls paths to configuration files loaded by services running in containers.
-    These are primarily used by `aiperf service` when running in Kubernetes.
+    Controls whether OnComplete callback exceptions abort the run after all
+    callbacks attempt or are isolated and logged. Default is isolated so that
+    a single misbehaving callback (e.g. auto-plot in strict mode, third-party
+    hook) cannot bypass the deliberate ``os._exit`` hang-protection that
+    guards against multiprocessing/ZMQ teardown hangs in the parent process.
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="AIPERF_CONFIG_",
+        env_prefix="AIPERF_",
     )
 
-    SERVICE_FILE: Path | None = Field(
-        default=None,
-        description="Path to service configuration JSON/YAML file. "
-        "Default: /etc/aiperf/service_config.json in Kubernetes deployments.",
-    )
-    USER_FILE: Path | None = Field(
-        default=None,
-        description="Path to user configuration JSON/YAML file. "
-        "Default: /etc/aiperf/user_config.json in Kubernetes deployments.",
+    RAISE_ON_CALLBACK_ERROR: bool = Field(
+        default=False,
+        description="When true, re-raise the first OnComplete callback exception "
+        "after running all remaining callbacks but before os._exit. Provides a "
+        "strict-mode contract where a callback raise propagates out "
+        "of the runner. When false (default) the exception is logged with full "
+        "traceback, the exit code is forced non-zero, and the process still "
+        "terminates via os._exit so leftover ZMQ/multiprocessing state cannot "
+        "hang the interpreter.",
     )
 
 
@@ -182,6 +185,14 @@ class _DatasetSettings(BaseSettings):
         le=100,
         default=10,
         description="Maximum number of concurrent media URL downloads",
+    )
+    INLINE_RECORDS_WARN_THRESHOLD: int = Field(
+        ge=1,
+        default=500,
+        description="Soft warning threshold for the number of inline `records:` "
+        "entries on a `FileDataset`. When total inline records exceed this "
+        "value, the config loader logs a warning suggesting the user move the "
+        "dataset to a JSONL file. No hard cap.",
     )
 
 
@@ -580,6 +591,75 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+
+
+class _SearchPlannerSettings(BaseSettings):
+    """Adaptive-search planner tunables.
+
+    Controls precision targets, warmup-phase injection, and request-count
+    presets for the smooth-isotonic and monotonic SLA-saturation search
+    planners. All values are read at planner-construction or
+    iteration-mutate time, so changes take effect on the next search run.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_SEARCH_PLANNER_",
+    )
+
+    SLA_PRECISION_DEFAULT: float = Field(
+        gt=0.0,
+        lt=1.0,
+        default=0.05,
+        description="Default SLA boundary search precision target. "
+        "The bisection / smooth-isotonic bracket halts when "
+        "(infeasible_min - feasible_max) / infeasible_min < this value, "
+        "and the cliff detector requires bracket_gap > this * x_hi to "
+        "report a cliff. 5% mirrors perf_analyzer's --binary-search default.",
+    )
+    DEFAULT_WARMUP_SECONDS: float = Field(
+        gt=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Smooth-isotonic SLA planner: default warmup phase duration "
+        "in seconds injected into each iteration's cfg when "
+        "``cfg.sla_warmup_seconds`` is unset. Spec calls for "
+        "max(30s, 3*inter-batch-time) but inter-batch-time is unknown at "
+        "planner-time, so 30s is the safe floor. Must be strictly positive: "
+        "zero defeats the cold-KV-cache rationale that motivates the floor.",
+    )
+    FIRST_PROBE_WARMUP_FLOOR: float = Field(
+        gt=0.0,
+        le=100000.0,
+        default=60.0,
+        description="Smooth-isotonic SLA planner: minimum warmup duration in "
+        "seconds for the first probe at each swept-dim value. Cold KV-cache "
+        "and CUDA-graph compilation cost is largest the first time we hit a "
+        "given concurrency, so floor that probe at 60s. Must be strictly "
+        "positive: zero defeats the cold-KV-cache rationale.",
+    )
+    REPLICATE_WARMUP_FLOOR: float = Field(
+        gt=0.0,
+        le=100000.0,
+        default=15.0,
+        description="Smooth-isotonic SLA planner: minimum warmup duration in "
+        "seconds for replicate probes at an already-probed swept-dim value. "
+        "Replicates reuse the warm KV-cache / CUDA-graph state, so a shorter "
+        "warmup suffices. Must be strictly positive: zero defeats the floor.",
+    )
+    SLA_PRECISION_REQUESTS: dict[str, Annotated[int, Field(gt=0)]] = Field(
+        default={
+            "tight": 10000,
+            "normal": 1000,
+            "coarse": 300,
+        },
+        description="Mapping from ``cfg.sla_precision`` preset name to the "
+        "``phases.profiling.requests`` value injected when the user did not "
+        "set ``requests`` explicitly on the profiling phase. Drives p99 CI "
+        "width. Each value must be strictly positive — zero/negative request "
+        "counts surface as iteration-time failures otherwise. Override via "
+        "JSON, e.g. "
+        "``AIPERF_SEARCH_PLANNER_SLA_PRECISION_REQUESTS='{\"tight\": 20000}'``.",
     )
 
 
@@ -1057,6 +1137,22 @@ class _ZMQSettings(BaseSettings):
         default=10,
         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
     )
+    EVENT_BUS_PROXY_FRONTEND_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=5663,
+        description="Default TCP port for the event-bus XPUB/XSUB proxy frontend "
+        "(producers connect here). Single source of truth for the non-k8s comm "
+        "configs (TCP, dual-bind); k8s pod manifests pull the same value via "
+        "``K8sEnvironment.PORTS.EVENT_BUS_PROXY_PUB_FRONTEND`` (defaults match).",
+    )
+    EVENT_BUS_PROXY_BACKEND_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=5664,
+        description="Default TCP port for the event-bus XPUB/XSUB proxy backend "
+        "(subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``.",
+    )
 
 
 class _Environment(BaseSettings):
@@ -1092,9 +1188,9 @@ class _Environment(BaseSettings):
         default_factory=_CompressionSettings,
         description="Compression settings for streaming file transfers",
     )
-    CONFIG: _ConfigSettings = Field(
-        default_factory=_ConfigSettings,
-        description="Configuration file paths for distributed deployments",
+    CLI_RUNNER: _CLIRunnerSettings = Field(
+        default_factory=_CLIRunnerSettings,
+        description="CLI runner post-run callback isolation settings",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,
@@ -1135,6 +1231,10 @@ class _Environment(BaseSettings):
     RECORD: _RecordSettings = Field(
         default_factory=_RecordSettings,
         description="Record processing and export settings",
+    )
+    SEARCH_PLANNER: _SearchPlannerSettings = Field(
+        default_factory=_SearchPlannerSettings,
+        description="Adaptive-search planner tunables",
     )
     SERVER_METRICS: _ServerMetricsSettings = Field(
         default_factory=_ServerMetricsSettings,

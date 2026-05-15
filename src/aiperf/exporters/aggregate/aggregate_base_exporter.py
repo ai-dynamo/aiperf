@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Base class for aggregate exporters."""
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,7 @@ class AggregateExporterConfig:
     - ProfileResults (single-run data)
     - TelemetryExportData (per-run telemetry)
     - ServerMetricsResults (per-run server metrics)
-    - Full UserConfig (just need output directory)
+    - Full benchmark config (just need output directory)
 
     Attributes:
         result: AggregateResult to export
@@ -88,7 +89,7 @@ class AggregateBaseExporter(AIPerfLoggerMixin, ABC):
         Raises:
             Exception: If file writing fails
         """
-        self._output_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(self._output_dir.mkdir, parents=True, exist_ok=True)
 
         file_path = self._output_dir / self.get_file_name()
 

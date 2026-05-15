@@ -10,10 +10,14 @@ import signal
 import sys
 import uuid
 import warnings
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.enums import LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.plugin.enums import ServiceType
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 # Suppress ZMQ RuntimeWarning about dropped messages during shutdown.
 # This is expected behavior when async tasks are cancelled while ZMQ messages are in-flight.
@@ -28,25 +32,20 @@ warnings.filterwarnings(
 def bootstrap_and_run_service(
     service_type: ServiceType,
     *,
-    service_config: ServiceConfig | None = None,
-    user_config: UserConfig | None = None,
+    run: "BenchmarkRun",
     service_id: str | None = None,
     log_queue: "multiprocessing.Queue | None" = None,
     **kwargs,
 ):
     """Bootstrap the service and run it.
 
-    This function will load the service configuration,
-    create an instance of the service, and run it.
+    Constructs an instance of the service from ``run`` and runs its lifecycle.
 
     Args:
         service_type: The type of the service to run.
-        service_config: The service configuration to use. If not provided, the service
-            configuration will be loaded from the environment variables.
-        user_config: The user configuration to use. If not provided, the user configuration
-            will be loaded from the environment variables.
-        log_queue: Optional multiprocessing queue for child process logging. If provided,
-            the child process logging will be set up.
+        run: BenchmarkRun carrying the v2 BenchmarkConfig + per-run state.
+        service_id: Optional unique identifier for this service instance.
+        log_queue: Optional multiprocessing queue for child process logging.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
@@ -72,18 +71,6 @@ def bootstrap_and_run_service(
             else str(service_type)
         )
 
-    # Load the service configuration
-    if service_config is None:
-        from aiperf.common.config.loader import load_service_config
-
-        service_config = load_service_config()
-
-    # Load the user configuration
-    if user_config is None:
-        from aiperf.common.config.loader import load_user_config
-
-        user_config = load_user_config()
-
     async def _run_service():
         # Disable health server in child processes to prevent port conflicts.
         # Multiple child processes on the same host cannot bind to the same port.
@@ -107,30 +94,27 @@ def bootstrap_and_run_service(
             gc.disable()
 
         # Load and apply custom GPU metrics in child process
-        if user_config.gpu_telemetry_metrics_file:
+        if run.cfg.gpu_telemetry.metrics_file:
             from aiperf.gpu_telemetry import constants
             from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 
             loader = MetricsConfigLoader()
             custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
-                custom_csv_path=user_config.gpu_telemetry_metrics_file
+                custom_csv_path=run.cfg.gpu_telemetry.metrics_file
             )
 
             constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
             constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
         service = ServiceClass(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             **kwargs,
         )
 
         from aiperf.common.logging import setup_child_process_logging
 
-        setup_child_process_logging(
-            log_queue, service.service_id, service_config, user_config
-        )
+        setup_child_process_logging(log_queue, service.service_id, run)
 
         # NOTE: Prevent child processes from accessing parent's terminal on macOS.
         # This solves the macOS terminal corruption issue with Textual UI where child
@@ -145,7 +129,7 @@ def bootstrap_and_run_service(
 
         # Always reset and then initialize the global random generator to ensure a clean state
         rng.reset()
-        rng.init(user_config.input.random_seed)
+        rng.init(run.random_seed if run is not None else None)
 
         try:
             await service.initialize()
@@ -155,7 +139,9 @@ def bootstrap_and_run_service(
             service.exception(f"Unhandled exception in service: {e}")
 
         if Environment.DEV.ENABLE_YAPPI:
-            _stop_yappi_profiling(service.service_id, user_config)
+            _stop_yappi_profiling(service.service_id, run)
+
+        _exit_if_service_failed(service)
 
     with contextlib.suppress(asyncio.CancelledError):
         if not Environment.SERVICE.DISABLE_UVLOOP:
@@ -164,6 +150,23 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+
+def _exit_if_service_failed(service) -> None:
+    """Surface accumulated service failures as a non-zero SystemExit.
+
+    The on_stop hook in production calls ``os._exit(1)`` to terminate
+    immediately, but the component-integration test harness mocks
+    ``os._exit`` to a no-op so the failure must be propagated another
+    way. Inspect the service's terminal state and ``_exit_errors`` list
+    (populated by ``SERVICE_ERROR`` messages from failing components)
+    and raise ``SystemExit(1)`` so the harness — and the production
+    ``cli_runner`` ``except SystemExit`` clause — can see the failure.
+    """
+    exit_errors = getattr(service, "_exit_errors", None)
+    state = getattr(service, "state", None)
+    if state == LifecycleState.FAILED or bool(exit_errors):
+        sys.exit(1)
 
 
 def _redirect_stdio_to_devnull() -> None:
@@ -215,7 +218,7 @@ def _start_yappi_profiling() -> None:
         ) from e
 
 
-def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
+def _stop_yappi_profiling(service_id_: str, run: "BenchmarkRun") -> None:
     """Stop yappi profiling and save the profile to a file."""
     import yappi
 
@@ -223,7 +226,7 @@ def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
 
     # Get profile stats and save to file in the artifact directory
     stats = yappi.get_func_stats()
-    yappi_dir = user_config.output.artifact_directory / "yappi"
+    yappi_dir = run.cfg.artifacts.dir / "yappi"
     yappi_dir.mkdir(parents=True, exist_ok=True)
     stats.save(
         str(yappi_dir / f"{service_id_}.prof"),

@@ -27,25 +27,22 @@ from aiperf.accuracy.graders.math import (
     _normalize,
     _to_fraction,
 )
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_benchmark_run
 
 
-def _make_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.AIME),
+def _make_run():
+    return make_benchmark_run(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy={"benchmark": AccuracyBenchmarkType.AIME},
     )
 
 
 @pytest.fixture
 def grader() -> MathGrader:
-    return MathGrader(user_config=_make_user_config())
+    return MathGrader(run=_make_run())
 
 
 class TestExtractLastBoxed:

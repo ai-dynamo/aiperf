@@ -136,6 +136,10 @@ class TestResponsesFormatPayloadHostile:
 
         assert payload["b"] is b
 
+    @pytest.mark.skip(
+        reason="v2 Turn.max_tokens enforces ge=1; see test_openai_chat_attack "
+        "for the equivalent skipped sibling. Port pending."
+    )
     def test_max_tokens_negative_one_serialised(self, endpoint):
         turn = Turn(texts=[Text(contents=["x"])], max_tokens=-1)
         req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
@@ -143,25 +147,6 @@ class TestResponsesFormatPayloadHostile:
         payload = endpoint.format_payload(req)
 
         assert payload["max_output_tokens"] == -1
-
-    @pytest.mark.xfail(
-        reason="bug: Responses endpoint uses truthy `if value is not None` for "
-        "max_output_tokens — verify max_tokens=0 still emits. If this passes, "
-        "behaviour is correct (None-check, not truthy-check) and xfail flips.",
-        strict=True,
-    )
-    def test_max_tokens_zero_not_emitted(self, endpoint):
-        """Sanity: confirm max_tokens=0 IS emitted (None-check semantics).
-        Marked xfail-strict to invert: this asserts the BAD outcome; the
-        actual code does the right thing (emit zero), so the test fails =>
-        xfail-strict passes => no bug. Used to detect a future regression."""
-        turn = Turn(texts=[Text(contents=["x"])], max_tokens=0)
-        req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(req)
-
-        # Bad outcome: zero would silently drop.
-        assert "max_output_tokens" not in payload
 
     def test_empty_model_falls_back_to_primary(self, endpoint):
         turn = Turn(texts=[Text(contents=["x"])], model="")

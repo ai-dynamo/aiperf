@@ -102,12 +102,18 @@ def import_modules(modules: list[str]) -> dict[str, Exception]:
         modules: List of module paths to import.
 
     Returns:
-        Dict mapping failed module paths to their exceptions.
+        Dict mapping failed module paths to their exceptions. Modules that
+        call ``pytest.importorskip`` at top level (soft optional deps like
+        ``optuna``, ``botorch``, ``torch``) are treated as a successful skip,
+        not a failure — they raise ``pytest.skip.Exception`` (a
+        ``BaseException``) which is intentionally not caught by ``Exception``.
     """
     failures: dict[str, Exception] = {}
     for module_path in modules:
         try:
             importlib.import_module(module_path)
+        except pytest.skip.Exception:
+            continue
         except Exception as e:
             failures[module_path] = e
     return failures

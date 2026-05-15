@@ -6,11 +6,17 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 
 import logging
 import os
+import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from contextlib import suppress
+from types import SimpleNamespace
+from typing import Any
 
 from constants import (
+    AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
     SETUP_MONITOR_TIMEOUT,
 )
@@ -18,6 +24,62 @@ from data_types import Server
 from utils import get_repo_root
 
 logger = logging.getLogger(__name__)
+
+
+class _ProcessGroupKillGuard:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._finished = False
+
+    def mark_finished(self) -> None:
+        with self._lock:
+            self._finished = True
+
+    def mark_killing_if_running(self, proc: Any) -> bool:
+        with self._lock:
+            if self._finished or proc.poll() is not None:
+                return False
+            self._finished = True
+            return True
+
+
+def _make_process_group_timeout_killer(
+    *,
+    proc: Any,
+    test_num: int,
+    server_name: str,
+    guard: _ProcessGroupKillGuard,
+) -> Callable[[], None]:
+    def _kill_on_timeout() -> None:
+        if not guard.mark_killing_if_running(proc):
+            return
+        logger.error(
+            f"AIPerf test {test_num} exceeded "
+            f"{AIPERF_COMMAND_TIMEOUT}s timeout for {server_name}; "
+            f"sending SIGKILL to process group"
+        )
+        with suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+
+    return _kill_on_timeout
+
+
+def test_timeout_killer_skips_process_marked_finished(monkeypatch):
+    killed = []
+    guard = _ProcessGroupKillGuard()
+    guard.mark_finished()
+    proc = SimpleNamespace(pid=12345, poll=lambda: None)
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    killer = _make_process_group_timeout_killer(
+        proc=proc,
+        test_num=1,
+        server_name="test-server",
+        guard=guard,
+    )
+    killer()
+
+    assert killed == []
 
 
 class EndToEndTestRunner:
@@ -336,19 +398,37 @@ class EndToEndTestRunner:
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
+                start_new_session=True,
             )
 
-            # Show real-time output
-            aiperf_output_lines = []
-            while True:
-                line = aiperf_process.stdout.readline()
-                if not line and aiperf_process.poll() is not None:
-                    break
-                if line:
-                    print(f"AIPERF[{server.name}]: {line.rstrip()}")
-                    aiperf_output_lines.append(line)
+            kill_guard = _ProcessGroupKillGuard()
+            watchdog = threading.Timer(
+                AIPERF_COMMAND_TIMEOUT,
+                _make_process_group_timeout_killer(
+                    proc=aiperf_process,
+                    test_num=i + 1,
+                    server_name=server.name,
+                    guard=kill_guard,
+                ),
+            )
+            watchdog.daemon = True
+            watchdog.start()
 
-            aiperf_process.wait()
+            try:
+                # Show real-time output
+                aiperf_output_lines = []
+                while True:
+                    line = aiperf_process.stdout.readline()
+                    if not line and aiperf_process.poll() is not None:
+                        break
+                    if line:
+                        print(f"AIPERF[{server.name}]: {line.rstrip()}")
+                        aiperf_output_lines.append(line)
+
+                aiperf_process.wait()
+            finally:
+                kill_guard.mark_finished()
+                watchdog.cancel()
 
             if aiperf_process.returncode != 0:
                 logger.error("=" * 60)

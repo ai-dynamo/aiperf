@@ -4,14 +4,13 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pytest import param
 
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-)
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.base import BaseDatasetComposer
+from tests.unit.dataset.composer.conftest import make_run
 
 
 class ConcreteBaseComposer(BaseDatasetComposer):
@@ -29,41 +28,35 @@ class TestBaseDatasetComposer:
     def base_config(self):
         """Create a basic configuration for testing."""
         config_dict = {
-            "endpoint": {
-                "model_names": ["test-model-1", "test-model-2"],
-                "model_selection_strategy": ModelSelectionStrategy.ROUND_ROBIN,
-            },
-            "input": {
-                "conversation": {"num": 1, "turn": {"mean": 1}},
-                "prompt": {
-                    "input_tokens": {"mean": 100, "stddev": 10},
-                    "output_tokens": {"mean": 50, "stddev": 5},
-                    "batch_size": 1,
-                    "prefix_prompt": {"length": 10},
-                },
-            },
+            "model_names": ["test-model-1", "test-model-2"],
+            "model_selection_strategy": ModelSelectionStrategy.ROUND_ROBIN,
+            "conversation_num": 1,
+            "conversation_turn_mean": 1,
+            "prompt_input_tokens_mean": 100,
+            "prompt_input_tokens_stddev": 10,
+            "prompt_output_tokens_mean": 50,
+            "prompt_output_tokens_stddev": 5,
+            "prompt_batch_size": 1,
+            "prompt_prefix_length": 10,
         }
-        return UserConfig(**config_dict)
+        return CLIConfig(**config_dict)
 
     @pytest.fixture
     def sequence_dist_config(self):
         """Create configuration with sequence distribution."""
         config_dict = {
-            "endpoint": {
-                "model_names": ["test-model"],
-                "model_selection_strategy": ModelSelectionStrategy.ROUND_ROBIN,
-            },
-            "input": {
-                "conversation": {"num": 1, "turn": {"mean": 1}},
-                "prompt": {
-                    "input_tokens": {"mean": 100, "stddev": 10},
-                    "output_tokens": {"mean": 50, "stddev": 5},
-                    "batch_size": 1,
-                    "sequence_distribution": "100,25:50;200,50:50",
-                },
-            },
+            "model_names": ["test-model"],
+            "model_selection_strategy": ModelSelectionStrategy.ROUND_ROBIN,
+            "conversation_num": 1,
+            "conversation_turn_mean": 1,
+            "prompt_input_tokens_mean": 100,
+            "prompt_input_tokens_stddev": 10,
+            "prompt_output_tokens_mean": 50,
+            "prompt_output_tokens_stddev": 5,
+            "prompt_batch_size": 1,
+            "prompt_sequence_distribution": "100,25:50;200,50:50",
         }
-        return UserConfig(**config_dict)
+        return CLIConfig(**config_dict)
 
     @pytest.fixture
     def mock_tokenizer(self):
@@ -74,16 +67,27 @@ class TestBaseDatasetComposer:
         self, sequence_dist_config, mock_tokenizer
     ):
         """Test initialization with sequence distribution."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
 
+        # Distribution was built directly from the v2 entries (not via
+        # DistributionParser.parse, which only accepts strings).
         assert composer._seq_distribution is not None
-        assert isinstance(composer._seq_distribution, SequenceLengthDistribution)
-        assert len(composer._seq_distribution.pairs) == 2
-        assert len(composer._turn_sequence_cache) == 0
+        pairs = composer._seq_distribution.pairs
+        assert len(pairs) == 2
+        assert pairs[0].input_seq_len == 100
+        assert pairs[0].output_seq_len == 25
+        assert pairs[0].probability == 50.0
+        assert pairs[1].input_seq_len == 200
+        assert pairs[1].output_seq_len == 50
+        assert pairs[1].probability == 50.0
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):
         """Test round robin model selection."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
 
         # Test round robin selection
         assert composer._select_model_name() == "test-model-1"
@@ -92,8 +96,10 @@ class TestBaseDatasetComposer:
 
     def test_model_selection_random(self, base_config, mock_tokenizer):
         """Test random model selection."""
-        base_config.endpoint.model_selection_strategy = ModelSelectionStrategy.RANDOM
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        base_config.model_selection_strategy = ModelSelectionStrategy.RANDOM
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
 
         # Test random selection returns a valid model
         # With the global RNG system, we just verify it returns one of the valid models
@@ -102,8 +108,11 @@ class TestBaseDatasetComposer:
 
     def test_model_selection_invalid_strategy(self, base_config, mock_tokenizer):
         """Test invalid model selection strategy raises error."""
-        base_config.endpoint.model_selection_strategy = "INVALID"
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        run = make_run(base_config)
+        composer = ConcreteBaseComposer(run=run, tokenizer=mock_tokenizer)
+        # Bypass v2 enum validation by mutating the resolved run; the composer
+        # only re-reads strategy at call time.
+        run.cfg.models.strategy = "INVALID"
 
         with pytest.raises(ValueError, match="Invalid model selection strategy"):
             composer._select_model_name()
@@ -112,41 +121,33 @@ class TestBaseDatasetComposer:
         self, sequence_dist_config, mock_tokenizer
     ):
         """Test getting sequence lengths with distribution."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
 
-        turn_id = 12345
+        turn_id = 999
+        result = composer._get_turn_sequence_lengths(turn_id)
 
-        # Mock the sample method
-        with patch.object(composer._seq_distribution, "sample") as mock_sample:
-            mock_sample.return_value = (150, 75)
-
-            # First call should sample and cache
-            result = composer._get_turn_sequence_lengths(turn_id)
-            assert result == (150, 75)
-            mock_sample.assert_called_once()
-
-            # Second call should return cached value
-            result2 = composer._get_turn_sequence_lengths(turn_id)
-            assert result2 == (150, 75)
-            mock_sample.assert_called_once()  # No additional call
-
-        # Check cache
-        assert turn_id in composer._turn_sequence_cache
-        assert composer._turn_sequence_cache[turn_id] == (150, 75)
+        # Sample must come from one of the configured pairs.
+        assert result in [(100, 25), (200, 50)]
+        # And must be cached for reuse within the same turn.
+        assert composer._turn_sequence_cache[turn_id] == result
 
     def test_get_turn_sequence_lengths_without_distribution(
         self, base_config, mock_tokenizer
     ):
         """Test getting sequence lengths without distribution (fallback)."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
 
         turn_id = 12345
         result = composer._get_turn_sequence_lengths(turn_id)
 
         # Should use fallback values from config
         expected = (
-            base_config.input.prompt.input_tokens.mean,
-            base_config.input.prompt.output_tokens.mean,
+            base_config.prompt_input_tokens_mean,
+            base_config.prompt_output_tokens_mean,
         )
         assert result == expected
 
@@ -156,37 +157,40 @@ class TestBaseDatasetComposer:
 
     def test_clear_turn_cache(self, sequence_dist_config, mock_tokenizer):
         """Test clearing turn cache."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
 
-        # Add some cache entries
-        composer._turn_sequence_cache[123] = (100, 50)
-        composer._turn_sequence_cache[456] = (200, 100)
+        turn_id = 123
+        composer._get_turn_sequence_lengths(turn_id)
+        assert turn_id in composer._turn_sequence_cache
 
-        # Clear one entry
-        composer._clear_turn_cache(123)
-        assert 123 not in composer._turn_sequence_cache
-        assert 456 in composer._turn_sequence_cache
+        composer._clear_turn_cache(turn_id)
+        assert turn_id not in composer._turn_sequence_cache
 
-        # Clear non-existent entry (should not error)
-        composer._clear_turn_cache(999)
+        # Idempotent.
+        composer._clear_turn_cache(turn_id)
+        assert turn_id not in composer._turn_sequence_cache
 
     def test_set_max_tokens_with_distribution(
         self, sequence_dist_config, mock_tokenizer
     ):
         """Test setting max_tokens using sequence distribution."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
         turn = Turn()
 
-        # Pre-cache sequence lengths for this turn
-        turn_id = id(turn)
-        composer._turn_sequence_cache[turn_id] = (150, 75)
-
         composer._set_max_tokens(turn)
-        assert turn.max_tokens == 75
+
+        # max_tokens comes from one of the configured OSL values.
+        assert turn.max_tokens in (25, 50)
 
     def test_set_max_tokens_without_distribution(self, base_config, mock_tokenizer):
         """Test setting max_tokens using legacy behavior."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
         turn = Turn()
 
         composer._set_max_tokens(turn)
@@ -203,9 +207,14 @@ class TestBaseDatasetComposer:
         self, base_config, mock_tokenizer
     ):
         """Test setting max_tokens when output_tokens.mean is None."""
-        base_config.input.prompt.output_tokens.mean = None
+        base_config.prompt_output_tokens_mean = None
+        # v2 osl distribution requires mean when present; when v1 mean=None the
+        # converter must also drop stddev or AIPerfConfig validation fails.
+        base_config.prompt_output_tokens_stddev = None
 
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
         turn = Turn()
 
         composer._set_max_tokens(turn)
@@ -215,7 +224,9 @@ class TestBaseDatasetComposer:
 
     def test_set_max_tokens_preserves_existing_value(self, base_config, mock_tokenizer):
         """Test that per-line max_tokens is not overwritten by global --osl config."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
         turn = Turn(max_tokens=42)
 
         composer._set_max_tokens(turn)
@@ -226,11 +237,10 @@ class TestBaseDatasetComposer:
         self, sequence_dist_config, mock_tokenizer
     ):
         """Test that per-line max_tokens is not overwritten by sequence distribution."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
         turn = Turn(max_tokens=42)
-
-        turn_id = id(turn)
-        composer._turn_sequence_cache[turn_id] = (150, 75)
 
         composer._set_max_tokens(turn)
 
@@ -238,49 +248,56 @@ class TestBaseDatasetComposer:
 
     def test_finalize_turn(self, sequence_dist_config, mock_tokenizer):
         """Test turn finalization."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
         turn = Turn()
-        turn_id = id(turn)
-
-        # Pre-cache sequence lengths
-        composer._turn_sequence_cache[turn_id] = (150, 75)
 
         composer._finalize_turn(turn)
 
-        # Check model is set
+        # Model selection populated, max_tokens drawn from the distribution.
         assert turn.model == "test-model"
-
-        # Check max_tokens is set from cached sequence lengths
-        assert turn.max_tokens == 75
-
-        # Check cache is cleared
-        assert turn_id not in composer._turn_sequence_cache
+        assert turn.max_tokens in (25, 50)
+        # Cache cleared after finalize.
+        assert id(turn) not in composer._turn_sequence_cache
 
     def test_prefix_prompt_enabled_property(self, base_config, mock_tokenizer):
         """Test prefix_prompt_enabled property."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
 
         # Should be enabled when length > 0
         assert composer.prefix_prompt_enabled is True
 
-        # Should be disabled when length = 0
-        base_config.input.prompt.prefix_prompt.length = 0
-        composer2 = ConcreteBaseComposer(base_config, mock_tokenizer)
+        # Should be disabled when length is None (v2 forbids length=0; clear it
+        # via model_construct on the resolved dataset to test the disabled path).
+        run = make_run(base_config)
+        run.cfg.datasets[0].prefix_prompts.length = None
+        composer2 = ConcreteBaseComposer(run=run, tokenizer=mock_tokenizer)
         assert composer2.prefix_prompt_enabled is False
 
     def test_inject_context_prompts_with_shared_system_prompt(
         self, base_config, mock_tokenizer
     ):
         """Test _inject_context_prompts with shared system prompt."""
-        base_config.input.prompt.prefix_prompt.shared_system_prompt_length = 50
-        base_config.input.prompt.prefix_prompt.length = 0
-        base_config.input.conversation.num = 3
+        # v2 forbids length=0 + shared_system_length together (mutually
+        # exclusive groups). Build the run, then mutate the resolved dataset's
+        # prefix_prompts to install the shared_system_length only.
+        run = make_run(base_config)
+        from aiperf.config.dataset.content import (
+            PrefixPromptConfig as V2PrefixPromptConfig,
+        )
+
+        run.cfg.datasets[0].prefix_prompts = V2PrefixPromptConfig(
+            shared_system_length=50,
+        )
 
         # Patch _generate_shared_system_prompt to avoid corpus initialization
         with patch(
             "aiperf.dataset.generator.prompt.PromptGenerator._generate_shared_system_prompt"
         ):
-            composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+            composer = ConcreteBaseComposer(run=run, tokenizer=mock_tokenizer)
 
         # Create mock conversations
         from aiperf.common.models import Conversation
@@ -312,11 +329,16 @@ class TestBaseDatasetComposer:
         self, base_config, mock_tokenizer
     ):
         """Test _inject_context_prompts with user context prompts."""
-        base_config.input.prompt.prefix_prompt.user_context_prompt_length = 30
-        base_config.input.prompt.prefix_prompt.length = 0
-        base_config.input.conversation.num = 3
+        run = make_run(base_config)
+        from aiperf.config.dataset.content import (
+            PrefixPromptConfig as V2PrefixPromptConfig,
+        )
 
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        run.cfg.datasets[0].prefix_prompts = V2PrefixPromptConfig(
+            user_context_length=30,
+        )
+
+        composer = ConcreteBaseComposer(run=run, tokenizer=mock_tokenizer)
 
         # Create mock conversations
         from aiperf.common.models import Conversation
@@ -351,16 +373,21 @@ class TestBaseDatasetComposer:
         self, base_config, mock_tokenizer
     ):
         """Test _inject_context_prompts with both shared system and user context prompts."""
-        base_config.input.prompt.prefix_prompt.shared_system_prompt_length = 50
-        base_config.input.prompt.prefix_prompt.user_context_prompt_length = 30
-        base_config.input.prompt.prefix_prompt.length = 0
-        base_config.input.conversation.num = 2
+        run = make_run(base_config)
+        from aiperf.config.dataset.content import (
+            PrefixPromptConfig as V2PrefixPromptConfig,
+        )
+
+        run.cfg.datasets[0].prefix_prompts = V2PrefixPromptConfig(
+            shared_system_length=50,
+            user_context_length=30,
+        )
 
         # Patch _generate_shared_system_prompt to avoid corpus initialization
         with patch(
             "aiperf.dataset.generator.prompt.PromptGenerator._generate_shared_system_prompt"
         ):
-            composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+            composer = ConcreteBaseComposer(run=run, tokenizer=mock_tokenizer)
 
         # Create mock conversations
         from aiperf.common.models import Conversation
@@ -397,12 +424,11 @@ class TestBaseDatasetComposer:
 
     def test_inject_context_prompts_with_no_prompts(self, base_config, mock_tokenizer):
         """Test _inject_context_prompts when no context prompts are configured."""
-        base_config.input.prompt.prefix_prompt.length = 0
-        base_config.input.prompt.prefix_prompt.shared_system_prompt_length = None
-        base_config.input.prompt.prefix_prompt.user_context_prompt_length = None
-        base_config.input.conversation.num = 2
+        # Clear prefix_prompts entirely on the resolved dataset.
+        run = make_run(base_config)
+        run.cfg.datasets[0].prefix_prompts = None
 
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        composer = ConcreteBaseComposer(run=run, tokenizer=mock_tokenizer)
 
         # Create mock conversations
         from aiperf.common.models import Conversation
@@ -420,3 +446,59 @@ class TestBaseDatasetComposer:
         assert conversations[0].user_context_message is None
         assert conversations[1].system_message is None
         assert conversations[1].user_context_message is None
+
+
+class TestSetMaxTokensOslZero:
+    """Tests for --osl 0 / osl_mean==0 'model decides' semantics."""
+
+    def _make_osl_config(self, osl_mean: int | None) -> CLIConfig:
+        return CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=1,
+            prompt_input_tokens_mean=128,
+            prompt_input_tokens_stddev=0,
+            prompt_output_tokens_mean=osl_mean,
+        )
+
+    @pytest.mark.parametrize(
+        ("osl_mean", "expect_none"),
+        [
+            param(0, True, id="osl_zero_leaves_max_tokens_none"),
+            param(5, False, id="osl_five_sets_max_tokens"),
+            param(None, True, id="osl_none_leaves_max_tokens_none"),
+        ],
+    )  # fmt: skip
+    def test_set_max_tokens_osl_mean(
+        self, osl_mean: int | None, expect_none: bool
+    ) -> None:
+        config = self._make_osl_config(osl_mean)
+        composer = ConcreteBaseComposer(run=make_run(config), tokenizer=MagicMock())
+        turn = Turn()
+
+        composer._set_max_tokens(turn)
+
+        if expect_none:
+            assert turn.max_tokens is None
+        else:
+            assert turn.max_tokens == osl_mean
+
+    def test_set_max_tokens_seq_dist_zero_osl_leaves_none(self) -> None:
+        """seq-dist branch: if the sampled OSL is 0, max_tokens must remain None."""
+
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=1,
+            prompt_input_tokens_mean=128,
+            prompt_input_tokens_stddev=0,
+            prompt_sequence_distribution="128,1:100",
+        )
+        composer = ConcreteBaseComposer(run=make_run(config), tokenizer=MagicMock())
+        turn = Turn()
+
+        # Simulate seq-dist returning OSL=0 (e.g. future dataset with optional OSL)
+        with patch.object(
+            composer, "_get_turn_sequence_lengths", return_value=(128, 0)
+        ):
+            composer._set_max_tokens(turn)
+
+        assert turn.max_tokens is None

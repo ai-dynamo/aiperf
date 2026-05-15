@@ -36,14 +36,20 @@ def _server_metric(name: str, stats: dict) -> dict:
 
 
 def _profile(dataset: str | None = None, model: str | None = "test-model") -> dict:
-    """Construct a minimal profile export with the fields the report reads."""
-    endpoint: dict = {}
+    """Construct a minimal profile export with the fields the report reads.
+
+    Mirrors the v2 ``BenchmarkConfig`` dump: model names live under
+    ``models.items[].name`` and the public dataset enum under
+    ``datasets[].dataset``.
+    """
+    input_config: dict = {}
     if model is not None:
-        endpoint["model_names"] = [model]
-    input_block: dict = {}
+        input_config["models"] = {"items": [{"name": model}]}
     if dataset is not None:
-        input_block["public_dataset"] = dataset
-    return {"input_config": {"endpoint": endpoint, "input": input_block}}
+        input_config["datasets"] = [
+            {"name": "main", "type": "public", "dataset": dataset}
+        ]
+    return {"input_config": input_config}
 
 
 def _write_run_dir(
@@ -67,13 +73,13 @@ class TestExtractCategory:
         assert extract_category(_profile(dataset="speed_bench_coding")) == "coding"
 
     def test_extract_category_missing_input_returns_none(self):
-        assert extract_category({"input_config": {"endpoint": {}}}) is None
+        assert extract_category({"input_config": {"models": {"items": []}}}) is None
 
     def test_extract_category_non_speed_bench_dataset_returns_none(self):
         assert extract_category(_profile(dataset="sharegpt")) is None
 
     def test_extract_category_non_string_dataset_returns_none(self):
-        profile = {"input_config": {"input": {"public_dataset": 42}}}
+        profile = {"input_config": {"datasets": [{"name": "main", "dataset": 42}]}}
         assert extract_category(profile) is None
 
     def test_extract_category_missing_input_config_returns_none(self):
@@ -85,7 +91,7 @@ class TestExtractModel:
         assert extract_model(_profile(model="llama-3.1")) == "llama-3.1"
 
     def test_extract_model_empty_names_falls_back_to_unknown(self):
-        profile = {"input_config": {"endpoint": {"model_names": []}}}
+        profile = {"input_config": {"models": {"items": []}}}
         assert extract_model(profile) == "unknown"
 
     def test_extract_model_missing_endpoint_falls_back_to_unknown(self):
@@ -251,7 +257,7 @@ class TestLoadJson:
         run = _write_run_dir(tmp_path, "run", _profile(dataset="speed_bench_coding"))
         loaded = load_profile(run)
         assert loaded is not None
-        assert loaded["input_config"]["input"]["public_dataset"] == "speed_bench_coding"
+        assert loaded["input_config"]["datasets"][0]["dataset"] == "speed_bench_coding"
 
     def test_load_profile_missing_file_returns_none(self, tmp_path: Path):
         empty = tmp_path / "empty"

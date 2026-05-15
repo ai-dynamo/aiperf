@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import TelemetryRecord
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class GPUTelemetryJSONLWriter(
@@ -33,18 +36,18 @@ class GPUTelemetryJSONLWriter(
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: "BenchmarkRun",
         **kwargs,
     ):
-        if user_config.gpu_telemetry_disabled:
+        if run.cfg.gpu_telemetry_disabled:
             raise PostProcessorDisabled(
                 "GPU telemetry export is disabled via --no-gpu-telemetry"
             )
 
-        output_file: Path = user_config.output.profile_export_gpu_telemetry_jsonl_file
+        output_file: Path = run.cfg.artifacts.profile_export_gpu_telemetry_jsonl_file
 
         super().__init__(
-            user_config=user_config,
+            run=run,
             output_file=output_file,
             batch_size=Environment.GPU.EXPORT_BATCH_SIZE,
             **kwargs,

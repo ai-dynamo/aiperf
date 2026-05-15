@@ -4,6 +4,9 @@
 
 from typing import ClassVar
 
+import orjson
+
+from aiperf.common.finite import scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
@@ -45,10 +48,16 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         # Convert to JsonExportData format (adapter pattern)
         export_data = self._aggregate_to_export_data()
 
-        # Serialize using Pydantic (same approach as MetricsJsonExporter._generate_content())
-        return export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
+        # Pydantic's model_dump_json silently coerces NaN/inf to JSON null,
+        # which collides with the explicit-None "metric was missing"
+        # contract. Round-trip via model_dump + scrub_non_finite + orjson
+        # so null on disk only ever means "absent".
+        payload = export_data.model_dump(
+            mode="json", exclude_unset=True, exclude_none=True
         )
+        return orjson.dumps(
+            scrub_non_finite(payload), option=orjson.OPT_INDENT_2
+        ).decode("utf-8")
 
     def _aggregate_to_export_data(self):
         """Convert AggregateResult to JsonExportData format.

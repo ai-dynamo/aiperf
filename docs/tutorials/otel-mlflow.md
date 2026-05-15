@@ -69,6 +69,31 @@ aiperf profile \
 | `--mlflow-experiment my-experiment` | Creates or reuses the named experiment. |
 | `--stream default` | Activates the default streaming strategy (metrics + timing). Use `--stream metrics` for metrics only. |
 
+The equivalent config-v2 YAML uses first-class benchmark-level telemetry groups, not artifact fields:
+
+```yaml
+benchmark:
+  artifacts:
+    dir: ./artifacts
+    export_outputs_json: true
+  otel:
+    metrics_url: http://localhost:4318
+    stream_metrics_enabled: true
+    stream_timing_enabled: true
+    custom_resource_attributes:
+      deployment.environment: local
+    gen_ai_provider: vllm
+  mlflow:
+    tracking_uri: http://localhost:5000
+    experiment: my-experiment
+    run_name: my-run
+    tags: "team:perf"
+    parent_run_id: null
+    artifact_globs:
+      - "*.json"
+      - "*.csv"
+```
+
 ## Inspect Live OTel Data
 
 While the benchmark runs, metrics flow to your OTel Collector and from there to any configured backend (Prometheus, Grafana, Jaeger, etc.).

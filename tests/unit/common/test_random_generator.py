@@ -364,5 +364,56 @@ class TestDocumentationAndEdgeCases:
         assert all(0.0 <= val < 1.0 for val in batch)
 
 
+class TestDeriveVariationSeedFormula:
+    """Byte-pin the `derive_variation_seed` SHA-256 formula.
+
+    The formula is `sha256(f"{root}:variation:{label}").digest()[:8]` as a
+    big-endian uint64. These exact integers are the seeds AIPerf produces
+    today for adaptive-overflow variations and `vary_seed_per_trial` runs.
+    Changing the prefix `:variation:` to `:var:`, swapping endianness, or
+    bumping the digest slice would silently change every reproducible
+    workload that relies on this path — every existing config's adaptive
+    runs would shift to a different RNG sequence with no test failure.
+
+    Update these values only as part of an intentional, documented
+    seed-rotation event (which would also require a CHANGELOG entry and
+    a re-baseline of every benchmark-finding repo that anchors to seeds).
+    """
+
+    def test_formula_pinned_for_grid_style_label(self):
+        from aiperf.common.random_generator import derive_variation_seed
+
+        assert derive_variation_seed(42, "concurrency_10") == 16006226885058497949
+
+    def test_formula_pinned_for_adaptive_style_label(self):
+        from aiperf.common.random_generator import derive_variation_seed
+
+        assert derive_variation_seed(42, "search_iter_0001") == 7270971771351893726
+
+    def test_formula_pinned_for_per_trial_composite_label(self):
+        """Pins both the SHA formula AND the `:trial:` separator used by
+        `resolve_run_seed` when `vary_seed_per_trial` is set. The composite
+        label is constructed at the call site, but the value must match
+        `derive_variation_seed(root, f"{label}:trial:{n}")` exactly.
+        """
+        from aiperf.common.random_generator import derive_variation_seed
+
+        assert (
+            derive_variation_seed(99, "concurrency_10:trial:3") == 16416812867456934616
+        )
+
+    def test_none_root_returns_none(self):
+        from aiperf.common.random_generator import derive_variation_seed
+
+        assert derive_variation_seed(None, "concurrency_10") is None
+
+    def test_output_fits_in_uint64(self):
+        """SHA-truncation slice is `[:8]` => max value 2**64 - 1."""
+        from aiperf.common.random_generator import derive_variation_seed
+
+        seed = derive_variation_seed(42, "x")
+        assert 0 <= seed < 2**64
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

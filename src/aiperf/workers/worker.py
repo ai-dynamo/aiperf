@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 import uuid
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.enums import (
     CommAddress,
@@ -64,6 +66,9 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -131,14 +136,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ):
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             **kwargs,
         )
@@ -157,7 +160,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
-        self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
+        self.model_endpoint = ModelEndpointInfo.from_run(self.run)
 
         self.inference_client: InferenceClient = InferenceClient(
             model_endpoint=self.model_endpoint,
@@ -194,9 +197,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
         # when the orchestrator doesn't need TTFT events for slot management.
-        self._prefill_concurrency_enabled: bool = (
-            self.user_config.loadgen.prefill_concurrency is not None
-            or self.user_config.loadgen.warmup_prefill_concurrency is not None
+        # ``prefill_concurrency`` lives per-phase (warmup phases produce
+        # results-excluded entries alongside profiling ones), so probe every
+        # phase to decide whether prefill-concurrency limiting is active
+        # anywhere in the run.
+        self._prefill_concurrency_enabled: bool = any(
+            getattr(phase, "prefill_concurrency", None) is not None
+            for phase in self.run.cfg.phases
         )
 
         # Only used as a fallback when dataset client is not initialized

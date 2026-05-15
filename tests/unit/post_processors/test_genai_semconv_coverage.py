@@ -133,13 +133,14 @@ class TestBuildTokenUsageAttributes:
     def test_builds_input_token_attributes(self) -> None:
         record = MagicMock()
         record.error = None
-        user_config = MagicMock()
-        user_config.endpoint.type = "chat"
-        user_config.endpoint.model_names = ["gpt-4"]
-        user_config.endpoint.urls = ["http://api.openai.com/v1"]
-        user_config.gen_ai_provider = None
+        cfg = MagicMock()
+        cfg.endpoint.type = "chat"
+        cfg.endpoint.model_names = ["gpt-4"]
+        cfg.get_model_names.return_value = ["gpt-4"]
+        cfg.endpoint.urls = ["http://api.openai.com/v1"]
+        cfg.otel.gen_ai_provider = None
 
-        attrs = _build_token_usage_attributes(record, user_config, token_type="input")
+        attrs = _build_token_usage_attributes(record, cfg, token_type="input")
         assert attrs["gen_ai.token.type"] == "input"
         assert attrs["gen_ai.operation.name"] == "chat"
         assert attrs["gen_ai.request.model"] == "gpt-4"
@@ -147,13 +148,14 @@ class TestBuildTokenUsageAttributes:
     def test_builds_output_token_attributes(self) -> None:
         record = MagicMock()
         record.error = None
-        user_config = MagicMock()
-        user_config.endpoint.type = "completions"
-        user_config.endpoint.model_names = ["llama-3"]
-        user_config.endpoint.urls = ["http://localhost:8000"]
-        user_config.gen_ai_provider = None
+        cfg = MagicMock()
+        cfg.endpoint.type = "completions"
+        cfg.endpoint.model_names = ["llama-3"]
+        cfg.get_model_names.return_value = ["llama-3"]
+        cfg.endpoint.urls = ["http://localhost:8000"]
+        cfg.otel.gen_ai_provider = None
 
-        attrs = _build_token_usage_attributes(record, user_config, token_type="output")
+        attrs = _build_token_usage_attributes(record, cfg, token_type="output")
         assert attrs["gen_ai.token.type"] == "output"
         assert attrs["gen_ai.operation.name"] == "text_completion"
 
@@ -164,25 +166,27 @@ class TestBuildDurationAttributes:
     def test_error_type_attached_when_present(self) -> None:
         record = MagicMock()
         record.error = SimpleNamespace(code=503, type=None, cause_chain=[], message="")
-        user_config = MagicMock()
-        user_config.endpoint.type = "chat"
-        user_config.endpoint.model_names = ["model"]
-        user_config.endpoint.urls = ["http://localhost"]
-        user_config.gen_ai_provider = None
+        cfg = MagicMock()
+        cfg.endpoint.type = "chat"
+        cfg.endpoint.model_names = ["model"]
+        cfg.get_model_names.return_value = ["model"]
+        cfg.endpoint.urls = ["http://localhost"]
+        cfg.otel.gen_ai_provider = None
 
-        attrs = _build_duration_attributes(record, user_config)
+        attrs = _build_duration_attributes(record, cfg)
         assert attrs["error.type"] == "http_5xx"
 
     def test_no_error_type_when_no_error(self) -> None:
         record = MagicMock()
         record.error = None
-        user_config = MagicMock()
-        user_config.endpoint.type = "chat"
-        user_config.endpoint.model_names = ["model"]
-        user_config.endpoint.urls = ["http://localhost"]
-        user_config.gen_ai_provider = None
+        cfg = MagicMock()
+        cfg.endpoint.type = "chat"
+        cfg.endpoint.model_names = ["model"]
+        cfg.get_model_names.return_value = ["model"]
+        cfg.endpoint.urls = ["http://localhost"]
+        cfg.otel.gen_ai_provider = None
 
-        attrs = _build_duration_attributes(record, user_config)
+        attrs = _build_duration_attributes(record, cfg)
         assert "error.type" not in attrs
 
 
@@ -233,13 +237,14 @@ class TestTranslateTokenUsage:
     def test_input_token_count_translates(self) -> None:
         record = MagicMock()
         record.error = None
-        user_config = MagicMock()
-        user_config.endpoint.type = "chat"
-        user_config.endpoint.model_names = ["model"]
-        user_config.endpoint.urls = ["http://localhost"]
-        user_config.gen_ai_provider = None
+        cfg = MagicMock()
+        cfg.endpoint.type = "chat"
+        cfg.endpoint.model_names = ["model"]
+        cfg.get_model_names.return_value = ["model"]
+        cfg.endpoint.urls = ["http://localhost"]
+        cfg.otel.gen_ai_provider = None
 
-        emission = translate("input_token_count", 50.0, record, user_config=user_config)
+        emission = translate("input_token_count", 50.0, record, cfg=cfg)
         assert emission is not None
         assert emission.spec_metric_name == "gen_ai.client.token.usage"
         assert emission.attributes["gen_ai.token.type"] == "input"
@@ -248,23 +253,19 @@ class TestTranslateTokenUsage:
     def test_output_token_count_translates(self) -> None:
         record = MagicMock()
         record.error = None
-        user_config = MagicMock()
-        user_config.endpoint.type = "chat"
-        user_config.endpoint.model_names = ["model"]
-        user_config.endpoint.urls = ["http://localhost"]
-        user_config.gen_ai_provider = None
+        cfg = MagicMock()
+        cfg.endpoint.type = "chat"
+        cfg.endpoint.model_names = ["model"]
+        cfg.get_model_names.return_value = ["model"]
+        cfg.endpoint.urls = ["http://localhost"]
+        cfg.otel.gen_ai_provider = None
 
-        emission = translate(
-            "output_token_count", 200.0, record, user_config=user_config
-        )
+        emission = translate("output_token_count", 200.0, record, cfg=cfg)
         assert emission is not None
         assert emission.spec_metric_name == "gen_ai.client.token.usage"
         assert emission.attributes["gen_ai.token.type"] == "output"
 
     def test_unknown_metric_returns_none(self) -> None:
         record = MagicMock()
-        user_config = MagicMock()
-        assert (
-            translate("some_random_metric", 1.0, record, user_config=user_config)
-            is None
-        )
+        cfg = MagicMock()
+        assert translate("some_random_metric", 1.0, record, cfg=cfg) is None

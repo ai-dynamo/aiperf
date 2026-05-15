@@ -2,23 +2,23 @@
   "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
+      "duplicate-classes",
+      "src/aiperf/common/exceptions.py",
+      "ConfigurationError"
+    ],
+    [
+      "duplicate-classes",
+      "src/aiperf/config/loader/errors.py",
+      "ConfigurationError"
+    ],
+    [
       "file-size",
       "src/aiperf/accuracy/graders/math.py",
       ""
     ],
     [
       "file-size",
-      "src/aiperf/common/config/loadgen_config.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/common/config/user_config.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/common/config/zmq_config.py",
+      "src/aiperf/cli_runner/_sweep_aggregate.py",
       ""
     ],
     [
@@ -44,6 +44,11 @@
     [
       "file-size",
       "src/aiperf/common/mixins/base_metrics_collector_mixin.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/models/dataset_models.py",
       ""
     ],
     [
@@ -83,6 +88,56 @@
     ],
     [
       "file-size",
+      "src/aiperf/common/tokenizer_validator.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/config.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/dataset/config.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/distributions.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/endpoint.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/flags/_converter_dataset.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/flags/converter.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/loader/core.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/sweep/config.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/sweep/expand.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/controller/system_controller.py",
       ""
     ],
@@ -118,7 +173,17 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/memory_map_utils.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
       ""
     ],
     [
@@ -138,7 +203,17 @@
     ],
     [
       "file-size",
-      "src/aiperf/orchestrator/strategies.py",
+      "src/aiperf/orchestrator/orchestrator.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/orchestrator/search_planner/_optuna_helpers.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/orchestrator/search_planner/optuna_planner.py",
       ""
     ],
     [
@@ -208,6 +283,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/search_recipes/builtins.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/server_metrics/export_stats.py",
       ""
     ],
@@ -258,33 +338,13 @@
     ],
     [
       "function-size",
-      "src/aiperf/cli_runner.py",
-      "_run_multi_benchmark"
-    ],
-    [
-      "function-size",
-      "src/aiperf/cli_runner.py",
-      "_run_single_benchmark"
+      "src/aiperf/cli_runner/_sweep_aggregate.py",
+      "aggregate_sweep_and_export"
     ],
     [
       "function-size",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
-    ],
-    [
-      "function-size",
-      "src/aiperf/common/config/loadgen_config.py",
-      "LoadGeneratorConfig.parse_concurrency_list"
-    ],
-    [
-      "function-size",
-      "src/aiperf/common/config/loadgen_config.py",
-      "LoadGeneratorConfig.validate_multi_run_params"
-    ],
-    [
-      "function-size",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.validate_timing_mode"
     ],
     [
       "function-size",
@@ -378,28 +438,13 @@
     ],
     [
       "function-size",
-      "src/aiperf/orchestrator/aggregation/sweep.py",
-      "SweepAnalyzer.compute"
+      "src/aiperf/orchestrator/search_planner/_optuna_helpers.py",
+      "build_qnehvi_candidates_func"
     ],
     [
       "function-size",
-      "src/aiperf/orchestrator/aggregation/sweep.py",
-      "identify_pareto_optimal"
-    ],
-    [
-      "function-size",
-      "src/aiperf/orchestrator/orchestrator.py",
-      "MultiRunOrchestrator._execute_single_run"
-    ],
-    [
-      "function-size",
-      "src/aiperf/orchestrator/strategies.py",
-      "SweepConfidenceStrategy._execute_sweep_then_trials"
-    ],
-    [
-      "function-size",
-      "src/aiperf/orchestrator/strategies.py",
-      "SweepConfidenceStrategy.aggregate"
+      "src/aiperf/orchestrator/search_planner/_optuna_helpers.py",
+      "build_sampler"
     ],
     [
       "function-size",
@@ -808,6 +853,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/search_recipes/_itl_surface_fit.py",
+      "_extract_2d_points"
+    ],
+    [
+      "function-size",
       "src/aiperf/server_metrics/accumulator.py",
       "ServerMetricsAccumulator._compute_endpoint_summaries"
     ],
@@ -945,6 +995,11 @@
       "function-size",
       "src/aiperf/ui/dashboard/rich_log_viewer.py",
       "SelectableRichLog.display_log_record"
+    ],
+    [
+      "function-size",
+      "src/aiperf/workers/worker.py",
+      "Worker.__init__"
     ],
     [
       "function-size",
@@ -1158,11 +1213,6 @@
     ],
     [
       "nesting-depth",
-      "src/aiperf/orchestrator/aggregation/sweep.py",
-      "identify_pareto_optimal"
-    ],
-    [
-      "nesting-depth",
       "src/aiperf/plot/config.py",
       "PlotConfig._expand_metric_shortcut"
     ],
@@ -1230,11 +1280,6 @@
       "nesting-depth",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
       "ProgressDashboard._get_status"
-    ],
-    [
-      "pydantic-fields",
-      "src/aiperf/common/config/loadgen_config.py",
-      "LoadGeneratorConfig"
     ],
     [
       "pydantic-fields",

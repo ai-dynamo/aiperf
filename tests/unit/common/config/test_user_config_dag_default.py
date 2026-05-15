@@ -1,266 +1,165 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""--num-conversations autodefault for dag_jsonl input.
+
+"""--num-conversations autodefault for dag_jsonl input (v2 converter).
 
 For DAG-shaped (forking) datasets, ``--request-count`` is a literal
 wire-request cap that includes fork-spawned children, so the generic
 ``concurrency * MULT`` default would silently truncate the DAG mid-tree.
-Instead, default ``--num-conversations`` to the *root* count (sessions
-not referenced by any fork list) and refuse to default
-``--request-count``.
+Instead, the CLI->YAML converter defaults ``phase.sessions`` to the *root*
+count (sessions not referenced by any fork list) and refuses to default
+``phase.requests``.
+
+The DAG-walking logic lives on ``DatasetResolver`` helpers that the
+converter reuses; the file I/O happens at convert time for CLI users only.
+YAML-only configs must be explicit.
 """
 
+from __future__ import annotations
+
+import json
 from pathlib import Path
 
-import orjson
+import pytest
 
-from aiperf.common.config.user_config import UserConfig
-
-
-def _write_dag_jsonl(path: Path, root_count: int, children_per_root: int) -> None:
-    """Write a dag.jsonl file with ``root_count`` roots and ``children_per_root``
-    children per root (total entries = root_count * (1 + children_per_root))."""
-    records: list[dict] = []
-    for i in range(root_count):
-        children = [f"child-{i}-{j}" for j in range(children_per_root)]
-        first_turn: dict = {"messages": [{"role": "user", "content": "x"}]}
-        if children:
-            first_turn["forks"] = children
-        records.append({"session_id": f"root-{i}", "turns": [first_turn]})
-    for i in range(root_count):
-        for j in range(children_per_root):
-            records.append(
-                {
-                    "session_id": f"child-{i}-{j}",
-                    "turns": [{"messages": [{"role": "user", "content": "c"}]}],
-                }
-            )
-    with open(path, "wb") as f:
-        for r in records:
-            f.write(orjson.dumps(r))
-            f.write(b"\n")
+from aiperf.config.flags._converter_profiling import build_profiling
+from aiperf.config.flags.cli_config import CLIConfig
 
 
-def _make_config(dag_file: Path, **loadgen_overrides) -> UserConfig:
-    return UserConfig(
-        endpoint={
-            "model_names": ["test-model"],
-            "url": "http://localhost:8000/v1",
-        },
-        input={"file": str(dag_file), "custom_dataset_type": "dag_jsonl"},
-        loadgen=loadgen_overrides or {"concurrency": 1},
-    )
+def _make_cli(**overrides) -> CLIConfig:
+    """Build a minimal CLIConfig with endpoint+model, override the rest."""
+    base = {
+        "url": "http://localhost:8000/test",
+        "model_names": ["test-model"],
+    }
+    base.update(overrides)
+    return CLIConfig(**base)
 
 
-class TestDagAutodefault:
-    def test_num_conversations_defaults_to_root_count(self, tmp_path: Path) -> None:
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=3, children_per_root=2)
-        # 3 roots + 6 children = 9 entries; should default num-conversations to 3.
+def _write_dag_file(tmp_path: Path, lines: list[dict]) -> Path:
+    """Write a dag.jsonl file with the supplied records."""
+    path = tmp_path / "dag.jsonl"
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    return path
 
-        config = _make_config(dag_file, concurrency=2)
 
-        assert config.input.conversation.num == 3
-
-    def test_request_count_not_defaulted_for_forking_dataset(
-        self, tmp_path: Path
-    ) -> None:
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=2, children_per_root=1)
-
-        config = _make_config(dag_file, concurrency=2)
-
-        # --request-count must NOT be auto-defaulted (would truncate mid-tree).
-        # --num-conversations IS defaulted to the root count.
-        assert config.loadgen.request_count is None
-        assert config.input.conversation.num == 2
-
-    def test_explicit_request_count_overrides_autodefault(self, tmp_path: Path) -> None:
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=3, children_per_root=2)
-
-        config = _make_config(dag_file, concurrency=2, request_count=100)
-
-        # User-provided --request-count is honored; --num-conversations
-        # is NOT autodefaulted because the user already chose a cap.
-        assert config.loadgen.request_count == 100
-
-    def test_explicit_num_conversations_overrides_root_default(
-        self, tmp_path: Path
-    ) -> None:
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=3, children_per_root=2)
-
-        config = UserConfig(
-            endpoint={
-                "model_names": ["test-model"],
-                "url": "http://localhost:8000/v1",
-            },
-            input={
-                "file": str(dag_file),
-                "custom_dataset_type": "dag_jsonl",
-                "conversation": {"num": 7},
-            },
-            loadgen={"concurrency": 2},
+class TestDagRootCountAutodefault:
+    def test_three_records_one_root_defaults_sessions_to_one(self, tmp_path):
+        """1 root + 2 children -> sessions=1 (not requests=3)."""
+        dag = _write_dag_file(
+            tmp_path,
+            [
+                {"session_id": "s1", "turns": [{"forks": ["s2"]}]},
+                {"session_id": "s2", "turns": [{"spawns": [{"children": ["s3"]}]}]},
+                {"session_id": "s3", "turns": []},
+            ],
+        )
+        cli = _make_cli(
+            input_file=str(dag),
+            custom_dataset_type="dag_jsonl",
         )
 
-        assert config.input.conversation.num == 7
-        assert config.loadgen.request_count is None
+        prof = build_profiling(cli)
 
-    def test_non_dag_dataset_uses_generic_default(self, tmp_path: Path) -> None:
-        # Non-forking dataset (no custom_dataset_type or single_turn) keeps
-        # the generic concurrency-based --request-count autodefault.
-        config = UserConfig(
-            endpoint={
-                "model_names": ["test-model"],
-                "url": "http://localhost:8000/v1",
-            },
-            loadgen={"concurrency": 4},
+        assert prof.get("sessions") == 1
+        # The DAG default must NOT also set requests; that would defeat
+        # the whole point (request_count truncates children mid-tree).
+        assert "requests" not in prof
+
+    def test_explicit_request_count_overrides_autodefault(self, tmp_path):
+        """Explicit --request-count wins; no DAG autodefault applied."""
+        dag = _write_dag_file(
+            tmp_path,
+            [
+                {"session_id": "s1", "turns": [{"forks": ["s2"]}]},
+                {"session_id": "s2", "turns": []},
+            ],
+        )
+        cli = _make_cli(
+            input_file=str(dag),
+            custom_dataset_type="dag_jsonl",
+            request_count=42,
         )
 
-        # request_count should be auto-defaulted; num-conversations stays None.
-        assert config.loadgen.request_count is not None
-        assert config.input.conversation.num is None
+        prof = build_profiling(cli)
 
+        assert prof["requests"] == 42
+        assert "sessions" not in prof
 
-class TestUserConfigHelpers:
-    def test_is_forking_dataset_true_for_dag_jsonl(self, tmp_path: Path) -> None:
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=2, children_per_root=1)
-        config = _make_config(dag_file, concurrency=1)
-
-        assert config._is_forking_dataset() is True
-
-    def test_is_forking_dataset_false_for_non_dag(self) -> None:
-        config = UserConfig(
-            endpoint={
-                "model_names": ["test-model"],
-                "url": "http://localhost:8000/v1",
-            },
+    def test_explicit_num_conversations_overrides_autodefault(self, tmp_path):
+        """Explicit --num-conversations wins; no DAG autodefault applied."""
+        dag = _write_dag_file(
+            tmp_path,
+            [
+                {"session_id": "s1", "turns": [{"forks": ["s2"]}]},
+                {"session_id": "s2", "turns": []},
+            ],
+        )
+        cli = _make_cli(
+            input_file=str(dag),
+            custom_dataset_type="dag_jsonl",
+            conversation_num=7,
         )
 
-        assert config._is_forking_dataset() is False
+        prof = build_profiling(cli)
 
-    def test_count_dag_root_entries_returns_root_only(self, tmp_path: Path) -> None:
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=4, children_per_root=3)
-        # 4 roots, 12 children, 16 total entries.
-        config = _make_config(dag_file, concurrency=2)
+        assert prof["sessions"] == 7
 
-        assert config._count_dag_root_entries() == 4
+    def test_no_input_file_no_autodefault(self):
+        """Bare --custom-dataset-type without --input-file falls through.
 
-    def test_count_dag_root_entries_handles_no_forks(self, tmp_path: Path) -> None:
-        # Five entries, none referenced by another's forks => five roots.
-        dag_file = tmp_path / "x.dag.jsonl"
-        _write_dag_jsonl(dag_file, root_count=5, children_per_root=0)
-        config = _make_config(dag_file, concurrency=2)
+        Without a file to count, the converter cannot derive roots; it
+        falls back to the generic 10-requests default like any other
+        unbounded run.
+        """
+        cli = _make_cli(custom_dataset_type="dag_jsonl")
 
-        assert config._count_dag_root_entries() == 5
+        prof = build_profiling(cli)
 
-    def test_count_dag_root_entries_excludes_object_form_forks(
-        self, tmp_path: Path
-    ) -> None:
-        # Object-form forks ({"child": "x", "background": true}) reference
-        # children just like bare-string forks do — root counter must walk
-        # both shapes or BG-fork targets get counted as roots.
-        dag_file = tmp_path / "x.dag.jsonl"
-        records = [
-            {
-                "session_id": "P",
-                "turns": [
-                    {
-                        "messages": [{"role": "user", "content": "t0"}],
-                        "forks": [{"child": "BG", "background": True}],
-                    },
-                    {"messages": [{"role": "user", "content": "t1"}]},
-                ],
-            },
-            {
-                "session_id": "BG",
-                "turns": [{"messages": [{"role": "user", "content": "c"}]}],
-            },
-        ]
-        with open(dag_file, "wb") as f:
-            for r in records:
-                f.write(orjson.dumps(r))
-                f.write(b"\n")
-        config = _make_config(dag_file, concurrency=1)
+        assert prof.get("requests") == 10
+        assert "sessions" not in prof
 
-        # Only P is a root; BG is the FORK target.
-        assert config._count_dag_root_entries() == 1
+    def test_non_forking_dataset_falls_through_to_generic_default(self, tmp_path):
+        """A non-DAG dataset gets the 10-requests fallback (not roots)."""
+        plain = tmp_path / "plain.jsonl"
+        plain.write_text('{"prompt": "hi"}\n{"prompt": "yo"}\n')
+        cli = _make_cli(
+            input_file=str(plain),
+            custom_dataset_type="single_turn",
+        )
 
-    def test_count_dag_root_entries_excludes_spawn_targets(
-        self, tmp_path: Path
-    ) -> None:
-        # SPAWN children (bare-string and DagSpawn object form) must be
-        # excluded from the root count; they are dispatched by their parent
-        # and would over-instantiate if treated as standalone roots.
-        dag_file = tmp_path / "x.dag.jsonl"
-        records = [
-            {
-                "session_id": "P",
-                "turns": [
-                    {
-                        "messages": [{"role": "user", "content": "t0"}],
-                        "spawns": ["B", {"children": ["C", "D"], "join_at": 2}],
-                    },
-                    {"messages": [{"role": "user", "content": "t1"}]},
-                    {"messages": [{"role": "user", "content": "t2"}]},
-                ],
-            },
-            {
-                "session_id": "B",
-                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
-            },
-            {
-                "session_id": "C",
-                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
-            },
-            {
-                "session_id": "D",
-                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
-            },
-        ]
-        with open(dag_file, "wb") as f:
-            for r in records:
-                f.write(orjson.dumps(r))
-                f.write(b"\n")
-        config = _make_config(dag_file, concurrency=1)
+        prof = build_profiling(cli)
 
-        # Only P is a root; B / C / D are SPAWN targets.
-        assert config._count_dag_root_entries() == 1
+        assert prof.get("requests") == 10
+        assert "sessions" not in prof
 
-    def test_count_dag_root_entries_excludes_pre_session_spawn_targets(
-        self, tmp_path: Path
-    ) -> None:
-        # pre_session_spawns children get fired by the orchestrator as
-        # background sub-agents of the declaring root — they are not
-        # standalone roots and must not be sampled as such.
-        dag_file = tmp_path / "x.dag.jsonl"
-        records = [
-            {
-                "session_id": "ROOT",
-                "turns": [{"messages": [{"role": "user", "content": "t0"}]}],
-                "pre_session_spawns": ["x1", "x2", "x3"],
-            },
-            {
-                "session_id": "x1",
-                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
-            },
-            {
-                "session_id": "x2",
-                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
-            },
-            {
-                "session_id": "x3",
-                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
-            },
-        ]
-        with open(dag_file, "wb") as f:
-            for r in records:
-                f.write(orjson.dumps(r))
-                f.write(b"\n")
-        config = _make_config(dag_file, concurrency=1)
 
-        # Only ROOT is a true root.
-        assert config._count_dag_root_entries() == 1
+@pytest.mark.parametrize(
+    "shape,expected_roots",
+    [
+        ([{"session_id": "r1", "turns": []}], 1),
+        (
+            [
+                {"session_id": "r1", "turns": [{"forks": ["c1", "c2"]}]},
+                {"session_id": "c1", "turns": []},
+                {"session_id": "c2", "turns": []},
+            ],
+            1,
+        ),
+        (
+            [
+                {"session_id": "r1", "turns": []},
+                {"session_id": "r2", "turns": []},
+                {"session_id": "r3", "turns": [{"forks": ["c1"]}]},
+                {"session_id": "c1", "turns": []},
+            ],
+            3,
+        ),
+    ],
+    ids=["single_root", "one_root_two_children", "three_roots_one_child"],
+)
+def test_root_count_shapes(tmp_path, shape, expected_roots):
+    dag = _write_dag_file(tmp_path, shape)
+    cli = _make_cli(input_file=str(dag), custom_dataset_type="dag_jsonl")
+    prof = build_profiling(cli)
+    assert prof.get("sessions") == expected_roots

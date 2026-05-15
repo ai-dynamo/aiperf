@@ -3,7 +3,7 @@
 """Adversarial pathology tests targeting timing-strategy ↔ DAG-orchestrator
 interactions.
 
-Sibling to ``test_dag_adversarial_timing_modes.py``: that suite parameterises
+Sibling to ``test_dag_adversarial_timing_modes.py``: that suite parametrizes
 strategy-agnostic orchestrator invariants over the three TimingMode shapes.
 This suite drills into strategy-specific timestamp / rate / slot pathologies
 that the orchestrator alone does not see — out-of-order timestamps,
@@ -14,7 +14,7 @@ zero-child branches.
 Where a strategy is exercised end-to-end, we use the strategy class directly
 with mocked dependencies (scheduler, credit_issuer, lifecycle) so each test
 runs in <100ms and avoids the full PhaseRunner spin-up. Orchestrator-level
-behaviour is exercised through ``BranchOrchestrator.intercept`` directly
+behavior is exercised through ``BranchOrchestrator.intercept`` directly
 (same pattern as the sibling suite).
 """
 
@@ -363,24 +363,23 @@ async def test_fixed_schedule_zero_timestamp_fires_at_perf_start() -> None:
 
 
 def test_request_rate_validates_zero_rate_at_interval_config() -> None:
-    """Rate=0 must be rejected by the interval generator's validator."""
-    cfg = IntervalGeneratorConfig(
-        arrival_pattern=ArrivalPattern.CONSTANT, request_rate=0.0
-    )
-    from aiperf.timing.intervals import ConstantIntervalGenerator
+    """Rate=0 must be rejected by ``IntervalGeneratorConfig`` (``gt=0``)."""
+    from pydantic import ValidationError
 
-    with pytest.raises(ValueError, match="must be set and greater than 0"):
-        ConstantIntervalGenerator(cfg)
+    with pytest.raises(ValidationError, match="greater than 0"):
+        IntervalGeneratorConfig(
+            arrival_pattern=ArrivalPattern.CONSTANT, request_rate=0.0
+        )
 
 
 def test_request_rate_validates_negative_rate() -> None:
-    cfg = IntervalGeneratorConfig(
-        arrival_pattern=ArrivalPattern.CONSTANT, request_rate=-1.0
-    )
-    from aiperf.timing.intervals import ConstantIntervalGenerator
+    """Negative rate must be rejected by ``IntervalGeneratorConfig`` (``gt=0``)."""
+    from pydantic import ValidationError
 
-    with pytest.raises(ValueError, match="must be set and greater than 0"):
-        ConstantIntervalGenerator(cfg)
+    with pytest.raises(ValidationError, match="greater than 0"):
+        IntervalGeneratorConfig(
+            arrival_pattern=ArrivalPattern.CONSTANT, request_rate=-1.0
+        )
 
 
 def test_request_rate_set_rate_rejects_zero() -> None:

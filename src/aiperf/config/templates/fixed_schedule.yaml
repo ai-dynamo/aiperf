@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Fixed Schedule (Hand-Authored Timestamps)
+# description: Send requests at exact millisecond timestamps from a JSONL file for deterministic temporal testing.
+# category: Load Testing
+# tags: fixed_schedule, mooncake, regression, deterministic, timing
+# difficulty: advanced
+# features: fixed_schedule, mooncake_trace, autoOffset, startOffset/endOffset windowing
+#
+# Fixed Schedule Benchmark
+# ========================
+# Unlike rate-based modes (poisson/gamma/concurrency), fixed_schedule fires
+# each request at its own recorded timestamp. Use this for:
+#   - Regression tests: same exact request sequence every run
+#   - Bursty traffic patterns that don't fit a smooth rate
+#   - SLA verification under known peak periods
+#   - Reproducing a single bad minute from production
+#
+# This template uses a hand-authored mooncake-trace JSONL. For replay of
+# real production captures, see `trace_replay.yaml` (which adds sampling
+# and synthesis transforms).
+#
+# Schedule file format (one JSON object per line, .jsonl):
+#   {"timestamp": 0,    "input_length": 100, "output_length": 200, "hash_ids": [3001]}
+#   {"timestamp": 500,  "input_length": 200, "output_length": 400, "hash_ids": [3002]}
+#   {"timestamp": 1500, "input_length": 800, "output_length": 256, "hash_ids": [3003, 3050]}
+#
+# Fields:
+#   timestamp     : ms from schedule start when the request fires
+#   input_length  : tokens of synthetic prompt (or use input_text for exact text)
+#   output_length : max tokens in response (optional)
+#   hash_ids      : block IDs for prefix-cache simulation (optional, 512-token blocks)
+#
+# Run: aiperf profile --config fixed_schedule.yaml
+#
+# Sample data: a minimal `data/precise_schedule.jsonl` is bundled alongside
+# this template (`src/aiperf/config/templates/data/`). Copy or symlink it
+# into your run directory, or replace the `path:` below with an absolute
+# path to your own mooncake-trace JSONL.
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 300.0
+
+  dataset:
+    type: file
+    path: ./data/precise_schedule.jsonl
+    format: mooncake_trace            # Required for fixed_schedule timestamp parsing
+
+  phases:
+    type: fixed_schedule
+    autoOffset: true                  # Normalize so the first timestamp is t=0
+    concurrency: 100                  # Safety ceiling — schedule shape determines actual concurrency
+    # gracePeriod: not applicable — fixed_schedule's stop condition is the schedule itself, not a duration.
+    # Optional time-window selection (uncomment to replay only part of the schedule):
+    # startOffset: 2000               # Skip everything with timestamp < 2000ms
+    # endOffset: 8000                 # Skip everything with timestamp > 8000ms
+
+  artifacts:
+    dir: ./artifacts/fixed_schedule
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 10s                # Fine windows reveal how latency tracks the schedule's burst pattern

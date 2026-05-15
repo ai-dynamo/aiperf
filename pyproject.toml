@@ -36,6 +36,7 @@ dependencies = [
   "msgspec>=0.19.0,<1.0.0",
   "numpy>=1.26.4,<3",
   "nvidia-ml-py", # Note: No version specified to be most compatible with CUDA version
+  "optuna>=3.6",
   "orjson~=3.11.7",
   "pandas~=2.3.3",
   "pillow~=12.2.0",
@@ -84,10 +85,11 @@ otel = [
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
 dev = [
-  "aiperf[mlflow,otel]",
+  "aiperf[botorch,mlflow,otel]",
   "black>=25.1.0",
   "httpx>=0.27.0",
   "hypothesis>=6.0.0",
+  "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
@@ -96,6 +98,15 @@ dev = [
   "pytest-xdist>=3.8.0",
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
+]
+botorch = [
+  "optuna-integration>=3.6",
+  "botorch>=0.10",
+  "gpytorch>=1.11",
+  "torch>=2.0",
+]
+optuna = [
+  "aiperf[botorch]",
 ]
 accuracy = [
     # latex2sympy2-extended is co-resolved with lighteval (which pins
@@ -179,7 +190,7 @@ markers = [
     "performance: marks tests as performance tests (deselected by default)",
     "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
     "stress: marks tests as stress tests that generate high load (deselected by default)",
-    "slow: marks tests as slow (>= 3s, run by default but can be skipped with -m 'not slow')",
+    "slow: marks tests as slow (>= 3s, deselected by default; opt in with -m slow)",
     "component_integration: marks tests as component integration tests",
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
@@ -189,10 +200,10 @@ markers = [
 console_output_style = "progress"
 verbosity_assertions = 2
 # Show extra test summary info
-# Deselect performance, ffmpeg, and stress, and statistical, and component_integration, and integration, and server_unit tests by default
-# To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
+# Deselect performance, ffmpeg, stress, statistical, component_integration, integration, server_unit, fern, and slow tests by default
+# To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical, pytest -m slow
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
@@ -202,5 +213,5 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
-ignore-words-list = "timeslice,timeslices,optiona"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency"

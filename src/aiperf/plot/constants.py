@@ -10,12 +10,31 @@ configuration constants used throughout the visualization functionality.
 
 from pathlib import Path
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.config.artifacts import OutputDefaults
 
 # File patterns for AIPerf profiling output files. These reference the canonical definitions from OutputDefaults
 PROFILE_EXPORT_JSONL = OutputDefaults.PROFILE_EXPORT_JSONL_FILE.name
 PROFILE_EXPORT_AIPERF_JSON = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE.name
+PROFILE_EXPORT_AIPERF_AGGREGATE_JSON = "profile_export_aiperf_aggregate.json"
+"""Per-cell confidence-aggregate JSON written by the sweep orchestrator at
+``<base>/aggregate/<cell>/`` (REPEATED) or ``<base>/<cell>/aggregate/``
+(INDEPENDENT). Distinct from the cross-cell ``profile_export_aiperf_sweep.json``,
+which lives under ``sweep_aggregate/`` and is consumed by ``aiperf plot pareto``."""
+
+TRIAL_RUNS_SUBDIR = "profile_runs"
+"""Name of the per-trial subdirectory the sweep orchestrator emits at every
+multi-trial layout (``<base>/profile_runs/`` no-sweep, ``<base>/profile_runs/trial_NNNN/<cell>/``
+REPEATED, ``<base>/<cell>/profile_runs/trial_NNNN/`` INDEPENDENT,
+``<base>/search_iter_NNNN/profile_runs/run_NNNN/`` adaptive).
+
+Recursive run discovery skips into this subdir ONLY when the parent dir has
+a sibling ``aggregate/`` directory — i.e. when a per-cell aggregate is
+available as the canonical alternative. Without that condition,
+``profile_runs/`` is often the only place benchmark data lives (adaptive BO,
+recipes with multi-run convergence per cell, non-sweep multi-trial runs).
+Pass the ``profile_runs`` path explicitly to opt back in to the per-trial
+view when an aggregate sibling exists."""
 PROFILE_EXPORT_TIMESLICES_CSV = (
     OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE.name
 )

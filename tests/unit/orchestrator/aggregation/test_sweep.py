@@ -1,15 +1,30 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for sweep aggregation components."""
+"""Tests for sweep aggregation components.
+
+Covers ``SweepAnalyzer`` / ``identify_pareto_optimal`` and friends, plus
+focused cases that name the realistic throughput-vs-TTFT shape and the
+multi-axis sweep schema.
+"""
 
 import pytest
 
 from aiperf.orchestrator.aggregation import (
     DEFAULT_PARETO_OBJECTIVES,
-    Objective,
     OptimizationDirection,
     ParameterCombination,
+    ParetoObjective,
+    SweepAnalyzer,
+    identify_pareto_optimal,
 )
+
+
+def _stat(mean: float, p99: float | None = None) -> dict[str, float]:
+    """Build a metric stats dict with realistic keys."""
+    out: dict[str, float] = {"mean": mean}
+    if p99 is not None:
+        out["p99"] = p99
+    return out
 
 
 class TestOptimizationDirection:
@@ -31,58 +46,67 @@ class TestOptimizationDirection:
             OptimizationDirection.MINIMIZE,
         }
 
+    def test_case_insensitive_lookup(self):
+        """HEAD models OptimizationDirection as CaseInsensitiveStrEnum."""
+        # CaseInsensitiveStrEnum allows lookup by any-case string.
+        assert OptimizationDirection("MAXIMIZE") == OptimizationDirection.MAXIMIZE
+        assert OptimizationDirection("Minimize") == OptimizationDirection.MINIMIZE
+        assert OptimizationDirection("maximize") == OptimizationDirection.MAXIMIZE
+
 
 class TestObjective:
-    """Tests for Objective named tuple."""
+    """Tests for ParetoObjective named tuple."""
 
     def test_create_maximize_objective(self):
         """Test creating an objective with MAXIMIZE direction."""
-        obj = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        obj = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         assert obj.metric_key == "request_throughput_avg"
         assert obj.direction == OptimizationDirection.MAXIMIZE
 
     def test_create_minimize_objective(self):
         """Test creating an objective with MINIMIZE direction."""
-        obj = Objective("time_to_first_token_p99", OptimizationDirection.MINIMIZE)
+        obj = ParetoObjective("time_to_first_token_p99", OptimizationDirection.MINIMIZE)
         assert obj.metric_key == "time_to_first_token_p99"
         assert obj.direction == OptimizationDirection.MINIMIZE
 
     def test_objective_is_immutable(self):
-        """Test that Objective is immutable (NamedTuple property)."""
-        obj = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        """Test that ParetoObjective is immutable (NamedTuple property)."""
+        obj = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         with pytest.raises(AttributeError):
             obj.metric_key = "new_metric"
 
     def test_objective_equality(self):
         """Test that objectives with same values are equal."""
-        obj1 = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
-        obj2 = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        obj1 = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        obj2 = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         assert obj1 == obj2
 
     def test_objective_inequality(self):
         """Test that objectives with different values are not equal."""
-        obj1 = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
-        obj2 = Objective("time_to_first_token_p99", OptimizationDirection.MINIMIZE)
+        obj1 = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        obj2 = ParetoObjective(
+            "time_to_first_token_p99", OptimizationDirection.MINIMIZE
+        )
         assert obj1 != obj2
 
     def test_objective_tuple_unpacking(self):
-        """Test that Objective can be unpacked like a tuple."""
-        obj = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        """Test that ParetoObjective can be unpacked like a tuple."""
+        obj = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         metric_key, direction = obj
         assert metric_key == "request_throughput_avg"
         assert direction == OptimizationDirection.MAXIMIZE
 
     def test_objective_indexing(self):
-        """Test that Objective supports indexing."""
-        obj = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        """Test that ParetoObjective supports indexing."""
+        obj = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         assert obj[0] == "request_throughput_avg"
         assert obj[1] == OptimizationDirection.MAXIMIZE
 
     def test_objective_repr(self):
-        """Test that Objective has a useful repr."""
-        obj = Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+        """Test that ParetoObjective has a useful repr."""
+        obj = ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         repr_str = repr(obj)
-        assert "Objective" in repr_str
+        assert "ParetoObjective" in repr_str
         assert "request_throughput_avg" in repr_str
         assert "MAXIMIZE" in repr_str
 
@@ -99,9 +123,9 @@ class TestDefaultParetoObjectives:
         assert len(DEFAULT_PARETO_OBJECTIVES) == 2
 
     def test_default_objectives_contains_objective_instances(self):
-        """Test that all items in DEFAULT_PARETO_OBJECTIVES are Objective instances."""
+        """Test that all items in DEFAULT_PARETO_OBJECTIVES are ParetoObjective instances."""
         for obj in DEFAULT_PARETO_OBJECTIVES:
-            assert isinstance(obj, Objective)
+            assert isinstance(obj, ParetoObjective)
 
     def test_default_objectives_first_is_throughput_maximize(self):
         """Test that first objective is to maximize request_throughput_avg."""
@@ -120,6 +144,16 @@ class TestDefaultParetoObjectives:
         obj = DEFAULT_PARETO_OBJECTIVES[0]
         with pytest.raises(AttributeError):
             obj.metric_key = "new_metric"
+
+    def test_default_pareto_objectives_are_throughput_max_then_ttft_min(self):
+        """Compact form of the two element-by-element checks above."""
+        assert len(DEFAULT_PARETO_OBJECTIVES) == 2
+        assert DEFAULT_PARETO_OBJECTIVES[0] == ParetoObjective(
+            "request_throughput_avg", OptimizationDirection.MAXIMIZE
+        )
+        assert DEFAULT_PARETO_OBJECTIVES[1] == ParetoObjective(
+            "time_to_first_token_p99", OptimizationDirection.MINIMIZE
+        )
 
 
 class TestParameterCombination:
@@ -141,6 +175,14 @@ class TestParameterCombination:
         result = combo.to_dict()
         assert result == {"concurrency": 10, "request_rate": 20}
         # Verify it's a copy
+        result["concurrency"] = 999
+        assert combo.parameters["concurrency"] == 10
+
+    def test_parameter_combination_to_dict_round_trip_returns_independent_copy(self):
+        """HEAD-style round-trip: mutating to_dict() result doesn't poison source."""
+        combo = ParameterCombination({"concurrency": 10, "request_rate": 20})
+        result = combo.to_dict()
+        assert result == {"concurrency": 10, "request_rate": 20}
         result["concurrency"] = 999
         assert combo.parameters["concurrency"] == 10
 
@@ -180,8 +222,6 @@ class TestIdentifyParetoOptimal:
 
     def test_single_configuration_is_pareto_optimal(self):
         """Test that a single configuration is always Pareto optimal."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {
@@ -195,8 +235,6 @@ class TestIdentifyParetoOptimal:
 
     def test_all_configurations_pareto_optimal_when_none_dominates(self):
         """Test that all configurations are Pareto optimal when none dominates another."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Config 1: high throughput, high latency
         # Config 2: low throughput, low latency
         # Neither dominates the other
@@ -218,8 +256,6 @@ class TestIdentifyParetoOptimal:
 
     def test_dominated_configuration_excluded(self):
         """Test that a dominated configuration is excluded from Pareto optimal set."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Config 1: 100 throughput, 50ms latency
         # Config 2: 150 throughput, 40ms latency (dominates config 1)
         # Config 3: 80 throughput, 60ms latency (dominated by config 1)
@@ -246,8 +282,6 @@ class TestIdentifyParetoOptimal:
 
     def test_pareto_frontier_with_tradeoffs(self):
         """Test Pareto frontier with multiple optimal points showing tradeoffs."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Classic Pareto frontier: as throughput increases, latency increases
         # All three are Pareto optimal (different tradeoff points)
         combo1 = ParameterCombination({"concurrency": 10})
@@ -273,8 +307,6 @@ class TestIdentifyParetoOptimal:
 
     def test_uses_default_objectives_when_none_provided(self):
         """Test that function uses DEFAULT_PARETO_OBJECTIVES when objectives=None."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {
@@ -289,10 +321,8 @@ class TestIdentifyParetoOptimal:
 
     def test_custom_objectives_single_maximize(self):
         """Test with custom objective that only maximizes one metric."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         objectives = [
-            Objective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
+            ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE)
         ]
 
         combo1 = ParameterCombination({"concurrency": 10})
@@ -309,10 +339,8 @@ class TestIdentifyParetoOptimal:
 
     def test_custom_objectives_single_minimize(self):
         """Test with custom objective that only minimizes one metric."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         objectives = [
-            Objective("time_to_first_token_p99", OptimizationDirection.MINIMIZE)
+            ParetoObjective("time_to_first_token_p99", OptimizationDirection.MINIMIZE)
         ]
 
         combo1 = ParameterCombination({"concurrency": 10})
@@ -329,12 +357,10 @@ class TestIdentifyParetoOptimal:
 
     def test_custom_objectives_three_dimensions(self):
         """Test with three objectives (N-dimensional Pareto analysis)."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         objectives = [
-            Objective("throughput", OptimizationDirection.MAXIMIZE),
-            Objective("latency", OptimizationDirection.MINIMIZE),
-            Objective("cost", OptimizationDirection.MINIMIZE),
+            ParetoObjective("throughput", OptimizationDirection.MAXIMIZE),
+            ParetoObjective("latency", OptimizationDirection.MINIMIZE),
+            ParetoObjective("cost", OptimizationDirection.MINIMIZE),
         ]
 
         # Config 1: high throughput, high latency, low cost
@@ -365,10 +391,45 @@ class TestIdentifyParetoOptimal:
         # Config 3 is dominated by both 1 and 2
         assert set(result) == {combo1, combo2}
 
+    def test_identify_pareto_optimal_3d_drops_dominated_combo(self):
+        """3-D objective space using realistic flattened metric keys.
+
+        Throughput (max), TTFT (min), TTFO (min). c_mid is dominated by
+        c_best on all three axes.
+        """
+        c_low = ParameterCombination({"concurrency": 5})
+        c_mid = ParameterCombination({"concurrency": 10})
+        c_best = ParameterCombination({"concurrency": 20})
+        stats = {
+            c_low: {
+                "request_throughput_avg": _stat(80.0),
+                "time_to_first_token_p99": _stat(40.0),
+                "time_to_first_output_p99": _stat(45.0),
+            },
+            c_mid: {
+                "request_throughput_avg": _stat(120.0),
+                "time_to_first_token_p99": _stat(60.0),
+                "time_to_first_output_p99": _stat(70.0),
+            },
+            c_best: {
+                "request_throughput_avg": _stat(200.0),
+                "time_to_first_token_p99": _stat(50.0),
+                "time_to_first_output_p99": _stat(55.0),
+            },
+        }
+        objectives = [
+            ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE),
+            ParetoObjective("time_to_first_token_p99", OptimizationDirection.MINIMIZE),
+            ParetoObjective("time_to_first_output_p99", OptimizationDirection.MINIMIZE),
+        ]
+
+        pareto = identify_pareto_optimal(stats, objectives)
+
+        assert c_mid not in pareto
+        assert c_low in pareto and c_best in pareto
+
     def test_equal_values_not_dominated(self):
         """Test that configurations with equal objective values are not dominated."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Config 1 and 2 have identical metrics
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
@@ -389,8 +450,6 @@ class TestIdentifyParetoOptimal:
 
     def test_strictly_better_on_all_objectives_required(self):
         """Test that domination requires being better or equal on all, strictly better on at least one."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Config 2 is better on throughput and equal on latency
         # Config 2 DOES dominate config 1 (better or equal on all, strictly better on one)
         combo1 = ParameterCombination({"concurrency": 10})
@@ -412,8 +471,6 @@ class TestIdentifyParetoOptimal:
 
     def test_result_is_sorted(self):
         """Test that result is sorted by parameter combination."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo1 = ParameterCombination({"concurrency": 30})
         combo2 = ParameterCombination({"concurrency": 10})
         combo3 = ParameterCombination({"concurrency": 20})
@@ -440,15 +497,11 @@ class TestIdentifyParetoOptimal:
 
     def test_empty_stats_returns_empty_list(self):
         """Test that empty per_combination_stats returns empty list."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         result = identify_pareto_optimal({})
         assert result == []
 
     def test_complex_pareto_frontier(self):
         """Test complex scenario with multiple dominated and non-dominated configs."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -483,8 +536,6 @@ class TestIdentifyParetoOptimal:
 
     def test_true_pareto_frontier_with_multiple_optimal(self):
         """Test a true Pareto frontier where multiple configs are optimal."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Create a realistic Pareto frontier where there are tradeoffs
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
@@ -520,8 +571,6 @@ class TestIdentifyParetoOptimal:
 
     def test_missing_metric_key_raises_error(self):
         """Test that missing metric key in objectives raises KeyError."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -529,16 +578,16 @@ class TestIdentifyParetoOptimal:
             combo2: {"request_throughput_avg": {"mean": 180.0}},
         }
 
-        # Objective references metric that doesn't exist
-        objectives = [Objective("nonexistent_metric", OptimizationDirection.MAXIMIZE)]
+        # ParetoObjective references metric that doesn't exist
+        objectives = [
+            ParetoObjective("nonexistent_metric", OptimizationDirection.MAXIMIZE)
+        ]
 
         with pytest.raises(KeyError):
             identify_pareto_optimal(per_combination_stats, objectives)
 
     def test_very_close_floating_point_values(self):
         """Test Pareto identification with very close floating point values."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Values differ by tiny amounts (floating point precision edge case)
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
@@ -559,8 +608,6 @@ class TestIdentifyParetoOptimal:
 
     def test_large_number_of_configurations(self):
         """Test Pareto identification with many configurations (performance test)."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Create 100 configurations where throughput increases and latency decreases
         # This means higher configs dominate lower ones
         per_combination_stats = {}
@@ -581,8 +628,6 @@ class TestIdentifyParetoOptimal:
 
     def test_all_dominated_by_one_configuration(self):
         """Test when one configuration dominates all others."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -617,13 +662,11 @@ class TestIdentifyParetoOptimal:
 
     def test_four_dimensional_pareto_analysis(self):
         """Test Pareto analysis with 4 objectives (high-dimensional)."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         objectives = [
-            Objective("throughput", OptimizationDirection.MAXIMIZE),
-            Objective("latency", OptimizationDirection.MINIMIZE),
-            Objective("cost", OptimizationDirection.MINIMIZE),
-            Objective("memory", OptimizationDirection.MINIMIZE),
+            ParetoObjective("throughput", OptimizationDirection.MAXIMIZE),
+            ParetoObjective("latency", OptimizationDirection.MINIMIZE),
+            ParetoObjective("cost", OptimizationDirection.MINIMIZE),
+            ParetoObjective("memory", OptimizationDirection.MINIMIZE),
         ]
 
         combo1 = ParameterCombination({"concurrency": 10})
@@ -656,11 +699,11 @@ class TestIdentifyParetoOptimal:
 
     def test_negative_metric_values_in_pareto_analysis(self):
         """Test Pareto analysis works correctly with negative metric values."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         objectives = [
-            Objective("profit", OptimizationDirection.MAXIMIZE),  # Can be negative
-            Objective("cost", OptimizationDirection.MINIMIZE),  # Can be negative
+            ParetoObjective(
+                "profit", OptimizationDirection.MAXIMIZE
+            ),  # Can be negative
+            ParetoObjective("cost", OptimizationDirection.MINIMIZE),  # Can be negative
         ]
 
         combo1 = ParameterCombination({"concurrency": 10})
@@ -687,8 +730,6 @@ class TestIdentifyParetoOptimal:
 
     def test_zero_values_in_metrics(self):
         """Test Pareto analysis with zero values in metrics."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -714,8 +755,6 @@ class TestIdentifyParetoOptimal:
 
     def test_mixed_domination_patterns(self):
         """Test complex domination patterns with multiple Pareto optimal points."""
-        from aiperf.orchestrator.aggregation import identify_pareto_optimal
-
         # Create a scenario with multiple clusters of Pareto optimal points
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
@@ -754,14 +793,37 @@ class TestIdentifyParetoOptimal:
         # Configs 1, 3, 5, 6 form the Pareto frontier
         assert set(result) == {combo1, combo3, combo5, combo6}
 
+    def test_identify_pareto_optimal_2d_drops_dominated_combo(self):
+        """HEAD-style 2-D realistic frontier: c20 dominates c30."""
+        c10 = ParameterCombination({"concurrency": 10})
+        c20 = ParameterCombination({"concurrency": 20})
+        c30 = ParameterCombination({"concurrency": 30})
+        stats = {
+            c10: {
+                "request_throughput_avg": _stat(100.0),
+                "time_to_first_token_p99": _stat(50.0),
+            },
+            c20: {
+                "request_throughput_avg": _stat(180.0),
+                "time_to_first_token_p99": _stat(75.0),
+            },
+            c30: {
+                "request_throughput_avg": _stat(170.0),
+                "time_to_first_token_p99": _stat(90.0),
+            },
+        }
+
+        pareto = identify_pareto_optimal(stats)
+
+        assert {c.parameters["concurrency"] for c in pareto} == {10, 20}
+        assert c30 not in pareto
+
 
 class TestSweepAnalyzer:
     """Tests for SweepAnalyzer class."""
 
     def test_compute_returns_dict_with_required_keys(self):
         """Test that compute() returns a dict with all required keys."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -786,8 +848,6 @@ class TestSweepAnalyzer:
 
     def test_metadata_section_structure(self):
         """Test that metadata section has correct structure."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -806,8 +866,6 @@ class TestSweepAnalyzer:
 
     def test_per_combination_metrics_structure(self):
         """Test that per_combination_metrics has correct structure."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -825,8 +883,6 @@ class TestSweepAnalyzer:
 
     def test_per_combination_metrics_preserves_stats_structure(self):
         """Test that per_combination_metrics preserves the original stats structure."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {
@@ -847,8 +903,6 @@ class TestSweepAnalyzer:
 
     def test_pareto_optimal_uses_identify_pareto_optimal_function(self):
         """Test that pareto_optimal section uses identify_pareto_optimal()."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         # Config 1: high throughput, high latency
         # Config 2: low throughput, low latency
         # Both should be Pareto optimal
@@ -874,8 +928,6 @@ class TestSweepAnalyzer:
 
     def test_single_value_sweep(self):
         """Test compute() with single sweep value."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {
@@ -893,8 +945,6 @@ class TestSweepAnalyzer:
 
     def test_empty_sweep_values(self):
         """Test compute() with empty sweep values."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         result = SweepAnalyzer.compute({}, [])
 
         assert result["metadata"]["num_combinations"] == 1  # Empty product is 1
@@ -903,8 +953,6 @@ class TestSweepAnalyzer:
 
     def test_best_configurations_is_dict(self):
         """Test that best_configurations is a dict."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -919,8 +967,6 @@ class TestSweepAnalyzer:
 
     def test_compute_is_static_method(self):
         """Test that compute() is a static method (can be called without instance)."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {"request_throughput_avg": {"mean": 100.0}},
@@ -933,8 +979,6 @@ class TestSweepAnalyzer:
 
     def test_multiple_sweep_parameters(self):
         """Test with multiple sweep parameters."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10, "request_rate": 100})
         combo2 = ParameterCombination({"concurrency": 10, "request_rate": 200})
         combo3 = ParameterCombination({"concurrency": 20, "request_rate": 100})
@@ -957,8 +1001,6 @@ class TestSweepAnalyzer:
 
     def test_compute_with_complex_stats_structure(self):
         """Test compute() preserves complex nested stats structure."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {
@@ -994,14 +1036,66 @@ class TestSweepAnalyzer:
         assert metrics["request_throughput_avg"]["ci_high"] == 106.7
         assert metrics["request_throughput_avg"]["unit"] == "requests/sec"
 
+    def test_sweep_analyzer_compute_1d_concurrency_sweep_returns_full_schema(self):
+        """HEAD-style: 1-D sweep over realistic throughput-vs-TTFT shape."""
+        c10 = ParameterCombination({"concurrency": 10})
+        c20 = ParameterCombination({"concurrency": 20})
+        c30 = ParameterCombination({"concurrency": 30})
+        stats = {
+            c10: {
+                "request_throughput_avg": _stat(100.0),
+                "time_to_first_token_p99": _stat(50.0),
+            },
+            c20: {
+                "request_throughput_avg": _stat(180.0),
+                "time_to_first_token_p99": _stat(80.0),
+            },
+            c30: {
+                "request_throughput_avg": _stat(170.0),
+                "time_to_first_token_p99": _stat(95.0),
+            },
+        }
+        sweep_parameters = [{"name": "concurrency", "values": [10, 20, 30]}]
+
+        result = SweepAnalyzer.compute(stats, sweep_parameters)
+
+        assert result["metadata"]["num_combinations"] == 3
+        assert result["metadata"]["sweep_parameters"] == sweep_parameters
+
+        per_combo = result["per_combination_metrics"]
+        assert len(per_combo) == 3
+        assert [entry["parameters"]["concurrency"] for entry in per_combo] == [
+            10,
+            20,
+            30,
+        ]
+
+        best = result["best_configurations"]
+        assert best["best_throughput"]["parameters"] == {"concurrency": 20}
+        assert best["best_throughput"]["metric"] == 180.0
+        assert best["best_latency_p99"]["parameters"] == {"concurrency": 10}
+
+        pareto = result["pareto_optimal"]
+        assert {tuple(p.items()) for p in pareto} == {
+            (("concurrency", 10),),
+            (("concurrency", 20),),
+        }
+
+    def test_sweep_analyzer_compute_empty_stats_returns_empty_blocks(self):
+        """HEAD-style: empty per-combination stats with metadata still computed."""
+        result = SweepAnalyzer.compute({}, [{"name": "concurrency", "values": [10]}])
+
+        assert result["metadata"]["num_combinations"] == 1
+        assert result["per_combination_metrics"] == []
+        assert result["best_configurations"] == {}
+        assert result["pareto_optimal"] == []
+
 
 class TestBestConfigurations:
     """Tests for best_configurations section in SweepAnalyzer.compute()."""
 
     def test_best_throughput_identified(self):
         """Test that best throughput configuration is correctly identified."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -1022,8 +1116,6 @@ class TestBestConfigurations:
 
     def test_best_latency_identified(self):
         """Test that best latency configuration is correctly identified."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -1044,8 +1136,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_with_both_metrics(self):
         """Test best configurations when both throughput and latency are present."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         combo3 = ParameterCombination({"concurrency": 30})
@@ -1081,8 +1171,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_includes_units(self):
         """Test that best configurations include unit fields."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -1107,8 +1195,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_default_units_when_missing(self):
         """Test that default units are used when not present in stats."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -1133,16 +1219,12 @@ class TestBestConfigurations:
 
     def test_best_configurations_empty_when_no_stats(self):
         """Test that best_configurations is empty dict when no stats provided."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         result = SweepAnalyzer.compute({}, [])
 
         assert result["best_configurations"] == {}
 
     def test_best_configurations_only_throughput_when_latency_missing(self):
         """Test that only best_throughput is included when latency metric is missing."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -1164,8 +1246,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_only_latency_when_throughput_missing(self):
         """Test that only best_latency_p99 is included when throughput metric is missing."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -1187,8 +1267,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_handles_partial_metric_presence(self):
         """Test that best configurations handles case where metric is missing in some values."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -1213,8 +1291,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_single_value(self):
         """Test best configurations with single sweep value."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo = ParameterCombination({"concurrency": 10})
         per_combination_stats = {
             combo: {
@@ -1236,8 +1312,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_structure(self):
         """Test that best configurations have correct structure with parameters, metric, and unit."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
         per_combination_stats = {
@@ -1274,8 +1348,6 @@ class TestBestConfigurations:
 
     def test_best_configurations_realistic_scenario(self):
         """Test best configurations with realistic sweep data."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         # Realistic scenario: throughput increases with concurrency, latency also increases
         combo1 = ParameterCombination({"concurrency": 10})
         combo2 = ParameterCombination({"concurrency": 20})
@@ -1324,8 +1396,6 @@ class TestSweepAnalyzerLatencyResolution:
 
     def test_time_to_first_token_p99_recognized_for_best_latency(self):
         """time_to_first_token_p99 is the canonical TTFT key; sweep must recognize it."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 2})
         combo2 = ParameterCombination({"concurrency": 4})
         per_combination_stats = {
@@ -1347,8 +1417,6 @@ class TestSweepAnalyzerLatencyResolution:
 
     def test_time_to_first_token_p99_used_for_pareto(self):
         """Pareto analysis should work with time_to_first_token_p99."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 2})
         combo2 = ParameterCombination({"concurrency": 4})
         per_combination_stats = {
@@ -1369,8 +1437,6 @@ class TestSweepAnalyzerLatencyResolution:
 
     def test_ttft_preferred_over_request_latency_when_both_present(self):
         """When both TTFT and request_latency exist, TTFT should be used."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 2})
         per_combination_stats = {
             combo1: {
@@ -1387,8 +1453,6 @@ class TestSweepAnalyzerLatencyResolution:
 
     def test_request_latency_p99_fallback_for_non_streaming(self):
         """Non-streaming endpoints without TTFT fall back to request_latency_p99."""
-        from aiperf.orchestrator.aggregation import SweepAnalyzer
-
         combo1 = ParameterCombination({"concurrency": 2})
         per_combination_stats = {
             combo1: {

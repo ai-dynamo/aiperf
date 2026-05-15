@@ -24,10 +24,13 @@ profile.json
 profile.html
 .vscode
 *.jsonl
+# Bundled template data (sample mooncake-trace files) is intentionally tracked.
+!src/aiperf/config/templates/data/*.jsonl
 !tests/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/
 coverage.json
+.cache/
 
 # Generated plugin stubs (not committed, regenerate with: make generate-plugin-enums)
 src/aiperf/plugin/enums.pyi
@@ -51,3 +54,6 @@ src/aiperf/_build_info.py
 .cursor/*
 !.cursor/rules/
 .worktrees/
+
+# Chaos/adversarial test run artifacts
+tests/scripts/.chaos_runs/
