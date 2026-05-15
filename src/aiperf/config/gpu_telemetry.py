@@ -9,10 +9,12 @@ GPU Telemetry - Live or replayed GPU metrics collection configuration.
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import ConfigDict, Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.config.base import BaseConfig
@@ -27,9 +29,10 @@ class GpuTelemetryConfig(BaseConfig):
     """
     GPU telemetry configuration for live or replayed GPU metrics collection.
 
-    Collects GPU metrics through DCGM exporter endpoints by default; the
-    collector field can switch collection to local PyNVML, and mode controls
-    summary vs. realtime dashboard display.
+    Collects GPU metrics through DCGM exporter endpoints by default. The
+    ``collector`` field can switch to a local backend (``pynvml`` for NVIDIA,
+    ``amdsmi`` for AMD ROCm); ``mode`` controls summary vs. realtime dashboard
+    display.
 
     Accepts shorthand forms:
         - String URL: "http://localhost:9400/metrics"
@@ -78,7 +81,9 @@ class GpuTelemetryConfig(BaseConfig):
         GPUTelemetryCollectorType,
         Field(
             default=GPUTelemetryCollectorType.DCGM,
-            description="GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or 'pynvml' for local PyNVML collection.",
+            description="GPU telemetry collector backend. Use 'dcgm' for DCGM "
+            "exporter endpoints or a local collector (e.g. 'pynvml' for NVIDIA, "
+            "'amdsmi' for AMD ROCm) for on-host metrics collection.",
         ),
     ]
 
@@ -112,3 +117,39 @@ class GpuTelemetryConfig(BaseConfig):
             data["urls"] = [url] if isinstance(url, str) else url
 
         return data
+
+    @model_validator(mode="after")
+    def validate_collector_compatibility(self) -> Self:
+        """Enforce local-collector invariants driven by plugin metadata.
+
+        - Local collectors (``is_local: true`` in plugin metadata) cannot be
+          paired with DCGM URLs — they collect on the local host and the two
+          modes are mutually exclusive.
+        - For local collectors, probe the declared ``import_module`` so a
+          missing native binding surfaces the plugin's ``install_hint``
+          rather than an unrelated traceback later.
+        """
+        if not self.enabled:
+            return self
+
+        from aiperf.plugin import plugins
+
+        meta = plugins.get_gpu_telemetry_collector_metadata(self.collector)
+        if not meta.is_local:
+            return self
+
+        if self.urls:
+            raise ValueError(
+                f"Cannot use {self.collector} with DCGM URLs. Use either "
+                f"'{self.collector}' for local GPU monitoring or URLs for "
+                "DCGM endpoints, not both."
+            )
+
+        module_name = meta.import_module or str(self.collector)
+        try:
+            import_module(module_name)
+        except (ImportError, OSError) as e:
+            hint = meta.install_hint or f"{module_name} package not installed."
+            raise ValueError(hint) from e
+
+        return self

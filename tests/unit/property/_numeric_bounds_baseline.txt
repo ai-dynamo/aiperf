@@ -348,6 +348,15 @@ SyntheticDataset.turn_delay: numeric field has no ge/gt/le/lt bound and is not F
 SyntheticDataset.turns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TargetedServiceMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TelemetryExportData.endpoints: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_ecc_uncorrectable: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_energy_consumption: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_gfx_activity: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_memory_used: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_mm_activity: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_power: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_temperature: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_throttle_status: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+TelemetryMetrics.amd_umc_activity: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TelemetryMetrics.decoder_utilization: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TelemetryMetrics.encoder_utilization: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TelemetryMetrics.energy_consumption: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
