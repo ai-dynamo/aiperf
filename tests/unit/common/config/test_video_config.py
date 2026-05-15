@@ -116,3 +116,35 @@ class TestVideoConfigWithAudio:
         assert config.fps == 4
         assert config.format == VideoFormat.WEBM
         assert config.codec == "libvpx-vp9"
+
+
+class TestVideoConfigValidation:
+    """Test VideoConfig disabled-state validation."""
+
+    def test_explicit_batch_size_zero_with_dims_disable(self):
+        """`batch_size=0` overrides any dimension intent without raising."""
+        config = VideoConfig(batch_size=0, width=640, height=480)
+        assert config.videos_enabled() is False
+
+    def test_explicit_batch_size_zero_disable(self):
+        """`--video-batch-size 0` is treated as explicit disable, never raises."""
+        config = VideoConfig(batch_size=0)
+        assert config.videos_enabled() is False
+
+    def test_default_valued_does_not_raise(self):
+        """Loading a config with explicit default-valued width/height must not raise."""
+        config = VideoConfig(
+            batch_size=1,
+            duration=5.0,
+            fps=4,
+            width=None,
+            height=None,
+        )
+        assert config.videos_enabled() is False
+
+    def test_config_yaml_roundtrip_does_not_raise(self):
+        """Round-tripping a fully-serialized default config must not raise."""
+        original = VideoConfig()
+        dumped = original.model_dump()
+        config = VideoConfig.model_validate(dumped)
+        assert config.videos_enabled() is False

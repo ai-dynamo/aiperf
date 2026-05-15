@@ -164,13 +164,23 @@ class ImageConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_image_options(self) -> Self:
-        """Validate the image options."""
-        image_dims_set = bool(self.width.model_fields_set) or bool(
-            self.height.model_fields_set
-        )
-        if not self.images_enabled() and image_dims_set:
+        """Validate the image options.
+
+        Flag configs where the user supplied non-default width/height parameters but did
+        not enable images. `batch_size=0` is treated as an explicit disable and always
+        allowed, and default-valued fields (e.g., from a round-tripped config file) do
+        not trip the check.
+        """
+        if self.images_enabled() or self.batch_size == 0:
+            return self
+        if (
+            self.width.mean != 0.0
+            or self.width.stddev != 0.0
+            or self.height.mean != 0.0
+            or self.height.stddev != 0.0
+        ):
             raise ValueError(
-                "Image generation is disabled but image options were provided. Please set `--image-width-mean` and `--image-height-mean` to enable image generation."
+                "Image generation is disabled but image dimension options were provided. Please set `--image-batch-size`, `--image-width-mean`, and `--image-height-mean` to enable image generation."
             )
         return self
 

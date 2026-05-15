@@ -65,13 +65,46 @@ class TestAudioEnabled:
 
 class TestAudioConfigValidation:
     def test_rejects_options_when_audio_disabled(self):
+        """Non-default length params without enabling audio raise."""
         with pytest.raises(ValidationError, match="Audio generation is disabled"):
             AudioConfig(
-                length=AudioLengthConfig(mean=0),
+                length=AudioLengthConfig(stddev=2.0),
             )
 
     def test_format_alone_does_not_require_audio_enabled(self):
         """Setting format without length is allowed (e.g., for external loaders)."""
         config = AudioConfig(format=AudioFormat.WAV)
         assert config.format == AudioFormat.WAV
+        assert config.audio_enabled() is False
+
+    def test_explicit_batch_size_zero_disable(self):
+        """`--audio-batch-size 0` is treated as explicit disable, never raises."""
+        config = AudioConfig(batch_size=0)
+        assert config.audio_enabled() is False
+
+    def test_explicit_batch_size_zero_with_length_disable(self):
+        """`batch_size=0` overrides any length intent without raising."""
+        config = AudioConfig(
+            batch_size=0,
+            length=AudioLengthConfig(mean=5.0, stddev=1.0),
+        )
+        assert config.audio_enabled() is False
+
+    def test_default_valued_length_does_not_raise(self):
+        """Loading a config dump with all default fields set must not raise."""
+        config = AudioConfig(
+            length=AudioLengthConfig(mean=0.0, stddev=0.0),
+            format=AudioFormat.WAV,
+            depths=[16],
+            sample_rates=[16.0],
+            num_channels=1,
+        )
+        assert config.audio_enabled() is False
+
+    def test_config_yaml_roundtrip_does_not_raise(self):
+        """Round-tripping a fully-serialized default config must not raise."""
+        original = AudioConfig()
+        dumped = original.model_dump()
+        # All keys are present in the dump but at default values
+        config = AudioConfig.model_validate(dumped)
         assert config.audio_enabled() is False

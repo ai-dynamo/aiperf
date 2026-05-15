@@ -80,10 +80,10 @@ class TestImagesEnabled:
 
 class TestImageConfigValidation:
     def test_rejects_options_when_images_disabled(self):
+        """Non-default width/height params without enabling images raise."""
         with pytest.raises(ValidationError, match="Image generation is disabled"):
             ImageConfig(
-                width=ImageWidthConfig(mean=0),
-                height=ImageHeightConfig(mean=0),
+                width=ImageWidthConfig(stddev=80.0),
             )
 
     def test_format_alone_does_not_require_images_enabled(self):
@@ -96,6 +96,37 @@ class TestImageConfigValidation:
         """Setting source without dimensions is allowed (e.g., for external loaders)."""
         config = ImageConfig(source=ImageSource.NOISE)
         assert config.source == ImageSource.NOISE
+        assert config.images_enabled() is False
+
+    def test_explicit_batch_size_zero_disable(self):
+        """`--image-batch-size 0` is treated as explicit disable, never raises."""
+        config = ImageConfig(batch_size=0)
+        assert config.images_enabled() is False
+
+    def test_explicit_batch_size_zero_with_dims_disable(self):
+        """`batch_size=0` overrides any dimension intent without raising."""
+        config = ImageConfig(
+            batch_size=0,
+            width=ImageWidthConfig(mean=640, stddev=80),
+            height=ImageHeightConfig(mean=480, stddev=60),
+        )
+        assert config.images_enabled() is False
+
+    def test_default_valued_dims_does_not_raise(self):
+        """Loading a config dump with all default fields set must not raise."""
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=0.0, stddev=0.0),
+            height=ImageHeightConfig(mean=0.0, stddev=0.0),
+            format=ImageFormat.PNG,
+            source=ImageSource.ASSETS,
+        )
+        assert config.images_enabled() is False
+
+    def test_config_yaml_roundtrip_does_not_raise(self):
+        """Round-tripping a fully-serialized default config must not raise."""
+        original = ImageConfig()
+        dumped = original.model_dump()
+        config = ImageConfig.model_validate(dumped)
         assert config.images_enabled() is False
 
 

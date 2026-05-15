@@ -118,13 +118,18 @@ class VideoConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_video_options(self) -> Self:
-        """Validate the video options."""
-        video_dims_set = (
-            "width" in self.model_fields_set or "height" in self.model_fields_set
-        )
-        if not self.videos_enabled() and video_dims_set:
+        """Validate the video options.
+
+        Flag configs where the user supplied width/height but did not enable videos.
+        `batch_size=0` is treated as an explicit disable and always allowed, and
+        default-valued fields (e.g., from a round-tripped config file) do not trip the
+        check because width/height default to None.
+        """
+        if self.videos_enabled() or self.batch_size == 0:
+            return self
+        if self.width is not None or self.height is not None:
             raise ValueError(
-                "Video generation is disabled but video options were provided. Please set `--video-width` and `--video-height` to enable video generation."
+                "Video generation is disabled but video dimension options were provided. Please set `--video-batch-size`, `--video-width`, and `--video-height` to enable video generation."
             )
         return self
 

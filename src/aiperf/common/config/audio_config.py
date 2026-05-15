@@ -152,11 +152,18 @@ class AudioConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_audio_options(self) -> Self:
-        """Validate the audio options."""
-        audio_dims_set = bool(self.length.model_fields_set)
-        if not self.audio_enabled() and audio_dims_set:
+        """Validate the audio options.
+
+        Flag configs where the user supplied non-default length parameters but did not
+        enable audio. `batch_size=0` is treated as an explicit disable and always allowed,
+        and default-valued fields (e.g., from a round-tripped config file) do not trip
+        the check.
+        """
+        if self.audio_enabled() or self.batch_size == 0:
+            return self
+        if self.length.mean != 0.0 or self.length.stddev != 0.0:
             raise ValueError(
-                "Audio generation is disabled but audio options were provided. Please set `--audio-batch-size` and `--audio-length-mean` to enable audio generation."
+                "Audio generation is disabled but audio length options were provided. Please set `--audio-batch-size` and `--audio-length-mean` to enable audio generation."
             )
         return self
 
