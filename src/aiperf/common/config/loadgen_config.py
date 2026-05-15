@@ -186,6 +186,27 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = LoadGeneratorDefaults.BENCHMARK_GRACE_PERIOD
 
+    failed_request_threshold: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Abort the run early when (failed_records / total_records) exceeds this "
+            "ratio. Default None disables the check. Only PROFILING-phase records "
+            "count toward the ratio. A grace floor of max(concurrency, 10) records "
+            "must accumulate before the check is armed, so a single early failure "
+            "cannot kill the run. When the threshold is exceeded a "
+            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "normal cancel path, partial results are still aggregated, and the run "
+            "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
+            "in record_processor_service so the rate measures real failures only.",
+        ),
+        CLIParameter(
+            name=("--failed-request-threshold",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     concurrency: Annotated[
         Any,  # CLI accepts string, validator converts to Union[int, list[int], None]
         Field(

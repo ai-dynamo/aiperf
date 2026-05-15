@@ -763,6 +763,11 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
+#### `--failed-request-threshold` `<float>`
+
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
 #### `--concurrency` `<str>`
 
 Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.
