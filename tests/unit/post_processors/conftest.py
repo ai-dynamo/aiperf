@@ -7,7 +7,7 @@ import types
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 from unittest.mock import Mock
 
 import pytest
@@ -61,6 +61,9 @@ from tests.unit.conftest import (
     DEFAULT_OUTPUT_TOKENS,
     DEFAULT_START_TIME_NS,
 )
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig
 
 T = TypeVar("T", bound=AIPerfLifecycleMixin)
 
@@ -309,25 +312,53 @@ async def raw_record_processor(service_id: str, run):
 
 
 @pytest.fixture
-def mock_user_config() -> CLIConfig:
-    return CLIConfig(
-        model_names=["test-model"],
-        endpoint_type=EndpointType.COMPLETIONS,
-        streaming=False,
+def mock_user_config() -> "BenchmarkConfig":
+    """Native v2 ``BenchmarkConfig`` for post-processor tests.
+
+    Built directly (no v1 CLIConfig round-trip) with the minimal required
+    sections, matching the defaults the v1 fixture used to produce.
+    """
+    from aiperf.config import BenchmarkConfig
+
+    return BenchmarkConfig.model_validate(
+        {
+            "models": ["test-model"],
+            "endpoint": {
+                "type": EndpointType.COMPLETIONS,
+                "urls": ["http://localhost:8000/v1"],
+                "streaming": False,
+            },
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                }
+            ],
+        }
     )
 
 
 @pytest.fixture
-def mock_run(mock_user_config: CLIConfig):
-    """v2 BenchmarkRun built from the mock_user_config fixture.
+def mock_run(mock_user_config):
+    """v2 ``BenchmarkRun`` wrapping ``mock_user_config`` (native BenchmarkConfig).
 
     Tests should mutate ``mock_run.cfg.endpoint`` / ``mock_run.cfg.slos``
-    instead of ``mock_user_config`` because the v2 resolver flattens config
-    state at construction time.
+    directly — the cfg is the native object the runtime uses.
     """
-    from tests.unit.conftest import make_run_from_v1
+    import uuid
 
-    return make_run_from_v1(mock_user_config)
+    from aiperf.config import BenchmarkRun
+
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=mock_user_config,
+        artifact_dir=mock_user_config.artifacts.dir,
+        random_seed=None,
+        variables={},
+    )
 
 
 @pytest.fixture
@@ -344,7 +375,11 @@ def user_config_raw(tmp_artifact_dir: Path) -> CLIConfig:
 
 @pytest.fixture
 def run_raw(user_config_raw: CLIConfig):
-    """v2 BenchmarkRun built from the user_config_raw fixture."""
+    """v2 BenchmarkRun built from the user_config_raw fixture.
+
+    TODO: Replace v1 round-trip with direct BenchmarkConfig construction once
+    the raw-record export-level wiring is straightforward to set in v2.
+    """
     from tests.unit.conftest import make_run_from_v1
 
     return make_run_from_v1(user_config_raw)

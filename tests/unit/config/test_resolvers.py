@@ -11,8 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.config import BenchmarkConfig
-from aiperf.config.artifacts import GpuTelemetryConfig
-from aiperf.config.models import TokenizerConfig
+from aiperf.config.gpu_telemetry import GpuTelemetryConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.config.resolution.resolvers import (
     ArtifactDirResolver,
@@ -25,6 +24,7 @@ from aiperf.config.resolution.resolvers import (
     TokenizerResolver,
     build_default_resolver_chain,
 )
+from aiperf.config.tokenizer import TokenizerConfig
 
 # ---------------------------------------------------------------------------
 # Fixtures

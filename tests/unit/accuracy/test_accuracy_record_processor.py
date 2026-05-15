@@ -10,26 +10,26 @@ from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
 from aiperf.accuracy.models import GradingResult
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models.dataset_models import ConversationMetadata, DatasetMetadata
-from aiperf.config.flags import CLIConfig
+from aiperf.config import BenchmarkRun
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
     DatasetSamplingStrategy,
     EndpointType,
 )
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_benchmark_run
 from tests.unit.post_processors.conftest import create_metric_metadata
 
 
-def _make_user_config() -> CLIConfig:
-    return CLIConfig(
+def _make_run() -> BenchmarkRun:
+    return make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.COMPLETIONS,
         streaming=False,
-        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
+        accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
     )
 
 
-def _make_processor(monkeypatch, cli_config: CLIConfig) -> AccuracyRecordProcessor:
+def _make_processor(monkeypatch) -> AccuracyRecordProcessor:
     mock_grader_cls = MagicMock()
     mock_grader_cls.return_value = MagicMock()
 
@@ -42,11 +42,11 @@ def _make_processor(monkeypatch, cli_config: CLIConfig) -> AccuracyRecordProcess
         lambda *_args, **_kwargs: {"default_grader": "multiple_choice"},
     )
 
-    return AccuracyRecordProcessor(run=make_run_from_v1(cli_config), service_id="test")
+    return AccuracyRecordProcessor(run=_make_run(), service_id="test")
 
 
-def _make_results_processor(cli_config: CLIConfig) -> AccuracyResultsProcessor:
-    return AccuracyResultsProcessor(run=make_run_from_v1(cli_config))
+def _make_results_processor() -> AccuracyResultsProcessor:
+    return AccuracyResultsProcessor(run=_make_run())
 
 
 def _make_dataset_metadata(
@@ -78,7 +78,7 @@ def _make_record_data(
 
 class TestAccuracyRecordProcessorOnDatasetConfigured:
     def test_populates_ground_truths_from_metadata(self, monkeypatch) -> None:
-        processor = _make_processor(monkeypatch, _make_user_config())
+        processor = _make_processor(monkeypatch)
         metadata = _make_dataset_metadata(["A", "B", "C"], ["t1", "t2", "t3"])
 
         processor.on_dataset_configured(metadata)
@@ -86,7 +86,7 @@ class TestAccuracyRecordProcessorOnDatasetConfigured:
         assert processor._ground_truths == ["A", "B", "C"]
 
     def test_skips_conversations_without_accuracy_fields(self, monkeypatch) -> None:
-        processor = _make_processor(monkeypatch, _make_user_config())
+        processor = _make_processor(monkeypatch)
         conversations = [
             ConversationMetadata(conversation_id="plain"),  # no accuracy fields
             ConversationMetadata(
@@ -111,7 +111,7 @@ class TestAccuracyRecordProcessorSessionBounds:
         self, monkeypatch, sample_parsed_record
     ) -> None:
         """session_num >= dataset size wraps via modulo so the correct problem is graded."""
-        processor = _make_processor(monkeypatch, _make_user_config())
+        processor = _make_processor(monkeypatch)
         processor._ground_truths = ["A"]
 
         grading_result = GradingResult(
@@ -135,7 +135,7 @@ class TestAccuracyRecordProcessorSessionBounds:
         self, monkeypatch, sample_parsed_record
     ) -> None:
         """With N problems, session_num=N+1 grades problem at index 1."""
-        processor = _make_processor(monkeypatch, _make_user_config())
+        processor = _make_processor(monkeypatch)
         processor._ground_truths = ["A", "B", "C"]
 
         grading_result = GradingResult(
@@ -159,7 +159,7 @@ class TestAccuracyRecordProcessorSessionBounds:
     async def test_process_record_last_valid_session_num_succeeds(
         self, monkeypatch, sample_parsed_record
     ) -> None:
-        processor = _make_processor(monkeypatch, _make_user_config())
+        processor = _make_processor(monkeypatch)
         processor._ground_truths = ["A", "B"]
 
         grading_result = GradingResult(
@@ -181,7 +181,7 @@ class TestAccuracyRecordProcessorSessionBounds:
         self, monkeypatch, sample_parsed_record
     ) -> None:
         """process_record must raise if on_dataset_configured was never called."""
-        processor = _make_processor(monkeypatch, _make_user_config())
+        processor = _make_processor(monkeypatch)
         metadata = create_metric_metadata(session_num=0)
 
         with pytest.raises(RuntimeError, match="dataset not configured"):
@@ -190,7 +190,7 @@ class TestAccuracyRecordProcessorSessionBounds:
 
 class TestAccuracyResultsProcessorOnDatasetConfigured:
     def test_populates_tasks_from_metadata(self) -> None:
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         metadata = _make_dataset_metadata(["A", "B"], ["algebra", "history"])
 
         processor.on_dataset_configured(metadata)
@@ -198,7 +198,7 @@ class TestAccuracyResultsProcessorOnDatasetConfigured:
         assert processor._tasks == ["algebra", "history"]
 
     def test_skips_conversations_without_accuracy_task(self) -> None:
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         conversations = [
             ConversationMetadata(conversation_id="plain"),
             ConversationMetadata(
@@ -221,7 +221,7 @@ class TestAccuracyResultsProcessorOnDatasetConfigured:
 class TestAccuracyResultsProcessorSessionBounds:
     async def test_process_result_wraps_when_session_num_exceeds_dataset(self) -> None:
         """session_num >= dataset size wraps via modulo so the correct task is recorded."""
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["algebra"]
 
         # session_num=1 wraps to index 0 (the only task, "algebra")
@@ -232,7 +232,7 @@ class TestAccuracyResultsProcessorSessionBounds:
 
     async def test_process_result_wraps_to_correct_task(self) -> None:
         """With N problems, session_num=N+1 accumulates under the task at index 1."""
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["algebra", "history", "biology"]
 
         # session_num=4 % 3 = index 1 → task="history"
@@ -242,7 +242,7 @@ class TestAccuracyResultsProcessorSessionBounds:
         assert processor._task_total.get("algebra", 0) == 0
 
     async def test_process_result_last_valid_session_num_succeeds(self) -> None:
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["test_task", "test_task"]
 
         await processor.process_result(_make_record_data(session_num=1, correct=1.0))
@@ -253,13 +253,13 @@ class TestAccuracyResultsProcessorSessionBounds:
 
     async def test_process_result_raises_if_not_configured(self) -> None:
         """process_result must raise if on_dataset_configured was never called."""
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
 
         with pytest.raises(RuntimeError, match="dataset not configured"):
             await processor.process_result(_make_record_data(session_num=0))
 
     async def test_process_result_increments_overall_unparsed(self) -> None:
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["algebra"]
 
         await processor.process_result(
@@ -270,7 +270,7 @@ class TestAccuracyResultsProcessorSessionBounds:
         assert processor._overall_total == 1
 
     async def test_process_result_increments_task_unparsed(self) -> None:
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["algebra"]
 
         await processor.process_result(
@@ -282,7 +282,7 @@ class TestAccuracyResultsProcessorSessionBounds:
     async def test_process_result_does_not_increment_unparsed_when_conforming(
         self,
     ) -> None:
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["algebra"]
 
         await processor.process_result(
@@ -296,7 +296,7 @@ class TestAccuracyResultsProcessorSessionBounds:
         self,
     ) -> None:
         """Records without accuracy.unparsed (e.g. from older graders) count as conforming."""
-        processor = _make_results_processor(_make_user_config())
+        processor = _make_results_processor()
         processor._tasks = ["algebra"]
         data = MetricRecordsData(
             metadata=create_metric_metadata(session_num=0),

@@ -13,7 +13,6 @@ from __future__ import annotations
 import pytest
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.artifacts import GpuTelemetryConfig, ServerMetricsConfig
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.distributions import (
     Distribution,
@@ -24,6 +23,8 @@ from aiperf.config.distributions import (
     NormalDistribution,
 )
 from aiperf.config.endpoint import EndpointConfig
+from aiperf.config.gpu_telemetry import GpuTelemetryConfig
+from aiperf.config.server_metrics import ServerMetricsConfig
 
 PRESERVE = "x-kubernetes-preserve-unknown-fields"
 

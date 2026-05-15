@@ -9,21 +9,23 @@ import pytest
 from aiperf.accuracy.accuracy_data_exporter import AccuracyDataExporter
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
-from aiperf.config.flags import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
-from tests.unit.conftest import make_cfg_from_v1
+from tests.unit.conftest import make_benchmark_run
 
 
-def _make_exporter(tmp_path: Path, records: list[MetricResult]) -> AccuracyDataExporter:
-    cli_config = CLIConfig(
+def _make_cfg():
+    return make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.CHAT,
         streaming=False,
-        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
-    )
+        accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+    ).cfg
+
+
+def _make_exporter(tmp_path: Path, records: list[MetricResult]) -> AccuracyDataExporter:
     exporter_config = ExporterConfig(
-        cfg=make_cfg_from_v1(cli_config),
+        cfg=_make_cfg(),
         results=ProfileResults(
             records=records,
             completed=len(records),
@@ -99,14 +101,8 @@ class TestAccuracyDataExporterExport:
     async def test_export_does_nothing_when_records_is_none(
         self, tmp_path: Path
     ) -> None:
-        cli_config = CLIConfig(
-            model_names=["test-model"],
-            endpoint_type=EndpointType.CHAT,
-            streaming=False,
-            accuracy_benchmark=AccuracyBenchmarkType.MMLU,
-        )
         exporter_config = ExporterConfig(
-            cfg=make_cfg_from_v1(cli_config),
+            cfg=_make_cfg(),
             results=ProfileResults(records=None, completed=0, start_ns=0, end_ns=1),
             telemetry_results=None,
         )

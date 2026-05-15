@@ -27,19 +27,16 @@ from aiperf.accuracy.graders.math import (
     _normalize,
     _to_fraction,
 )
-from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_benchmark_run
 
 
 def _make_run():
-    return make_run_from_v1(
-        CLIConfig(
-            model_names=["test-model"],
-            endpoint_type=EndpointType.COMPLETIONS,
-            streaming=False,
-            accuracy_benchmark=AccuracyBenchmarkType.AIME,
-        )
+    return make_benchmark_run(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy={"benchmark": AccuracyBenchmarkType.AIME},
     )
 
 

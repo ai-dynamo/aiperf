@@ -7,26 +7,20 @@ import pytest
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
-from tests.unit.conftest import make_run_from_v1
+from tests.unit.conftest import make_benchmark_run
 
 
 def _make_run(n_shots: int | None = None):
-    # v1 CLIConfig requires int for n_shots, but the loader honors None
-    # as "fall back to plugin metadata". Build via v1 with a placeholder, then
-    # mutate the v2 cfg to expose the None path the loader actually reads.
-    cli_config = CLIConfig(
+    accuracy: dict = {"benchmark": AccuracyBenchmarkType.MMLU}
+    if n_shots is not None:
+        accuracy["n_shots"] = n_shots
+    return make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.COMPLETIONS,
         streaming=False,
-        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
-        accuracy_n_shots=n_shots if n_shots is not None else 0,
+        accuracy=accuracy,
     )
-    run = make_run_from_v1(cli_config)
-    if n_shots is None:
-        run.cfg.accuracy.n_shots = None
-    return run
 
 
 def _make_problem() -> BenchmarkProblem:

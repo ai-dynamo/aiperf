@@ -41,7 +41,7 @@ class TestGetTokenizerNameForModel:
     """Methods moved from v1 TokenizerConfig to v2 in commit bcc8fe384.
 
     The v1 TokenizerConfig is now flattened into CLIConfig (no methods, no
-    validators); see `aiperf.config.models.TokenizerConfig` for the
+    validators); see `aiperf.config.tokenizer.TokenizerConfig` for the
     `get_tokenizer_name_for_model` / `should_resolve_alias` behavior tests.
     """
 

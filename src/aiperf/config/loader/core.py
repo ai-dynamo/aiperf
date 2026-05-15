@@ -661,7 +661,7 @@ def validate_config_file(file_path: Path | str) -> list[str]:
 
     # Warn if streaming disabled but TTFT goodput set, and reject unknown
     # SLO metric names against the metric registry. SLOsConfig is a plain
-    # `dict[str, float]` (see models.SLOsConfig), so keys must be looked
+    # `dict[str, float]` (see slos.SLOsConfig), so keys must be looked
     # up dict-style — never as attributes.
     bench = config.benchmark
     if bench.slos:

@@ -408,6 +408,56 @@ def make_run_from_v1(
     )
 
 
+def make_benchmark_run(
+    *,
+    model_names: list[str] | None = None,
+    endpoint_type: str = "completions",
+    streaming: bool = False,
+    accuracy: dict | None = None,
+    extra: dict | None = None,
+):
+    """Build a v2 ``BenchmarkRun`` directly without round-tripping through v1.
+
+    Construct the minimal native ``BenchmarkConfig`` accuracy/post-processor
+    tests need, then wrap it in a ``BenchmarkRun`` with a freshly generated
+    ``benchmark_id``. ``extra`` is merged into the top-level dict so callers
+    can override or extend nested sections (e.g. ``{"mlflow": {...}}``) without
+    needing to rebuild the whole config payload.
+    """
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
+
+    payload: dict = {
+        "models": model_names or ["test-model"],
+        "endpoint": {
+            "type": endpoint_type,
+            "urls": ["http://localhost:8000/v1"],
+            "streaming": streaming,
+        },
+        "datasets": [{"name": "default", "type": "synthetic"}],
+        "phases": [
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "concurrency": 1,
+                "requests": 1,
+            }
+        ],
+    }
+    if accuracy is not None:
+        payload["accuracy"] = accuracy
+    if extra:
+        for key, value in extra.items():
+            payload[key] = value
+    cfg = BenchmarkConfig.model_validate(payload)
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=cfg,
+        artifact_dir=cfg.artifacts.dir,
+        random_seed=None,
+        variables={},
+    )
+
+
 @pytest.fixture
 def benchmark_run(cli_config: CLIConfig):
     """Build a v2 ``BenchmarkRun`` from the existing v1 fixture.

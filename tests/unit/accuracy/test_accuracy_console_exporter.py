@@ -10,26 +10,25 @@ from rich.console import Console
 from aiperf.accuracy.accuracy_console_exporter import AccuracyConsoleExporter
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
-from aiperf.config.flags import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
-from tests.unit.conftest import make_cfg_from_v1
+from tests.unit.conftest import make_benchmark_run
 
 
 def _make_exporter(records: list[MetricResult] | None) -> AccuracyConsoleExporter:
-    cli_config = CLIConfig(
+    cfg = make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.COMPLETIONS,
         streaming=False,
-        accuracy_benchmark=AccuracyBenchmarkType.MMLU,
-    )
+        accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+    ).cfg
     results = (
         ProfileResults(records=records, completed=0, start_ns=0, end_ns=1)
         if records is not None
         else None
     )
     exporter_config = ExporterConfig(
-        cfg=make_cfg_from_v1(cli_config),
+        cfg=cfg,
         results=results,
         telemetry_results=None,
     )

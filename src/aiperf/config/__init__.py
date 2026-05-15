@@ -39,11 +39,6 @@ Schema Version: 2.0.0
 
 from aiperf.config.artifacts import (
     ArtifactsConfig,
-    GpuTelemetryConfig,
-    MLflowConfig,
-    OTelConfig,
-    ServerMetricsConfig,
-    ServerMetricsDiscoveryConfig,
 )
 from aiperf.config.cli_parameter import (
     CLIParameter,
@@ -57,6 +52,13 @@ from aiperf.config.comm import (
     ZMQIPCProxyConfig,
     ZMQTCPConfig,
     ZMQTCPProxyConfig,
+)
+from aiperf.config.comm.inputs import (
+    CommunicationConfig,
+    DualBindCommunicationConfig,
+    IpcCommunicationConfig,
+    TcpCommunicationConfig,
+    TcpProxyConfig,
 )
 from aiperf.config.config import (
     AIPerfConfig,
@@ -89,6 +91,9 @@ from aiperf.config.endpoint import (
     EndpointConfig,
     TemplateConfig,
 )
+from aiperf.config.gpu_telemetry import (
+    GpuTelemetryConfig,
+)
 from aiperf.config.loader import (
     ENV_VAR_PATTERN,
     ConfigurationError,
@@ -115,21 +120,20 @@ from aiperf.config.loader.parsing import (
     print_str_or_list,
     validate_sequence_distribution,
 )
-from aiperf.config.metrics import MetricsConfig
-from aiperf.config.models import (
-    CommunicationConfig,
-    ConvergenceConfig,
-    DualBindCommunicationConfig,
-    IpcCommunicationConfig,
+from aiperf.config.logging import (
     LoggingConfig,
+)
+from aiperf.config.metrics import MetricsConfig
+from aiperf.config.mlflow import (
+    MLflowConfig,
+)
+from aiperf.config.models import (
     ModelItem,
     ModelsAdvanced,
-    RuntimeConfig,
-    SLOsConfig,
-    TcpCommunicationConfig,
-    TcpProxyConfig,
-    TokenizerConfig,
     TokenizerOverride,
+)
+from aiperf.config.otel import (
+    OTelConfig,
 )
 from aiperf.config.phases import (
     BasePhaseConfig,
@@ -154,6 +158,16 @@ from aiperf.config.resolution import (
     ResolvedConfig,
     build_default_resolver_chain,
 )
+from aiperf.config.runtime import (
+    RuntimeConfig,
+)
+from aiperf.config.server_metrics import (
+    ServerMetricsConfig,
+    ServerMetricsDiscoveryConfig,
+)
+from aiperf.config.slos import (
+    SLOsConfig,
+)
 from aiperf.config.sweep import (
     AdaptiveSearchSweep,
     GridSweep,
@@ -165,6 +179,12 @@ from aiperf.config.sweep import (
     SobolSweep,
     SweepConfig,
     SweepVariation,
+)
+from aiperf.config.sweep.multi_run import (
+    ConvergenceConfig,
+)
+from aiperf.config.tokenizer import (
+    TokenizerConfig,
 )
 from aiperf.config.types import (
     Distribution,

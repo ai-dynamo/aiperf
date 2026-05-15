@@ -4,37 +4,67 @@
 
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
 from queue import Empty, Full
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.post_processors.otel_metrics_results_processor import (
     OTelMetricsResultsProcessor,
 )
 
 
 @pytest.fixture
-def mock_user_config(tmp_path) -> MagicMock:
-    """Create a mock user config with OTel enabled."""
-    config = MagicMock()
-    config.otel.metrics_url = None
-    config.mlflow.enabled = True
-    config.mlflow.tracking_uri = "http://mlflow:5000"
-    config.mlflow.experiment = "Default"
-    config.mlflow.run_name = None
-    config.mlflow.tags_dict = {}
-    config.mlflow.parent_run_id = None
-    config.otel.stream_metrics_enabled = True
-    config.otel.stream_timing_enabled = True
-    config.otel.stream = "default"
-    config.endpoint.type = "chat"
-    config.endpoint.model_names = ["mock-model"]
-    config.get_model_names.return_value = ["mock-model"]
-    config.otel.custom_resource_attributes = {}
-    config.artifacts.artifact_directory = tmp_path
-    return config
+def mock_user_config(tmp_path: Path) -> BenchmarkConfig:
+    """Build a real ``BenchmarkConfig`` with MLflow live streaming enabled.
+
+    OTel collector URL is left unset so the processor exercises the
+    MLflow-only branch; ``mlflow.tracking_uri`` is set so the streaming
+    sink stays enabled and the queue/event-loop tests have something to
+    talk to.
+    """
+    return BenchmarkConfig.model_validate(
+        {
+            "models": ["mock-model"],
+            "endpoint": {
+                "type": "chat",
+                "urls": ["http://localhost:8000/v1"],
+                "streaming": False,
+            },
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                }
+            ],
+            "artifacts": {"dir": str(tmp_path)},
+            "otel": {
+                "metrics_url": None,
+                "stream_metrics_enabled": True,
+                "stream_timing_enabled": True,
+            },
+            "mlflow": {
+                "tracking_uri": "http://mlflow:5000",
+                "experiment": "Default",
+            },
+        }
+    )
+
+
+def _make_run(cfg: BenchmarkConfig) -> BenchmarkRun:
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=cfg,
+        artifact_dir=cfg.artifacts.dir,
+        random_seed=None,
+        variables={},
+    )
 
 
 class TestProcessorErrorPaths:
@@ -42,7 +72,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_flush_handles_exception_gracefully(
-        self, monkeypatch: pytest.MonkeyPatch, mock_user_config: MagicMock
+        self, monkeypatch: pytest.MonkeyPatch, mock_user_config: BenchmarkConfig
     ) -> None:
         """flush() should not raise when meter_provider.force_flush fails."""
         with patch(
@@ -50,7 +80,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=SimpleNamespace(cfg=mock_user_config, benchmark_id="test-123"),
+                run=_make_run(mock_user_config),
             )
             # Simulate fanout mode with a queue
             processor._streaming_ready = True
@@ -64,7 +94,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_queue_fanout_event_handles_put_exception(
-        self, mock_user_config: MagicMock
+        self, mock_user_config: BenchmarkConfig
     ) -> None:
         """_queue_fanout_event should handle unexpected exceptions from put_nowait."""
         with patch(
@@ -72,7 +102,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=SimpleNamespace(cfg=mock_user_config, benchmark_id="test-123"),
+                run=_make_run(mock_user_config),
             )
             mock_queue = MagicMock()
             mock_queue.put_nowait.side_effect = OSError("broken pipe")
@@ -83,7 +113,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_queue_fanout_event_full_then_drop_fails(
-        self, mock_user_config: MagicMock
+        self, mock_user_config: BenchmarkConfig
     ) -> None:
         """When queue is full and drop also fails, should increment drop counter."""
         with patch(
@@ -91,7 +121,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=SimpleNamespace(cfg=mock_user_config, benchmark_id="test-123"),
+                run=_make_run(mock_user_config),
             )
             mock_queue = MagicMock()
             # First put_nowait raises Full, get_nowait raises Empty (can't drop)
@@ -104,7 +134,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_drop_oldest_handles_exception(
-        self, mock_user_config: MagicMock
+        self, mock_user_config: BenchmarkConfig
     ) -> None:
         """_drop_oldest_fanout_event should return False on unexpected exception."""
         with patch(
@@ -112,7 +142,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=SimpleNamespace(cfg=mock_user_config, benchmark_id="test-123"),
+                run=_make_run(mock_user_config),
             )
             mock_queue = MagicMock()
             mock_queue.get_nowait.side_effect = OSError("broken")
@@ -123,7 +153,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_process_result_skips_when_not_ready(
-        self, mock_user_config: MagicMock
+        self, mock_user_config: BenchmarkConfig
     ) -> None:
         """process_result should silently return when streaming is not ready."""
         with patch(
@@ -131,7 +161,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=SimpleNamespace(cfg=mock_user_config, benchmark_id="test-123"),
+                run=_make_run(mock_user_config),
             )
             processor._streaming_ready = False
 

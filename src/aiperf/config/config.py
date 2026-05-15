@@ -38,12 +38,11 @@ from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_vali
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.config.accuracy import (
+    AccuracyConfig,
+)
 from aiperf.config.artifacts import (
     ArtifactsConfig,
-    GpuTelemetryConfig,
-    MLflowConfig,
-    OTelConfig,
-    ServerMetricsConfig,
 )
 from aiperf.config.base import BaseConfig
 from aiperf.config.comm.build import build_comm_config
@@ -53,25 +52,46 @@ from aiperf.config.dataset import (
 from aiperf.config.endpoint import (
     EndpointConfig,
 )
+from aiperf.config.gpu_telemetry import (
+    GpuTelemetryConfig,
+)
 from aiperf.config.loader.helpers import BenchmarkHelpersMixin
 from aiperf.config.loader.normalizers import (
     normalize_benchmark_input,
     parse_datasets_input,
 )
-from aiperf.config.metrics import MetricsConfig
-from aiperf.config.models import (
-    AccuracyConfig,
+from aiperf.config.logging import (
     LoggingConfig,
+)
+from aiperf.config.metrics import MetricsConfig
+from aiperf.config.mlflow import (
+    MLflowConfig,
+)
+from aiperf.config.models import (
     ModelsAdvanced,
-    MultiRunConfig,
-    RuntimeConfig,
-    SLOsConfig,
-    TokenizerConfig,
+)
+from aiperf.config.otel import (
+    OTelConfig,
 )
 from aiperf.config.phases import (
     PhaseConfig,
 )
+from aiperf.config.runtime import (
+    RuntimeConfig,
+)
+from aiperf.config.server_metrics import (
+    ServerMetricsConfig,
+)
+from aiperf.config.slos import (
+    SLOsConfig,
+)
 from aiperf.config.sweep import SweepConfig
+from aiperf.config.sweep.multi_run import (
+    MultiRunConfig,
+)
+from aiperf.config.tokenizer import (
+    TokenizerConfig,
+)
 
 _logger = AIPerfLogger(__name__)
 

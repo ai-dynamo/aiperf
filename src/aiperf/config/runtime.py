@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Runtime and logging configuration models.
+"""Runtime configuration models.
 
-Split out of ``models.py`` so the public module stays under the ergonomics
-file-size cap. Re-exported via :mod:`aiperf.config.models`.
+Split out of ``models.py`` so each config section lives in its own file.
+Re-exported via :mod:`aiperf.config`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from typing import Annotated
 from pydantic import ConfigDict, Field, model_validator
 from typing_extensions import Self
 
-from aiperf.common.enums import AIPerfLogLevel
 from aiperf.config.base import BaseConfig
 from aiperf.config.comm.inputs import CommunicationConfig
 from aiperf.plugin.enums import ServiceRunType, UIType
@@ -176,19 +175,6 @@ class RuntimeConfig(BaseConfig):
         return self
 
 
-class LoggingConfig(BaseConfig):
-    """Logging configuration for verbosity and debug settings."""
-
-    model_config = ConfigDict(extra="forbid", validate_default=True)
-
-    level: Annotated[
-        AIPerfLogLevel,
-        Field(
-            default=AIPerfLogLevel.INFO,
-            description="Global logging verbosity level (loguru-style severity ladder; "
-            "TRACE most verbose, CRITICAL least). NOTICE and SUCCESS are loguru-specific "
-            "intermediate levels (between INFO and WARNING) and have no equivalent in "
-            "the Python stdlib `logging` module — pick INFO/WARNING/ERROR if you want "
-            "stdlib-compatible severities.",
-        ),
-    ]
+__all__ = [
+    "RuntimeConfig",
+]

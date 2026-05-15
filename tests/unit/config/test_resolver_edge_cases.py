@@ -19,7 +19,6 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.config.models import TokenizerConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.config.resolution.resolvers import (
     ArtifactDirResolver,
@@ -29,6 +28,7 @@ from aiperf.config.resolution.resolvers import (
     TokenizerResolver,
     build_default_resolver_chain,
 )
+from aiperf.config.tokenizer import TokenizerConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

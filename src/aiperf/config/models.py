@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-AIPerf Configuration v2.0 - Pydantic Models
+AIPerf Configuration v2.0 - Models configuration
 
-This module hosts the core model/tokenizer Pydantic configs and re-exports the
-remaining configuration models for the AIPerf YAML configuration system.
-Implementations for non-core groups live in sibling submodules to keep any one
-file under the ergonomics file-size cap:
+This module hosts the model-selection Pydantic configs (per-model override,
+advanced model item, weighted-strategy validation). Other top-level config
+sections live in sibling submodules to keep any one file under the
+ergonomics file-size cap:
 
-* :mod:`aiperf.config.comm.inputs`      — IPC/TCP/DualBind communication configs
-* :mod:`aiperf.config.runtime`           — runtime and logging configs
-* :mod:`aiperf.config.sweep.multi_run`         — multi-run trial mechanics + convergence
+* :mod:`aiperf.config.tokenizer`         — tokenizer config
+* :mod:`aiperf.config.logging`           — logging config
+* :mod:`aiperf.config.slos`              — SLOs type alias
+* :mod:`aiperf.config.runtime`           — runtime config
+* :mod:`aiperf.config.comm.inputs`       — IPC/TCP/DualBind communication configs
+* :mod:`aiperf.config.sweep.multi_run`   — multi-run trial mechanics + convergence
 * :mod:`aiperf.config.accuracy`          — accuracy benchmarking config
 """
 
@@ -22,17 +25,7 @@ from typing import Annotated
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.config.accuracy import AccuracyConfig
 from aiperf.config.base import BaseConfig
-from aiperf.config.comm.inputs import (
-    CommunicationConfig,
-    DualBindCommunicationConfig,
-    IpcCommunicationConfig,
-    TcpCommunicationConfig,
-    TcpProxyConfig,
-)
-from aiperf.config.runtime import LoggingConfig, RuntimeConfig
-from aiperf.config.sweep.multi_run import ConvergenceConfig, MultiRunConfig
 
 
 class TokenizerOverride(BaseConfig):
@@ -163,124 +156,8 @@ class ModelsAdvanced(BaseConfig):
         return self
 
 
-# SLOs is a generic dict allowing any metric name with a threshold value.
-# Common metrics: request_latency, time_to_first_token, inter_token_latency, tokens_per_second
-SLOsConfig = dict[str, float]
-"""
-SLOs (Service Level Objectives) configuration as a generic dict.
-
-Maps metric names to threshold values (in milliseconds for latency metrics).
-A request is counted as "good" only if it meets ALL specified thresholds.
-
-Example:
-    slos:
-      request_latency: 500       # max 500ms end-to-end latency
-      time_to_first_token: 100   # max 100ms TTFT
-      inter_token_latency: 15    # max 15ms between tokens
-      tokens_per_second: 50      # min 50 tokens/second
-"""
-
-
-class TokenizerConfig(BaseConfig):
-    """
-    Tokenizer configuration for token counting and prompt generation.
-
-    AIPerf uses a HuggingFace tokenizer for accurate token counting,
-    which is essential for ISL/OSL enforcement and metrics calculation.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="HuggingFace tokenizer identifier, local filesystem path, or `builtin` "
-            "for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). "
-            "Should match the model's tokenizer for accurate token counts. "
-            "If `--tokenizer` is not set and the model name looks like an obvious placeholder "
-            "(e.g. `mock-model`, `test-model`, `fake-model`), AIPerf substitutes `builtin` automatically "
-            "and emits a warning. "
-            "Example: 'meta-llama/Llama-3.1-8B-Instruct'",
-        ),
-    ]
-
-    revision: Annotated[
-        str,
-        Field(
-            default="main",
-            description="Model revision to use: branch name, tag, or commit hash. "
-            "Use for version pinning to ensure reproducibility.",
-        ),
-    ]
-
-    trust_remote_code: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="Allow execution of custom tokenizer code from the repository. "
-            "Required for some models but poses security risk. "
-            "Only enable for trusted sources.",
-        ),
-    ]
-
-    resolved_names: Annotated[
-        dict[str, str] | None,
-        Field(
-            default=None,
-            exclude=True,
-            description="Pre-resolved tokenizer names from alias resolution. "
-            "[runtime-only; populated by the CLI or WorkerGroupManager after "
-            "tokenizer validation. Excluded from JSON/YAML serialization. Do not "
-            "set in a CR spec — any user value is ignored.]",
-        ),
-    ]
-
-    def get_tokenizer_name_for_model(self, model_name: str) -> str:
-        """Get the tokenizer name to use for a given model.
-
-        Resolution order:
-        1. Pre-resolved name from `resolved_names` (set by CLI after alias resolution)
-        2. Explicitly configured tokenizer name
-        3. The model name itself (assumes model repo contains tokenizer)
-        """
-        if self.resolved_names and model_name in self.resolved_names:
-            return self.resolved_names[model_name]
-        return self.name or model_name
-
-    @property
-    def should_resolve_alias(self) -> bool:
-        """Whether alias resolution should be performed when loading tokenizers.
-
-        Returns False if `resolved_names` is set (CLI already resolved aliases),
-        True otherwise to enable HuggingFace Hub alias resolution.
-        """
-        return self.resolved_names is None
-
-
 __all__ = [
-    # Accuracy benchmarking
-    "AccuracyConfig",
-    # Communication
-    "CommunicationConfig",
-    # Convergence (nested under MultiRunConfig)
-    "ConvergenceConfig",
-    "DualBindCommunicationConfig",
-    "IpcCommunicationConfig",
-    # Logging
-    "LoggingConfig",
-    # Models
     "ModelItem",
     "ModelsAdvanced",
-    # Multi-run
-    "MultiRunConfig",
-    # Runtime
-    "RuntimeConfig",
-    # SLOs
-    "SLOsConfig",
-    "TcpCommunicationConfig",
-    "TcpProxyConfig",
-    # Tokenizer
-    "TokenizerConfig",
     "TokenizerOverride",
 ]

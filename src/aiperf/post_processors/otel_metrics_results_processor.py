@@ -199,11 +199,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             export_timeout_millis=self._export_timeout_millis,
             max_batch_records=Environment.OTEL.MAX_BATCH_RECORDS,
             resource_attributes=self._build_resource_attributes(),
-            mlflow_tracking_uri=self.user_config.mlflow.tracking_uri,
-            mlflow_experiment=self.user_config.mlflow.experiment,
-            mlflow_run_name=self.user_config.mlflow.run_name,
-            mlflow_tags=self.user_config.mlflow.tags_dict,
-            mlflow_parent_run_id=self.user_config.mlflow.parent_run_id,
+            mlflow=self.user_config.mlflow,
             benchmark_id=self._benchmark_id,
             metadata_file=(
                 self.user_config.artifacts.artifact_directory
