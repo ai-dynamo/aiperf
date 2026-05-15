@@ -6,12 +6,6 @@ Public surface:
 
 * :func:`run_benchmark` - dispatch single-run vs multi-run by plan shape.
 * :class:`CompletedRun` / :data:`OnComplete` - post-run callback contract.
-
-Single-run execution lives in :mod:`aiperf.cli_runner._single_run`,
-multi-run in :mod:`aiperf.cli_runner._multi_run`. Per-domain helpers split
-across ``_strategy.py``, ``_aggregate.py``, ``_sweep_aggregate.py``,
-``_sweep_table.py``, ``_banner.py``, ``_preflight.py``, ``_process_setup.py``,
-``_callbacks.py``, and ``_post_process.py``.
 """
 
 from __future__ import annotations
@@ -36,8 +30,6 @@ if TYPE_CHECKING:
 __all__ = [
     "CompletedRun",
     "OnComplete",
-    "_run_multi_benchmark",
-    "_run_single_benchmark",
     "run_benchmark",
 ]
 

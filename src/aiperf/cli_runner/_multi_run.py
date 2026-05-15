@@ -333,9 +333,3 @@ def _log_failed_sweep_variations(
         for r in group:
             error_msg = r.error or "(no error message)"
             logger.warning(f"  {params_str}: {error_msg}")
-
-
-# Suppress unused-import warning: imported for re-export so test patches can
-# target `aiperf.cli_runner._multi_run.<name>` at the actual call site.
-_ = (CompletedRun, OnComplete)
-__all__ = ["_run_multi_benchmark"]
