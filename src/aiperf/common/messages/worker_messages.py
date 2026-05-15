@@ -54,10 +54,10 @@ class WorkerPodStateMessage(BaseServiceMessage):
 
     pod_index: str = Field(..., description="Pod index (e.g. ordinal in StatefulSet)")
     declared_workers: int = Field(
-        ..., description="Workers declared in the pod's spec"
+        ..., ge=0, description="Workers declared in the pod's spec"
     )
     declared_record_processors: int = Field(
-        ..., description="Record processors declared in the pod's spec"
+        ..., ge=0, description="Record processors declared in the pod's spec"
     )
     pod_state: str = Field(..., description="Coarse pod lifecycle state")
     admission_state: str = Field(
@@ -70,18 +70,22 @@ class WorkerPodStateMessage(BaseServiceMessage):
         None, description="Dataset generation tag this pod last reported on"
     )
     router_connected_workers: int = Field(
-        0, description="Workers that have completed router probe"
+        0, ge=0, description="Workers that have completed router probe"
     )
     dispatchable_workers: int = Field(
-        0, description="Workers eligible to receive credits"
+        0, ge=0, description="Workers eligible to receive credits"
     )
-    ready_workers: int = Field(0, description="Workers in READY startup state")
+    ready_workers: int = Field(
+        0, ge=0, description="Workers in READY startup state"
+    )
     ready_record_processors: int = Field(
-        0, description="Record processors in READY state"
+        0, ge=0, description="Record processors in READY state"
     )
-    degraded_workers: int = Field(0, description="Workers in degraded state")
+    degraded_workers: int = Field(
+        0, ge=0, description="Workers in degraded state"
+    )
     degraded_record_processors: int = Field(
-        0, description="Record processors in degraded state"
+        0, ge=0, description="Record processors in degraded state"
     )
 
 
@@ -95,6 +99,7 @@ class WorkerStartupStateMessage(BaseServiceMessage):
     )
     request_ns: int = Field(
         default_factory=time.time_ns,
+        ge=0,
         description="Nanosecond timestamp when this transition was reported",
     )
 
@@ -118,8 +123,12 @@ class WorkerGroupStatsMessage(BaseServiceMessage):
     startup_state: WorkerStartupState | None = Field(
         None, description="Aggregated startup state for the group, if known"
     )
-    declared_workers: int = Field(0, description="Workers declared in the group")
-    ready_workers: int = Field(0, description="Workers in READY startup state")
+    declared_workers: int = Field(
+        0, ge=0, description="Workers declared in the group"
+    )
+    ready_workers: int = Field(
+        0, ge=0, description="Workers in READY startup state"
+    )
     health: ProcessHealth | None = Field(
         None, description="Aggregated group health, if known"
     )
@@ -137,5 +146,6 @@ class WorkerGroupStatsMessage(BaseServiceMessage):
     )
     last_update_ns: int = Field(
         default_factory=time.time_ns,
+        ge=0,
         description="Nanosecond timestamp when these stats were sampled",
     )

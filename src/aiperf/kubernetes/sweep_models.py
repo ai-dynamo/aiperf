@@ -17,11 +17,12 @@ imports ``FailurePolicy`` from this module, so importing
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, Field
 
 from aiperf.config.base import BaseConfig
+from aiperf.config.resolution.plan import FailurePolicy
 
 if TYPE_CHECKING:
     from aiperf.config.sweep.multi_run import ConvergenceConfig as ConvergenceConfig
@@ -61,27 +62,8 @@ class ObjectMetaPartial(BaseConfig):
     )
 
 
-class FailurePolicy(BaseConfig):
-    """Failure handling policy for the sweep."""
+# ``FailurePolicy`` is re-exported from ``aiperf.config.resolution.plan`` so
+# operator code and ``BenchmarkPlan.failure_policy`` share the same Pydantic
+# class. Importing it at module top-level keeps the symbol available without
+# a second class definition that would fail ``isinstance``/field-type checks.
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    on_child_failure: Literal["continue", "abort"] = Field(
-        default="continue",
-        description=(
-            "continue: failed child becomes a status entry, advance to next variation. "
-            "abort: any failure terminates the sweep with phase=Failed."
-        ),
-    )
-    max_failures: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Hard failure budget for the entire sweep. 0 = unbounded "
-            "(no early-abort on count). When >0, the orchestrator stops "
-            "scheduling new children once failedRuns >= maxFailures and "
-            "the sweep terminates with phase=Failed. Independent of "
-            "terminal-phase resolution: a sweep with 0 < failedRuns < total "
-            "and the threshold not exceeded ends as PartiallyFailed."
-        ),
-    )
