@@ -121,6 +121,18 @@ endpoint:
       metrics_title: LLM Metrics
 ```
 
+Local GPU telemetry collectors declare themselves via `is_local`. Each collector class implements `validate_environment()` to surface missing native bindings before the benchmark starts; DCGM is a passthrough no-op.
+
+```yaml
+# plugins.yaml
+gpu_telemetry_collector:
+  my_local_gpu:
+    class: my_package.gpu:MyLocalGPUCollector
+    description: Local GPU telemetry collector using vendor Python bindings.
+    metadata:
+      is_local: true
+```
+
 ```python
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
