@@ -23,7 +23,7 @@ def test_image_config_defaults():
     assert config.height.stddev == 0.0
     assert config.batch_size == 1
     assert config.format == ImageFormat.PNG
-    assert config.source == ImageSource.ASSETS
+    assert config.source == ImageSource.NOISE
 
 
 def test_image_config_custom_values():
@@ -131,10 +131,18 @@ class TestImageConfigValidation:
 
 
 class TestImageSource:
-    def test_source_defaults_to_assets(self):
+    def test_source_defaults_to_noise(self):
         config = ImageConfig(
             width=ImageWidthConfig(mean=10),
             height=ImageHeightConfig(mean=10),
+        )
+        assert config.source == ImageSource.NOISE
+
+    def test_source_assets(self):
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=10),
+            source=ImageSource.ASSETS,
         )
         assert config.source == ImageSource.ASSETS
 

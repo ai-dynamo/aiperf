@@ -16,11 +16,18 @@ from aiperf.dataset.generator import ImageGenerator
 
 @pytest.fixture
 def base_config():
-    """Base configuration for ImageGenerator tests."""
+    """Base configuration for ImageGenerator tests (pinned to ASSETS source).
+
+    The ASSETS source path exercises disk loading and source-image sampling,
+    which several tests below mock and assert against. NOISE (the default
+    source) bypasses disk entirely, so tests that need to verify file-loading
+    behavior must use ASSETS explicitly.
+    """
     return ImageConfig(
         width=ImageWidthConfig(mean=10, stddev=2),
         height=ImageHeightConfig(mean=10, stddev=2),
         format=ImageFormat.PNG,
+        source=ImageSource.ASSETS,
     )
 
 
