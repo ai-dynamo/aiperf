@@ -214,10 +214,11 @@ A: None measurable. Network I/O dominates by 1000×.
 "dataset.prompt.corpus"        # Content position selection
 "dataset.prompt.prefix"        # Prefix selection
 
-# Images (3)
+# Images (4)
 "dataset.image.dimensions"     # Width + height (coupled for aspect ratio)
 "dataset.image.format"         # PNG/JPEG/etc. selection
-"dataset.image.source"         # Source image selection
+"dataset.image.source"         # Source image selection (assets and directory modes only)
+"dataset.image.noise"          # Random-noise pixel generation (noise mode, default)
 
 # Audio (3)
 "dataset.audio.duration"       # Length distribution
