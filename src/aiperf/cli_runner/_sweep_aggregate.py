@@ -3,13 +3,15 @@
 
 """Sweep-aggregate helpers for ``aiperf.cli_runner``.
 
-Lives in a sibling module to ``_cli_runner_helpers.py`` purely to keep
-both files under the 500-line ergonomics cap; downstream callers should
-prefer the re-export from ``_cli_runner_helpers``:
+Cross-variation aggregation: takes the per-variation RunResults from the
+full sweep and emits a single sweep-wide JSON (with pareto-optimal cells
+when a recipe declares ``pareto_axes``) plus per-variation confidence
+aggregates.
 
-    >>> from aiperf.cli_runner._helpers import aggregate_sweep_and_export
-
-The single public entry point is :func:`aggregate_sweep_and_export`.
+The two public entry points are :func:`aggregate_per_variation_and_export`
+and :func:`aggregate_sweep_and_export`; the confidence aggregation for a
+single configuration (multi-trial) lives in
+:mod:`aiperf.cli_runner._aggregate`.
 """
 
 from __future__ import annotations
@@ -573,7 +575,7 @@ async def aggregate_per_variation_and_export(
     """Write a per-variation confidence aggregate (JSON+CSV) for each cell.
 
     Sweep version of ``aggregate_and_export`` from
-    ``_cli_runner_helpers``: groups ``results`` by ``variation_values``
+    ``aiperf.cli_runner._aggregate``: groups ``results`` by ``variation_values``
     and writes one ``profile_export_aiperf_aggregate.{json,csv}`` pair
     per variation that has >=1 successful run. Single-success cells use
     ``ConfidenceAggregation``'s degraded mode (std=0, CI collapsed to

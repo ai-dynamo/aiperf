@@ -1,26 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Per-cell confidence aggregation + console summary for cli_runner.
 
-"""Helper functions for ``aiperf.cli_runner``.
+:func:`aggregate_and_export` is the multi-run entry point for combining
+the per-trial RunResults of a *single configuration* into a confidence
+aggregate (mean/std/CI per metric) and writing the JSON/CSV/detailed
+exports. The sweep-wide aggregation (across variations) lives in the
+sibling :mod:`aiperf.cli_runner._sweep_aggregate`.
 
-Split out purely to keep ``cli_runner.py`` below the file/function size
-ergonomics limits; the helpers here are not part of the public API.
-
-The sweep-aggregate helper :func:`aggregate_sweep_and_export` lives in
-the sibling :mod:`aiperf.cli_runner._sweep_helpers` (also for size
-reasons) and is re-exported here for caller convenience.
+:func:`print_aggregate_summary` writes the human-readable summary block
+that ends every multi-run benchmark.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
-from aiperf.cli_runner._sweep_helpers import (
-    aggregate_per_variation_and_export,
-    aggregate_sweep_and_export,
-)
-
-__all__ = ["aggregate_per_variation_and_export", "aggregate_sweep_and_export"]
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,145 +22,7 @@ if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkPlan
     from aiperf.orchestrator.aggregation.base import AggregateResult
-    from aiperf.orchestrator.convergence.base import ConvergenceCriterion
-    from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.orchestrator.strategies import ExecutionStrategy
-
-
-def validate_convergence_config(plan: BenchmarkPlan) -> None:
-    """Raise ValueError for invalid adaptive/convergence plan configurations."""
-    from aiperf.common.enums import ExportLevel
-    from aiperf.plugin.enums import ConvergenceCriterionType
-
-    if not plan.use_adaptive:
-        return
-    if plan.trials <= 1:
-        raise ValueError(
-            "--convergence-metric requires --num-profile-runs > 1. "
-            "Set --num-profile-runs to at least 2 to enable adaptive convergence."
-        )
-    convergence = plan.multi_run.convergence
-    assert convergence is not None  # use_adaptive guards this
-    if (
-        convergence.mode == ConvergenceCriterionType.DISTRIBUTION
-        and plan.export_level == ExportLevel.SUMMARY
-    ):
-        raise ValueError(
-            "--convergence-mode distribution requires per-request JSONL data, "
-            "but --export-level is set to 'summary'. "
-            "Use --export-level records or --export-level raw."
-        )
-
-
-def log_multi_run_banner(
-    plan: BenchmarkPlan, total_runs: int, logger: AIPerfLogger
-) -> None:
-    """Emit the banner describing a multi-run benchmark's configuration."""
-    from aiperf.plugin.enums import ConvergenceCriterionType
-
-    logger.info("=" * 80)
-    logger.info("Starting Multi-Run Benchmark")
-    logger.info(f"  Configurations: {len(plan.configs)}")
-    logger.info(f"  Trials per config: {plan.trials}")
-    logger.info(f"  Total runs: {total_runs}")
-    logger.info(f"  Confidence level: {plan.confidence_level:.0%}")
-    logger.info(f"  Cooldown between runs: {plan.cooldown_seconds}s")
-    if plan.use_adaptive:
-        convergence = plan.multi_run.convergence
-        assert convergence is not None  # use_adaptive guards this
-        logger.info(f"  Convergence mode: {convergence.mode}")
-        logger.info(f"  Convergence metric: {convergence.metric}")
-        logger.info(f"  Convergence threshold: {convergence.threshold}")
-        if convergence.mode == ConvergenceCriterionType.DISTRIBUTION:
-            logger.info(
-                "  Note: distribution mode converges when KS p-value > threshold "
-                "(higher threshold = stricter, opposite of ci_width/cv)"
-            )
-    logger.info("=" * 80)
-
-
-def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrategy:
-    """Construct the per-trial execution strategy (adaptive or fixed).
-
-    Called once per config by both ``cli_runner`` (single-trial,
-    non-sweep path) and ``MultiRunOrchestrator`` (per-variation). When
-    ``plan.is_sweep`` is True (multiple variations), the orchestrator
-    invokes this N times for N variations so each cell gets a fresh
-    strategy with no convergence state leakage. The returned strategy
-    governs only the inner trial loop within a single variation; the
-    orchestrator's outer variation loop is owned by
-    ``MultiRunOrchestrator``.
-    """
-    from aiperf.orchestrator.strategies import FixedTrialsStrategy
-
-    if not plan.use_adaptive:
-        return FixedTrialsStrategy(
-            num_trials=plan.trials,
-            cooldown_seconds=plan.cooldown_seconds,
-            disable_warmup_after_first=plan.disable_warmup_after_first,
-        )
-
-    from aiperf.orchestrator.strategies import AdaptiveStrategy
-
-    criterion = _build_convergence_criterion(plan)
-
-    convergence = plan.multi_run.convergence
-    assert convergence is not None  # guaranteed by plan.use_adaptive
-    if convergence.min_runs < 3:
-        logger.warning(
-            f"convergence.min_runs={convergence.min_runs} is below the recommended minimum of 3. "
-            "Convergence checks will have reduced statistical power."
-        )
-
-    return AdaptiveStrategy(
-        criterion=criterion,
-        min_runs=convergence.min_runs,
-        max_runs=plan.trials,
-        cooldown_seconds=plan.cooldown_seconds,
-        disable_warmup_after_first=plan.disable_warmup_after_first,
-    )
-
-
-def _build_convergence_criterion(plan: BenchmarkPlan) -> ConvergenceCriterion:
-    """Pick the convergence criterion matching ``plan.multi_run.convergence.mode``.
-
-    Dispatches via the plugin registry so third-party criteria (registered in
-    `plugins.yaml` under the `convergence_criterion` category) are reachable
-    through the same code path as the built-ins. Each criterion class owns the
-    mapping from BenchmarkPlan fields to its constructor via `from_plan`.
-    """
-    from aiperf.plugin import plugins
-    from aiperf.plugin.enums import PluginType
-
-    convergence = plan.multi_run.convergence
-    assert convergence is not None  # callers must check use_adaptive
-    criterion_cls = plugins.get_class(
-        PluginType.CONVERGENCE_CRITERION, str(convergence.mode)
-    )
-    return criterion_cls.from_plan(plan)
-
-
-def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
-    """Build the outer-loop SearchPlanner for adaptive search.
-
-    Returns None when ``plan.is_adaptive_search`` is False. Dispatches via the
-    plugin registry so third-party planners (registered in plugins.yaml under
-    the `search_planner` category) are reachable through the same code path
-    as the built-in `bayesian` planner.
-
-    The planner class is responsible for raising a clear ImportError if an
-    explicitly requested optional sampler is unavailable.
-    """
-    from aiperf.config.sweep import AdaptiveSearchSweep
-
-    if not isinstance(plan.sweep, AdaptiveSearchSweep):
-        return None
-
-    from aiperf.plugin import plugins
-    from aiperf.plugin.enums import PluginType
-
-    planner_cls = plugins.get_class(PluginType.SEARCH_PLANNER, str(plan.sweep.planner))
-    return planner_cls(plan.configs[0], plan.sweep)
 
 
 async def aggregate_and_export(

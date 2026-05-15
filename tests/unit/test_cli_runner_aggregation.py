@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.cli_runner._sweep_helpers import (
+from aiperf.cli_runner._sweep_aggregate import (
     _aggregate_group_to_stats,
     _build_per_combination_stats,
     _build_sweep_aggregate_result,
@@ -271,7 +271,7 @@ class TestSweepExportHelpers:
         sweep_results: list[RunResult],
         tmp_path: Path,
     ):
-        from aiperf.cli_runner._sweep_helpers import aggregate_sweep_and_export
+        from aiperf.cli_runner._sweep_aggregate import aggregate_sweep_and_export
 
         mock_compute.return_value = {
             "metadata": {},

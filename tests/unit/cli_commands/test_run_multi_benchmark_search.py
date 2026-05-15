@@ -76,7 +76,7 @@ def test_run_multi_benchmark_with_bo_invokes_orchestrator_with_planner(
         # no-op under the test harness.
         with (
             patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor"),
-            patch("aiperf.cli_runner._summarize_and_export", return_value=0),
+            patch("aiperf.cli_runner._multi_run._summarize_and_export", return_value=0),
             patch("os._exit"),
         ):
             _run_multi_benchmark(plan)

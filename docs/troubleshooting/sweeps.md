@@ -179,13 +179,13 @@ zip sweep parameter '<path>': value list must be non-empty.
 Skipping per-variation aggregate for '<variation_label>': 0 successful runs.
 ```
 
-**Where it's raised:** `src/aiperf/cli_runner/_sweep_helpers.py`.
+**Where it's raised:** `src/aiperf/cli_runner/_sweep_aggregate.py`.
 
-**Note:** Sweep mode does **not** require at least 2 successful runs. `ConfidenceAggregation` has a documented single-run degraded mode (std=0, CI collapsed to mean, `single_run: True` in metadata), and per-variation aggregation explicitly lets single-success cells through — see the comment at `src/aiperf/cli_runner/_sweep_helpers.py`. Only cells with **zero** successful runs are skipped.
+**Note:** Sweep mode does **not** require at least 2 successful runs. `ConfidenceAggregation` has a documented single-run degraded mode (std=0, CI collapsed to mean, `single_run: True` in metadata), and per-variation aggregation explicitly lets single-success cells through — see the comment at `src/aiperf/cli_runner/_sweep_aggregate.py`. Only cells with **zero** successful runs are skipped.
 
 **Related sweep-level warnings:**
-- `Skipping per-variation aggregate for '<label>': ConfidenceAggregation raised <exc>` — aggregation crashed for that cell (`_cli_runner_sweep_helpers.py`).
-- `Sweep aggregate skipped: no successful runs across all variations.` — the whole-sweep summary is skipped only when every variation had zero successes (`_cli_runner_sweep_helpers.py`).
+- `Skipping per-variation aggregate for '<label>': ConfidenceAggregation raised <exc>` — aggregation crashed for that cell (`cli_runner/_sweep_aggregate.py`).
+- `Sweep aggregate skipped: no successful runs across all variations.` — the whole-sweep summary is skipped only when every variation had zero successes (`cli_runner/_sweep_aggregate.py`).
 
 **Warning Message (non-sweep multi-run path):**
 ```text

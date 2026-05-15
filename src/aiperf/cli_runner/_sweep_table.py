@@ -155,7 +155,7 @@ class SweepTableLogger:
         plan: BenchmarkPlan,
         logger: AIPerfLogger,
     ) -> None:
-        from aiperf.cli_runner._sweep_helpers import _resolve_pareto_axes
+        from aiperf.cli_runner._sweep_aggregate import _resolve_pareto_axes
 
         self._plan = plan
         self._logger = logger
@@ -178,7 +178,7 @@ class SweepTableLogger:
         sweep aggregator. Returns ``{}`` when aggregation yields ``None``
         (e.g., no usable trials).
         """
-        from aiperf.cli_runner._sweep_helpers import _aggregate_group_to_stats
+        from aiperf.cli_runner._sweep_aggregate import _aggregate_group_to_stats
 
         return (
             _aggregate_group_to_stats(cell_results, self._plan.confidence_level) or {}

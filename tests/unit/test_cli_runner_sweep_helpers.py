@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for aiperf.cli_runner._sweep_helpers.aggregate_sweep_and_export."""
+"""Tests for aiperf.cli_runner._sweep_aggregate.aggregate_sweep_and_export."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.cli_runner._sweep_helpers import (
+from aiperf.cli_runner._sweep_aggregate import (
     _per_variation_aggregate_dir,
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
 )
-from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+from aiperf.cli_runner._sweep_table import SweepTableLogger
 from aiperf.common.enums import SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.resolution.plan import BenchmarkConfig, BenchmarkPlan
@@ -366,9 +366,9 @@ async def test_aggregate_sweep_logs_best_configurations(tmp_path, caplog):
         _bp_result("c10", 10, tput=100.0, ttft_p99=50.0),
         _bp_result("c20", 20, tput=180.0, ttft_p99=80.0),
     ]
-    test_logger = logging.getLogger("aiperf.cli_runner._sweep_helpers.best_test")
+    test_logger = logging.getLogger("aiperf.cli_runner._sweep_aggregate.best_test")
     with caplog.at_level(
-        logging.INFO, logger="aiperf.cli_runner._sweep_helpers.best_test"
+        logging.INFO, logger="aiperf.cli_runner._sweep_aggregate.best_test"
     ):
         await aggregate_sweep_and_export(results, plan, tmp_path, test_logger)
 
@@ -412,9 +412,9 @@ async def test_aggregate_sweep_logs_pareto_optimal(tmp_path, caplog):
         _bp_result("c10", 10, tput=100.0, ttft_p99=50.0),
         _bp_result("c20", 20, tput=180.0, ttft_p99=80.0),
     ]
-    test_logger = logging.getLogger("aiperf.cli_runner._sweep_helpers.pareto_test")
+    test_logger = logging.getLogger("aiperf.cli_runner._sweep_aggregate.pareto_test")
     with caplog.at_level(
-        logging.INFO, logger="aiperf.cli_runner._sweep_helpers.pareto_test"
+        logging.INFO, logger="aiperf.cli_runner._sweep_aggregate.pareto_test"
     ):
         await aggregate_sweep_and_export(results, plan, tmp_path, test_logger)
 
@@ -430,7 +430,7 @@ async def test_aggregate_sweep_logs_pareto_optimal(tmp_path, caplog):
 
 def test_execute_multi_benchmark_wires_sweep_table_logger() -> None:
     """When the suppress predicate clears, MultiRunOrchestrator gets a SweepTableLogger."""
-    from aiperf.cli_runner import _execute_multi_benchmark
+    from aiperf.cli_runner._multi_run import _execute_multi_benchmark
     from aiperf.common.aiperf_logger import AIPerfLogger
 
     plan = MagicMock()
@@ -439,13 +439,13 @@ def test_execute_multi_benchmark_wires_sweep_table_logger() -> None:
 
     with (
         patch(
-            "aiperf.cli_runner._sweep_table_logger._should_emit_sweep_table",
+            "aiperf.cli_runner._sweep_table._should_emit_sweep_table",
             return_value=True,
         ),
         patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator") as mock_orch_cls,
         patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor"),
-        patch("aiperf.cli_runner._helpers._build_search_planner", return_value=None),
-        patch("aiperf.cli_runner._log_search_planner_active"),
+        patch("aiperf.cli_runner._multi_run._build_search_planner", return_value=None),
+        patch("aiperf.cli_runner._multi_run._log_search_planner_active"),
         patch("asyncio.run", return_value=[]),
     ):
         _execute_multi_benchmark(plan, base_dir=MagicMock(), logger=AIPerfLogger("t"))
@@ -457,7 +457,7 @@ def test_execute_multi_benchmark_wires_sweep_table_logger() -> None:
 
 def test_execute_multi_benchmark_skips_table_when_suppressed() -> None:
     """When the suppress predicate fires, no callback is passed."""
-    from aiperf.cli_runner import _execute_multi_benchmark
+    from aiperf.cli_runner._multi_run import _execute_multi_benchmark
     from aiperf.common.aiperf_logger import AIPerfLogger
 
     plan = MagicMock()
@@ -466,13 +466,13 @@ def test_execute_multi_benchmark_skips_table_when_suppressed() -> None:
 
     with (
         patch(
-            "aiperf.cli_runner._sweep_table_logger._should_emit_sweep_table",
+            "aiperf.cli_runner._sweep_table._should_emit_sweep_table",
             return_value=False,
         ),
         patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator") as mock_orch_cls,
         patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor"),
-        patch("aiperf.cli_runner._helpers._build_search_planner", return_value=None),
-        patch("aiperf.cli_runner._log_search_planner_active"),
+        patch("aiperf.cli_runner._multi_run._build_search_planner", return_value=None),
+        patch("aiperf.cli_runner._multi_run._log_search_planner_active"),
         patch("asyncio.run", return_value=[]),
     ):
         _execute_multi_benchmark(plan, base_dir=MagicMock(), logger=AIPerfLogger("t"))

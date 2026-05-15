@@ -30,7 +30,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pytest import param
 
-from aiperf.cli_runner._sweep_helpers import _group_results_by_variation
+from aiperf.cli_runner._sweep_aggregate import _group_results_by_variation
 from aiperf.common.enums import SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import AIPerfConfig

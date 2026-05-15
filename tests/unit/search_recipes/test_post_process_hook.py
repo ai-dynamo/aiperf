@@ -18,7 +18,7 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.cli_runner._sweep_helpers import aggregate_sweep_and_export
+from aiperf.cli_runner._sweep_aggregate import aggregate_sweep_and_export
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import BenchmarkConfig, BenchmarkPlan
 from aiperf.config.sweep import GridSweep, SweepVariation

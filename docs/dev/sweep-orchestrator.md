@@ -1558,7 +1558,7 @@ sequenceDiagram
 | `BayesianSearchPlanner` / `MonotonicSLASearchPlanner` / `SmoothIsotonicSLAPlanner` / `OptunaSearchPlanner` | `src/aiperf/orchestrator/search_planner/{bayesian,monotonic,smooth_isotonic,optuna_planner}.py` |
 | `parse_sla_filter`, `parse_search_space` | `src/aiperf/orchestrator/search_planner/parsing.py` |
 | `SweepAnalyzer` + exporters | `src/aiperf/orchestrator/aggregation/sweep.py` |
-| `aggregate_sweep_and_export` (file writer) | `src/aiperf/cli_runner/_sweep_helpers.py` (re-exported from `cli_runner/_helpers.py`) |
+| `aggregate_sweep_and_export` (file writer) | `src/aiperf/cli_runner/_sweep_aggregate.py` (re-exported from `cli_runner/_aggregate.py`) |
 | `write_search_history` | `src/aiperf/exporters/search_history.py` |
 | `run_benchmark` (single vs multi dispatch) + `_reject_in_process_sweep_under_operator` | `src/aiperf/cli_runner.py` |
 | Plugin registry + categories | `src/aiperf/plugin/{plugins.py,categories.yaml,types.py,schema/}` |

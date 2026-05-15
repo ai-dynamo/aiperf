@@ -301,8 +301,8 @@ class TestRunMultiBenchmarkCallbacks:
     def successful_result(self, tmp_path: Path) -> RunResult:
         return RunResult(label="run_0001", success=True, artifacts_path=tmp_path)
 
-    @patch("aiperf.cli_runner.aggregate_and_export", new_callable=AsyncMock)
-    @patch("aiperf.cli_runner._estimate_and_log_duration")
+    @patch("aiperf.cli_runner._multi_run.aggregate_and_export", new_callable=AsyncMock)
+    @patch("aiperf.cli_runner._multi_run._estimate_and_log_duration")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_callbacks_invoked_in_order_after_success(
         self,
@@ -333,7 +333,7 @@ class TestRunMultiBenchmarkCallbacks:
             assert isinstance(payload, CompletedRun)
             assert payload.artifact_dir == plan.configs[0].artifacts.dir
 
-    @patch("aiperf.cli_runner._estimate_and_log_duration")
+    @patch("aiperf.cli_runner._multi_run._estimate_and_log_duration")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_callbacks_skipped_when_orchestrator_raises(
         self,
@@ -358,7 +358,7 @@ class TestRunMultiBenchmarkCallbacks:
 
         cb.assert_not_called()
 
-    @patch("aiperf.cli_runner._estimate_and_log_duration")
+    @patch("aiperf.cli_runner._multi_run._estimate_and_log_duration")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_callbacks_skipped_when_summarize_exits_on_all_failures(
         self,
@@ -549,7 +549,7 @@ class TestMultiBenchmarkOneSuccessRunsCallbacks:
         with patch("os._exit") as mock:
             yield mock
 
-    @patch("aiperf.cli_runner._estimate_and_log_duration")
+    @patch("aiperf.cli_runner._multi_run._estimate_and_log_duration")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_one_successful_run_still_runs_callbacks(
         self,

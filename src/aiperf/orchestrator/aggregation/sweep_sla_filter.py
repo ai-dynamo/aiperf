@@ -124,7 +124,7 @@ def read_metric_value(
     2. Single-trial tag-only block + direct ``stat`` attribute.
     3. Single-trial tag-only block + ``mean`` fallback. Single-trial blocks
        carry only ``{mean, std, min, max, cv, ci_low, ci_high, unit}`` (see
-       ``_cli_runner_sweep_helpers._json_metric_to_stats``) — no per-percentile
+       ``cli_runner._sweep_aggregate._json_metric_to_stats``) — no per-percentile
        keys — so without this fallback any recipe that asks for ``p95``/``p99``
        under ``--num-profile-runs 1`` reads ``None`` and silently marks every
        sweep point infeasible. ``aiperf.search_recipes._sweep_extract._extract_points`` uses the same

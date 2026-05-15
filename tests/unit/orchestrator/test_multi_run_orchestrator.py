@@ -441,11 +441,11 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
         counter["n"] += 1
         return s
 
-    # _execute_repeated imports build_strategy from _cli_runner_helpers
+    # _execute_repeated imports build_strategy from cli_runner._strategy
     # locally, so patch the source module.
-    import aiperf.cli_runner._helpers as helpers_mod
+    import aiperf.cli_runner._strategy as strategy_mod
 
-    monkeypatch.setattr(helpers_mod, "build_strategy", _fake_build)
+    monkeypatch.setattr(strategy_mod, "build_strategy", _fake_build)
 
     executor = FakeExecutor()
     await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)

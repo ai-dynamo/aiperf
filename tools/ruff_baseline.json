@@ -222,7 +222,7 @@
     ],
     [
       "BLE001",
-      "src/aiperf/cli_runner/_sweep_helpers.py",
+      "src/aiperf/cli_runner/_sweep_aggregate.py",
       "_resolve_pareto_axes"
     ],
     [
@@ -802,7 +802,7 @@
     ],
     [
       "C901",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       "_run_multi_benchmark"
     ],
     [
@@ -1222,7 +1222,7 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       "_run_multi_benchmark"
     ],
     [
@@ -1402,7 +1402,7 @@
     ],
     [
       "PLR0915",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       "_run_multi_benchmark"
     ],
     [

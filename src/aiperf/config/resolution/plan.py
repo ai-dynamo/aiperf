@@ -244,7 +244,7 @@ class BenchmarkPlan(BaseModel):
     def is_sweep(self) -> bool:
         """True when build_benchmark_plan expanded a sweep (multiple variations).
 
-        Used by _cli_runner_helpers and the operator-mode gate to detect
+        Used by cli_runner._multi_run and the operator-mode gate to detect
         sweep-in-flight without re-counting plan.configs at every callsite.
         """
         return len(self.configs) > 1

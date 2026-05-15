@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from pytest import param
 
-from aiperf.cli_runner._sweep_table_logger import (
+from aiperf.cli_runner._sweep_table import (
     _format_metric_value,
     _recompute_pareto_marks,
     _should_emit_sweep_table,
@@ -54,7 +54,7 @@ def test_should_emit_sweep_table(
     expected: bool,
 ) -> None:
     plan = _make_plan(n_variations=n_variations, ui_type=ui_type)
-    with patch("aiperf.cli_runner._sweep_table_logger.sys.stdout") as fake_stdout:
+    with patch("aiperf.cli_runner._sweep_table.sys.stdout") as fake_stdout:
         fake_stdout.isatty.return_value = isatty
         result = _should_emit_sweep_table(plan, no_sweep_table=no_flag)
     assert result is expected
@@ -181,7 +181,7 @@ def _make_plan_for_logger(
 
 
 def test_logger_init_captures_param_names_no_pareto() -> None:
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     plan = _make_plan_for_logger(
         variations=[
@@ -197,7 +197,7 @@ def test_logger_init_captures_param_names_no_pareto() -> None:
 
 
 def test_logger_init_captures_pareto_axes() -> None:
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     axes = ParetoAxesSpec(
         x_metric="ttft",
@@ -214,7 +214,7 @@ def test_logger_init_captures_pareto_axes() -> None:
 
 
 def test_build_row_finite_values_no_pareto() -> None:
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     plan = _make_plan_for_logger(
         variations=[{"concurrency": 1}, {"concurrency": 2}],
@@ -236,7 +236,7 @@ def test_build_row_finite_values_no_pareto() -> None:
 
 
 def test_build_row_with_pareto_marker() -> None:
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     axes = ParetoAxesSpec(
         x_metric="time_to_first_token",
@@ -265,7 +265,7 @@ def test_build_row_with_pareto_marker() -> None:
 
 
 def test_build_row_handles_missing_metrics() -> None:
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     plan = _make_plan_for_logger(
         variations=[{"concurrency": 1}, {"concurrency": 2}],
@@ -289,10 +289,10 @@ def test_call_emits_table_to_logger(caplog: pytest.LogCaptureFixture) -> None:
     """Three sequential cell_callback fires produce three info-level log records,
     each containing all prior rows in the rendered table.
     """
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     plan = _make_plan_for_logger()
-    logger = AIPerfLogger("aiperf.cli_runner._sweep_table_logger.test_emit")
+    logger = AIPerfLogger("aiperf.cli_runner._sweep_table.test_emit")
     table_logger = SweepTableLogger(plan, logger)
 
     fake_stats = {
@@ -328,7 +328,7 @@ def test_call_emits_table_to_logger(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_call_with_pareto_axes_marks_frontier() -> None:
-    from aiperf.cli_runner._sweep_table_logger import SweepTableLogger
+    from aiperf.cli_runner._sweep_table import SweepTableLogger
 
     axes = ParetoAxesSpec(
         x_metric="time_to_first_token",
@@ -339,7 +339,7 @@ def test_call_with_pareto_axes_marks_frontier() -> None:
         y_maximize=True,
     )
     plan = _make_plan_for_logger(pareto_axes=axes)
-    logger = AIPerfLogger("aiperf.cli_runner._sweep_table_logger.test_pareto")
+    logger = AIPerfLogger("aiperf.cli_runner._sweep_table.test_pareto")
     table_logger = SweepTableLogger(plan, logger)
 
     cells = [
