@@ -132,7 +132,7 @@ class TestResponsesEndpoint:
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="Audio content must be in the format"):
+        with pytest.raises(ValueError, match="audio content must be in the format"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_system_message_becomes_instructions(
@@ -256,6 +256,167 @@ class TestResponsesEndpoint:
 
         assert payload["temperature"] == 0.7
         assert payload["top_p"] == 0.9
+
+    def test_format_payload_raw_tools_forwarded_as_tools(
+        self, endpoint, model_endpoint
+    ):
+        """Per-turn ``raw_tools`` is forwarded to the Responses payload as
+        ``tools``, mirroring chat-endpoint behavior. Without this, a DAG
+        trace authored with per-turn tool definitions would silently send
+        a different request to the Responses API than the author wrote.
+        """
+        tools = [
+            {
+                "type": "function",
+                "name": "get_weather",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+        turn = Turn(
+            texts=[Text(contents=["What's the weather?"])],
+            model="test-model",
+            raw_tools=tools,
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == tools
+
+    def test_format_payload_raw_tools_walks_from_latest_turn(
+        self, endpoint, model_endpoint
+    ):
+        """``raw_tools`` is read via the ``_latest_turn_attr`` walk, so a
+        FORK child whose final turn omits tools still inherits the parent
+        turn's tool definitions.
+        """
+        tools = [{"type": "function", "name": "lookup"}]
+        parent_turn = Turn(
+            texts=[Text(contents=["Use the tool"])],
+            model="test-model",
+            raw_tools=tools,
+        )
+        child_turn = Turn(
+            texts=[Text(contents=["Follow up"])],
+            model="test-model",
+            raw_tools=None,
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[parent_turn, child_turn]
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == tools
+
+    def test_format_payload_no_raw_tools_means_no_tools_key(
+        self, endpoint, model_endpoint
+    ):
+        """Turns without ``raw_tools`` produce no ``tools`` key in payload."""
+        turn = Turn(texts=[Text(contents=["Plain"])], model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "tools" not in payload
+
+    def test_format_payload_empty_raw_tools_list_forwarded_verbatim(
+        self, endpoint, model_endpoint
+    ):
+        """An explicit empty ``raw_tools=[]`` is distinct from ``None`` — it
+        is a deliberate authoring choice to send an empty tool array (e.g.
+        to suppress provider-injected defaults). ``_latest_turn_attr``
+        returns the first non-None value walking back, so ``[]`` is
+        forwarded verbatim and must show up as ``tools: []`` in payload.
+        """
+        turn = Turn(
+            texts=[Text(contents=["Plain"])],
+            model="test-model",
+            raw_tools=[],
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == []
+
+    def test_format_payload_raw_tools_walk_skips_intermediate_none(
+        self, endpoint, model_endpoint
+    ):
+        """Walk from the end and pick the FIRST non-None — intermediate
+        turns with ``raw_tools=None`` are transparent.
+        """
+        parent_tools = [{"type": "function", "name": "parent_fn"}]
+        mid_tools = [{"type": "function", "name": "mid_fn"}]
+        parent = Turn(
+            texts=[Text(contents=["root"])],
+            model="test-model",
+            raw_tools=parent_tools,
+        )
+        mid = Turn(
+            texts=[Text(contents=["middle"])],
+            model="test-model",
+            raw_tools=mid_tools,
+        )
+        leaf = Turn(
+            texts=[Text(contents=["child"])],
+            model="test-model",
+            raw_tools=None,
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[parent, mid, leaf]
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        # ``mid`` is the latest non-None — its tools must win, NOT the
+        # leaf's None (transparent) and NOT the parent's tools.
+        assert payload["tools"] == mid_tools
+
+    def test_format_payload_endpoint_extra_tools_override_raw_tools(self):
+        """``model_endpoint.endpoint.extra`` is applied AFTER per-turn
+        ``raw_tools`` (mirrors chat-endpoint ordering), so endpoint-level
+        ``tools`` win when both are set. Document this so a future
+        refactor doesn't silently flip the order.
+        """
+        per_turn_tools = [{"type": "function", "name": "from_turn"}]
+        endpoint_tools = [{"type": "function", "name": "from_endpoint_extra"}]
+        me = create_model_endpoint(
+            EndpointType.RESPONSES, extra=[("tools", endpoint_tools)]
+        )
+        ep = create_endpoint_with_mock_transport(ResponsesEndpoint, me)
+        turn = Turn(
+            texts=[Text(contents=["x"])],
+            model="test-model",
+            raw_tools=per_turn_tools,
+        )
+        request_info = create_request_info(model_endpoint=me, turns=[turn])
+
+        payload = ep.format_payload(request_info)
+
+        assert payload["tools"] == endpoint_tools
+
+    def test_format_payload_turn_extra_body_tools_override_raw_tools(
+        self, endpoint, model_endpoint
+    ):
+        """Per-turn ``extra_body`` is applied last (after ``raw_tools`` and
+        after endpoint.extra), so a turn-level ``extra_body["tools"]``
+        wins over any sibling ``raw_tools`` on the same turn list. This
+        is the documented "latest-wins" behavior of the extra_body merge.
+        """
+        per_turn_tools = [{"type": "function", "name": "from_raw_tools"}]
+        extra_body_tools = [{"type": "function", "name": "from_extra_body"}]
+        turn = Turn(
+            texts=[Text(contents=["x"])],
+            model="test-model",
+            raw_tools=per_turn_tools,
+            extra_body={"tools": extra_body_tools},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == extra_body_tools
 
     def test_format_payload_model_fallback(self, endpoint, model_endpoint):
         """Turn model=None falls back to primary model name."""
@@ -712,3 +873,39 @@ class TestResponsesEndpointParseResponse:
         )
         if has_message:
             assert parsed.data is not None
+
+
+class TestResponsesExtraBody:
+    """Tests for ResponsesEndpoint extra_body merge (latest-wins)."""
+
+    @pytest.fixture
+    def responses_endpoint(self):
+        ep_info = create_model_endpoint(EndpointType.RESPONSES, streaming=True)
+        return create_endpoint_with_mock_transport(ResponsesEndpoint, ep_info)
+
+    def test_extra_body_shallow_merges_into_payload(self, responses_endpoint):
+        turn = Turn(
+            role="user",
+            texts=[Text(contents=["hello"])],
+            extra_body={"vendor_top_k": 5},
+        )
+        request_info = create_request_info(
+            model_endpoint=responses_endpoint.model_endpoint,
+            turns=[turn],
+        )
+        payload = responses_endpoint.format_payload(request_info)
+        assert payload["vendor_top_k"] == 5
+
+    def test_extra_body_does_not_inherit_from_parent_turn(self, responses_endpoint):
+        parent = Turn(
+            role="user",
+            texts=[Text(contents=["help"])],
+            extra_body={"vendor_x": 1},
+        )
+        child = Turn(role="user", texts=[Text(contents=["follow up"])])
+        request_info = create_request_info(
+            model_endpoint=responses_endpoint.model_endpoint,
+            turns=[parent, child],
+        )
+        payload = responses_endpoint.format_payload(request_info)
+        assert "vendor_x" not in payload

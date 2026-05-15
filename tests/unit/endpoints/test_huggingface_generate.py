@@ -84,6 +84,27 @@ class TestHuggingFaceGenerateEndpoint:
         with pytest.raises(ValueError):
             endpoint.format_payload(request_info)
 
+    def test_extra_body_shallow_merges_at_top_level(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges at the TOP level of the
+        TGI wire body (not nested under `parameters`).
+
+        Matches OpenAI SDK extra_body= semantics: keys land at the wire body
+        root. To override a `parameters` key, a user must pass
+        extra_body={"parameters": {...}} (replaces the whole sub-dict).
+        """
+        turn = Turn(
+            texts=[{"contents": ["hello"]}],
+            extra_body={"vendor_x": 1, "stream": True},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        # extra_body lands at the TOP level (not inside `parameters`).
+        assert payload["vendor_x"] == 1
+        assert payload["stream"] is True
+        assert "vendor_x" not in payload["parameters"]
+        assert "stream" not in payload["parameters"]
+
     def test_parse_response_streaming_calls_streaming(self, endpoint):
         response = Mock(spec=InferenceServerResponse)
         endpoint.model_endpoint.endpoint.streaming = True

@@ -51,6 +51,14 @@ Compression settings for streaming file transfers. Controls chunk size and compr
 | `AIPERF_COMPRESSION_ZSTD_LEVEL` | `3` | ≥ 1, ≤ 22 | Zstandard compression level (1=fastest, 22=best compression, default: 3) |
 | `AIPERF_COMPRESSION_GZIP_LEVEL` | `6` | ≥ 1, ≤ 9 | Gzip compression level (1=fastest, 9=best compression, default: 6) |
 
+## DAG
+
+Settings for DAG benchmark mode (`dag_jsonl` input type).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_DAG_FAIL_FAST` | `False` | — | When True, abort the whole run on the first DAG child error (cancel pending siblings, raise to PhaseRunner, terminate phase). Default False - the orchestrator counts the error in BranchStats.children_errored, releases the join slot, drains pending siblings, and continues the run. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI assertions. |
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations, as well as memory-mapped dataset storage settings.

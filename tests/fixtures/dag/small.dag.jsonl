@@ -1,0 +1,3 @@
+{"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"sys1"},{"role":"user","content":"u1"}],"max_tokens":10,"forks":["branchA","branchB"]}]}
+{"session_id":"branchA","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"u2a"}],"max_tokens":10},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"u3a"}],"max_tokens":10}]}
+{"session_id":"branchB","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"u5"}],"max_tokens":10},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"u4"}],"max_tokens":10}]}

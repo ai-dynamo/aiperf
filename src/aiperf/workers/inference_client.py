@@ -7,10 +7,13 @@ import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import orjson
+
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
     ModelEndpointInfo,
+    RecordContext,
     RequestInfo,
     RequestRecord,
 )
@@ -99,10 +102,16 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        formatted_payload = self.endpoint.format_payload(request_info)
+        raw_payload = request_info.turns[-1].raw_payload
+        payload = (
+            raw_payload
+            if raw_payload is not None
+            else self.endpoint.format_payload(request_info)
+        )
+        request_info.payload_bytes = orjson.dumps(payload)
         return await self.transport.send_request(
             request_info,
-            payload=formatted_payload,
+            payload=payload,
             first_token_callback=first_token_callback,
         )
 
@@ -176,9 +185,27 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info.endpoint_headers = (
             redact_headers(request_info.endpoint_headers) or {}
         )
-        return self._enrich_request_record(record=record, request_info=request_info)
+        return self._finalize_request_record(record=record, request_info=request_info)
 
+    @staticmethod
     def _enrich_request_record(
+        record: RequestRecord, request_info: RequestInfo
+    ) -> RequestRecord:
+        """Attach a slim ``RecordContext`` (downcast from ``RequestInfo``) to
+        the record before the ZMQ hop to the record processor.
+
+        The full ``RequestInfo`` carries transport-only extras
+        (``model_endpoint``, ``turns``, ``endpoint_headers``,
+        ``endpoint_params``, ``drop_perf_ns``, ``cancel_after_ns``, ...) that
+        the record-processor pipeline never reads; downcasting saves
+        ~500-900 bytes per record at high throughput.
+        """
+        ctx_field_names = set(RecordContext.model_fields.keys())
+        ri_dump = request_info.model_dump(include=ctx_field_names)
+        record.request_info = RecordContext.model_validate(ri_dump)
+        return record
+
+    def _finalize_request_record(
         self,
         *,
         record: RequestRecord,
@@ -188,7 +215,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         record.model_name = (
             request_info.turns[-1].model or self.model_endpoint.primary_model_name
         )
-        record.request_info = request_info
+        self._enrich_request_record(record, request_info)
 
         # Copy turns with stripped multimodal data to avoid mutating original session
         # and reduce memory usage (placeholders instead of large image/audio/video data)

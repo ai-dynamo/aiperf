@@ -48,6 +48,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/common/models/dataset_models.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/models/record_models.py",
       ""
     ],
@@ -168,6 +173,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/memory_map_utils.py",
       ""
     ],
@@ -258,11 +268,6 @@
     ],
     [
       "file-size",
-      "src/aiperf/plugin/schema/schemas.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/post_processors/otel_metrics_results_processor.py",
       ""
     ],
@@ -303,6 +308,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/timing/concurrency.py",
       ""
     ],
@@ -325,11 +335,6 @@
       "function-size",
       "src/aiperf/accuracy/graders/_math_strip.py",
       "strip_string"
-    ],
-    [
-      "function-size",
-      "src/aiperf/cli_runner/_sweep_aggregate.py",
-      "_export_one_variation_aggregate"
     ],
     [
       "function-size",
@@ -948,11 +953,6 @@
     ],
     [
       "function-size",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.run"
-    ],
-    [
-      "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1210,11 +1210,6 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
     ],
     [
       "nesting-depth",

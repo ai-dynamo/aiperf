@@ -232,7 +232,7 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.text == '{"location": "Paris"}'
+        assert parsed.data.tool_call_text == '{"location": "Paris"}'
 
     def test_parse_response_non_streaming_tool_calls_only(self, endpoint):
         """Test parsing non-streaming response with only tool_calls."""
@@ -256,10 +256,15 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.text == '{"query": "test"}'
+        assert parsed.data.tool_call_text == '{"query": "test"}'
 
-    def test_parse_response_tool_calls_with_content_prioritizes_content(self, endpoint):
-        """Test that content takes priority over tool_calls when both present."""
+    def test_parse_response_tool_calls_with_content_returns_mixed_data(self, endpoint):
+        """Mixed content+tool_calls chunks return ToolCallResponseData with both fields populated.
+
+        Roughly ~18% of agentic turns emit prose content alongside a
+        tool-call delta; preserving both portions makes client-side OSL
+        match the server's ``usage.completion_tokens``.
+        """
         mock_response = create_mock_response(
             123456789,
             {
@@ -280,8 +285,10 @@ class TestChatEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
-        assert isinstance(parsed.data, TextResponseData)
-        assert parsed.data.text == "Some text"
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.content == "Some text"
+        assert parsed.data.tool_call_text == '{"key": "val"}'
+        assert parsed.data.get_text() == 'Some text{"key": "val"}'
 
     def test_parse_response_multiple_tool_calls_concatenated(self, endpoint):
         """Test that name and arguments from multiple tool calls are concatenated."""
@@ -311,7 +318,7 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.text == 'get_weather{"a":"b"}'
+        assert parsed.data.tool_call_text == 'get_weather{"a":"b"}'
 
     def test_parse_response_tool_call_name_only(self, endpoint):
         """Test parsing tool call chunk with only function name (first streaming chunk)."""
@@ -329,7 +336,7 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.text == "search"
+        assert parsed.data.tool_call_text == "search"
 
     def test_parse_response_tool_calls_empty_arguments_returns_none(self, endpoint):
         """Test that tool_calls with empty arguments returns None."""

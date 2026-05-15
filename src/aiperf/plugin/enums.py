@@ -187,4 +187,4 @@ def _build_datasetformat_members() -> dict[str, str]:
             members[alias.upper()] = alias
     return members
 DatasetFormat = create_enum("DatasetFormat", _build_datasetformat_members(), module=__name__)
-"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because ``--custom-dataset-type`` resolves into ``benchmark.datasets[].file.format``. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BURST_GPT_TRACE, DatasetFormat.MOONCAKE_TRACE"""
+"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because ``--custom-dataset-type`` resolves into ``benchmark.datasets[].file.format``. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BURST_GPT_TRACE, DatasetFormat.DAG_JSONL"""

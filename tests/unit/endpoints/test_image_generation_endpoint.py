@@ -136,7 +136,7 @@ class TestImageGenerationEndpoint:
         turn = Turn(texts=[], model="dall-e-3")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="requires text prompt"):
+        with pytest.raises(ValueError, match="requires a text prompt"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_empty_text_contents_raises(self, endpoint, model_endpoint):
@@ -144,8 +144,39 @@ class TestImageGenerationEndpoint:
         turn = Turn(texts=[Text(contents=[])], model="dall-e-3")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="requires text prompt"):
+        with pytest.raises(ValueError, match="requires a text prompt"):
             endpoint.format_payload(request_info)
+
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges into the payload."""
+        turn = Turn(
+            texts=[Text(contents=["a cat"])],
+            extra_body={"vendor_quality": "hd"},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_quality"] == "hd"
+
+    def test_format_payload_uses_dispatching_turn(self, endpoint, model_endpoint):
+        parent_turn = Turn(
+            texts=[Text(contents=["parent prompt"])],
+            model="parent-model",
+            extra_body={"vendor_quality": "parent"},
+        )
+        child_turn = Turn(
+            texts=[Text(contents=["child prompt"])],
+            model="child-model",
+            extra_body={"vendor_quality": "child"},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(
+                model_endpoint=model_endpoint, turns=[parent_turn, child_turn]
+            )
+        )
+        assert payload["prompt"] == "child prompt"
+        assert payload["model"] == "child-model"
+        assert payload["vendor_quality"] == "child"
 
     # ===== parse_response tests =====
 

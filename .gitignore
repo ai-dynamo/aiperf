@@ -26,6 +26,7 @@ profile.html
 *.jsonl
 # Bundled template data (sample mooncake-trace files) is intentionally tracked.
 !src/aiperf/config/templates/data/*.jsonl
+!tests/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/
 coverage.json

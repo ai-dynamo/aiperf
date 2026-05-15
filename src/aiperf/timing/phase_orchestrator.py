@@ -107,10 +107,21 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             PluginType.DATASET_SAMPLER,
             self._dataset_metadata.sampling_strategy,
         )
+        # Only root conversations are sampled by the strategy. DAG
+        # children belong to their root's session and are dispatched by
+        # the BranchOrchestrator on credit return — sampling them as
+        # roots would create duplicate root sessions. Filter on
+        # ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode
+        # children (which keep ``agent_depth == 0`` for fresh-context
+        # semantics but carry ``is_root=False``) are also excluded.
+        root_conv_ids = [
+            c.conversation_id
+            for c in self._dataset_metadata.conversations
+            if getattr(c, "is_root", True)
+        ]
         self._dataset_sampler = SamplerClass(
-            conversation_ids=[
-                c.conversation_id for c in self._dataset_metadata.conversations
-            ],
+            conversation_ids=root_conv_ids
+            or [c.conversation_id for c in self._dataset_metadata.conversations]
         )
 
         # Long-lived components (shared across phases)

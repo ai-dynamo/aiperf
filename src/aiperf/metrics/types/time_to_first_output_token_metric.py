@@ -74,7 +74,7 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
                 )
                 or (
                     isinstance(response.data, ToolCallResponseData)
-                    and response.data.text
+                    and response.data.tool_call_text
                 )
             )
         except StopIteration:

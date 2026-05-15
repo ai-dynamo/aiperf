@@ -1,0 +1,2 @@
+{"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"root-sys"},{"role":"user","content":"root-u"}],"max_tokens":20,"spawns":["spawned-child"]}]}
+{"session_id":"spawned-child","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"spawn-sys"},{"role":"user","content":"spawn-u"}],"max_tokens":20}]}
