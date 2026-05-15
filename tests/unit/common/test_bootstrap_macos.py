@@ -104,7 +104,7 @@ class TestRedirectStdioToDevnull:
         )
 
     def test_redirect_dup2_called_for_stdin_stdout_stderr(self):
-        """os.dup2 redirects FDs 0, 1, 2 to /dev/null."""
+        """os.dup2 redirects FDs 0, 1 to /dev/null and FD 2 to a per-PID stderr file."""
         p_open, p_dup2, p_close, p_fdopen = self._patch_os()
         with (
             p_open as mock_open,
@@ -117,16 +117,24 @@ class TestRedirectStdioToDevnull:
         ):
             _redirect_stdio_to_devnull()
 
-            mock_open.assert_called_once_with(os.devnull, os.O_RDWR)
+            # Two opens: /dev/null for stdin/stdout, a per-PID file for stderr.
+            # Stderr is preserved to a tmp file so uncaught Python tracebacks
+            # from spawned children are recoverable for postmortem.
+            assert mock_open.call_count == 2
+            assert mock_open.call_args_list[0] == call(os.devnull, os.O_RDWR)
+            stderr_open_args = mock_open.call_args_list[1].args
+            assert "aiperf_child_" in stderr_open_args[0]
+            assert stderr_open_args[0].endswith("_stderr.log")
+
             assert mock_dup2.call_args_list == [
                 call(99, 0),
                 call(99, 1),
                 call(99, 2),
             ]
-            mock_close.assert_called_once_with(99)
+            assert mock_close.call_count == 2
 
     def test_redirect_creates_python_streams_from_fds(self):
-        """sys.stdin/stdout/stderr are recreated from OS-level FDs."""
+        """sys.stdin/stdout/stderr are recreated from OS-level FDs with UTF-8 encoding."""
         mock_streams = {0: MagicMock(), 1: MagicMock(), 2: MagicMock()}
 
         def fdopen_side_effect(fd, _mode="r", **_kwargs):
@@ -148,9 +156,50 @@ class TestRedirectStdioToDevnull:
 
             _redirect_stdio_to_devnull()
 
-            mock_fdopen.assert_any_call(0, "r", closefd=False)
-            mock_fdopen.assert_any_call(1, "w", closefd=False)
-            mock_fdopen.assert_any_call(2, "w", closefd=False)
+            mock_fdopen.assert_any_call(
+                0, "r", encoding="utf-8", errors="replace", closefd=False
+            )
+            mock_fdopen.assert_any_call(
+                1, "w", encoding="utf-8", errors="replace", closefd=False
+            )
+            mock_fdopen.assert_any_call(
+                2, "w", encoding="utf-8", errors="replace", closefd=False
+            )
             assert sys.stdin is mock_streams[0]
             assert sys.stdout is mock_streams[1]
             assert sys.stderr is mock_streams[2]
+
+
+class TestRemoveIfEmpty:
+    """Tests for _remove_if_empty — atexit handler that cleans empty stderr files."""
+
+    def test_removes_zero_byte_file(self, tmp_path):
+        """An empty stderr file (clean exit, no traceback) is unlinked."""
+        from aiperf.common.bootstrap import _remove_if_empty
+
+        empty_file = tmp_path / "aiperf_child_12345_abcd_stderr.log"
+        empty_file.write_bytes(b"")
+
+        _remove_if_empty(str(empty_file))
+
+        assert not empty_file.exists(), "Empty stderr file should be removed"
+
+    def test_preserves_nonempty_file(self, tmp_path):
+        """A non-empty stderr file (real crash with traceback) is preserved."""
+        from aiperf.common.bootstrap import _remove_if_empty
+
+        crash_file = tmp_path / "aiperf_child_12345_abcd_stderr.log"
+        crash_file.write_text("Traceback (most recent call last):\n  ...\n")
+        size_before = crash_file.stat().st_size
+
+        _remove_if_empty(str(crash_file))
+
+        assert crash_file.exists(), "Non-empty crash log must be preserved"
+        assert crash_file.stat().st_size == size_before
+
+    def test_swallows_oserror_for_missing_file(self, tmp_path):
+        """Missing file (already cleaned up by something else) doesn't raise."""
+        from aiperf.common.bootstrap import _remove_if_empty
+
+        # Should not raise even though the path doesn't exist.
+        _remove_if_empty(str(tmp_path / "never_existed.log"))

@@ -15,6 +15,37 @@ from aiperf.controller.multiprocess_service_manager import (
 from aiperf.plugin.enums import ServiceType
 
 
+class TestForkProcessRemovalSmokeTest:
+    """Bug 1 regression: ``ForkProcess`` import was Linux-only.
+
+    The original ``Process | SpawnProcess | ForkProcess | None`` field type
+    pulled ``ForkProcess`` from ``multiprocessing.context``, which fails at
+    module-load time on Windows (``ImportError: cannot import name
+    'ForkProcess'``). Replaced with ``Process | None`` — every Process
+    subclass inherits from Process, no subclass dispatch in the codebase.
+    """
+
+    def test_module_imports_on_any_platform(self) -> None:
+        """Importing this module must succeed on every platform AIPerf
+        supports — ForkProcess is no longer in the import chain."""
+        from aiperf.controller import multiprocess_service_manager
+
+        assert multiprocess_service_manager.MultiProcessRunInfo is not None
+
+    def test_field_accepts_a_plain_process(self) -> None:
+        """The ``process`` field accepts any subclass of Process, including
+        SpawnProcess (the actual runtime type AIPerf produces)."""
+        from multiprocessing import Process
+
+        info = MultiProcessRunInfo.model_construct(
+            process=Process(target=lambda: None),
+            service_type=ServiceType.SYSTEM_CONTROLLER,
+            run_id="test",
+        )
+        assert info.process is not None
+        # Don't actually start; just confirm assignment works.
+
+
 class TestMultiProcessServiceManager:
     """Test MultiProcessServiceManager process failure scenarios."""
 
@@ -124,6 +155,62 @@ class TestMultiProcessServiceManager:
             AIPerfError,
             match="Service process failed_to_start_service died before registering",
         ):
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=1.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_wait_blocks_until_optional_services_register(
+        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
+    ):
+        """Regression: optional services started via run_service() must also
+        be waited for before ProfileConfigureCommand is broadcast.
+
+        Failure mode: ServerMetricsManager (an optional service started via
+        run_service, not part of required_services) registers ~1s later than
+        the core services on slow Windows VDI. The SystemController previously
+        only waited for required_services; it broadcast ProfileConfigureCommand
+        before ServerMetricsManager had subscribed, leaving it un-configured
+        and the JSON export file missing on disk.
+
+        Now wait_for_all_services_registration derives its wait set from
+        multi_process_info (every spawned service) instead of just
+        required_services.
+        """
+        from aiperf.common.enums import ServiceRegistrationStatus
+        from aiperf.common.models.service_models import ServiceRunInfo
+
+        # required service already registered
+        required_info = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="dataset_manager",
+        )
+        # optional service spawned via run_service() but not yet registered
+        optional_info = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.SERVER_METRICS_MANAGER,
+            service_id="server_metrics_manager",
+        )
+        service_manager.multi_process_info = [required_info, optional_info]
+        # Mark only the required one as REGISTERED — optional is still spawning.
+        service_manager.service_id_map = {
+            "dataset_manager": ServiceRunInfo(
+                service_type=ServiceType.DATASET_MANAGER,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id="dataset_manager",
+            ),
+            "timing_manager": ServiceRunInfo(
+                service_type=ServiceType.TIMING_MANAGER,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id="timing_manager",
+            ),
+        }
+
+        # Pre-fix: wait would return ~immediately because required_services
+        # are all registered. Post-fix: wait times out because the optional
+        # SERVER_METRICS_MANAGER in multi_process_info isn't in service_id_map.
+        with pytest.raises(AIPerfError, match="failed to register within timeout"):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
             )

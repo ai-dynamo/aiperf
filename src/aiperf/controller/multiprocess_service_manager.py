@@ -20,7 +20,10 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | None = Field(default=None)
+    process: Process | None = Field(
+        default=None,
+        description="The multiprocessing Process handle for the spawned service.",
+    )
     service_type: ServiceTypeT = Field(
         ...,
         description="Type of service running in the process",
@@ -143,8 +146,18 @@ class MultiProcessServiceManager(BaseServiceManager):
         """
         self.debug("Waiting for all required services to register...")
 
-        # Get the set of required service types for checking completion
-        required_types = set(self.required_services.keys())
+        # Wait for every service we've actually spawned, not just the ones in
+        # required_services. Optional services (GPU telemetry, server metrics,
+        # API) are started via run_service() and tracked in multi_process_info
+        # but never added to required_services. On slow targets (Windows VDI
+        # multiprocessing.spawn) those optional services register hundreds of
+        # ms after the core ones — if we only waited on required_services, the
+        # ProfileConfigureCommand would broadcast before the optionals had
+        # subscribed, leaving them un-configured and their data missing from
+        # the final export.
+        required_types = set(
+            info.service_type for info in self.multi_process_info
+        ) or set(self.required_services.keys())
 
         # TODO: Can this be done better by using asyncio.Event()?
 

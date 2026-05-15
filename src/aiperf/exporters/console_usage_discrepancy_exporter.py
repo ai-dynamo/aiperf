@@ -89,12 +89,12 @@ class ConsoleUsageDiscrepancyExporter(AIPerfLoggerMixin):
         """Create the formatted warning text with details and recommendations."""
         return f"""\
 [bold]{discrepancy_count:,} of {total_records:,} requests ({percentage:.1f}%) show a difference exceeding {self._threshold:g}% between:[/bold]
-  • API-reported usage tokens (from 'usage' field)
-  • Client-computed token counts (from tokenization)
+  - API-reported usage tokens (from 'usage' field)
+  - Client-computed token counts (from tokenization)
 
 [bold]Possible Causes:[/bold]
-  • Different tokenization methods (API vs client)
-  • API special tokens or preprocessing
+  - Different tokenization methods (API vs client)
+  - API special tokens or preprocessing
 
 [bold]Investigation Steps:[/bold]
   1. Review [cyan]profile_export.jsonl[/cyan] for per-request [cyan]usage_*_diff_pct[/cyan] values

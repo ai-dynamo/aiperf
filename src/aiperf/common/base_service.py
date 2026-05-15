@@ -9,6 +9,7 @@ import uuid
 from abc import ABC
 from typing import TYPE_CHECKING
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.hooks import on_command
@@ -166,6 +167,8 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         # graceful stop has already failed; the lifecycle task may be wedged
         # inside a C extension (zmq, uvloop, orjson) where CancelledError
         # cannot interrupt. Replace this only if we add a robust abort path
-        # for blocked extension calls.
-        os.kill(os.getpid(), signal.SIGKILL)
+        # for blocked extension calls. Windows has no SIGKILL —
+        # ``signal.SIGKILL`` raises AttributeError on Windows; SIGTERM is the
+        # closest cross-platform unconditional kill there.
+        os.kill(os.getpid(), signal.SIGTERM if IS_WINDOWS else signal.SIGKILL)
         raise asyncio.CancelledError(f"Killed {self}")

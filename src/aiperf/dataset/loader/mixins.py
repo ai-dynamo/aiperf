@@ -99,6 +99,13 @@ class MediaConversionMixin:
         Raises:
             ValueError: If URL has only scheme or only netloc (invalid).
         """
+        # A real URL contains the "://" separator between scheme and authority.
+        # Without it, urlparse would mis-classify Windows drive-letter paths
+        # like "C:\Users\foo" as having scheme="c" and crash here. Filter them
+        # out cheaply before urlparse runs.
+        if "://" not in content:
+            return False
+
         url = urlparse(content)
 
         # Valid URL with both scheme and netloc
