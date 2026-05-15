@@ -34,10 +34,18 @@ class TestDataLoaderLoadRun:
         assert "time_to_first_token" in run.requests.columns
         assert "request_latency" in run.requests.columns
 
-    def test_load_run_nonexistent_path(self) -> None:
-        """Test loading from nonexistent path raises error."""
+    def test_load_run_nonexistent_path(self, tmp_path: Path) -> None:
+        """Test loading from nonexistent path raises error.
+
+        Uses ``tmp_path / "nonexistent" / "path"`` instead of a hard-coded
+        ``"/nonexistent/path"`` so the path is guaranteed not to exist on
+        every platform. (On Windows, ``Path("/nonexistent/path")`` can
+        resolve to drive-relative paths whose parents may exist as
+        directories on the test machine, causing the ``is_dir()`` /
+        ``exists()`` checks in ``load_run`` to take an unexpected branch.)
+        """
         loader = DataLoader()
-        fake_path = Path("/nonexistent/path")
+        fake_path = tmp_path / "nonexistent" / "path"
 
         with pytest.raises(DataLoadError, match="does not exist"):
             loader.load_run(fake_path)

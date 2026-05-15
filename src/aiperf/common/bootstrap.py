@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import atexit
 import contextlib
 import multiprocessing
 import os
 import signal
 import sys
+import tempfile
 import uuid
 import warnings
 from typing import TYPE_CHECKING
@@ -48,6 +50,18 @@ def bootstrap_and_run_service(
         log_queue: Optional multiprocessing queue for child process logging.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
+    is_child_process = multiprocessing.parent_process() is not None
+
+    # Release inherited terminal/pipe FDs in spawned children BEFORE anything
+    # else runs in this process. See _redirect_stdio_to_devnull for the
+    # per-platform reasoning. Doing it later (e.g. inside the async event
+    # loop) is too late on Python 3.13: by that point asyncio/logging have
+    # already grabbed C-level references to the inherited fd 1/2, and a
+    # later dup2-to-NUL no longer releases the parent's pipe handles fully —
+    # the parent's `process.communicate()` never sees EOF and hangs.
+    if (IS_MACOS or IS_WINDOWS) and is_child_process:
+        _redirect_stdio_to_devnull()
+
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
     # handled via the message bus (ShutdownCommand); process.terminate() is only
@@ -55,7 +69,7 @@ def bootstrap_and_run_service(
     # falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
     # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
     # code (uvloop, zmq, aiohttp, orjson) is executing.
-    if multiprocessing.parent_process() is not None:
+    if is_child_process:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
@@ -75,7 +89,6 @@ def bootstrap_and_run_service(
         # Disable health server in child processes to prevent port conflicts.
         # Multiple child processes on the same host cannot bind to the same port.
         # The main process (SystemController) handles health probes for local mode.
-        is_child_process = multiprocessing.parent_process() is not None
         if is_child_process:
             Environment.SERVICE.HEALTH_ENABLED = False
 
@@ -115,14 +128,6 @@ def bootstrap_and_run_service(
         from aiperf.common.logging import setup_child_process_logging
 
         setup_child_process_logging(log_queue, service.service_id, run)
-
-        # NOTE: Prevent child processes from accessing parent's terminal on macOS.
-        # This solves the macOS terminal corruption issue with Textual UI where child
-        # processes inherit terminal file descriptors and interfere with Textual's
-        # terminal management, causing ASCII garbage and freezing when mouse events occur.
-        # Only apply this in spawned child processes, NOT in the main process where Textual runs.
-        if IS_MACOS and is_child_process:
-            _redirect_stdio_to_devnull()
 
         # Initialize global RandomGenerator for reproducible random number generation
         from aiperf.common import random_generator as rng
@@ -189,10 +194,21 @@ def _exit_if_service_failed(service) -> None:
 
 
 def _redirect_stdio_to_devnull() -> None:
-    """Redirect stdin/stdout/stderr to /dev/null for macOS child processes.
+    """Redirect stdin/stdout/stderr to NUL/devnull in spawned child processes.
 
-    Prevents child processes from accessing the parent's terminal, which causes
-    Textual UI corruption (ASCII garbage and freezes from inherited terminal FDs).
+    macOS: avoid Textual UI terminal corruption — children inheriting the
+    parent's terminal FDs interfere with Textual's terminal management,
+    causing ASCII garbage and freezes on mouse events.
+
+    Windows: when aiperf is launched as a subprocess with stdout/stderr =
+    ``subprocess.PIPE`` (e.g. from the integration test runner), Windows marks
+    those pipe handles inheritable. ``multiprocessing.spawn`` then propagates
+    them into every grandchild service. At shutdown the grandchildren still
+    hold those pipe handles, which causes either ``process.communicate()`` to
+    hang forever waiting for EOF, or a ``STATUS_ACCESS_VIOLATION`` (0xC0000005)
+    during ``DLL_PROCESS_DETACH``. Releasing the inherited pipe FDs to NUL
+    early makes shutdown clean. Service log output is already routed through
+    the multiprocessing log_queue, so this loses nothing.
     """
     # Redirect at the OS level so spawned grandchild processes (e.g.
     # ProcessPoolExecutor workers via 'spawn' context) inherit safe FDs
@@ -208,17 +224,61 @@ def _redirect_stdio_to_devnull() -> None:
     # os.open on /dev/null hits a kernel fast path (no disk I/O), so
     # the blocking calls are safe here.
     devnull_fd = os.open(os.devnull, os.O_RDWR)
-    for fd in (0, 1, 2):
-        os.dup2(devnull_fd, fd)
+    os.dup2(devnull_fd, 0)
+    os.dup2(devnull_fd, 1)
     os.close(devnull_fd)
+
+    # stderr: redirect to a per-process file rather than NUL. Releases the
+    # inherited stderr pipe handle from the parent (same shutdown rationale
+    # as fd 1), AND preserves uncaught Python tracebacks for postmortem —
+    # otherwise child crashes are invisible because Python's default
+    # ``sys.excepthook`` writes to stderr.
+    #
+    # Filename includes PID + a UUID suffix so a recycled PID (common on
+    # Windows) cannot O_TRUNC over a previous process's crash log. An atexit
+    # handler removes the file on clean exit if it's still empty — that keeps
+    # %TEMP% from accumulating zero-byte ``aiperf_child_*_stderr.log`` files
+    # over many runs while still preserving crash evidence (non-empty files
+    # are left in place for the user to inspect).
+    err_path = (
+        f"{tempfile.gettempdir()}{os.sep}"
+        f"aiperf_child_{os.getpid()}_{uuid.uuid4().hex[:8]}_stderr.log"
+    )
+    err_fd = os.open(err_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    os.dup2(err_fd, 2)
+    os.close(err_fd)
+    atexit.register(_remove_if_empty, err_path)
 
     # Recreate Python-level streams from the redirected OS FDs.
     # closefd=False keeps FD ownership at the OS level so that if these
     # stream objects are garbage-collected (e.g. replaced by test frameworks),
     # the underlying FDs 0/1/2 stay open and the /dev/null redirect holds.
-    sys.stdin = os.fdopen(0, "r", closefd=False)
-    sys.stdout = os.fdopen(1, "w", closefd=False)
-    sys.stderr = os.fdopen(2, "w", closefd=False)
+    #
+    # encoding="utf-8" is critical on Windows: without it, os.fdopen picks
+    # the system default (cp1252) which can't encode common Unicode chars
+    # (box-drawing arrows, emoji, etc.) used in aiperf's TRACE-level log
+    # messages. The first such write triggers UnicodeEncodeError, which
+    # Python's logging then re-emits as another UnicodeEncodeError on top,
+    # cascading into a flood that wedges the child before it can register.
+    # errors="replace" guards against any non-UTF8 binary slipping through.
+    sys.stdin = os.fdopen(0, "r", encoding="utf-8", errors="replace", closefd=False)
+    sys.stdout = os.fdopen(1, "w", encoding="utf-8", errors="replace", closefd=False)
+    sys.stderr = os.fdopen(2, "w", encoding="utf-8", errors="replace", closefd=False)
+
+
+def _remove_if_empty(path: str) -> None:
+    """Delete ``path`` on interpreter exit only if it has zero bytes.
+
+    Used by ``_redirect_stdio_to_devnull`` to clean up the per-process stderr
+    file when the process exited cleanly with no uncaught traceback. Files
+    with content (i.e. real crashes) are preserved for postmortem.
+    """
+    try:
+        if os.path.getsize(path) == 0:
+            os.unlink(path)
+    except OSError:
+        # File already gone, or directory not writable — both fine to ignore.
+        pass
 
 
 def _start_yappi_profiling() -> None:

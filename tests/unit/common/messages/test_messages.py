@@ -61,11 +61,19 @@ class TestBaseStatusMessageTimestamp:
 
     def test_request_ns_differs_between_instances(self):
         """Each instance gets its own timestamp via default_factory, not a shared class-level value."""
+        import sys
+        import time
+
         msg1 = StatusMessage(
             state=LifecycleState.RUNNING,
             service_id="svc-1",
             service_type=ServiceType.WORKER,
         )
+        # Windows ``time.time_ns()`` has ~16ms granularity (system clock tick);
+        # back-to-back calls can collapse to the same value. Force a tick to
+        # guarantee monotonic separation without touching production code.
+        if sys.platform == "win32":
+            time.sleep(0.02)
         msg2 = StatusMessage(
             state=LifecycleState.RUNNING,
             service_id="svc-2",

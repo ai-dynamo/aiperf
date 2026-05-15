@@ -90,14 +90,19 @@ class TestPlotControllerValidatePaths:
 
     def test_validate_paths_with_nonexistent_path(self, tmp_path: Path) -> None:
         """Test path validation with nonexistent path raises error."""
+        import re
+
         nonexistent = tmp_path / "nonexistent"
         controller = PlotController(
             paths=[nonexistent],
             output_dir=tmp_path / "output",
         )
 
+        # ``re.escape`` is required because Windows paths contain backslashes
+        # like ``\Users``, which the regex engine interprets as ``\U`` (a
+        # Unicode escape) and rejects as invalid.
         with pytest.raises(
-            FileNotFoundError, match=f"Path does not exist: {nonexistent}"
+            FileNotFoundError, match=re.escape(f"Path does not exist: {nonexistent}")
         ):
             controller._validate_paths()
 

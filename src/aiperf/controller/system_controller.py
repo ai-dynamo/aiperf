@@ -784,7 +784,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.print(
             Panel(
-                "[bold yellow]⚠️  BENCHMARK CANCELLED[/bold yellow]\n\n"
+                "[bold yellow]BENCHMARK CANCELLED[/bold yellow]\n\n"
                 "Stopping credit issuance and cancelling in-flight requests...\n"
                 "Results will be written to files.\n\n"
                 "[dim]Press Ctrl+C again to force quit immediately[/dim]\n"
@@ -809,7 +809,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.print(
             Panel(
-                "[bold red]🛑 FORCE QUIT[/bold red]\n\n"
+                "[bold red]FORCE QUIT[/bold red]\n\n"
                 "Terminating all processes immediately.\n"
                 "Results may be incomplete or not written to files.",
                 border_style="red",
@@ -923,14 +923,25 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.ui.wait_for_tasks()
         await asyncio.sleep(0.1)  # Give time for screen clear to finish
 
-        if not self._exit_errors:
-            await self._print_post_benchmark_info_and_metrics()
-        else:
-            self._print_exit_errors_and_log_file()
+        # Post-shutdown reporting must never prevent reaching os._exit(): by
+        # this point services/comms/UI are already stopped, so any unhandled
+        # raise here leaves the parent process alive with no work to do, and
+        # an integration runner waiting on process.communicate() blocks until
+        # its timeout. The concrete failure that motivated this guard was a
+        # UnicodeEncodeError from a Rich console.print() of a non-cp1252 char
+        # on Windows PIPE'd stdout — but any rendering bug has the same blast
+        # radius, so we catch broadly.
+        try:
+            if not self._exit_errors:
+                await self._print_post_benchmark_info_and_metrics()
+            else:
+                self._print_exit_errors_and_log_file()
 
-        if Environment.DEV.MODE:
-            # Print a warning message to the console if developer mode is enabled, on exit after results
-            print_developer_mode_warning()
+            if Environment.DEV.MODE:
+                # Print a warning message to the console if developer mode is enabled, on exit after results
+                print_developer_mode_warning()
+        except Exception as e:  # noqa: BLE001 - last-chance guard; any raise here hangs the process tree
+            self.error(f"Post-shutdown reporting failed (continuing to exit): {e!r}")
 
         # Clean up the global log queue to prevent semaphore leaks
         await cleanup_global_log_queue()
