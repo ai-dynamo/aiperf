@@ -110,6 +110,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # Track which x_correlation_ids correspond to trajectories in WARMUP
         # so that terminal failures can be attributed to a trace_id.
         self._warmup_correlation_to_trace: dict[str, str] = {}
+        # Per-trajectory (k_i, num_turns) recorded at warmup dispatch so the
+        # warmup-completion log line can show the actual start position and
+        # how far into the trace the trajectory began.
+        self._warmup_correlation_to_start_info: dict[str, tuple[int, int]] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
@@ -197,6 +201,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self._warmup_correlation_to_trace[turn.x_correlation_id] = (
                 trajectory.conversation_id
             )
+            num_turns = len(session.metadata.turns)
+            self._warmup_correlation_to_start_info[turn.x_correlation_id] = (
+                trajectory.start_turn_index,
+                num_turns,
+            )
             await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
         # will be issued. SendingCompleteStopCondition watches this flag and
@@ -273,12 +282,26 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """
         if self.config.phase == CreditPhase.WARMUP:
             self._warmup_completed_count += 1
+            cid = credit.x_correlation_id
+            lane = self._correlation_to_lane.get(cid, -1)
+            trace_id = self._warmup_correlation_to_trace.get(cid, "?")
+            start_info = self._warmup_correlation_to_start_info.get(cid)
+            if start_info is not None:
+                k_i, n_turns = start_info
+                pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
+                start_desc = f"start_turn={k_i}/{n_turns} ({pct:.0f}% through trace)"
+            else:
+                start_desc = "start_turn=?/?"
+            status = "error" if error is not None else "ok"
             self.info(
-                lambda c=credit: f"WARMUP {self._warmup_completed_count}/"
-                f"{self._warmup_total_count} returned "
-                f"[{'error' if error is not None else 'ok'}] "
-                f"(lane={self._correlation_to_lane.get(c.x_correlation_id, -1)}, "
-                f"trace_id={self._warmup_correlation_to_trace.get(c.x_correlation_id, '?')})"
+                lambda c=self._warmup_completed_count,
+                t=self._warmup_total_count,
+                s=status,
+                ln=lane,
+                tid=trace_id,
+                sd=start_desc: (
+                    f"WARMUP {c}/{t} returned [{s}] (lane={ln}, trace_id={tid}, {sd})"
+                )
             )
             return
 

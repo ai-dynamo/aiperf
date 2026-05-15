@@ -204,6 +204,18 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    context_overflow_skip: bool = Field(
+        default=False,
+        description="True iff the record was classified as a context-overflow event "
+        "AND the active scenario uses AGENTIC_REPLAY timing. Set on the worker side "
+        "by ``RecordProcessor`` and consumed by ``RecordsManager``: the record still "
+        "increments ``total_records`` (so the records-side counter stays in lockstep "
+        "with the credit-side ``final_requests_completed`` and the completion barrier "
+        "converges), but it is skipped from the error tracker, the per-record "
+        "accumulators (latency/throughput/etc.), and the stream exporters. Net effect: "
+        "the overflow event doesn't show up in any user-facing metric, while the run "
+        "still terminates cleanly.",
+    )
 
 
 class TimesliceResult(AIPerfBaseModel):
