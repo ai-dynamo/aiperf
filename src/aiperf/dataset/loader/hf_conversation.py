@@ -105,14 +105,20 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         return normalized
 
     def _extract_first_message(self, messages: list[Any]) -> str | None:
-        """Extract the text of the first message, handling dataset-specific quirks.
+        """Extract the text of the first user message, handling dataset-specific quirks.
 
-        Unwraps list-of-lists turns (VisionArena) and strips ``<image>``
-        placeholder tokens (LLaVA) that are meaningless for benchmarking.
+        Prefers the first message with a ``user`` or ``human`` role. Falls back
+        to the literal first message when no role fields are present (backward
+        compatible with untagged datasets). Unwraps list-of-lists turns
+        (VisionArena) and strips ``<image>`` placeholder tokens (LLaVA).
         """
         normalized = self._normalize_messages(messages)
         if not normalized:
             return None
+        for msg in normalized:
+            role = (msg.get("role") or msg.get("from") or "").lower()
+            if role in ("user", "human"):
+                return self._text_from_message_dict(msg)
         return self._text_from_message_dict(normalized[0])
 
     def _sharegpt_style_pairs(
@@ -169,14 +175,19 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
             return []
 
         sg = self._sharegpt_style_pairs(normalized)
-        if sg is not None:
+        if sg:
             return sg
         return self._openai_style_pairs(normalized)
 
     def _pairs_pass_validation(self, pairs: list[tuple[str, str]]) -> list[int] | None:
-        """Validate pairs and return completion token lengths, or None if invalid."""
+        """Validate pairs and return completion token lengths, or None if invalid.
+
+        Returns ``None`` when any pair fails validation. When no tokenizer is
+        configured, validation is skipped and an empty list is returned so the
+        caller falls back to ``max_tokens=None``.
+        """
         if self.tokenizer is None:
-            return [0] * len(pairs)
+            return []
         completion_lengths: list[int] = []
         for prompt, completion in pairs:
             prompt_length = len(self.tokenizer.encode(prompt))
@@ -227,7 +238,9 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
                     Turn(
                         texts=[Text(contents=[prompt])],
                         images=images if idx == 0 else [],
-                        max_tokens=completion_lengths[idx] if self.tokenizer else None,
+                        max_tokens=completion_lengths[idx]
+                        if completion_lengths
+                        else None,
                     )
                     for idx, (prompt, _) in enumerate(pairs)
                 ]
