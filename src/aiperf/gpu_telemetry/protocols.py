@@ -57,6 +57,16 @@ class GPUTelemetryCollectorProtocol(Protocol):
         """
         ...
 
+    async def collect_and_process_metrics(self) -> None:
+        """Perform a one-shot scrape and dispatch records via the configured callback.
+
+        Called by ``GPUTelemetryManager`` for baseline and final-state capture,
+        outside the collector's own periodic background task. Implementations
+        must be safe to invoke before ``start()`` (i.e. after ``initialize()``)
+        and concurrently with the periodic loop.
+        """
+        ...
+
     @classmethod
     def validate_environment(cls) -> None:
         """Raise RuntimeError if this collector cannot run on the current host.
