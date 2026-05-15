@@ -110,10 +110,13 @@ class SearchPlanner(ABC):
         """Number of completed ask/tell cycles (== length of history()).
 
         Default reads ``self._iter`` which all shipped concrete planners
-        maintain. Subclasses with a different counter representation should
-        override.
+        maintain. Subclasses with a different counter representation MUST
+        override this property; a missing ``_iter`` raises
+        :class:`AttributeError` so the gap surfaces immediately rather
+        than silently logging "0 iterations" for every cancel / converge
+        / abort terminal state.
         """
-        return int(getattr(self, "_iter", 0))
+        return int(self._iter)  # type: ignore[attr-defined]
 
     def convergence_reason(self) -> str | None:
         """Which signal caused the most recent True from is_converged().
