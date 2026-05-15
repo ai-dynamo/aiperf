@@ -137,6 +137,20 @@ class TestImageConfigValidation:
         config = ImageConfig.model_validate(dumped)
         assert config.images_enabled() is False
 
+    def test_batch_size_without_dimensions_logs_warning(self, caplog):
+        """Warn when positive batch size cannot enable images without dimensions."""
+        config = ImageConfig(batch_size=4)
+
+        assert config.images_enabled() is False
+        assert "--image-width-mean" in caplog.text
+        assert "--image-height-mean" in caplog.text
+
+    def test_default_config_roundtrip_does_not_warn(self, caplog):
+        """Fully-serialized default configs should remain quiet."""
+        ImageConfig.model_validate(ImageConfig().model_dump())
+
+        assert caplog.text == ""
+
 
 class TestImageSource:
     def test_source_defaults_to_noise(self):
@@ -177,6 +191,7 @@ class TestImageSource:
             param("assets", ImageSource.ASSETS, id="enum-string-assets"),
             param("./my_images", Path("./my_images"), id="path-relative"),
             param("/tmp/my_images", Path("/tmp/my_images"), id="path-absolute"),
+            param("~/my_images", Path("~/my_images").expanduser(), id="path-home"),
         ],
     )  # fmt: skip
     def test_source_str_coercion(self, raw, expected):

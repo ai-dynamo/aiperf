@@ -108,7 +108,7 @@ class ImageGenerator(BaseGenerator):
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"
 
     def _create_from_source_images(self, width: int, height: int) -> Image.Image:
-        """Sample a pre-loaded source images directory and resize to target dimensions."""
+        """Sample one pre-loaded source image and resize to target dimensions."""
         image = self._source_rng.choice(self._source_images).copy()
         return image.resize(size=(width, height))
 

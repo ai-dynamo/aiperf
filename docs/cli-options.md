@@ -347,7 +347,7 @@ Number of audio channels for synthetic audio generation. `1` = mono (single chan
 
 #### `--image-width-mean` `<float>`
 
-Mean width in pixels for synthetically generated images. Image widths follow a normal distribution around this mean (±`--image-width-stddev`). Combined with `--image-height-mean` to determine image dimensions and file sizes for multimodal benchmarking.
+Mean width in pixels for synthetically generated images. Image widths follow a normal distribution around this mean (±`--image-width-stddev`). Used when `--image-batch-size` > 0 for multimodal vision benchmarking. Combined with `--image-height-mean` and `--image-source` to determine generated image dimensions and content.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0.0`_
 
@@ -389,7 +389,7 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a bundled set of source images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
 
 ### Video Input

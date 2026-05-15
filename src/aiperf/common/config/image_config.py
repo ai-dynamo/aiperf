@@ -4,13 +4,29 @@
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import ImageFormat, ImageSource
+
+_logger = AIPerfLogger(__name__)
+
+
+def _parse_image_source(value: object) -> object:
+    if isinstance(value, ImageSource):
+        return value
+    if isinstance(value, Path):
+        return value.expanduser()
+    if isinstance(value, str):
+        try:
+            return ImageSource(value)
+        except ValueError:
+            return Path(value).expanduser()
+    return value
 
 
 class ImageHeightConfig(BaseConfig):
@@ -64,8 +80,8 @@ class ImageWidthConfig(BaseConfig):
             default=0.0,
             ge=0,
             description="Mean width in pixels for synthetically generated images. Image widths follow a normal distribution "
-            "around this mean (±`--image-width-stddev`). Combined with `--image-height-mean` to determine image dimensions "
-            "and file sizes for multimodal benchmarking.",
+            "around this mean (±`--image-width-stddev`). Used when `--image-batch-size` > 0 for multimodal vision benchmarking. "
+            "Combined with `--image-height-mean` and `--image-source` to determine generated image dimensions and content.",
         ),
         CLIParameter(
             name=(
@@ -148,12 +164,13 @@ class ImageConfig(BaseConfig):
 
     source: Annotated[
         ImageSource | Path,
+        BeforeValidator(_parse_image_source),
         Field(
             default=ImageSource.NOISE,
             description="Source image generation mode (default `noise`). "
             "`noise` generates random noise images on the fly at the requested dimensions — no files on disk required, "
             "and the pool is effectively unbounded so servers cannot dedupe on identical inputs. "
-            "`assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
+            "`assets` loads images from the built-in `assets/source_images` directory (ships with a bundled set of source images) "
             "and resizes them to the requested dimensions. "
             "A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). "
             "Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
@@ -175,6 +192,14 @@ class ImageConfig(BaseConfig):
         """
         if self.images_enabled() or self.batch_size == 0:
             return self
+        if (
+            "batch_size" in self.model_fields_set
+            and self.batch_size != type(self).model_fields["batch_size"].default
+        ):
+            _logger.warning(
+                "--image-batch-size was set, but image generation is disabled because "
+                "--image-width-mean and --image-height-mean are not both positive."
+            )
         if (
             self.width.mean != 0.0
             or self.width.stddev != 0.0
