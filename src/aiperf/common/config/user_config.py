@@ -122,6 +122,7 @@ def _local_collector_keywords() -> dict[str, GPUTelemetryCollectorType]:
 
 
 def _is_local_collector(collector_type: GPUTelemetryCollectorType) -> bool:
+    """Return True if this collector reads from the local host."""
     return plugins.get_gpu_telemetry_collector_metadata(collector_type).is_local
 
 
@@ -873,9 +874,10 @@ class UserConfig(BaseConfig):
                 urls.append(normalized_url)
             else:
                 valid_kw = ", ".join(f"'{k}'" for k in sorted(local_keywords))
+                prefix = f"{valid_kw}, " if valid_kw else ""
                 raise ValueError(
                     f"Invalid GPU telemetry item: {item}. Valid options are: "
-                    f"{valid_kw}, 'dashboard', '.csv' file, and URLs."
+                    f"{prefix}'dashboard', '.csv' file, and URLs."
                 )
         return mode, collector_type, urls, metrics_file
 
@@ -908,7 +910,7 @@ class UserConfig(BaseConfig):
 
     @property
     def gpu_telemetry_collector_type(self) -> GPUTelemetryCollectorType:
-        """Get the GPU telemetry collector type (DCGM or PYNVML)."""
+        """Get the GPU telemetry collector type."""
         return self._gpu_telemetry_collector_type
 
     @property

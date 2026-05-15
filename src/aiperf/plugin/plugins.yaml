@@ -1043,7 +1043,7 @@ plot:
 # GPU Telemetry Collector
 # =============================================================================
 # GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
-# Supports DCGM HTTP endpoints and pynvml Python library.
+# Supports DCGM HTTP endpoints and plugin-defined local collectors.
 # One-to-one mapping based on gpu_telemetry_collector configuration.
 # =============================================================================
 gpu_telemetry_collector:

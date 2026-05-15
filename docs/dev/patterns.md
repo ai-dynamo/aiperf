@@ -121,6 +121,20 @@ endpoint:
       metrics_title: LLM Metrics
 ```
 
+Local GPU telemetry collectors use metadata for CLI classification and native dependency checks:
+
+```yaml
+# plugins.yaml
+gpu_telemetry_collector:
+  my_local_gpu:
+    class: my_package.gpu:MyLocalGPUCollector
+    description: Local GPU telemetry collector using vendor Python bindings.
+    metadata:
+      is_local: true
+      import_module: my_vendor_smi
+      install_hint: "my_vendor_smi is not installed; install the vendor SMI wheel."
+```
+
 ```python
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
