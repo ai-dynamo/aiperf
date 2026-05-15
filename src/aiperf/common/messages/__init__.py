@@ -50,6 +50,7 @@ from aiperf.common.messages.progress_messages import (
 )
 from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
+    RealtimeServerMetricsMessage,
     ServerMetricsRecordMessage,
     ServerMetricsStatusMessage,
 )
@@ -111,6 +112,7 @@ __all__ = [
     "ProfileStartCommand",
     "RealtimeMetricsCommand",
     "RealtimeMetricsMessage",
+    "RealtimeServerMetricsMessage",
     "RealtimeTelemetryMetricsMessage",
     "RecordsProcessingStatsMessage",
     "RegisterServiceCommand",

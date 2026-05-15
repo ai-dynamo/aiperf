@@ -356,6 +356,7 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
+    REALTIME_SERVER_METRICS = "realtime_server_metrics"
     REGISTRATION = "registration"
     SERVICE_ERROR = "service_error"
     STATUS = "status"
