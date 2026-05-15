@@ -40,3 +40,16 @@ Unit tests for individual modules and components. The directory structure mirror
 
 ### [`unit/server/`](unit/server/)
 Unit tests exclusively for the aiperf-mock-server. See [`aiperf_mock_server/README.md`](aiperf_mock_server/README.md) for detailed information.
+
+## Auto-Selected Markers
+
+By default, `pytest` and `pytest tests` collect `tests/unit/` only, with marked slow/stress/infra suites deselected unless explicitly requested. When you target one of these paths directly, pytest automatically enables the matching marker so the tests run instead of being silently deselected. Marker-only invocations auto-lock only for integration suites, such as `pytest -m integration` or `pytest -m "component_integration and not stress"`.
+
+| Path | Marker enabled |
+|---|---|
+| `tests/integration/` | `integration` |
+| `tests/component_integration/` | `component_integration` |
+| `tests/unit/server/` | `server_unit` |
+| `tests/unit/fern/` | `fern` |
+
+The logic lives in `tests/conftest.py::pytest_configure` and `tests/conftest.py::pytest_collection_modifyitems`. Tests under `tests/integration/` and `tests/component_integration/` are auto-marked with their suite marker during collection.

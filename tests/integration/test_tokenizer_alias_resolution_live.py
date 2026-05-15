@@ -147,6 +147,9 @@ def assert_ambiguous(name: str) -> None:
 # =============================================================================
 
 
+pytestmark = pytest.mark.integration
+
+
 class TestDocumentedAliases:
     """Verify the examples documented in tokenizer-alias-resolution.md are accurate."""
 

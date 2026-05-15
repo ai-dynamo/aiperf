@@ -11,7 +11,7 @@ from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
 from tests.harness.utils import AIPerfCLI
-from tests.integration.utils import first_video_details
+from tests.harness.video_utils import first_video_details
 
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 

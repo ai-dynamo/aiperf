@@ -8,8 +8,8 @@ import pytest
 from pytest import approx
 
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
+from tests.harness.video_utils import iter_video_details
 from tests.integration.conftest import IntegrationTestDefaults as defaults
-from tests.integration.utils import iter_video_details
 
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 

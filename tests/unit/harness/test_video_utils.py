@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for integration test utilities."""
+"""Tests for video test utilities."""
 
-from tests.integration.utils import _check_mp4_fragmentation
+from tests.harness.video_utils import check_mp4_fragmentation
 
 
 class TestMP4FragmentationDetection:
@@ -22,7 +22,7 @@ class TestMP4FragmentationDetection:
             + b"\x00"
             * 1000  # padding
         )
-        assert _check_mp4_fragmentation(fragmented_mp4) is True
+        assert check_mp4_fragmentation(fragmented_mp4) is True
 
     def test_detects_non_fragmented_mp4(self):
         """Test that non-fragmented MP4 (without moof box) is detected."""
@@ -35,13 +35,13 @@ class TestMP4FragmentationDetection:
             b"\x00\x00\x00\x08"  # moov box size
             b"moov" + b"\x00" * 1000  # moov box type (not moof)  # padding
         )
-        assert _check_mp4_fragmentation(non_fragmented_mp4) is False
+        assert check_mp4_fragmentation(non_fragmented_mp4) is False
 
     def test_handles_short_file(self):
         """Test handling of very short file."""
         short_mp4 = b"ftypisom"
-        assert _check_mp4_fragmentation(short_mp4) is False
+        assert check_mp4_fragmentation(short_mp4) is False
 
     def test_handles_empty_file(self):
         """Test handling of empty file."""
-        assert _check_mp4_fragmentation(b"") is False
+        assert check_mp4_fragmentation(b"") is False

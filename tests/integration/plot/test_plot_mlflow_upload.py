@@ -25,7 +25,7 @@ from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
 
-@pytest.mark.component_integration
+@pytest.mark.integration
 @pytest.mark.asyncio
 class TestPlotMLflowUploadRoundTrip:
     """Verify aiperf plot --mlflow-upload reuses the live run and uploads plots."""

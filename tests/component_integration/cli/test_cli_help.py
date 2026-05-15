@@ -7,6 +7,8 @@ import pytest
 
 from tests.harness.utils import AIPerfCLI
 
+pytestmark = pytest.mark.component_integration
+
 
 @pytest.fixture
 def disabled_parameters() -> list[str]:
