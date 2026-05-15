@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "aiperf-operator.fullname" . }}-test-crd
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "aiperf-operator.testServiceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: crd-check
+    image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+    imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    {{- with .Values.tests.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    command: ["sh", "-c"]
+    args:
+    - |
+      for crd in aiperfjobs.aiperf.nvidia.com aiperfsweeps.aiperf.nvidia.com; do
+        echo "Verifying $crd is registered..."
+        if ! kubectl get crd "$crd" > /dev/null 2>&1; then
+          echo "CRD $crd not found"
+          exit 1
+        fi
+        VERSIONS=$(kubectl get crd "$crd" -o jsonpath='{.spec.versions[*].name}')
+        echo "$crd served versions: $VERSIONS"
+        if ! echo "$VERSIONS" | grep -q "v1alpha1"; then
+          echo "v1alpha1 not found in $crd served versions"
+          exit 1
+        fi
+      done
+
+      echo "All CRD checks passed"

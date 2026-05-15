@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.storage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aiperf-operator.fullname" . }}-results
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+spec:
+  accessModes:
+  - {{ .Values.storage.accessMode }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}
+{{- end }}

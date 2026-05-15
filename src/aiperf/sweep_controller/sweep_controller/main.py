@@ -1,0 +1,542 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Sweep-controller pod entry point.
+
+Reads its target AIPerfSweep CR from the apiserver, builds a BenchmarkPlan,
+runs MultiRunOrchestrator with K8sChildJobExecutor, runs aggregate_and_export
+once all variations are done, and idles until the pod is reaped.
+
+Idempotent: a restart re-reads the CR, sees existing terminal children
+(ownerRef + label match), and resumes from the first non-existent variation.
+Aggregation re-runs only if the ready marker is missing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
+import orjson
+
+logger = logging.getLogger(__name__)
+
+AGGREGATE_READY_MARKER = ".aiperf_results_ready.json"
+RESULTS_DIR = Path("/results")
+AGGREGATE_SUBDIR = "aggregate"
+# Port the sweep-controller pod's own results-sidecar listens on. DISTINCT
+# from the operator's results-server port (8081); see the comment at
+# ``sweep_controller.k8s_executor.SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT``.
+SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT = 19090
+CANCEL_POLL_INTERVAL_SECONDS = 10.0
+# K8s rejects CR patches > ~1 MiB with HTTP 413. Bound the in-CR aggregate
+# mirror so big sweeps (many cells x metrics x percentiles) don't strand the
+# parent at `Aggregating`. The disk-backed results sidecar still serves the
+# full document via `status.aggregateRef.apiPath`. 600 KiB leaves headroom
+# for status fields and apiserver framing under the 1 MiB ceiling.
+# TODO(slice-3-followup): migrate to `_JobSetSettings` once the working-tree
+# environment.py changes are committed (avoids cross-slice diff bleed here).
+_AGGREGATE_INLINE_MAX_BYTES = 600_000
+
+
+def aggregate_marker_exists(base_dir: Path) -> bool:
+    """Return True iff the aggregation ready marker is present."""
+    return (base_dir / AGGREGATE_READY_MARKER).exists()
+
+
+def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) -> str:
+    """Resolve the AIPerfSweep terminal ``status.phase`` from child outcomes.
+
+    Three-way classification keeps a single bad trial in a 6-trial sweep from
+    masquerading as a total run-failure:
+
+    * ``Succeeded`` — no failures.
+    * ``Failed`` — every result failed (no successful trial), OR
+      ``max_failures > 0`` and ``failed >= max_failures`` (explicit budget).
+    * ``PartiallyFailed`` — some failed, some succeeded, and the explicit
+      budget (if any) was not exceeded.
+
+    The CRD enum (``crd-aiperfsweep.yaml``) has carried ``PartiallyFailed``
+    since the schema was first written, but every prior call site collapsed
+    "any failure" → ``Failed``. ``aiperf kube watch`` and ``list`` already
+    accept the enum verbatim because the CRD declared it.
+
+    Args:
+        completed: Count of successful child results across all (variation,
+            trial) cells. Sourced from ``RunResult.success`` truthiness.
+        failed: Count of failed child results across all cells. Includes
+            both child Job ``Failed`` and child ``Cancelled``.
+        max_failures: ``spec.failurePolicy.maxFailures`` from the CR.
+            ``0`` = unbounded (no explicit threshold; use the all-failed
+            rule). ``>0`` = treat ``failed >= max_failures`` as
+            non-recoverable.
+
+    Returns:
+        One of ``"Succeeded"``, ``"PartiallyFailed"``, ``"Failed"`` —
+        members of ``PARENT_TERMINAL_PHASES`` in
+        ``aiperf.operator.handlers.sweep.child_rollup``.
+
+    Example:
+        >>> resolve_terminal_phase(completed=5, failed=1, max_failures=0)
+        'PartiallyFailed'
+        >>> resolve_terminal_phase(completed=0, failed=6, max_failures=0)
+        'Failed'
+        >>> resolve_terminal_phase(completed=6, failed=0, max_failures=0)
+        'Succeeded'
+        >>> resolve_terminal_phase(completed=4, failed=2, max_failures=2)
+        'Failed'
+    """
+    if failed <= 0:
+        return "Succeeded"
+    if max_failures > 0 and failed >= max_failures:
+        return "Failed"
+    if completed <= 0:
+        return "Failed"
+    return "PartiallyFailed"
+
+
+def write_aggregate_marker(base_dir: Path) -> None:
+    """Atomically write the aggregation ready marker."""
+    marker = base_dir / AGGREGATE_READY_MARKER
+    tmp = marker.with_suffix(".tmp")
+    tmp.write_bytes(orjson.dumps({"ready": True}))
+    tmp.rename(marker)
+
+
+async def _poll_cancel_flag(
+    custom: Any,
+    *,
+    namespace: str,
+    name: str,
+    flag: dict[str, bool],
+    interval: float = CANCEL_POLL_INTERVAL_SECONDS,
+) -> None:
+    """Background poller: set flag['requested']=True if parent CR's spec.cancel is set.
+
+    Best-effort: apiserver hiccups are swallowed. The flag is monotonic — once set,
+    it stays set, and the orchestrator/executor read it between cells/trials.
+    """
+    while not flag["requested"]:
+        try:
+            cr = await custom.get_namespaced_custom_object(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="aiperfsweeps",
+                name=name,
+            )
+            if bool((cr.get("spec") or {}).get("cancel", False)):
+                logger.info("cancel observed on parent CR; signalling orchestrator")
+                flag["requested"] = True
+                return
+        except Exception as e:  # noqa: BLE001 - best-effort poll, never crash the controller
+            logger.debug(f"cancel-flag poll transient error: {e}")
+        await asyncio.sleep(interval)
+
+
+def _write_aggregate_manifest(
+    aggregate_dir: Path,
+    sweep_cr: dict[str, Any],
+    results: list,
+    plan: Any,
+) -> None:
+    """Write the per-sweep manifest with epoch lineage of all child runs."""
+    manifest = {
+        "sweep": sweep_cr["metadata"]["name"],
+        "sweep_namespace": sweep_cr["metadata"]["namespace"],
+        "sweep_uid": sweep_cr["metadata"]["uid"],
+        "sweep_epoch": sweep_cr.get("status", {}).get("runEpoch", ""),
+        "total_variations": len(plan.configs),
+        "completed_runs": sum(1 for r in results if r.success),
+        "failed_runs": sum(1 for r in results if not r.success),
+        "child_runs": [
+            {
+                "label": r.label,
+                "status": "Succeeded" if r.success else "Failed",
+                "error": r.error or "",
+            }
+            for r in results
+        ],
+    }
+    (aggregate_dir / "manifest.json").write_bytes(
+        orjson.dumps(manifest, option=orjson.OPT_INDENT_2)
+    )
+
+
+def _write_sweep_parent_aggregate(
+    *,
+    base_dir: Path,
+    sweep_cr: dict[str, Any],
+    spec: Any,
+    results: list,
+    plan: Any,
+    sweep_run_epoch: str,
+    with_trial_suffix: bool,
+) -> None:
+    """Persist the durable parent ``aggregate.json`` under ``<base>/<ns>/sweeps/<name>/<epoch>/``.
+
+    Anchors the dual-backed sweep API: while the controller pod is alive the
+    operator can read live status from the CR; once the pod is gone the
+    operator falls back to this directory. Also writes ``children.json``
+    immediately after — the authoritative back-link from sweep epoch to each
+    child AIPerfJob's name + child epoch, used by ``sweep_union`` to resolve
+    archived sweeps after the parent CR has been TTL-reaped.
+
+    Conditions are owned by the operator and not yet collected here, so we
+    pass ``conditions=None`` and the ``conditions.json`` sibling is omitted.
+    """
+    from aiperf.sweep_controller.aggregator import (
+        write_children_manifest,
+        write_sweep_aggregate,
+    )
+    from aiperf.sweep_controller.k8s_executor import build_child_name
+
+    metadata = sweep_cr.get("metadata") or {}
+    namespace = metadata["namespace"]
+    name = metadata["name"]
+    completed = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+    doc: dict[str, Any] = {
+        "phase": "Succeeded" if failed == 0 else "Failed",
+        "totalVariations": len(plan.configs),
+        "completedRuns": completed,
+        "failedRuns": failed,
+        "specSnapshot": spec.model_dump(mode="json")
+        if hasattr(spec, "model_dump")
+        else {},
+        "childRuns": [
+            {
+                "label": r.label,
+                "status": "Succeeded" if r.success else "Failed",
+                "error": r.error or "",
+            }
+            for r in results
+        ],
+    }
+    write_sweep_aggregate(
+        base_dir=base_dir,
+        namespace=namespace,
+        sweep_name=name,
+        sweep_run_epoch=sweep_run_epoch,
+        doc=doc,
+        conditions=None,
+    )
+    # Build children manifest by walking the actual results stream, not
+    # plan.variations. For adaptive search plan.variations is a length-1
+    # placeholder and the real variation set lives in `results` — each
+    # RunResult carries its `trial_index` directly and its variation cell
+    # is identified by `variation_label`. For grid/repeated mode the
+    # results stream still preserves the same (var, trial) ordering, so
+    # this single results-driven path handles both.
+    children: list[dict[str, Any]] = []
+    label_to_var_idx: dict[str, int] = {}
+    next_var_idx = 0
+    for r in results:
+        explicit_idx = r.variation_values.get("index") if r.variation_values else None
+        if isinstance(explicit_idx, int):
+            var_idx = explicit_idx
+        else:
+            cell_key = r.variation_label or ""
+            if cell_key not in label_to_var_idx:
+                label_to_var_idx[cell_key] = next_var_idx
+                next_var_idx += 1
+            var_idx = label_to_var_idx[cell_key]
+        trial_idx = int(r.trial_index)
+        trial_for_name = trial_idx if with_trial_suffix else None
+        child_name = build_child_name(
+            sweep_name=name,
+            sweep_run_epoch=sweep_run_epoch,
+            variation_index=var_idx,
+            trial_index=trial_for_name,
+        )
+        children.append(
+            {
+                "namespace": namespace,
+                "name": child_name,
+                "variation_index": var_idx,
+                "variation_label": r.variation_label,
+                "trial_index": trial_idx if with_trial_suffix else None,
+                "child_run_epoch": sweep_run_epoch,
+                "label": r.label,
+                "status": "Succeeded" if r.success else "Failed",
+            }
+        )
+    write_children_manifest(
+        base_dir=base_dir,
+        namespace=namespace,
+        sweep_name=name,
+        sweep_run_epoch=sweep_run_epoch,
+        children=children,
+    )
+
+
+def _load_aggregate_for_cr(
+    base_dir: Path,
+    namespace: str,
+    sweep_name: str,
+    sweep_run_epoch: str,
+) -> dict[str, Any]:
+    """Read the on-disk aggregate JSON files and bundle them for the CR patch.
+
+    The sweep-controller writes aggregate artifacts under
+    ``<base>/<ns>/sweeps/<name>/<epoch>/`` (parent ``aggregate.json``,
+    ``children.json``) and the strategy-owned aggregate dir (typically
+    ``<base>/aggregate/profile_export_aiperf_aggregate.json``). On small
+    sweeps the bundle is ~50 KB and we embed everything inline on the CR
+    to close the live half of the dual-backed sweep API contract
+    documented in ``aggregator.py``.
+
+    On large sweeps (many cells x metrics x percentiles) the strategy
+    ``confidence`` payload grows linearly and the patch can exceed the
+    apiserver's 1 MB CR size cap, returning 413 and stranding the parent
+    at ``Aggregating``. We bound the inlined size: if the encoded bundle
+    exceeds ``_AGGREGATE_INLINE_MAX_BYTES`` we drop ``confidence`` (the
+    largest contributor) and emit only ``parent`` + ``children``. The
+    disk-backed path served by the results sidecar still has the full
+    document, so consumers fetching ``status.aggregateRef.apiPath`` see
+    no loss; only the in-CR mirror is reduced.
+
+    Missing files are silently skipped: this loader is best-effort and the
+    primary signal (``aggregation.phase=Complete`` and ``terminal_phase``)
+    is set by the caller regardless of which sub-files made it to disk.
+    """
+    sweep_dir = Path(base_dir) / namespace / "sweeps" / sweep_name / sweep_run_epoch
+    bundle: dict[str, Any] = {}
+    parent_path = sweep_dir / "aggregate.json"
+    children_path = sweep_dir / "children.json"
+    confidence_path = (
+        Path(base_dir) / "aggregate" / "profile_export_aiperf_aggregate.json"
+    )
+    for key, path in (
+        ("parent", parent_path),
+        ("children", children_path),
+        ("confidence", confidence_path),
+    ):
+        try:
+            bundle[key] = orjson.loads(path.read_bytes())
+        except FileNotFoundError:
+            continue
+        except (OSError, orjson.JSONDecodeError, ValueError) as exc:
+            # A truncated or malformed file must not poison the bundle —
+            # exit non-zero loses all three artifacts. Log + skip; the CR
+            # patch carries whichever sub-files made it.
+            logger.warning(
+                "sweep aggregate: skipping %s (%s) — %s: %s",
+                key,
+                path,
+                type(exc).__name__,
+                exc,
+            )
+            continue
+
+    if "confidence" in bundle:
+        encoded_size = len(orjson.dumps(bundle))
+        if encoded_size > _AGGREGATE_INLINE_MAX_BYTES:
+            logger.warning(
+                "aggregate bundle is %d bytes (> %d cap); dropping `confidence` "
+                "from CR mirror — full document remains at the disk-backed path",
+                encoded_size,
+                _AGGREGATE_INLINE_MAX_BYTES,
+            )
+            bundle.pop("confidence", None)
+    return bundle
+
+
+async def main() -> int:
+    """Run the sweep-controller pod: load CR, execute variations, aggregate, idle.
+
+    Returns 0 on clean completion, 1 on unrecoverable error. Idempotent across
+    pod restarts (existing terminal child jobs are reused; aggregation re-runs
+    only if the ready marker is missing).
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+    sweep_name = os.environ["AIPERF_SWEEP_NAME"]
+    sweep_namespace = os.environ["AIPERF_SWEEP_NAMESPACE"]
+    sweep_run_epoch = os.environ["AIPERF_SWEEP_EPOCH"]
+    logger.info(f"sweep-controller starting for {sweep_namespace}/{sweep_name}")
+
+    from kubernetes_asyncio.client import CustomObjectsApi
+
+    from aiperf._cli_runner_helpers import aggregate_and_export, build_strategy
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.operator.models import AIPerfSweepSpec
+    from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
+    from aiperf.sweep_controller.k8s_executor import (
+        K8sChildJobExecutor,
+        needs_trial_suffix,
+    )
+    from aiperf.sweep_controller.plan_builder import build_plan_from_sweep
+    from aiperf.sweep_controller.status_writer import SweepStatusWriter
+
+    aiperf_logger = AIPerfLogger(__name__)
+
+    async with k8s_client() as api:
+        custom = CustomObjectsApi(api)
+        sweep_cr = await custom.get_namespaced_custom_object(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            namespace=sweep_namespace,
+            plural="aiperfsweeps",
+            name=sweep_name,
+        )
+        spec = AIPerfSweepSpec.model_validate(sweep_cr["spec"])
+
+        plan = build_plan_from_sweep(sweep_cr)
+        cancel_flag: dict[str, bool] = {"requested": False}
+        cancel_task = asyncio.create_task(
+            _poll_cancel_flag(
+                custom,
+                namespace=sweep_namespace,
+                name=sweep_name,
+                flag=cancel_flag,
+            )
+        )
+        status_writer = SweepStatusWriter(
+            api, name=sweep_name, namespace=sweep_namespace
+        )
+        # Promote `status.phase` from `Pending` to `Running` before the
+        # orchestrator loop begins. The CRD declares Running but no other
+        # writer ever set it, so parents jumped Pending -> Aggregating
+        # directly. Atomic test/replace skips silently on pod restart or
+        # if the rollup already advanced phase.
+        await status_writer.parent_running()
+        executor = K8sChildJobExecutor(
+            api=api,
+            sweep=sweep_cr,
+            with_trial_suffix=needs_trial_suffix(
+                multi_run_trials=(spec.multi_run.num_runs if spec.multi_run else None),
+                has_convergence=(
+                    spec.multi_run is not None
+                    and spec.multi_run.convergence is not None
+                ),
+            ),
+            base_dir=RESULTS_DIR,
+            status_writer=status_writer,
+            cancel_check=lambda: cancel_flag["requested"],
+            sweep_run_epoch=sweep_run_epoch,
+        )
+
+        orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
+        from aiperf._cli_runner_helpers import _build_search_planner
+
+        search_planner = _build_search_planner(plan)
+        if search_planner is not None:
+            from aiperf.config.sweep import AdaptiveSearchSweep
+
+            adaptive = (
+                plan.sweep if isinstance(plan.sweep, AdaptiveSearchSweep) else None
+            )
+            if adaptive is not None:
+                logger.info(
+                    f"Cluster-side adaptive search active: planner={adaptive.planner}, "
+                    f"max_iterations={adaptive.max_iterations}, "
+                    f"objective={adaptive.objective.metric}:"
+                    f"{adaptive.objective.stat}:"
+                    f"{adaptive.objective.direction}"
+                )
+        try:
+            all_results = await orchestrator.execute(
+                plan,
+                executor,
+                cancel_check=lambda: cancel_flag["requested"],
+                search_planner=search_planner,
+            )
+        finally:
+            cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
+
+        if not aggregate_marker_exists(RESULTS_DIR):
+            await status_writer.aggregation_running()
+            try:
+                # Top-level strategy mirrors cli_runner.py — only used for
+                # aggregate-path resolution; per-cell strategies were rebuilt
+                # inside the orchestrator.
+                strategy = build_strategy(plan, aiperf_logger)
+                aggregate_dir = strategy.get_aggregate_path(RESULTS_DIR)
+                aggregate_dir.mkdir(parents=True, exist_ok=True)
+                await aggregate_and_export(
+                    all_results,
+                    plan,
+                    strategy=strategy,
+                    base_dir=RESULTS_DIR,
+                    logger=aiperf_logger,
+                )
+                _write_aggregate_manifest(aggregate_dir, sweep_cr, all_results, plan)
+                _write_sweep_parent_aggregate(
+                    base_dir=RESULTS_DIR,
+                    sweep_cr=sweep_cr,
+                    spec=spec,
+                    results=all_results,
+                    plan=plan,
+                    sweep_run_epoch=sweep_run_epoch,
+                    with_trial_suffix=needs_trial_suffix(
+                        multi_run_trials=(
+                            spec.multi_run.num_runs if spec.multi_run else None
+                        ),
+                        has_convergence=(
+                            spec.multi_run is not None
+                            and spec.multi_run.convergence is not None
+                        ),
+                    ),
+                )
+                write_aggregate_marker(RESULTS_DIR)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("aggregation failed")
+                await status_writer.aggregation_failed(error=str(e))
+                return 1
+        else:
+            logger.info("aggregation already complete (marker present)")
+
+        # Idempotent across pod restarts: load disk artifacts and patch the CR
+        # every time main() reaches this point. Without this, a sweep-controller
+        # pod that aggregates once but fails to patch (apiserver hiccup, OOM,
+        # crash before the patch) would never advance the parent CR — and the
+        # restart path skips re-aggregation via aggregate_marker_exists, so
+        # there is no second chance.
+        controller_host = os.environ.get("HOSTNAME", "")
+        try:
+            aggregate_doc = _load_aggregate_for_cr(
+                RESULTS_DIR, sweep_namespace, sweep_name, sweep_run_epoch
+            )
+            failed_count = sum(1 for r in all_results if not r.success)
+            completed_count = len(all_results) - failed_count
+            terminal_phase = resolve_terminal_phase(
+                completed=completed_count,
+                failed=failed_count,
+                max_failures=spec.failure_policy.max_failures,
+            )
+            await status_writer.aggregation_complete(
+                aggregate_path=(
+                    f"/api/v1/results/{sweep_namespace}/{sweep_name}/aggregate"
+                ),
+                controller_host=controller_host,
+                port=SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT,
+                aggregate_doc=aggregate_doc,
+                terminal_phase=terminal_phase,
+            )
+        except Exception:  # noqa: BLE001 - apiserver/disk failure path: log + exit non-zero so restartPolicy retries
+            # Non-zero exit so the pod's `restartPolicy: OnFailure` restarts
+            # us; the aggregate marker means re-aggregation is skipped, but
+            # the CR-patch is retried fresh on next boot. Idling forever
+            # leaks the pod (JobSet `completions=1` requires a clean exit
+            # for the parent Job to complete and the CR-side TTL to fire).
+            logger.exception("CR aggregate patch failed; exiting non-zero for restart")
+            return 1
+
+    # Clean exit so the JobSet (`completions=1`, `restartPolicy: OnFailure`)
+    # marks the controller Job complete; the parent CR's
+    # `ttlSecondsAfterFinished` reaper can now run without the pod hanging
+    # around on `while True: sleep(3600)`.
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
