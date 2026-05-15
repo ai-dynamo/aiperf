@@ -4,7 +4,7 @@ An agentic coding workload trace that reflects a long-context, KV-reuse-heavy us
 
 ## How to Generate
 
-To generate the dataset, use the directory's `manifest.json` with the following commands: 
+To generate the dataset, use the directory's `manifest.json` with the following commands:
 ```bash
 aiperf synthesize agentic-code \
   --config manifest.json \
