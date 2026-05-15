@@ -112,6 +112,18 @@ When replaying conversations that involve tool use (function calling), include t
 
 The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter.
 
+## Per-Request Extra Inputs
+
+Use the `extra` field to inject arbitrary key-value pairs into the HTTP payload for individual trace entries. This works alongside (and after) the global `--extra-inputs` flag, so per-entry values override global defaults for the same top-level key.
+
+```json
+{"input_length": 100, "output_length": 50, "timestamp": 0, "extra": {"nvext": {"priority": 99}}}
+{"input_length": 200, "output_length": 30, "timestamp": 500}
+{"messages": [{"role": "user", "content": "Hello"}], "output_length": 50, "timestamp": 1000, "extra": {"routing": "fast"}}
+```
+
+**Merge semantics:** Merging is shallow — a per-entry `{"nvext": {...}}` replaces the entire global `nvext` key. Deep merge is not performed.
+
 ## Profile using real Mooncake Trace
 
 For real-world benchmarking, use the FAST25 production trace data from the Mooncake research paper:
