@@ -220,6 +220,7 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
         return TurnMetadata(
