@@ -155,19 +155,17 @@ def test_recompute_pareto_marks_empty() -> None:
 def _make_plan_for_logger(
     *,
     variations: list[dict[str, Any]] | None = None,
-    pareto_axes: ParetoAxesSpec | None = None,
 ) -> SimpleNamespace:
     """Plan stub with the attributes ``SweepTableLogger.__init__`` reads.
 
     Param names are derived from the union of per-variation ``values``
-    keys (mirrors ``cli_runner._guard_against_in_process_sweep``). The
-    pareto_axes lookup goes through ``_resolve_pareto_axes``, which
-    honors a ``plan.recipe`` mock as the fast path; that's what the
-    pareto-axes test exercises.
+    keys (mirrors ``cli_runner._guard_against_in_process_sweep``). Tests
+    that need a non-None ``pareto_axes`` patch
+    ``aiperf.cli_runner._pareto._resolve_pareto_axes`` directly.
     """
     if variations is None:
         variations = [{"concurrency": 1}, {"concurrency": 2}]
-    plan = SimpleNamespace(
+    return SimpleNamespace(
         variations=[
             SimpleNamespace(values=dict(v), index=i, label=f"v{i}")
             for i, v in enumerate(variations)
@@ -175,9 +173,6 @@ def _make_plan_for_logger(
         sweep=SimpleNamespace(recipe_name=None, search_recipe=None),
         confidence_level=0.95,
     )
-    if pareto_axes is not None:
-        plan.recipe = SimpleNamespace(pareto_axes=pareto_axes)
-    return plan
 
 
 def test_logger_init_captures_param_names_no_pareto() -> None:
@@ -207,9 +202,10 @@ def test_logger_init_captures_pareto_axes() -> None:
         y_stat="avg",
         y_maximize=True,
     )
-    plan = _make_plan_for_logger(pareto_axes=axes)
+    plan = _make_plan_for_logger()
     logger = AIPerfLogger("test_sweep_table_logger")
-    table_logger = SweepTableLogger(plan, logger)
+    with patch("aiperf.cli_runner._pareto._resolve_pareto_axes", return_value=axes):
+        table_logger = SweepTableLogger(plan, logger)
     assert table_logger._pareto_axes is axes
 
 
@@ -246,8 +242,9 @@ def test_build_row_with_pareto_marker() -> None:
         y_stat="avg",
         y_maximize=True,
     )
-    plan = _make_plan_for_logger(pareto_axes=axes)
-    table_logger = SweepTableLogger(plan, AIPerfLogger("t"))
+    plan = _make_plan_for_logger()
+    with patch("aiperf.cli_runner._pareto._resolve_pareto_axes", return_value=axes):
+        table_logger = SweepTableLogger(plan, AIPerfLogger("t"))
     stats = {
         "output_token_throughput": {"avg": 1402.1},
         "time_to_first_token": {"p99": 128.6},
@@ -338,9 +335,10 @@ def test_call_with_pareto_axes_marks_frontier() -> None:
         y_stat="avg",
         y_maximize=True,
     )
-    plan = _make_plan_for_logger(pareto_axes=axes)
+    plan = _make_plan_for_logger()
     logger = AIPerfLogger("aiperf.cli_runner._sweep_table.test_pareto")
-    table_logger = SweepTableLogger(plan, logger)
+    with patch("aiperf.cli_runner._pareto._resolve_pareto_axes", return_value=axes):
+        table_logger = SweepTableLogger(plan, logger)
 
     cells = [
         {"params": {"concurrency": 8}, "ttft": 100.0, "thru": 50.0},  # dominated

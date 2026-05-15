@@ -11,7 +11,7 @@ mocked plan/strategy so they stay fast and free of real subprocess work.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -63,8 +63,13 @@ def _make_variation(values: dict, label: str = "v0", index: int = 0) -> SweepVar
     return SweepVariation(index=index, label=label, values=dict(values))
 
 
-def _make_plan(*, recipe: MagicMock, trials: int = 1) -> MagicMock:
-    """Mocked BenchmarkPlan covering every attribute _run_independent_cell touches."""
+def _make_plan(*, trials: int = 1) -> MagicMock:
+    """Mocked BenchmarkPlan covering every attribute _run_independent_cell touches.
+
+    Pareto axes are injected by patching
+    ``aiperf.cli_runner._pareto._resolve_pareto_axes`` per test, not by
+    stubbing fields on the plan.
+    """
     plan = MagicMock()
     plan.is_adaptive_search = False
     plan.is_sweep = True
@@ -74,9 +79,13 @@ def _make_plan(*, recipe: MagicMock, trials: int = 1) -> MagicMock:
     plan.variables = {}
     plan.failure_policy = None
     plan.sweep = None  # _plan_iteration_order falls back to REPEATED
-    plan.recipe = recipe
     plan.sweep_id = "test-sweep-id"
     return plan
+
+
+def _patch_axes(axes):
+    """Context manager: make ``_resolve_pareto_axes(plan)`` return ``axes``."""
+    return patch("aiperf.cli_runner._pareto._resolve_pareto_axes", return_value=axes)
 
 
 def _make_strategy(num_trials: int = 1) -> MagicMock:
@@ -129,9 +138,8 @@ async def test_cell_callback_fires_after_each_variation_in_grid_path(tmp_path: P
     def hook(variation_key, cell):
         received.append((variation_key, cell))
 
-    recipe = MagicMock()
-    recipe.pareto_axes = _make_pareto_axes()
-    plan = _make_plan(recipe=recipe, trials=1)
+    axes = _make_pareto_axes()
+    plan = _make_plan(trials=1)
 
     orch = MultiRunOrchestrator(tmp_path, cell_callback=hook)
 
@@ -144,21 +152,22 @@ async def test_cell_callback_fires_after_each_variation_in_grid_path(tmp_path: P
         _run_result_with_axes(label="run_0001", latency_p95=20.0, throughput_avg=80.0),
     ]
 
-    for var, result in zip(variations, results_per_variation, strict=True):
-        executor = _make_executor_returning([result])
-        strategy = _make_strategy(num_trials=1)
-        cell_results, aborted = await orch._run_independent_cell(
-            plan,
-            executor,
-            strategy=strategy,
-            cfg=_make_cfg(),
-            variation=var,
-            var_idx=var.index,
-            prior_all_results=[],
-            cancel_check=None,
-        )
-        assert not aborted
-        assert len(cell_results) == 1
+    with _patch_axes(axes):
+        for var, result in zip(variations, results_per_variation, strict=True):
+            executor = _make_executor_returning([result])
+            strategy = _make_strategy(num_trials=1)
+            cell_results, aborted = await orch._run_independent_cell(
+                plan,
+                executor,
+                strategy=strategy,
+                cfg=_make_cfg(),
+                variation=var,
+                var_idx=var.index,
+                prior_all_results=[],
+                cancel_check=None,
+            )
+            assert not aborted
+            assert len(cell_results) == 1
 
     assert len(received) == 2
     # Variation key is (label, sorted-values-tuple).
@@ -178,9 +187,8 @@ async def test_cell_callback_fires_after_each_variation_in_grid_path(tmp_path: P
 @pytest.mark.asyncio
 async def test_cell_callback_not_called_when_none(tmp_path: Path):
     """No callback registered: the cell loop completes without raising."""
-    recipe = MagicMock()
-    recipe.pareto_axes = _make_pareto_axes()
-    plan = _make_plan(recipe=recipe, trials=1)
+    axes = _make_pareto_axes()
+    plan = _make_plan(trials=1)
 
     orch = MultiRunOrchestrator(tmp_path)  # no cell_callback
 
@@ -188,16 +196,17 @@ async def test_cell_callback_not_called_when_none(tmp_path: Path):
     executor = _make_executor_returning(
         [_run_result_with_axes(label="run_0001", latency_p95=10.0, throughput_avg=50.0)]
     )
-    cell_results, aborted = await orch._run_independent_cell(
-        plan,
-        executor,
-        strategy=_make_strategy(num_trials=1),
-        cfg=_make_cfg(),
-        variation=var,
-        var_idx=0,
-        prior_all_results=[],
-        cancel_check=None,
-    )
+    with _patch_axes(axes):
+        cell_results, aborted = await orch._run_independent_cell(
+            plan,
+            executor,
+            strategy=_make_strategy(num_trials=1),
+            cfg=_make_cfg(),
+            variation=var,
+            var_idx=0,
+            prior_all_results=[],
+            cancel_check=None,
+        )
 
     assert len(cell_results) == 1
     assert not aborted
@@ -219,9 +228,7 @@ async def test_cell_callback_fires_with_minimal_cell_when_recipe_has_no_pareto_a
     def hook(variation_key, cell):
         received.append((variation_key, cell))
 
-    recipe = MagicMock()
-    recipe.pareto_axes = None
-    plan = _make_plan(recipe=recipe, trials=1)
+    plan = _make_plan(trials=1)
 
     orch = MultiRunOrchestrator(tmp_path, cell_callback=hook)
 
@@ -229,16 +236,17 @@ async def test_cell_callback_fires_with_minimal_cell_when_recipe_has_no_pareto_a
     executor = _make_executor_returning(
         [_run_result_with_axes(label="run_0001", latency_p95=10.0, throughput_avg=50.0)]
     )
-    cell_results, aborted = await orch._run_independent_cell(
-        plan,
-        executor,
-        strategy=_make_strategy(num_trials=1),
-        cfg=_make_cfg(),
-        variation=var,
-        var_idx=0,
-        prior_all_results=[],
-        cancel_check=None,
-    )
+    with _patch_axes(None):
+        cell_results, aborted = await orch._run_independent_cell(
+            plan,
+            executor,
+            strategy=_make_strategy(num_trials=1),
+            cfg=_make_cfg(),
+            variation=var,
+            var_idx=0,
+            prior_all_results=[],
+            cancel_check=None,
+        )
 
     assert len(cell_results) == 1
     assert not aborted
@@ -259,9 +267,8 @@ async def test_cell_callback_exception_does_not_break_sweep(tmp_path: Path):
     def bad_hook(variation_key, cell):
         raise RuntimeError("kaboom")
 
-    recipe = MagicMock()
-    recipe.pareto_axes = _make_pareto_axes()
-    plan = _make_plan(recipe=recipe, trials=1)
+    axes = _make_pareto_axes()
+    plan = _make_plan(trials=1)
 
     orch = MultiRunOrchestrator(tmp_path, cell_callback=bad_hook)
 
@@ -271,16 +278,17 @@ async def test_cell_callback_exception_does_not_break_sweep(tmp_path: Path):
     )
 
     # Must NOT raise.
-    cell_results, aborted = await orch._run_independent_cell(
-        plan,
-        executor,
-        strategy=_make_strategy(num_trials=1),
-        cfg=_make_cfg(),
-        variation=var,
-        var_idx=0,
-        prior_all_results=[],
-        cancel_check=None,
-    )
+    with _patch_axes(axes):
+        cell_results, aborted = await orch._run_independent_cell(
+            plan,
+            executor,
+            strategy=_make_strategy(num_trials=1),
+            cfg=_make_cfg(),
+            variation=var,
+            var_idx=0,
+            prior_all_results=[],
+            cancel_check=None,
+        )
 
     assert len(cell_results) == 1
     assert not aborted

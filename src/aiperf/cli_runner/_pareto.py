@@ -26,19 +26,13 @@ def _resolve_pareto_axes(plan: BenchmarkPlan) -> ParetoAxesSpec | None:
     """Return the active recipe's ``pareto_axes`` or None.
 
     ``BenchmarkPlan`` doesn't carry a recipe instance - it only holds the
-    recipe NAME at ``plan.sweep.search_recipe``. The actual class (which is
-    where ``pareto_axes`` lives as a ``ClassVar``) has to be resolved via the
-    plugin registry. Centralizing this lookup keeps every call site honest.
-
-    Tests sometimes stub a `plan.recipe` mock for convenience; honor that
-    too (it dominates the registry lookup) so unit tests don't have to
-    register a fake recipe class.
+    recipe NAME at ``plan.sweep.recipe_name`` (post-expansion) or
+    ``plan.sweep.search_recipe`` (test stubs). The actual class (which is
+    where ``pareto_axes`` lives as a ``ClassVar``) has to be resolved via
+    the plugin registry. Centralizing this lookup keeps every call site
+    honest. Tests that need to override the lookup should patch this
+    function directly.
     """
-    direct = getattr(plan, "recipe", None)
-    if direct is not None:
-        axes = getattr(direct, "pareto_axes", None)
-        if axes is not None:
-            return axes
     sweep = getattr(plan, "sweep", None)
     name = None
     if sweep is not None:
