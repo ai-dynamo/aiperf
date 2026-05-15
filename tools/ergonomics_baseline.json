@@ -13,17 +13,12 @@
     ],
     [
       "file-size",
-      "src/aiperf/cli_runner/_sweep_helpers.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/accuracy/graders/math.py",
       ""
     ],
     [
       "file-size",
-      "src/aiperf/cli_runner/__init__.py",
+      "src/aiperf/cli_runner/_sweep_helpers.py",
       ""
     ],
     [
@@ -323,6 +318,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
+    ],
+    [
+      "function-size",
       "src/aiperf/cli_runner/_sweep_helpers.py",
       "_export_one_variation_aggregate"
     ],
@@ -330,11 +330,6 @@
       "function-size",
       "src/aiperf/cli_runner/_sweep_helpers.py",
       "aggregate_sweep_and_export"
-    ],
-    [
-      "function-size",
-      "src/aiperf/accuracy/graders/_math_strip.py",
-      "strip_string"
     ],
     [
       "function-size",

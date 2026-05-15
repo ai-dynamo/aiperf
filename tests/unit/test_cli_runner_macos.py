@@ -46,7 +46,9 @@ class TestMacOSTerminalFixes:
         mock_platform_darwin: Mock,
         mock_multiprocessing_set_start_method: Mock,
     ):
-        from aiperf.cli_runner import _configure_multiprocessing_start_method
+        from aiperf.cli_runner._process_setup import (
+            _configure_multiprocessing_start_method,
+        )
 
         _configure_multiprocessing_start_method(using_dashboard=True)
 
@@ -59,7 +61,9 @@ class TestMacOSTerminalFixes:
         mock_platform_linux: Mock,
         mock_multiprocessing_set_start_method: Mock,
     ):
-        from aiperf.cli_runner import _configure_multiprocessing_start_method
+        from aiperf.cli_runner._process_setup import (
+            _configure_multiprocessing_start_method,
+        )
 
         _configure_multiprocessing_start_method(using_dashboard=True)
 
@@ -70,7 +74,9 @@ class TestMacOSTerminalFixes:
         mock_platform_darwin: Mock,
         mock_multiprocessing_set_start_method: Mock,
     ):
-        from aiperf.cli_runner import _configure_multiprocessing_start_method
+        from aiperf.cli_runner._process_setup import (
+            _configure_multiprocessing_start_method,
+        )
 
         _configure_multiprocessing_start_method(using_dashboard=False)
 
@@ -83,7 +89,7 @@ class TestMacOSTerminalFixes:
         mock_platform_linux: Mock,
         mock_get_global_log_queue: Mock,
     ):
-        from aiperf.cli_runner import _setup_ui_queues
+        from aiperf.cli_runner._process_setup import _setup_ui_queues
 
         mock_get_global_log_queue.return_value = MagicMock(spec=multiprocessing.Queue)
 
@@ -100,7 +106,9 @@ class TestMacOSTerminalFixes:
         mock_platform_darwin: Mock,
         mock_multiprocessing_set_start_method: Mock,
     ):
-        from aiperf.cli_runner import _configure_multiprocessing_start_method
+        from aiperf.cli_runner._process_setup import (
+            _configure_multiprocessing_start_method,
+        )
 
         mock_multiprocessing_set_start_method.side_effect = RuntimeError(
             "context already set"
@@ -115,7 +123,7 @@ class TestMacOSTerminalFixes:
         mock_platform_darwin: Mock,
         mock_get_global_log_queue: Mock,
     ):
-        from aiperf.cli_runner import _setup_ui_queues
+        from aiperf.cli_runner._process_setup import _setup_ui_queues
 
         mock_queue = MagicMock(spec=multiprocessing.Queue)
         mock_get_global_log_queue.return_value = mock_queue
