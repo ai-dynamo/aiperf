@@ -433,6 +433,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         record_data = message.to_data()
 
+        # Context-overflow records in AGENTIC_REPLAY scenarios bypass the
+        # error tracker, accumulators, and stream exporters, but STILL bump
+        # the records-side counter so the completion barrier converges.
+        # The records-side counter ``total_records`` is compared against the
+        # credit-side ``final_requests_completed`` at end-of-phase; if we
+        # dropped the record entirely the LHS would lag the RHS forever and
+        # the run would hang. Classify as success so error counters stay at
+        # zero (the original "don't count as failure" intent) while keeping
+        # the invariant intact.
+        if getattr(record_data.metadata, "context_overflow_skip", False):
+            phase = record_data.metadata.benchmark_phase
+            phase_tracker = self._records_tracker._get_phase_tracker(phase)
+            phase_tracker.increment_success_records()
+            phase_tracker.increment_worker_success_records(
+                record_data.metadata.worker_id
+            )
+            if self._records_tracker.check_and_set_all_records_received_for_phase(
+                phase
+            ):
+                await self._handle_all_records_received(phase)
+            return
+
         await self._send_record_to_accumulators(record_data)
 
         self._records_tracker.update_from_record_data(record_data)

@@ -231,30 +231,31 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         if self.user_config.output.export_level != ExportLevel.RAW:
             record.responses = None
 
-        # Drop context-overflow records from the metrics pipeline entirely
-        # when running an AGENTIC_REPLAY scenario. The timing strategy
-        # (``agentic_replay.handle_credit_return``) already terminates the
-        # trajectory on overflow via the CreditReturn path, so emitting an
-        # error record here would double-count an event we intentionally
-        # tolerate as the natural end-of-trajectory signal. No
-        # MetricRecordsMessage is pushed; downstream aggregators, exporters,
-        # error counters, and per-record JSONL never see this record.
+        metadata = self._create_metric_record_metadata(
+            record, message.service_id, last_response_perf_ns
+        )
+
+        # Flag context-overflow records for the records-side "skip" path when
+        # the active scenario uses AGENTIC_REPLAY. RecordsManager will count
+        # the record toward ``total_records`` (so the records-side counter
+        # stays in lockstep with credit-side ``final_requests_completed``
+        # and the completion barrier converges -- a previous version of this
+        # code returned early here, which broke that invariant in one
+        # direction only and hung the run at end-of-phase) but skip the
+        # error tracker, accumulators, and stream exporters so the overflow
+        # event doesn't show up in any user-facing metric.
         if self._drop_agentic_overflow_records and getattr(
             record, "context_overflow", False
         ):
+            metadata = metadata.model_copy(update={"context_overflow_skip": True})
             self.debug(
                 lambda r=record: (
-                    f"AGENTIC_REPLAY: dropping context-overflow record from "
-                    f"metrics pipeline (credit={r.request_info.credit_num} "
+                    f"AGENTIC_REPLAY: flagging context-overflow record as "
+                    f"metrics-skip (credit={r.request_info.credit_num} "
                     f"conv={r.request_info.conversation_id} "
                     f"turn={r.request_info.turn_index})"
                 )
             )
-            return
-
-        metadata = self._create_metric_record_metadata(
-            record, message.service_id, last_response_perf_ns
-        )
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
