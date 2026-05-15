@@ -534,6 +534,7 @@ class MultiRunOrchestrator:
                 logger.warning(
                     f"Outer-loop cell at iter {variation.index} aborted; halting BO"
                 )
+                _flush_history("aborted")
                 return all_results
 
     async def _execute_repeated(
