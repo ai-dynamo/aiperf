@@ -12,6 +12,7 @@ aiperf synthesize agentic-code \
   --seed 42 \
   --output .
 ```
+This produces a `dataset.jsonl` (the trace dataset) with several companion files documenting the data statistics.
 
 ## Contents
 
@@ -25,7 +26,7 @@ Expected dataset output, user-generated via the `aiperf synthesize agentic-code`
 
 | File | Purpose |
 |---|---|
-| `dataset.jsonl` | Mooncake-format trace file |
+| `dataset.jsonl` | **Mooncake-format trace file** |
 | `quality.json` | Per-metric quality stats vs target distribution |
 | `report.html` | Full synthesis dashboard |
 | `cache_explorer.html` | Interactive prefix-cache structure viewer |
