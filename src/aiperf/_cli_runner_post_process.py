@@ -108,15 +108,3 @@ def run_post_process_hook(
             f"Post-process handler {handler_name!r} failed: {exc}; "
             f"standard sweep aggregates unaffected (errors in {errors_path})."
         )
-
-
-def _scrub_non_finite(obj: Any) -> Any:
-    """Backwards-compatible shim; delegates to :func:`aiperf.common.finite.scrub_non_finite`.
-
-    Kept so existing imports (``from aiperf._cli_runner_post_process import
-    _scrub_non_finite``) continue to resolve. New code should import the
-    canonical helper from ``aiperf.common.finite`` directly.
-    """
-    from aiperf.common.finite import scrub_non_finite
-
-    return scrub_non_finite(obj)

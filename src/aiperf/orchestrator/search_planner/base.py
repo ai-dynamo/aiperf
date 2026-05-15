@@ -105,6 +105,16 @@ class SearchPlanner(ABC):
     def history(self) -> list[SearchIteration]:
         """All iterations recorded so far, in submission order."""
 
+    @property
+    def iter_count(self) -> int:
+        """Number of completed ask/tell cycles (== length of history()).
+
+        Default reads ``self._iter`` which all shipped concrete planners
+        maintain. Subclasses with a different counter representation should
+        override.
+        """
+        return int(getattr(self, "_iter", 0))
+
     def convergence_reason(self) -> str | None:
         """Which signal caused the most recent True from is_converged().
 

@@ -32,7 +32,7 @@ class ConvergenceCriterion(ABC):
 
         Each subclass owns the mapping from plan fields to its constructor
         kwargs. Used by the plugin-registry dispatch in
-        ``aiperf.orchestrator.orchestrator._build_convergence_criterion`` so
+        ``aiperf._cli_runner_helpers._build_convergence_criterion`` so
         heterogeneous constructor signatures still dispatch uniformly.
         """
 

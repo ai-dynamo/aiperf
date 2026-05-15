@@ -135,7 +135,7 @@ def test_sla_breach_knee_serializes_nan_safely(tmp_path: Path) -> None:
     non-finite floats to None before serialization, so the wire format keeps
     null reserved for "absent" only.
     """
-    from aiperf._cli_runner_post_process import _scrub_non_finite
+    from aiperf.common.finite import scrub_non_finite
 
     agg = {
         "per_combination_metrics": [
@@ -170,7 +170,7 @@ def test_sla_breach_knee_serializes_nan_safely(tmp_path: Path) -> None:
                 nan_observed_seen = True
     assert nan_observed_seen, "Test setup expected a NaN observed value"
 
-    scrubbed = _scrub_non_finite(out)
+    scrubbed = scrub_non_finite(out)
     encoded = orjson.dumps(scrubbed)
     decoded = orjson.loads(encoded)
 

@@ -20,7 +20,6 @@ from uuid import uuid4
 
 import orjson
 
-from aiperf.common.redact import REDACTED_VALUE
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
 
@@ -130,25 +129,6 @@ class LocalSubprocessExecutor(RunExecutor):
             text=True,
             env=env,
         )
-
-    @staticmethod
-    def _write_redacted_config(run: BenchmarkRun, config_file: Path) -> None:
-        """Overwrite the on-disk config file with a redacted copy.
-
-        ``_prepare_run_artifacts`` already writes a redacted copy
-        (``EndpointConfig.api_key`` has a JSON field_serializer that
-        replaces it with ``<redacted>``); this method exists for the
-        belt-and-suspenders case where someone bypasses the field
-        serializer (e.g. by mutating ``run.cfg`` after dump) or for
-        forward-compatibility if the serializer is removed.
-        """
-        redacted = run.model_dump(mode="json", exclude_none=True)
-        if "cfg" in redacted and "endpoint" in redacted["cfg"]:
-            endpoint = redacted["cfg"]["endpoint"]
-            if "api_key" in endpoint and endpoint["api_key"] is not None:
-                endpoint["api_key"] = REDACTED_VALUE
-        with open(config_file, "wb") as f:
-            f.write(orjson.dumps(redacted, option=orjson.OPT_INDENT_2))
 
     @staticmethod
     def _failure_from_subprocess(

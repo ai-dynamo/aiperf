@@ -27,6 +27,8 @@ from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.plugin.enums import ServiceType, UIType
 
 if TYPE_CHECKING:
+    import multiprocessing as _mp
+
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkConfig, BenchmarkPlan, BenchmarkRun
     from aiperf.orchestrator.models import RunResult
@@ -311,7 +313,9 @@ def _configure_multiprocessing_start_method(using_dashboard: bool) -> None:
             multiprocessing.set_start_method("spawn", force=True)
 
 
-def _setup_ui_queues(using_dashboard: bool, run: BenchmarkRun, logger: AIPerfLogger):  # noqa: ANN202
+def _setup_ui_queues(
+    using_dashboard: bool, run: BenchmarkRun, logger: AIPerfLogger
+) -> _mp.Queue | None:
     """Create the Dashboard log queue when needed.
 
     Returns the log_queue (or ``None`` when no Dashboard UI is active). When
@@ -700,19 +704,15 @@ def _log_failed_sweep_variations(
             tuple(sorted((r.variation_values or {}).items())),
         )
         by_variation.setdefault(key, []).append(r)
-    failed_values_str = [
-        f"{label}: {', '.join(f'{k}={v}' for k, v in values)}"
-        if label
-        else ", ".join(f"{k}={v}" for k, v in values)
-        for label, values in by_variation
-    ]
+
+    def _format_key(label: str, params: tuple) -> str:
+        kvs = ", ".join(f"{k}={v}" for k, v in params)
+        return f"{label}: {kvs}" if label else kvs
+
+    failed_values_str = [_format_key(label, params) for label, params in by_variation]
     logger.warning(f"Some sweep variations failed: {failed_values_str}")
-    for (label, values), group in by_variation.items():
-        params_str = (
-            f"{label}: {', '.join(f'{k}={v}' for k, v in values)}"
-            if label
-            else ", ".join(f"{k}={v}" for k, v in values)
-        )
+    for (label, params), group in by_variation.items():
+        params_str = _format_key(label, params)
         for r in group:
             error_msg = r.error or "(no error message)"
             logger.warning(f"  {params_str}: {error_msg}")
@@ -755,12 +755,15 @@ def _summarize_and_export(
         logger.info("Computing aggregate statistics...")
         if plan.is_sweep:
             # Per-variation confidence aggregates (one JSON+CSV per cell with
-            # >=2 successful runs).
-            _asyncio.run(
-                aggregate_per_variation_and_export(results, plan, base_dir, logger)
-            )
-            logger.info("Computing sweep aggregate across variations...")
-            _asyncio.run(aggregate_sweep_and_export(results, plan, base_dir, logger))
+            # >=2 successful runs) and the cross-variation sweep aggregate
+            # are independent; run concurrently.
+            async def _aggregate_sweep() -> None:
+                await _asyncio.gather(
+                    aggregate_per_variation_and_export(results, plan, base_dir, logger),
+                    aggregate_sweep_and_export(results, plan, base_dir, logger),
+                )
+
+            _asyncio.run(_aggregate_sweep())
         else:
             _asyncio.run(
                 aggregate_and_export(
@@ -769,10 +772,16 @@ def _summarize_and_export(
             )
         return 0
     if len(successful_runs) == 1:
-        logger.warning(
-            "Only 1 successful run - cannot compute confidence statistics. "
-            "At least 2 successful runs are required."
-        )
+        if plan.is_sweep:
+            logger.warning(
+                "Only 1 variation succeeded - cannot compute sweep aggregate "
+                "statistics. At least 2 successful variations are required."
+            )
+        else:
+            logger.warning(
+                "Only 1 successful run - cannot compute confidence statistics. "
+                "At least 2 successful runs are required."
+            )
         return 1
     logger.error(
         "All runs failed - cannot compute aggregate statistics. "

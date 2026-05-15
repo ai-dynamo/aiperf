@@ -32,16 +32,6 @@ __all__ = [
 ]
 
 
-def _plan_iteration_order(plan: BenchmarkPlan) -> Any:
-    """Resolve the sweep iteration order, defaulting to REPEATED outside grids."""
-    from aiperf.common.enums import SweepMode
-    from aiperf.config.sweep import _GridSweepBase
-
-    if isinstance(plan.sweep, _GridSweepBase):
-        return plan.sweep.iteration_order
-    return SweepMode.REPEATED
-
-
 def _resolve_artifact_dir(
     base_dir: Path,
     plan: BenchmarkPlan,
@@ -89,6 +79,8 @@ def _resolve_artifact_dir(
     is_sweep = plan.is_sweep
     multi_run = plan.trials > 1
     if iteration_order is None:
+        from aiperf._cli_runner_sweep_helpers import _plan_iteration_order
+
         iteration_order = _plan_iteration_order(plan)
 
     if not is_sweep and not multi_run:
@@ -142,19 +134,6 @@ def _build_strategy(plan: BenchmarkPlan) -> Any:
     from aiperf._cli_runner_helpers import build_strategy
 
     return build_strategy(plan, logger)
-
-
-def _build_convergence_criterion(plan: BenchmarkPlan) -> Any:
-    """Construct the configured convergence criterion via the plugin registry."""
-    from aiperf.plugin import plugins
-    from aiperf.plugin.enums import PluginType
-
-    convergence = plan.multi_run.convergence
-    assert convergence is not None
-    criterion_cls = plugins.get_class(
-        PluginType.CONVERGENCE_CRITERION, str(convergence.mode)
-    )
-    return criterion_cls.from_plan(plan)
 
 
 class MultiRunOrchestrator:
@@ -338,6 +317,7 @@ class MultiRunOrchestrator:
         """
         self._maybe_write_sampling_design(plan)
 
+        from aiperf._cli_runner_sweep_helpers import _plan_iteration_order
         from aiperf.common.enums import SweepMode
 
         if plan.is_adaptive_search:
@@ -499,19 +479,28 @@ class MultiRunOrchestrator:
 
         all_results: list[RunResult] = []
         sweep = plan.sweep
-        # plan.is_adaptive_search guarantees AdaptiveSearchSweep
-        assert sweep is not None
+        assert sweep is not None  # guaranteed by plan.is_adaptive_search
         logger.info(
             f"Starting adaptive outer-loop benchmark "
             f"({sweep.planner}, max_iterations={sweep.max_iterations}, "
             f"trials per point={plan.trials})"
         )
 
+        def _flush_history(reason: str | None) -> None:
+            write_search_history(
+                self.base_dir,
+                planner.history(),
+                sweep,
+                convergence_reason=reason,
+                planner=planner,
+            )
+
         while True:
             if cancel_check is not None and cancel_check():
                 logger.info(
-                    f"Adaptive outer loop cancelled after {planner._iter} iterations"
+                    f"Adaptive outer loop cancelled after {planner.iter_count} iterations"
                 )
+                _flush_history("cancelled")
                 return all_results
 
             proposal = planner.ask()
@@ -519,16 +508,10 @@ class MultiRunOrchestrator:
                 reason = planner.convergence_reason() or "unknown"
                 logger.info(
                     "Adaptive outer loop terminated after %d iterations (reason=%s)",
-                    planner._iter,
+                    planner.iter_count,
                     reason,
                 )
-                write_search_history(
-                    self.base_dir,
-                    planner.history(),
-                    sweep,
-                    convergence_reason=reason,
-                    planner=planner,
-                )
+                _flush_history(reason)
                 return all_results
             cfg, variation = proposal
             strategy = _build_strategy(plan)
@@ -547,12 +530,7 @@ class MultiRunOrchestrator:
             )
             planner.tell(variation, cell_results)
             all_results.extend(cell_results)
-            write_search_history(
-                self.base_dir,
-                planner.history(),
-                sweep,
-                planner=planner,
-            )
+            _flush_history(None)
 
             if aborted:
                 logger.warning(

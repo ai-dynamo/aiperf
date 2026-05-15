@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkPlan
     from aiperf.orchestrator.aggregation.base import AggregateResult
+    from aiperf.orchestrator.convergence.base import ConvergenceCriterion
+    from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.orchestrator.strategies import ExecutionStrategy
 
 
@@ -125,7 +127,7 @@ def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrate
     )
 
 
-def _build_convergence_criterion(plan: BenchmarkPlan):  # noqa: ANN202
+def _build_convergence_criterion(plan: BenchmarkPlan) -> ConvergenceCriterion:
     """Pick the convergence criterion matching ``plan.multi_run.convergence.mode``.
 
     Dispatches via the plugin registry so third-party criteria (registered in
@@ -144,7 +146,7 @@ def _build_convergence_criterion(plan: BenchmarkPlan):  # noqa: ANN202
     return criterion_cls.from_plan(plan)
 
 
-def _build_search_planner(plan: BenchmarkPlan):  # noqa: ANN202
+def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
     """Build the outer-loop SearchPlanner for adaptive search.
 
     Returns None when ``plan.is_adaptive_search`` is False. Dispatches via the
@@ -228,7 +230,9 @@ async def aggregate_and_export(
     print_aggregate_summary(aggregate_result, logger)
 
 
-def _maybe_compute_detailed(plan: BenchmarkPlan, results: list):  # noqa: ANN202
+def _maybe_compute_detailed(
+    plan: BenchmarkPlan, results: list
+) -> AggregateResult | None:
     """Return detailed aggregation result when adaptive mode is enabled."""
     if not plan.use_adaptive:
         return None
