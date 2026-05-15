@@ -55,7 +55,7 @@ from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import ServiceTypeT
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager

@@ -5,7 +5,7 @@ from enum import Enum
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.config.defaults import EndpointDefaults
+from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType, URLSelectionStrategy
 

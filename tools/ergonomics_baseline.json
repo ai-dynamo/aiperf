@@ -93,11 +93,6 @@
     ],
     [
       "file-size",
-      "src/aiperf/config/artifacts.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/config/config.py",
       ""
     ],
@@ -109,6 +104,11 @@
     [
       "file-size",
       "src/aiperf/config/distributions.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/endpoint.py",
       ""
     ],
     [

@@ -9,7 +9,7 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.config.defaults import InputDefaults
+from aiperf.config.dataset.defaults import InputDefaults
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,

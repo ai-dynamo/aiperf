@@ -9,6 +9,7 @@ Artifacts - Export and output settings for benchmark results.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -21,12 +22,12 @@ from pydantic import (
 
 from aiperf.common.enums import ExportLevel
 from aiperf.config.base import BaseConfig
-from aiperf.config.defaults import OutputDefaults
 from aiperf.config.phases import _normalize_duration
 from aiperf.config.user_files import UserFile
 
 __all__ = [
     "ArtifactsConfig",
+    "OutputDefaults",
 ]
 
 # Type aliases for format arrays.
@@ -35,6 +36,36 @@ __all__ = [
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]
+
+
+@dataclass(frozen=True)
+class OutputDefaults:
+    ARTIFACT_DIRECTORY = Path("./artifacts")
+    RAW_RECORDS_FOLDER = Path("raw_records")
+    OUTPUT_FRAGMENTS_FOLDER = Path("output_fragments")
+    LOG_FOLDER = Path("logs")
+    LOG_FILE = Path("aiperf.log")
+    INPUTS_JSON_FILE = Path("inputs.json")
+    OUTPUTS_JSON_FILE = Path("outputs.json")
+    PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
+    PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
+    PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE = Path(
+        "profile_export_aiperf_timeslices.csv"
+    )
+    PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE = Path(
+        "profile_export_aiperf_timeslices.json"
+    )
+    PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
+    PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
+    PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
+    SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
+    SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
+    SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
+    SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
+    EXPORT_LEVEL = ExportLevel.RECORDS
+    EXPORT_HTTP_TRACE = False
+    SHOW_TRACE_TIMING = False
+    SLICE_DURATION = None
 
 
 class ArtifactsConfig(BaseConfig):

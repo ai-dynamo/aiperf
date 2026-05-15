@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.config.defaults import TokenizerDefaults
 from aiperf.config.flags import CLIConfig
+from aiperf.config.tokenizer import TokenizerDefaults
 
 
 def test_tokenizer_config_defaults():

@@ -15,7 +15,7 @@ from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.optional_dependencies import mlflow_dependency_message
 from aiperf.common.redact import redact_cli_command, redact_url
-from aiperf.config.defaults import MLflowDefaults
+from aiperf.config.mlflow import MLflowDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.mlflow_metadata import (
     MLflowExportMetadata,

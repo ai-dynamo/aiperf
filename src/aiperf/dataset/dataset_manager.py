@@ -44,8 +44,8 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
-from aiperf.config.defaults import OutputDefaults
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (

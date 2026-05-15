@@ -9,11 +9,19 @@ Re-exported via :mod:`aiperf.config`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from pydantic import ConfigDict, Field
 
 from aiperf.config.base import BaseConfig
+
+
+@dataclass(frozen=True)
+class TokenizerDefaults:
+    NAME = None
+    REVISION = "main"
+    TRUST_REMOTE_CODE = False
 
 
 class TokenizerConfig(BaseConfig):
@@ -95,4 +103,5 @@ class TokenizerConfig(BaseConfig):
 
 __all__ = [
     "TokenizerConfig",
+    "TokenizerDefaults",
 ]

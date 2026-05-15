@@ -6,8 +6,8 @@ from pydantic import Field
 from typing_extensions import Self
 
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.config.dataset.trace import SynthesisConfig
-from aiperf.config.defaults import InputTokensDefaults
 
 
 class MetricStats(AIPerfBaseModel):

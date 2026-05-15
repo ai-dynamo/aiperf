@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags import CLIConfig
 
 

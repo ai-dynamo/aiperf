@@ -39,6 +39,7 @@ Schema Version: 2.0.0
 
 from aiperf.config.artifacts import (
     ArtifactsConfig,
+    OutputDefaults,
 )
 from aiperf.config.cli_parameter import (
     CLIParameter,
@@ -80,15 +81,13 @@ from aiperf.config.dataset import (
     VideoAudioConfig,
     VideoConfig,
 )
-from aiperf.config.defaults import (
-    EndpointDefaults,
+from aiperf.config.dataset.defaults import (
     InputDefaults,
     InputTokensDefaults,
-    OutputDefaults,
-    ServiceDefaults,
 )
 from aiperf.config.endpoint import (
     EndpointConfig,
+    EndpointDefaults,
     TemplateConfig,
 )
 from aiperf.config.gpu_telemetry import (
@@ -160,6 +159,7 @@ from aiperf.config.resolution import (
 )
 from aiperf.config.runtime import (
     RuntimeConfig,
+    ServiceDefaults,
 )
 from aiperf.config.server_metrics import (
     ServerMetricsConfig,

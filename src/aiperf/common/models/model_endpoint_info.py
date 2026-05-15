@@ -19,8 +19,7 @@ from aiperf.common.enums import (
     RequestContentType,
 )
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.config.defaults import EndpointDefaults
-from aiperf.config.endpoint import TemplateConfig
+from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
 from aiperf.plugin.enums import EndpointType, TransportType
 
 if TYPE_CHECKING:

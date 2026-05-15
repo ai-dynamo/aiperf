@@ -20,7 +20,7 @@ from pathlib import PosixPath
 import pytest
 from pydantic import ValidationError
 
-from aiperf.config.defaults import InputDefaults
+from aiperf.config.dataset.defaults import InputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType
 

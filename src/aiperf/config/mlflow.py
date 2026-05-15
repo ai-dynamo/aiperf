@@ -9,16 +9,40 @@ MLflow - Tracking and artifact-upload configuration.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import ConfigDict, Field
 
 from aiperf.config.base import BaseConfig
-from aiperf.config.defaults import MLflowDefaults
 
 __all__ = [
     "MLflowConfig",
+    "MLflowDefaults",
 ]
+
+
+@dataclass(frozen=True)
+class MLflowDefaults:
+    TRACKING_URI = None
+    EXPERIMENT = "aiperf"
+    RUN_NAME = None
+    TAGS = None
+    ARTIFACT_GLOBS = None
+    DEFAULT_ARTIFACT_GLOBS = (
+        "*.json",
+        "*.csv",
+        "*.jsonl",
+        "*.parquet",
+        "*_timeslices.*",
+        "**/*.png",
+        "**/*.jpg",
+        "**/*.jpeg",
+        "**/*.svg",
+        "**/*.html",
+    )
+    EXPORT_METADATA_FILE = Path("mlflow_export.json")
 
 
 class MLflowConfig(BaseConfig):

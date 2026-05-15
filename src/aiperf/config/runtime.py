@@ -9,14 +9,29 @@ Re-exported via :mod:`aiperf.config`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from pydantic import ConfigDict, Field, model_validator
 from typing_extensions import Self
 
+from aiperf.common.enums import AIPerfLogLevel
 from aiperf.config.base import BaseConfig
 from aiperf.config.comm.inputs import CommunicationConfig
-from aiperf.plugin.enums import ServiceRunType, UIType
+from aiperf.plugin.enums import CommunicationBackend, ServiceRunType, UIType
+
+
+@dataclass(frozen=True)
+class ServiceDefaults:
+    SERVICE_RUN_TYPE = ServiceRunType.MULTIPROCESSING
+    COMM_BACKEND = CommunicationBackend.ZMQ_IPC
+    COMM_CONFIG = None
+    LOG_LEVEL = AIPerfLogLevel.INFO
+    VERBOSE = False
+    EXTRA_VERBOSE = False
+    LOG_PATH = None
+    RECORD_PROCESSOR_SERVICE_COUNT = None
+    UI_TYPE = UIType.DASHBOARD
 
 
 class RuntimeConfig(BaseConfig):
@@ -177,4 +192,5 @@ class RuntimeConfig(BaseConfig):
 
 __all__ = [
     "RuntimeConfig",
+    "ServiceDefaults",
 ]

@@ -13,7 +13,7 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
-from aiperf.config.defaults import InputTokensDefaults
+from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.base import BaseGenerator
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"

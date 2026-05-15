@@ -52,9 +52,10 @@ from aiperf.common.enums import (
     VideoFormat,
     VideoSynthType,
 )
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
-from aiperf.config.defaults import EndpointDefaults, OutputDefaults, ServiceDefaults
+from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.loader.parsing import (
     normalize_http_urls,
     parse_file,
@@ -66,6 +67,7 @@ from aiperf.config.loader.parsing import (
     parse_str_or_list_of_positive_values,
     require_turn_mean_at_least_one,
 )
+from aiperf.config.runtime import ServiceDefaults
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
     AccuracyGraderType,

@@ -7,7 +7,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import RawRecordInfo
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,

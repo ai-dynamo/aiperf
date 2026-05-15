@@ -13,7 +13,7 @@ from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models.record_models import MetricRecordInfo
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 JsonObject = dict[str, Any]

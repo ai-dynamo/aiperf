@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.models import InputsFile, SessionPayloads
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.plugin import plugins
 
 

@@ -10,8 +10,8 @@ import pytest
 
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import JsonExportData
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.config import BenchmarkConfig
-from aiperf.config.defaults import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 from aiperf.plugin.enums import EndpointType

@@ -8,7 +8,7 @@ import orjson
 import pytest
 
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.outputs_json_exporter import OutputsJsonExporter
 
 

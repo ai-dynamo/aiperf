@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.config.defaults import InputTokensDefaults
+from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader

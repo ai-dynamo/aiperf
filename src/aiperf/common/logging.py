@@ -19,7 +19,8 @@ from rich.traceback import Traceback
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.environment import Environment
 from aiperf.common.utils import is_tty
-from aiperf.config.defaults import OutputDefaults, ServiceDefaults
+from aiperf.config.artifacts import OutputDefaults
+from aiperf.config.runtime import ServiceDefaults
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
 

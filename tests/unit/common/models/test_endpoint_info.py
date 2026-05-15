@@ -5,7 +5,7 @@
 import pytest
 
 from aiperf.common.models.model_endpoint_info import EndpointInfo
-from aiperf.config.defaults import EndpointDefaults
+from aiperf.config.endpoint import EndpointDefaults
 
 
 class TestEndpointInfoMultiURL:

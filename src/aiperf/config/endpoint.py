@@ -9,6 +9,7 @@ Endpoint - Server connection and API configuration
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ from typing_extensions import Self
 
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
+    ModelSelectionStrategy,
     RequestContentType,
 )
 from aiperf.config.base import BaseConfig
@@ -33,8 +35,33 @@ from aiperf.plugin.enums import (
 
 __all__ = [
     "EndpointConfig",
+    "EndpointDefaults",
     "TemplateConfig",
 ]
+
+
+@dataclass(frozen=True)
+class EndpointDefaults:
+    MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
+    CUSTOM_ENDPOINT = None
+    TYPE = EndpointType.CHAT
+    STREAMING = False
+    URL = "http://localhost:8000"
+    URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
+    TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
+    API_KEY = None
+    USE_LEGACY_MAX_TOKENS = False
+    USE_SERVER_TOKEN_COUNT = False
+    CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
+    DOWNLOAD_VIDEO_CONTENT = False
+    REQUEST_CONTENT_TYPE = None
+    # Readiness probe defaults. Timeout 0 disables the probe (the default);
+    # any positive value enables it. Interval is only consulted when the
+    # probe is enabled but is validated positive so mis-configuration
+    # (e.g. --wait-for-model-interval 0) is rejected at config-load time.
+    WAIT_FOR_MODEL_TIMEOUT = 0.0
+    WAIT_FOR_MODEL_INTERVAL = 5.0
+    WAIT_FOR_MODEL_MODE = "inference"
 
 
 class TemplateConfig(BaseConfig):

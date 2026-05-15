@@ -10,8 +10,8 @@ from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.config import BenchmarkConfig
-from aiperf.config.defaults import OutputDefaults
 
 
 class OutputFragment(AIPerfBaseModel):

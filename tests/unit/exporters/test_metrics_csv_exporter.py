@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.common.models import MetricResult
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
 from aiperf.plugin.enums import EndpointType

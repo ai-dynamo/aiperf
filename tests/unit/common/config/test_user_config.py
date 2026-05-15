@@ -22,7 +22,7 @@ What survives here:
 
 from unittest.mock import mock_open, patch
 
-from aiperf.config.defaults import EndpointDefaults
+from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import (
     DatasetSamplingStrategy,

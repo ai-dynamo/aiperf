@@ -11,7 +11,7 @@ import numpy as np
 import orjson
 
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.config.defaults import InputTokensDefaults
+from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats
 from aiperf.dataset.synthesis.radix_tree import RadixTree
 

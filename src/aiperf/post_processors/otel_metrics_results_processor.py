@@ -22,7 +22,7 @@ from aiperf.common.optional_dependencies import (
     OTEL_METRICS_STREAMING_FEATURE,
     otel_dependency_message,
 )
-from aiperf.config.defaults import MLflowDefaults
+from aiperf.config.mlflow import MLflowDefaults
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.post_processors.otel_streaming_fanout import (

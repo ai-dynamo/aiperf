@@ -21,7 +21,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.common.redact import redact_headers
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
