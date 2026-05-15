@@ -23,7 +23,7 @@ def endpoint_config():
 
 @pytest.fixture
 def output_config(tmp_path):
-    """Returns the artifact directory path used by mock_user_config."""
+    """Returns the artifact directory path used by mock_cfg."""
     return tmp_path
 
 
@@ -40,7 +40,7 @@ def sample_records():
 
 
 @pytest.fixture
-def mock_user_config(endpoint_config, output_config):
+def mock_cfg(endpoint_config, output_config):
     config = CLIConfig(
         **endpoint_config.model_dump(exclude_unset=True),
         artifact_directory=output_config,
@@ -51,7 +51,7 @@ def mock_user_config(endpoint_config, output_config):
 class TestExporterManager:
     @pytest.mark.asyncio
     async def test_export(
-        self, endpoint_config, output_config, sample_records, mock_user_config
+        self, endpoint_config, output_config, sample_records, mock_cfg
     ):
         # Create a mock exporter instance
         mock_instance = MagicMock()
@@ -75,7 +75,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_v1(mock_user_config),
+                run=make_run_from_v1(mock_cfg),
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -85,7 +85,7 @@ class TestExporterManager:
 
     @pytest.mark.asyncio
     async def test_export_runs_mlflow_after_other_data_exporters(
-        self, endpoint_config, output_config, sample_records, mock_user_config
+        self, endpoint_config, output_config, sample_records, mock_cfg
     ):
         execution_order: list[str] = []
 
@@ -125,7 +125,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_v1(mock_user_config),
+                run=make_run_from_v1(mock_cfg),
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -136,7 +136,7 @@ class TestExporterManager:
 
     @pytest.mark.asyncio
     async def test_export_console(
-        self, endpoint_config, output_config, sample_records, mock_user_config
+        self, endpoint_config, output_config, sample_records, mock_cfg
     ):
         from rich.console import Console
 
@@ -169,7 +169,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_v1(mock_user_config),
+                run=make_run_from_v1(mock_cfg),
                 telemetry_results=None,
             )
             await manager.export_console(Console())

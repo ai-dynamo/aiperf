@@ -193,7 +193,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     self._metric_results_processors.append(results_processor)
                     if (
                         entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER
-                        and self.user_config.otel.stream_timing_enabled
+                        and self.cfg.otel.stream_timing_enabled
                     ):
                         self._timing_results_processors.append(results_processor)
 

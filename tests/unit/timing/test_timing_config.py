@@ -22,7 +22,7 @@ def make_phase_config(**overrides) -> CreditPhaseConfig:
     return CreditPhaseConfig(**defaults)
 
 
-# Fields recognized by ``make_user_config`` overrides. Each is routed to either
+# Fields recognized by ``make_cfg`` overrides. Each is routed to either
 # the loadgen or input section of a real v1 ``CLIConfig``; only fields the
 # caller passes flow into ``model_fields_set`` so the v1 -> v2 resolver maps
 # them faithfully.
@@ -66,7 +66,7 @@ _INPUT_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def make_user_config(**overrides) -> CLIConfig:
+def make_cfg(**overrides) -> CLIConfig:
     """Build a real v1 ``CLIConfig`` whose ``model_fields_set`` reflects only
     the kwargs the caller passed. The v1 -> v2 resolver depends on
     ``model_fields_set`` to distinguish "user supplied" from "defaulted", so
@@ -106,7 +106,7 @@ def make_user_config(**overrides) -> CLIConfig:
         elif key in _INPUT_FIELDS:
             input_kwargs[key] = value
         else:
-            raise KeyError(f"unknown make_user_config override: {key!r}")
+            raise KeyError(f"unknown make_cfg override: {key!r}")
 
     return CLIConfig(
         **endpoint_kwargs,
@@ -118,7 +118,7 @@ def make_user_config(**overrides) -> CLIConfig:
 def _make_timing_config(**overrides) -> TimingConfig:
     """Convenience: build a CLIConfig with overrides, run it through the v1
     -> v2 resolver, and return the resulting ``TimingConfig``."""
-    return TimingConfig.from_run(make_run_from_v1(make_user_config(**overrides)))
+    return TimingConfig.from_run(make_run_from_v1(make_cfg(**overrides)))
 
 
 class TestTimingConfig:

@@ -31,7 +31,7 @@ async def test_fanout_queue_maxsize_reads_env_var(
     """Queue maxsize must equal AIPERF_OTEL_MAX_BUFFERED_RECORDS (Req 7.4)."""
     monkeypatch.setattr(Environment.OTEL, "MAX_BUFFERED_RECORDS", 1)
 
-    user_config = BenchmarkConfig(
+    cfg = BenchmarkConfig(
         model="test-model",
         endpoint=EndpointConfig(
             urls=["http://localhost:8000"],
@@ -45,7 +45,7 @@ async def test_fanout_queue_maxsize_reads_env_var(
 
     processor = OTelMetricsResultsProcessor(
         service_id="records-manager",
-        run=SimpleNamespace(cfg=user_config, benchmark_id="bench-fanout"),
+        run=SimpleNamespace(cfg=cfg, benchmark_id="bench-fanout"),
     )
 
     assert processor._fanout_queue_maxsize == 1

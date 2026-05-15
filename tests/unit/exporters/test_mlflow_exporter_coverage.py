@@ -27,7 +27,7 @@ def _make_config(
     tracking_uri: str | None = "http://localhost:5000",
     benchmark_id: str = "test-bench-123",
 ) -> ExporterConfig:
-    user_config = BenchmarkConfig(
+    cfg = BenchmarkConfig(
         model="mock-model",
         endpoint=EndpointConfig(
             urls=["http://localhost:8000"],
@@ -58,7 +58,7 @@ def _make_config(
     results.was_cancelled = False
 
     return ExporterConfig(
-        cfg=user_config,
+        cfg=cfg,
         results=results,
         telemetry_results=None,
         run=SimpleNamespace(benchmark_id=benchmark_id),

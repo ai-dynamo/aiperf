@@ -28,7 +28,7 @@ from aiperf.common.tokenizer_validator import (
 
 
 @pytest.fixture
-def mock_user_config() -> MagicMock:
+def mock_cfg() -> MagicMock:
     """Create a mock BenchmarkConfig with tokenizer-requiring endpoint.
 
     Mirrors the v2 BenchmarkConfig surface ``validate_tokenizer_early`` reads:
@@ -357,13 +357,11 @@ class TestPreloadTokenizers:
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")
 class TestValidatorTiktokenShortCircuit:
-    def test_builtin_skips_alias_resolution(
-        self, mock_user_config, mock_logger
-    ) -> None:
-        mock_user_config.tokenizer.name = BUILTIN_TOKENIZER_NAME
+    def test_builtin_skips_alias_resolution(self, mock_cfg, mock_logger) -> None:
+        mock_cfg.tokenizer.name = BUILTIN_TOKENIZER_NAME
 
         with patch.object(Tokenizer, "resolve_alias") as mock_resolve:
-            result = validate_tokenizer_early(mock_user_config, mock_logger)
+            result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         mock_resolve.assert_not_called()
         assert result == {
@@ -373,12 +371,12 @@ class TestValidatorTiktokenShortCircuit:
 
     @pytest.mark.parametrize("encoding_name", sorted(TIKTOKEN_ENCODING_NAMES))
     def test_tiktoken_encoding_names_skip_alias_resolution(
-        self, mock_user_config, mock_logger, encoding_name: str
+        self, mock_cfg, mock_logger, encoding_name: str
     ) -> None:
-        mock_user_config.tokenizer.name = encoding_name
+        mock_cfg.tokenizer.name = encoding_name
 
         with patch.object(Tokenizer, "resolve_alias") as mock_resolve:
-            result = validate_tokenizer_early(mock_user_config, mock_logger)
+            result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         mock_resolve.assert_not_called()
         assert result == {
@@ -391,14 +389,12 @@ class TestValidatorTiktokenShortCircuit:
 class TestValidatorFakeModelFallback:
     """Placeholder model names default to builtin when --tokenizer is unset."""
 
-    def test_all_fake_models_skip_alias_resolution(
-        self, mock_user_config, mock_logger
-    ) -> None:
-        mock_user_config.tokenizer.name = None
-        mock_user_config.get_model_names.return_value = ["mock-llama", "test-model"]
+    def test_all_fake_models_skip_alias_resolution(self, mock_cfg, mock_logger) -> None:
+        mock_cfg.tokenizer.name = None
+        mock_cfg.get_model_names.return_value = ["mock-llama", "test-model"]
 
         with patch.object(Tokenizer, "resolve_alias") as mock_resolve:
-            result = validate_tokenizer_early(mock_user_config, mock_logger)
+            result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         mock_resolve.assert_not_called()
         assert result == {
@@ -406,15 +402,15 @@ class TestValidatorFakeModelFallback:
             "test-model": BUILTIN_TOKENIZER_NAME,
         }
         # tokenizer_cfg.name is mutated so downstream consumers see builtin.
-        assert mock_user_config.tokenizer.name == BUILTIN_TOKENIZER_NAME
+        assert mock_cfg.tokenizer.name == BUILTIN_TOKENIZER_NAME
         # One warning per fake model name.
         assert mock_logger.warning.call_count == 2
 
     def test_mixed_fake_and_real_models_resolve_only_real(
-        self, mock_user_config, mock_logger
+        self, mock_cfg, mock_logger
     ) -> None:
-        mock_user_config.tokenizer.name = None
-        mock_user_config.get_model_names.return_value = [
+        mock_cfg.tokenizer.name = None
+        mock_cfg.get_model_names.return_value = [
             "mock-llama",
             "Qwen/Qwen3-0.6B",
         ]
@@ -426,7 +422,7 @@ class TestValidatorFakeModelFallback:
         with patch.object(
             Tokenizer, "resolve_alias", return_value=resolution
         ) as mock_resolve:
-            result = validate_tokenizer_early(mock_user_config, mock_logger)
+            result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         # Only the real model is resolved; the fake one is skipped entirely.
         mock_resolve.assert_called_once_with("Qwen/Qwen3-0.6B")
@@ -436,11 +432,11 @@ class TestValidatorFakeModelFallback:
         }
 
     def test_explicit_tokenizer_overrides_fake_detection(
-        self, mock_user_config, mock_logger
+        self, mock_cfg, mock_logger
     ) -> None:
         """Explicit --tokenizer wins, even if --model is placeholder-shaped."""
-        mock_user_config.tokenizer.name = "Qwen/Qwen3-0.6B"
-        mock_user_config.get_model_names.return_value = ["mock-llama"]
+        mock_cfg.tokenizer.name = "Qwen/Qwen3-0.6B"
+        mock_cfg.get_model_names.return_value = ["mock-llama"]
 
         resolution = MagicMock()
         resolution.is_ambiguous = False
@@ -449,7 +445,7 @@ class TestValidatorFakeModelFallback:
         with patch.object(
             Tokenizer, "resolve_alias", return_value=resolution
         ) as mock_resolve:
-            result = validate_tokenizer_early(mock_user_config, mock_logger)
+            result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         mock_resolve.assert_called_once_with("Qwen/Qwen3-0.6B")
         # No placeholder warning emitted.

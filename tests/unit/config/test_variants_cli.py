@@ -93,7 +93,7 @@ def test_alias_table_contains_known_short_aliases() -> None:
     assert "benchmark_duration" in table
 
 
-def test_alias_table_paths_resolve_to_user_config_subtree() -> None:
+def test_alias_table_paths_resolve_to_cli_config_subtree() -> None:
     table = build_alias_table()
     # After the de-nest, isl/osl resolve to flat ``prompt_*`` attrs on CLIConfig
     # (no nested holders). The path is just the top-level Python attr name.

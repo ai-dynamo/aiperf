@@ -48,7 +48,7 @@ class TestOutputsJsonRecordProcessorDisabled:
         with pytest.raises(PostProcessorDisabled):
             OutputsJsonRecordProcessor(
                 service_id="processor-1",
-                user_config=config,
+                cfg=config,
             )
 
 
@@ -78,7 +78,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            user_config=config,
+            cfg=config,
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -110,7 +110,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            user_config=config,
+            cfg=config,
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -144,7 +144,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            user_config=config,
+            cfg=config,
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)

@@ -29,7 +29,7 @@ behavior lives in the dataset / converter test modules.
 from aiperf.config.flags.cli_config import CLIConfig
 
 
-def test_user_config_with_loadgen_request_count_default_dto_value() -> None:
+def test_cli_config_with_loadgen_request_count_default_dto_value() -> None:
     """The v1 LoadGeneratorConfig DTO leaves request_count unset (None) by default."""
     config = CLIConfig(
         model_names=["test-model"], **CLIConfig().model_dump(exclude_unset=True)
@@ -37,7 +37,7 @@ def test_user_config_with_loadgen_request_count_default_dto_value() -> None:
     assert config.request_count is None
 
 
-def test_user_config_with_explicit_loadgen_request_count() -> None:
+def test_cli_config_with_explicit_loadgen_request_count() -> None:
     """Explicit request_count is preserved on the DTO."""
     config = CLIConfig(
         model_names=["test-model"],

@@ -94,14 +94,14 @@ def _create_server_metrics_results(
 
 
 def _generate_csv_content(
-    mock_user_config,
+    mock_cfg,
     mock_profile_results,
     server_metrics_results: ServerMetricsResults,
 ) -> str:
     """Create exporter and generate CSV content."""
     config = create_exporter_config(
         profile_results=mock_profile_results,
-        cli_config=mock_user_config,
+        cli_config=mock_cfg,
         server_metrics_results=server_metrics_results,
     )
     return ServerMetricsCsvExporter(config)._generate_content()
@@ -113,7 +113,7 @@ def _generate_csv_content(
 
 
 @pytest.fixture
-def mock_user_config(tmp_path):
+def mock_cfg(tmp_path):
     """Create a CLIConfig with a temp output directory."""
     return CLIConfig(
         model_names=["test-model"],
@@ -329,25 +329,25 @@ class TestServerMetricsCsvExporterInitialization:
 
     def test_initialization_with_valid_config(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that exporter initializes correctly with valid config."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         assert ServerMetricsCsvExporter(config) is not None
 
     def test_initialization_disabled_without_results(
-        self, mock_user_config, mock_profile_results
+        self, mock_cfg, mock_profile_results
     ):
         """Test that exporter raises DataExporterDisabled when no results."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             server_metrics_results=None,
         )
         with pytest.raises(DataExporterDisabled):
@@ -359,14 +359,14 @@ class TestServerMetricsCsvExporterGetExportInfo:
 
     def test_get_export_info_returns_correct_type(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that export info contains correct type and path."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         info = ServerMetricsCsvExporter(config).get_export_info()
@@ -380,13 +380,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_creates_valid_csv(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that generated content is valid CSV."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -394,13 +394,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_has_sections_by_metric_type(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that CSV has separate sections for each metric type."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -416,13 +416,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_gauge_section_has_correct_columns(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that gauge section has appropriate stat columns."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -444,13 +444,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_counter_section_has_correct_columns(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that counter section has appropriate stat columns."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -463,13 +463,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_histogram_section_has_buckets_column(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that histogram section has a buckets column."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -481,13 +481,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_has_normalized_endpoints(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that endpoints are normalized (without http:// and /metrics)."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -497,13 +497,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_handles_labeled_metrics(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_labeled_metrics,
     ):
         """Test that labeled metrics have individual label columns."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_labeled_metrics,
         )
@@ -513,13 +513,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_merges_metrics_from_all_endpoints(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that metrics from multiple endpoints appear in the same section."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -529,13 +529,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_histogram_bucket_values_in_column(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that histogram bucket values are in key=value format."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -543,7 +543,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             assert expected in content
 
     def test_generate_content_histograms_with_different_buckets_in_same_section(
-        self, mock_user_config, mock_profile_results
+        self, mock_cfg, mock_profile_results
     ):
         """Test that histograms with different bucket boundaries are in the same section."""
         results = _create_server_metrics_results(
@@ -595,7 +595,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             }
         )
 
-        content = _generate_csv_content(mock_user_config, mock_profile_results, results)
+        content = _generate_csv_content(mock_cfg, mock_profile_results, results)
         rows = _parse_csv_content(content)
 
         # Count histogram headers - should be exactly one
@@ -616,13 +616,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_has_unit_column(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
     ):
         """Test that Unit column exists with correct values derived from metric names."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_all_types,
         )
@@ -638,13 +638,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_info_metrics_in_transposed_section(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_info_metrics,
     ):
         """Test that info metrics appear in transposed key-value format."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_info_metrics,
         )
@@ -657,13 +657,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_info_metrics_separated_from_gauges(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_info_metrics,
     ):
         """Test that info metrics don't appear in gauge section."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_info_metrics,
         )
@@ -687,13 +687,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_info_metrics_have_description(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_info_metrics,
     ):
         """Test that info metric rows include description."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_info_metrics,
         )
@@ -701,13 +701,13 @@ class TestServerMetricsCsvExporterGenerateContent:
 
     def test_generate_content_label_columns_exclude_info_metric_labels(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_info_metrics,
     ):
         """Test that info metric labels don't become columns in gauge section."""
         content = _generate_csv_content(
-            mock_user_config,
+            mock_cfg,
             mock_profile_results,
             server_metrics_results_with_info_metrics,
         )
@@ -722,7 +722,7 @@ class TestServerMetricsCsvExporterGenerateContent:
         assert "engine" in gauge_header
 
     def test_generate_content_labels_grouped_by_cooccurrence(
-        self, mock_user_config, mock_profile_results
+        self, mock_cfg, mock_profile_results
     ):
         """Test that labels appearing together stay adjacent in columns."""
         results = _create_server_metrics_results(
@@ -752,7 +752,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             }
         )
 
-        content = _generate_csv_content(mock_user_config, mock_profile_results, results)
+        content = _generate_csv_content(mock_cfg, mock_profile_results, results)
         rows = _parse_csv_content(content)
         counter_header = _find_header_row(rows, ["total"])
         assert counter_header is not None
@@ -770,7 +770,7 @@ class TestServerMetricsCsvExporterGenerateContent:
         assert model_name_idx < status_idx
 
     def test_generate_content_overlapping_labels_merged(
-        self, mock_user_config, mock_profile_results
+        self, mock_cfg, mock_profile_results
     ):
         """Test that overlapping label sets are merged into one group."""
         results = _create_server_metrics_results(
@@ -809,7 +809,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             }
         )
 
-        content = _generate_csv_content(mock_user_config, mock_profile_results, results)
+        content = _generate_csv_content(mock_cfg, mock_profile_results, results)
         rows = _parse_csv_content(content)
         counter_header = _find_header_row(rows, ["total"])
         assert counter_header is not None
@@ -829,7 +829,7 @@ class TestServerMetricsCsvExporterGenerateContent:
         assert max(merged_indices) < min(method_idx, status_idx)
 
     def test_generate_content_metrics_without_labels(
-        self, mock_user_config, mock_profile_results
+        self, mock_cfg, mock_profile_results
     ):
         """Test that metrics without labels work correctly (no label columns)."""
         results = _create_server_metrics_results(
@@ -850,7 +850,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             }
         )
 
-        content = _generate_csv_content(mock_user_config, mock_profile_results, results)
+        content = _generate_csv_content(mock_cfg, mock_profile_results, results)
         rows = _parse_csv_content(content)
         gauge_header = _find_header_row(rows, ["avg"])
         assert gauge_header is not None
@@ -860,9 +860,7 @@ class TestServerMetricsCsvExporterGenerateContent:
         desc_idx = gauge_header.index("Description")
         assert desc_idx == p99_idx + 1
 
-    def test_generate_content_only_info_metrics(
-        self, mock_user_config, mock_profile_results
-    ):
+    def test_generate_content_only_info_metrics(self, mock_cfg, mock_profile_results):
         """Test that only info metrics results in no gauge section, only info section."""
         results = _create_server_metrics_results(
             {
@@ -882,7 +880,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             }
         )
 
-        content = _generate_csv_content(mock_user_config, mock_profile_results, results)
+        content = _generate_csv_content(mock_cfg, mock_profile_results, results)
         assert "Endpoint,Metric,Key,Value,Description" in content
         assert "vllm:model_info" in content
         assert ",model," in content
@@ -890,7 +888,7 @@ class TestServerMetricsCsvExporterGenerateContent:
         assert ",gauge," not in content  # No gauge section
 
     def test_generate_content_rows_clustered_by_fill_pattern(
-        self, mock_user_config, mock_profile_results
+        self, mock_cfg, mock_profile_results
     ):
         """Test that rows with identical fill patterns are grouped together."""
         results = _create_server_metrics_results(
@@ -928,7 +926,7 @@ class TestServerMetricsCsvExporterGenerateContent:
             }
         )
 
-        content = _generate_csv_content(mock_user_config, mock_profile_results, results)
+        content = _generate_csv_content(mock_cfg, mock_profile_results, results)
         rows = _parse_csv_content(content)
         data_rows = [r for r in rows if r and r[0] == "localhost:8081"]
         metric_names = [r[2] for r in data_rows]
@@ -977,7 +975,7 @@ class TestServerMetricsCsvExporterIntegration:
     @pytest.mark.asyncio
     async def test_export_creates_valid_csv_file(
         self,
-        mock_user_config,
+        mock_cfg,
         mock_profile_results,
         server_metrics_results_with_all_types,
         tmp_path,
@@ -985,7 +983,7 @@ class TestServerMetricsCsvExporterIntegration:
         """Test that export creates a valid CSV file."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         exporter = ServerMetricsCsvExporter(config)

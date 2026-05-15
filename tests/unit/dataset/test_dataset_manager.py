@@ -45,7 +45,7 @@ def mock_tokenizer(mock_tokenizer_cls):
 
 
 @pytest.fixture
-def base_user_config():
+def base_cfg():
     """Create a basic CLIConfig for testing."""
     return CLIConfig(
         model_names=["test-model"],
@@ -53,10 +53,10 @@ def base_user_config():
 
 
 @pytest.fixture
-async def initialized_dataset_manager(mock_tokenizer, base_user_config):
+async def initialized_dataset_manager(mock_tokenizer, base_cfg):
     """Create an initialized DatasetManager with mocked publish."""
     CLIConfig()
-    dataset_manager = DatasetManager(run=make_run_from_v1(base_user_config))
+    dataset_manager = DatasetManager(run=make_run_from_v1(base_cfg))
 
     await dataset_manager.initialize()
     dataset_manager.publish = AsyncMock()
@@ -65,7 +65,7 @@ async def initialized_dataset_manager(mock_tokenizer, base_user_config):
 
 
 @pytest.fixture
-async def configured_dataset_manager(initialized_dataset_manager, base_user_config):
+async def configured_dataset_manager(initialized_dataset_manager, base_cfg):
     """Create a fully configured DatasetManager ready for request handling."""
     await initialized_dataset_manager._profile_configure_command(
         ProfileConfigureCommand(service_id="test_service")
@@ -363,7 +363,7 @@ class TestDatasetManagerMemoryAndClient:
     async def test_dataset_client_initialized_after_configuration(
         self,
         initialized_dataset_manager,
-        base_user_config,
+        base_cfg,
     ):
         """Test that dataset client is initialized after profile configuration."""
         dataset_manager = initialized_dataset_manager
@@ -406,7 +406,7 @@ class TestDatasetManagerMemoryAndClient:
     async def test_dataset_configured_event_set_after_client_initialization(
         self,
         initialized_dataset_manager,
-        base_user_config,
+        base_cfg,
     ):
         """Test that dataset_configured event is set after client initialization."""
         dataset_manager = initialized_dataset_manager
@@ -550,11 +550,11 @@ class TestKubernetesMode:
     # until the kubernetes plugin lands.
 
     def test_compress_only_multiprocessing_returns_false(
-        self, base_user_config: CLIConfig
+        self, base_cfg: CLIConfig
     ) -> None:
         """compress_only should be False in local (multiprocessing) mode."""
         CLIConfig(service_run_type=ServiceRunType.MULTIPROCESSING)
-        manager = DatasetManager(run=make_run_from_v1(base_user_config))
+        manager = DatasetManager(run=make_run_from_v1(base_cfg))
         assert manager._compress_only is False
 
 
@@ -856,7 +856,7 @@ class TestConfigureDatasetInlineMediaGating:
 # ============================================================================
 
 
-def _make_accuracy_user_config(
+def _make_accuracy_cfg(
     strategy: DatasetSamplingStrategy | None = None,
 ) -> CLIConfig:
     from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
@@ -886,7 +886,7 @@ class TestAccuracyModeSamplingGuards:
 
     async def test_random_sampling_raises_service_error(self) -> None:
         """Explicit random sampling is rejected in accuracy mode."""
-        cli_config = _make_accuracy_user_config(strategy=DatasetSamplingStrategy.RANDOM)
+        cli_config = _make_accuracy_cfg(strategy=DatasetSamplingStrategy.RANDOM)
         manager = await self._make_manager(cli_config)
 
         with pytest.raises(
@@ -896,9 +896,7 @@ class TestAccuracyModeSamplingGuards:
 
     async def test_shuffle_sampling_raises_service_error(self) -> None:
         """Explicit shuffle sampling is rejected in accuracy mode."""
-        cli_config = _make_accuracy_user_config(
-            strategy=DatasetSamplingStrategy.SHUFFLE
-        )
+        cli_config = _make_accuracy_cfg(strategy=DatasetSamplingStrategy.SHUFFLE)
         manager = await self._make_manager(cli_config)
 
         with pytest.raises(
@@ -908,7 +906,7 @@ class TestAccuracyModeSamplingGuards:
 
     async def test_fixed_schedule_raises_service_error(self) -> None:
         """Fixed-schedule timing is rejected in accuracy mode."""
-        cli_config = _make_accuracy_user_config()
+        cli_config = _make_accuracy_cfg()
         # In v2, fixed-schedule lives on the resolved phases (not cli_config);
         # set the v1 ``input.fixed_schedule`` flag and the v1->v2 resolver will
         # produce a phase with ``PhaseType.FIXED_SCHEDULE``.
@@ -922,9 +920,7 @@ class TestAccuracyModeSamplingGuards:
 
     async def test_sequential_sampling_does_not_raise(self) -> None:
         """Explicit sequential sampling is accepted and does not override itself."""
-        cli_config = _make_accuracy_user_config(
-            strategy=DatasetSamplingStrategy.SEQUENTIAL
-        )
+        cli_config = _make_accuracy_cfg(strategy=DatasetSamplingStrategy.SEQUENTIAL)
         manager = await self._make_manager(cli_config)
 
         with patch(
@@ -941,7 +937,7 @@ class TestAccuracyModeSamplingGuards:
 
     async def test_no_explicit_strategy_defaults_to_sequential(self) -> None:
         """When no sampling strategy is set, accuracy mode defaults to sequential."""
-        cli_config = _make_accuracy_user_config()
+        cli_config = _make_accuracy_cfg()
         assert cli_config.dataset_sampling_strategy is None
         manager = await self._make_manager(cli_config)
 

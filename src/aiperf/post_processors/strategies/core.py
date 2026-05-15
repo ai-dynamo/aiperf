@@ -69,7 +69,7 @@ class OTelStrategyContextProtocol(Protocol):
     """Protocol implemented by the OTel processor to support strategy execution."""
 
     @property
-    def user_config(self) -> BenchmarkConfig: ...
+    def cfg(self) -> BenchmarkConfig: ...
 
     async def get_or_create_histogram(
         self,

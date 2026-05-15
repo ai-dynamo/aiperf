@@ -37,14 +37,14 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         # without re-plumbing through kwargs.
         self._exporter_config = exporter_config
         self._results = exporter_config.results
-        self._user_config = exporter_config.cfg
+        self._cfg = exporter_config.cfg
         self._benchmark_id = (
             exporter_config.run.benchmark_id
             if exporter_config.run is not None
             else None
         )
 
-        if not self._user_config.mlflow.enabled:
+        if not self._cfg.mlflow.enabled:
             raise DataExporterDisabled(
                 "MLflow export is disabled (set --mlflow-tracking-uri to enable)."
             )
@@ -53,11 +53,11 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 "MLflow export is disabled (no profile results available)."
             )
 
-        self._tracking_uri = self._user_config.mlflow.tracking_uri
-        self._experiment_name = self._user_config.mlflow.experiment
-        self._run_name = self._user_config.mlflow.run_name
-        self._artifact_directory = self._user_config.artifacts.artifact_directory
-        self._artifact_globs = self._user_config.mlflow.resolved_artifact_globs
+        self._tracking_uri = self._cfg.mlflow.tracking_uri
+        self._experiment_name = self._cfg.mlflow.experiment
+        self._run_name = self._cfg.mlflow.run_name
+        self._artifact_directory = self._cfg.artifacts.artifact_directory
+        self._artifact_globs = self._cfg.mlflow.resolved_artifact_globs
         self._metadata_file = (
             self._artifact_directory / MLflowDefaults.EXPORT_METADATA_FILE
         )
@@ -207,12 +207,12 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         if reused_live_run:
             # On reuse, carry forward the parent_run_id from the live metadata.
             resolved_parent_run_id: str | None = existing_metadata.get("parent_run_id")
-            cli_parent = self._user_config.mlflow.parent_run_id
+            cli_parent = self._cfg.mlflow.parent_run_id
             if cli_parent and cli_parent != resolved_parent_run_id:
                 self.info("parent_run_id ignored on live-run reuse")
             run_context = mlflow.start_run(run_id=existing_live_run_id)
         else:
-            resolved_parent_run_id = self._user_config.mlflow.parent_run_id
+            resolved_parent_run_id = self._cfg.mlflow.parent_run_id
             # Fresh run: compute the name up front so _start_new_run can pass it
             # to mlflow.start_run. Reused runs keep the name MLflow already stored.
             new_run_name = self._run_name or self._derive_default_run_name()
@@ -355,17 +355,15 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
     def _build_param_payload(self) -> dict[str, str]:
         params: dict[str, str] = {
-            "endpoint.type": str(self._user_config.endpoint.type),
-            "endpoint.models": ",".join(self._user_config.get_model_names()),
+            "endpoint.type": str(self._cfg.endpoint.type),
+            "endpoint.models": ",".join(self._cfg.get_model_names()),
             "endpoint.urls": ",".join(
-                redact_url(url) for url in self._user_config.endpoint.urls
+                redact_url(url) for url in self._cfg.endpoint.urls
             ),
-            "output.artifact_directory": str(
-                self._user_config.artifacts.artifact_directory
-            ),
+            "output.artifact_directory": str(self._cfg.artifacts.artifact_directory),
         }
 
-        profiling_phases = self._user_config.get_profiling_phases()
+        profiling_phases = self._cfg.get_profiling_phases()
         if profiling_phases:
             phase = profiling_phases[0]
             params["timing.mode"] = str(phase.type)
@@ -377,7 +375,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 params["loadgen.request_count"] = str(phase.requests)
             if phase.duration is not None:
                 params["loadgen.benchmark_duration"] = str(phase.duration)
-        cli_command = getattr(self._user_config, "cli_command", None)
+        cli_command = getattr(self._cfg, "cli_command", None)
         if cli_command:
             params["aiperf.cli_command"] = redact_cli_command(cli_command)
 
@@ -392,7 +390,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         }
         if self._benchmark_id:
             tags["benchmark_id"] = self._benchmark_id
-        tags.update(self._user_config.mlflow.tags_dict)
+        tags.update(self._cfg.mlflow.tags_dict)
         return tags
 
     def _collect_artifact_files(self) -> list[Path]:

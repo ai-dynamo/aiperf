@@ -35,7 +35,7 @@ def mock_endpoint_config():
 
 
 @pytest.fixture
-def mock_user_config(mock_endpoint_config):
+def mock_cfg(mock_endpoint_config):
     """Create a mock user configuration with gpu_telemetry enabled."""
     return CLIConfig(
         **mock_endpoint_config.model_dump(exclude_unset=True),
@@ -88,12 +88,12 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_none_telemetry_results_no_output(
-        self, mock_profile_results, mock_user_config, capsys
+        self, mock_profile_results, mock_cfg, capsys
     ):
         """Test that export does not print when telemetry_results is None."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -106,12 +106,12 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_with_telemetry_data(
-        self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
+        self, mock_profile_results, mock_cfg, sample_telemetry_results, capsys
     ):
         """Test export with real telemetry data displays correctly."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -127,12 +127,12 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_displays_all_endpoints(
-        self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
+        self, mock_profile_results, mock_cfg, sample_telemetry_results, capsys
     ):
         """Test that all endpoints are displayed in the summary."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -149,14 +149,14 @@ class TestGPUTelemetryConsoleExporter:
     async def test_export_shows_failed_endpoints(
         self,
         mock_profile_results,
-        mock_user_config,
+        mock_cfg,
         sample_telemetry_results_with_failures,
         capsys,
     ):
         """Test that failed endpoints are marked appropriately."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=sample_telemetry_results_with_failures,
         )
 
@@ -172,12 +172,12 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_empty_telemetry_shows_message(
-        self, mock_profile_results, mock_user_config, empty_telemetry_results, capsys
+        self, mock_profile_results, mock_cfg, empty_telemetry_results, capsys
     ):
         """Test that empty telemetry data shows appropriate message."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=empty_telemetry_results,
         )
 
@@ -194,12 +194,12 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_get_renderable_with_multi_gpu_data(
-        self, mock_profile_results, mock_user_config, sample_telemetry_results
+        self, mock_profile_results, mock_cfg, sample_telemetry_results
     ):
         """Test get_renderable method with multi-GPU data."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -235,12 +235,12 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_displays_all_metrics(
-        self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
+        self, mock_profile_results, mock_cfg, sample_telemetry_results, capsys
     ):
         """Test that all key metrics are displayed in the output."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -261,7 +261,7 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_with_failed_endpoint(
-        self, mock_profile_results, mock_user_config, capsys
+        self, mock_profile_results, mock_cfg, capsys
     ):
         """Test that failed endpoints show appropriate message."""
 
@@ -278,7 +278,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=telemetry_results,
         )
 
@@ -293,7 +293,7 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_handles_missing_metrics(
-        self, mock_profile_results, mock_user_config, capsys
+        self, mock_profile_results, mock_cfg, capsys
     ):
         """Test that missing metrics are handled gracefully."""
         from datetime import datetime
@@ -336,7 +336,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=telemetry_results,
         )
 
@@ -353,7 +353,7 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_all_endpoints_failed(
-        self, mock_profile_results, mock_user_config, capsys
+        self, mock_profile_results, mock_cfg, capsys
     ):
         """Test display when all endpoints failed."""
 
@@ -373,7 +373,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=telemetry_results,
         )
 
@@ -392,9 +392,7 @@ class TestGPUTelemetryConsoleExporter:
         assert "node3:9400" in output
 
     @pytest.mark.asyncio
-    async def test_get_renderable_empty_gpu_data(
-        self, mock_profile_results, mock_user_config
-    ):
+    async def test_get_renderable_empty_gpu_data(self, mock_profile_results, mock_cfg):
         """Test get_renderable with endpoint that has no GPU data."""
 
         # Endpoint exists but has no GPU data
@@ -412,7 +410,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=telemetry_results,
         )
 
@@ -423,13 +421,11 @@ class TestGPUTelemetryConsoleExporter:
         assert renderable is not None
 
     @pytest.mark.asyncio
-    async def test_format_number_with_none(
-        self, mock_profile_results, mock_user_config
-    ):
+    async def test_format_number_with_none(self, mock_profile_results, mock_cfg):
         """Test _format_number with None value."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -438,13 +434,11 @@ class TestGPUTelemetryConsoleExporter:
         assert result == "N/A"
 
     @pytest.mark.asyncio
-    async def test_format_number_with_large_value(
-        self, mock_profile_results, mock_user_config
-    ):
+    async def test_format_number_with_large_value(self, mock_profile_results, mock_cfg):
         """Test _format_number with large values (scientific notation)."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -453,13 +447,11 @@ class TestGPUTelemetryConsoleExporter:
         assert "2.50e+06" in result or "2.5e+06" in result
 
     @pytest.mark.asyncio
-    async def test_format_number_with_small_value(
-        self, mock_profile_results, mock_user_config
-    ):
+    async def test_format_number_with_small_value(self, mock_profile_results, mock_cfg):
         """Test _format_number with normal values."""
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -469,7 +461,7 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_with_mixed_successful_failed_endpoints(
-        self, mock_profile_results, mock_user_config, capsys
+        self, mock_profile_results, mock_cfg, capsys
     ):
         """Test display with mix of successful and failed endpoints."""
 
@@ -505,7 +497,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = make_exporter_config(
             results=mock_profile_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=telemetry_results,
         )
 

@@ -112,11 +112,11 @@ class TestMooncakeTraceDatasetLoader:
         return generator
 
     @pytest.fixture
-    def default_user_config(self):
+    def default_cfg(self):
         """Create a default CLIConfig for testing."""
         return CLIConfig(model_names=["test-model"])
 
-    def make_user_config(
+    def make_cfg(
         self,
         start_offset: int | None = None,
         end_offset: int | None = None,
@@ -139,7 +139,7 @@ class TestMooncakeTraceDatasetLoader:
         )
 
     def test_load_dataset_basic_functionality(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test basic JSONL file loading."""
         content = [
@@ -150,7 +150,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -175,7 +175,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].timestamp == 2000
 
     def test_load_dataset_with_text_input(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test loading JSONL file with text_input fields."""
         content = [
@@ -186,7 +186,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -200,7 +200,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].input_length is None
 
     def test_load_dataset_mixed_input_types(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test loading JSONL file with mixed input_length and text_input entries (but not both in same entry)."""
         content = [
@@ -212,7 +212,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -235,7 +235,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[2][0].text_input is None
 
     def test_load_dataset_skips_empty_lines(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test that empty lines are skipped."""
         content = [
@@ -247,7 +247,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         result = loader.load_dataset()
@@ -255,7 +255,7 @@ class TestMooncakeTraceDatasetLoader:
         assert len(result) == 2  # Should skip empty line
 
     def test_load_dataset_with_timestamps(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test loading dataset with timestamp fields."""
         content = [
@@ -266,7 +266,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -302,7 +302,7 @@ class TestMooncakeTraceDatasetLoader:
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
-        cli_config = self.make_user_config(start_offset, end_offset, file=filename)
+        cli_config = self.make_cfg(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
             run=make_run_from_v1(cli_config),
@@ -338,7 +338,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = self.make_user_config(start_offset, end_offset, file=filename)
+        cli_config = self.make_cfg(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
             run=make_run_from_v1(cli_config),
@@ -351,7 +351,7 @@ class TestMooncakeTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_convert_to_conversations(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         """Test conversion of trace data to conversations."""
         # Mock parallel_decode to return decoded prompts
@@ -391,7 +391,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -417,12 +417,12 @@ class TestMooncakeTraceDatasetLoader:
         assert conv3.turns[0].timestamp == 3000
 
     def test_convert_to_conversations_empty_data(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ):
         """Test conversion with empty trace data."""
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations({})
@@ -430,7 +430,7 @@ class TestMooncakeTraceDatasetLoader:
         assert len(conversations) == 0
 
     def test_convert_to_conversations_with_text_input(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ):
         """Test conversion uses text_input when provided - covers 'if trace.text_input is not None' line."""
         # Create traces with text_input to cover the uncovered line
@@ -443,7 +443,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -456,7 +456,7 @@ class TestMooncakeTraceDatasetLoader:
         assert conversation.turns[1].texts[0].contents[0] == "What is the weather like?"
 
     def test_convert_to_conversations_multi_turn_messages_on_turns(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ):
         """Test that each turn carries its own raw_messages in multi-turn conversations."""
         messages_turn1 = [{"role": "user", "content": "Hello"}]
@@ -476,7 +476,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -491,7 +491,7 @@ class TestMooncakeTraceDatasetLoader:
         assert conversation.turns[1].max_tokens == 20
 
     def test_infer_context_mode_all_messages_returns_message_array(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ) -> None:
         """All traces with pre-built messages infer MESSAGE_ARRAY_WITH_RESPONSES."""
         traces = [
@@ -508,7 +508,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         assert (
@@ -517,7 +517,7 @@ class TestMooncakeTraceDatasetLoader:
         )
 
     def test_infer_context_mode_no_messages_returns_none(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ) -> None:
         """Traces without messages fall through to the global default."""
         traces = [
@@ -526,13 +526,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         assert loader._infer_context_mode(traces) is None
 
     def test_convert_to_conversations_messages_sets_context_mode(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ) -> None:
         """Conversations built from all-messages traces have context_mode set."""
         trace_data = {
@@ -546,7 +546,7 @@ class TestMooncakeTraceDatasetLoader:
         }
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -556,7 +556,7 @@ class TestMooncakeTraceDatasetLoader:
         )
 
     def test_infer_context_mode_mixed_messages_raises(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ):
         """Test that mixed sessions with both messages and synthesized prompts raise."""
         traces = [
@@ -570,14 +570,14 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         with pytest.raises(ValueError, match="Mixed Mooncake sessions"):
             loader._infer_context_mode(traces)
 
     def test_convert_to_conversations_messages_with_tools(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ):
         """Test that tools flow through to Turn.raw_tools."""
         messages = [{"role": "user", "content": "What's the weather?"}]
@@ -594,7 +594,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -606,7 +606,7 @@ class TestMooncakeTraceDatasetLoader:
         assert turn.max_tokens == 50
 
     def test_convert_to_conversations_messages_without_tools(
-        self, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_cfg
     ):
         """Test that raw_tools is None when tools not provided."""
         messages = [{"role": "user", "content": "Hello"}]
@@ -618,7 +618,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -626,7 +626,7 @@ class TestMooncakeTraceDatasetLoader:
         assert conversations[0].turns[0].raw_tools is None
 
     def test_load_dataset_with_session_ids(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test loading JSONL file with session_id fields."""
         content = [
@@ -638,7 +638,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -653,7 +653,7 @@ class TestMooncakeTraceDatasetLoader:
         assert dataset["session-2"][0].text_input == "This is session 2 input"
 
     def test_load_dataset_with_delay_field(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Test loading JSONL file with delay fields."""
         content = [
@@ -664,7 +664,7 @@ class TestMooncakeTraceDatasetLoader:
 
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -992,7 +992,7 @@ class TestMooncakeTraceReproducibility:
         return generator
 
     @pytest.fixture
-    def user_config_for_reproducibility(self):
+    def cfg_for_reproducibility(self):
         """Create a CLIConfig suitable for reproducibility testing."""
         return CLIConfig(
             model_names=["test-model"],
@@ -1003,7 +1003,7 @@ class TestMooncakeTraceReproducibility:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_mooncake_flow_reproducibility_with_same_seed(
-        self, mock_parallel_decode, mock_tokenizer_cls, user_config_for_reproducibility
+        self, mock_parallel_decode, mock_tokenizer_cls, cfg_for_reproducibility
     ):
         """Verify Mooncake flow produces identical prompts across runs with same seed.
 
@@ -1050,7 +1050,7 @@ class TestMooncakeTraceReproducibility:
         rng.init(42)
 
         tokenizer1 = mock_tokenizer_cls.from_pretrained("test-model")
-        run1 = make_run_from_v1(user_config_for_reproducibility)
+        run1 = make_run_from_v1(cfg_for_reproducibility)
         ds1 = run1.cfg.get_default_dataset()
         generator1 = PromptGenerator(
             prompts=getattr(ds1, "prompts", None),
@@ -1073,7 +1073,7 @@ class TestMooncakeTraceReproducibility:
         rng.init(42)
 
         tokenizer2 = mock_tokenizer_cls.from_pretrained("test-model")
-        run2 = make_run_from_v1(user_config_for_reproducibility)
+        run2 = make_run_from_v1(cfg_for_reproducibility)
         ds2 = run2.cfg.get_default_dataset()
         generator2 = PromptGenerator(
             prompts=getattr(ds2, "prompts", None),
@@ -1100,7 +1100,7 @@ class TestMooncakeTraceReproducibility:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         """Verify that length mismatch between pending_decodes and decoded_prompts raises.
 
@@ -1123,7 +1123,7 @@ class TestMooncakeTraceReproducibility:
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
 

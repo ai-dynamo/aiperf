@@ -111,10 +111,10 @@ class TestBailianTraceDatasetLoader:
         return generator
 
     @pytest.fixture
-    def default_user_config(self):
+    def default_cfg(self):
         return CLIConfig(model_names=["test-model"])
 
-    def _make_user_config(
+    def _make_cfg(
         self,
         start_offset: int | None = None,
         end_offset: int | None = None,
@@ -136,9 +136,7 @@ class TestBailianTraceDatasetLoader:
 
     # ---- basic loading ----
 
-    def test_load_basic(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
-    ):
+    def test_load_basic(self, create_jsonl_file, mock_prompt_generator, default_cfg):
         content = [
             '{"chat_id": 1, "parent_chat_id": -1, "timestamp": 1.0, "input_length": 100, "output_length": 40, "type": "text", "turn": 1, "hash_ids": [10, 20]}',
             '{"chat_id": 2, "parent_chat_id": -1, "timestamp": 2.0, "input_length": 200, "output_length": 80, "type": "text", "turn": 1, "hash_ids": [30]}',
@@ -147,7 +145,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -158,7 +156,7 @@ class TestBailianTraceDatasetLoader:
         assert all_traces[1].input_length == 200
 
     def test_timestamps_converted_to_milliseconds(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         content = [
             '{"chat_id": 1, "timestamp": 1.5, "input_length": 10, "output_length": 5}',
@@ -167,7 +165,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -176,7 +174,7 @@ class TestBailianTraceDatasetLoader:
         assert trace.timestamp == 1500.0
 
     def test_skips_empty_lines(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         content = [
             '{"chat_id": 1, "timestamp": 1.0, "input_length": 10, "output_length": 5}',
@@ -187,7 +185,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -198,7 +196,7 @@ class TestBailianTraceDatasetLoader:
     # ---- multi-turn grouping ----
 
     def test_groups_by_parent_chat_id(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Entries with the same root should be grouped into one session."""
         content = [
@@ -210,7 +208,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -222,7 +220,7 @@ class TestBailianTraceDatasetLoader:
         assert [t.turn for t in session] == [1, 2, 3]
 
     def test_separate_sessions(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Independent root entries form separate sessions."""
         content = [
@@ -233,7 +231,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -241,7 +239,7 @@ class TestBailianTraceDatasetLoader:
         assert len(dataset) == 2
 
     def test_turns_sorted_within_session(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
         """Turns are sorted even if JSONL order differs."""
         content = [
@@ -253,7 +251,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -289,7 +287,7 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = self._make_user_config(start_offset, end_offset, file=filename)
+        cli_config = self._make_cfg(start_offset, end_offset, file=filename)
         loader = BailianTraceDatasetLoader(
             filename=filename,
             run=make_run_from_v1(cli_config),
@@ -312,7 +310,7 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = self._make_user_config(1000, 3000, file=filename)
+        cli_config = self._make_cfg(1000, 3000, file=filename)
         loader = BailianTraceDatasetLoader(
             filename=filename,
             run=make_run_from_v1(cli_config),
@@ -411,7 +409,7 @@ class TestBailianTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_convert_to_conversations(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         mock_parallel_decode.return_value = ["decoded prompt 1", "decoded prompt 2"]
 
@@ -438,7 +436,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -448,15 +446,15 @@ class TestBailianTraceDatasetLoader:
         assert conversations[0].turns[0].timestamp == 1000.0
         assert conversations[0].turns[0].max_tokens == 50
 
-    def test_convert_empty_data(self, mock_prompt_generator, default_user_config):
+    def test_convert_empty_data(self, mock_prompt_generator, default_cfg):
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         assert loader.convert_to_conversations({}) == []
 
-    def test_convert_without_hash_ids(self, mock_prompt_generator, default_user_config):
+    def test_convert_without_hash_ids(self, mock_prompt_generator, default_cfg):
         """When hash_ids is empty, falls back to normal prompt generation."""
         trace_data = {
             "1": [
@@ -471,7 +469,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -483,7 +481,7 @@ class TestBailianTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         """strict=True in zip guards against silent data loss."""
         mock_parallel_decode.return_value = ["only one"]  # expecting 2
@@ -511,7 +509,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -522,7 +520,7 @@ class TestBailianTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_multi_turn_conversation_ordering(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         mock_parallel_decode.return_value = [
             "prompt turn 1",
@@ -563,7 +561,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_v1(default_user_config),
+            run=make_run_from_v1(default_cfg),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)

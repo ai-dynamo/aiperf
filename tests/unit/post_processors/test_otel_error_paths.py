@@ -18,7 +18,7 @@ from aiperf.post_processors.otel_metrics_results_processor import (
 
 
 @pytest.fixture
-def mock_user_config(tmp_path: Path) -> BenchmarkConfig:
+def mock_cfg(tmp_path: Path) -> BenchmarkConfig:
     """Build a real ``BenchmarkConfig`` with MLflow live streaming enabled.
 
     OTel collector URL is left unset so the processor exercises the
@@ -72,7 +72,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_flush_handles_exception_gracefully(
-        self, monkeypatch: pytest.MonkeyPatch, mock_user_config: BenchmarkConfig
+        self, monkeypatch: pytest.MonkeyPatch, mock_cfg: BenchmarkConfig
     ) -> None:
         """flush() should not raise when meter_provider.force_flush fails."""
         with patch(
@@ -80,7 +80,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=_make_run(mock_user_config),
+                run=_make_run(mock_cfg),
             )
             # Simulate fanout mode with a queue
             processor._streaming_ready = True
@@ -94,7 +94,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_queue_fanout_event_handles_put_exception(
-        self, mock_user_config: BenchmarkConfig
+        self, mock_cfg: BenchmarkConfig
     ) -> None:
         """_queue_fanout_event should handle unexpected exceptions from put_nowait."""
         with patch(
@@ -102,7 +102,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=_make_run(mock_user_config),
+                run=_make_run(mock_cfg),
             )
             mock_queue = MagicMock()
             mock_queue.put_nowait.side_effect = OSError("broken pipe")
@@ -113,7 +113,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_queue_fanout_event_full_then_drop_fails(
-        self, mock_user_config: BenchmarkConfig
+        self, mock_cfg: BenchmarkConfig
     ) -> None:
         """When queue is full and drop also fails, should increment drop counter."""
         with patch(
@@ -121,7 +121,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=_make_run(mock_user_config),
+                run=_make_run(mock_cfg),
             )
             mock_queue = MagicMock()
             # First put_nowait raises Full, get_nowait raises Empty (can't drop)
@@ -134,7 +134,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_drop_oldest_handles_exception(
-        self, mock_user_config: BenchmarkConfig
+        self, mock_cfg: BenchmarkConfig
     ) -> None:
         """_drop_oldest_fanout_event should return False on unexpected exception."""
         with patch(
@@ -142,7 +142,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=_make_run(mock_user_config),
+                run=_make_run(mock_cfg),
             )
             mock_queue = MagicMock()
             mock_queue.get_nowait.side_effect = OSError("broken")
@@ -153,7 +153,7 @@ class TestProcessorErrorPaths:
 
     @pytest.mark.asyncio
     async def test_process_result_skips_when_not_ready(
-        self, mock_user_config: BenchmarkConfig
+        self, mock_cfg: BenchmarkConfig
     ) -> None:
         """process_result should silently return when streaming is not ready."""
         with patch(
@@ -161,7 +161,7 @@ class TestProcessorErrorPaths:
         ):
             processor = OTelMetricsResultsProcessor(
                 service_id="test",
-                run=_make_run(mock_user_config),
+                run=_make_run(mock_cfg),
             )
             processor._streaming_ready = False
 

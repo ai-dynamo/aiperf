@@ -96,7 +96,7 @@ def _untyped_record(
 
 
 @pytest.fixture
-def minimal_user_config() -> BenchmarkConfig:
+def minimal_cfg() -> BenchmarkConfig:
     return BenchmarkConfig(
         model="test-model",
         endpoint=EndpointConfig(
@@ -184,12 +184,10 @@ class TestUnknownAccumulatorExport:
     """Accumulator produces ``UnknownMetricData`` for UNKNOWN entries."""
 
     async def test_endpoint_summary_uses_unknown_metric_data(
-        self, minimal_user_config: BenchmarkConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         proc = ServerMetricsAccumulator(
-            SimpleNamespace(
-                cfg=minimal_user_config, benchmark_id="bench-server-metrics"
-            )
+            SimpleNamespace(cfg=minimal_cfg, benchmark_id="bench-server-metrics")
         )
         for i, v in enumerate([1.0, 2.0, 3.0, 4.0, 5.0]):
             await proc.process_server_metrics_record(
@@ -249,7 +247,7 @@ class TestUnknownJsonRoundTrip:
         assert dumped["type"] == "unknown"
 
     def test_full_export_json_contains_unknown_type(
-        self, minimal_user_config: BenchmarkConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         # Build a minimal ServerMetricsResults with one UnknownMetricData entry.
         umd = UnknownMetricData(description="Statistic IcmpInErrors.")
@@ -265,7 +263,7 @@ class TestUnknownJsonRoundTrip:
         )
         exporter_config = MagicMock()
         exporter_config.server_metrics_results = results
-        exporter_config.cfg = minimal_user_config
+        exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsJsonExporter(exporter_config)
         export_data, _ = exporter._build_hybrid_metrics()
         entry = export_data["node_netstat_Icmp_InErrors"]
@@ -292,7 +290,7 @@ class TestUnknownCsvSection:
         )
 
     def test_csv_output_includes_unknown_section(
-        self, minimal_user_config: BenchmarkConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         umd = UnknownMetricData(description="Statistic IcmpInErrors.")
         # Populate with one series so the section is non-empty.
@@ -333,7 +331,7 @@ class TestUnknownCsvSection:
         )
         exporter_config = MagicMock()
         exporter_config.server_metrics_results = results
-        exporter_config.cfg = minimal_user_config
+        exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsCsvExporter(exporter_config)
         body = exporter._generate_content()
         # The unknown-section header should mention the type explicitly.
@@ -346,7 +344,7 @@ class TestUnknownCsvSection:
         assert "node_netstat_Icmp_InErrors" in joined
 
     def test_unknown_section_is_after_histogram(
-        self, minimal_user_config: BenchmarkConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         gauge = GaugeMetricData(description="Gauge metric")
         gauge.series.append(GaugeSeries(stats=GaugeStats(avg=1.0)))
@@ -388,7 +386,7 @@ class TestUnknownCsvSection:
         )
         exporter_config = MagicMock()
         exporter_config.server_metrics_results = results
-        exporter_config.cfg = minimal_user_config
+        exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsCsvExporter(exporter_config)
 
         rows = [

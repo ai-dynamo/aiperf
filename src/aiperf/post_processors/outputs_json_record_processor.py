@@ -43,19 +43,18 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
     def __init__(
         self,
         service_id: str | None,
-        user_config: BenchmarkConfig,
+        cfg: BenchmarkConfig,
         **kwargs,
     ) -> None:
-        self.user_config = user_config
+        self.cfg = cfg
 
-        if not self.user_config.artifacts.export_outputs_json:
+        if not self.cfg.artifacts.export_outputs_json:
             raise PostProcessorDisabled(
                 "OutputsJsonRecordProcessor is disabled (--export-outputs-json not set)"
             )
 
         output_dir = (
-            user_config.artifacts.artifact_directory
-            / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+            cfg.artifacts.artifact_directory / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -74,7 +73,7 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
             output_file=output_file,
             batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
             service_id=service_id,
-            user_config=user_config,
+            cfg=cfg,
             **kwargs,
         )
 

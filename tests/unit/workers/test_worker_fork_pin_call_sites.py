@@ -7,7 +7,7 @@ evict_if_unpinned API on ``UserSessionManager`` for the DAG-FORK
 child path. The storage half is covered by
 ``test_session_fork_refcount.py``; this file tests the wiring.
 
-The original test body (~230 lines, written against v1 UserConfig +
+The original test body (~230 lines, written against v1 CLIConfig +
 ServiceConfig fixtures) needs porting to the v2 BenchmarkRun shape.
 Stub kept so pytest discovers the skip marker; restore from the
 cleanup-gpu-config merge once the port is done.

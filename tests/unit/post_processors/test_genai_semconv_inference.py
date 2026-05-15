@@ -18,7 +18,7 @@ from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.strategies.genai_semconv import infer_provider_name
 
 
-def _make_user_config(
+def _make_cfg(
     urls: list[str] | None = None,
     gen_ai_provider: str | None = None,
 ) -> BenchmarkConfig:
@@ -95,7 +95,7 @@ class TestProviderHostInference:
         ],
     )  # fmt: skip
     def test_known_host_patterns(self, url: str, expected_provider: str) -> None:
-        config = _make_user_config(urls=[url])
+        config = _make_cfg(urls=[url])
         assert infer_provider_name(config) == expected_provider
 
 
@@ -128,7 +128,7 @@ class TestExplicitOverrideWins:
     def test_explicit_override_wins(
         self, url: str, override: str, expected: str
     ) -> None:
-        config = _make_user_config(urls=[url], gen_ai_provider=override)
+        config = _make_cfg(urls=[url], gen_ai_provider=override)
         assert infer_provider_name(config) == expected
 
 
@@ -146,7 +146,7 @@ class TestUnknownHostFallback:
         ],
     )  # fmt: skip
     def test_unknown_host_returns_other(self, url: str) -> None:
-        config = _make_user_config(urls=[url])
+        config = _make_cfg(urls=[url])
         assert infer_provider_name(config) == "_OTHER"
 
 
@@ -164,7 +164,7 @@ class TestMalformedURLValidation:
     )  # fmt: skip
     def test_malformed_url_fails_config_validation(self, url: str) -> None:
         with pytest.raises(ValueError):
-            _make_user_config(urls=[url])
+            _make_cfg(urls=[url])
 
 
 class TestEmptyURLList:
@@ -172,5 +172,5 @@ class TestEmptyURLList:
 
     def test_default_url_returns_other(self) -> None:
         # Default URL is localhost:8000 which matches no known provider
-        config = _make_user_config()
+        config = _make_cfg()
         assert infer_provider_name(config) == "_OTHER"

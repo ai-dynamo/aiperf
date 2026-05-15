@@ -39,7 +39,7 @@ def tmp_artifact_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def user_config_records_export(tmp_artifact_dir: Path) -> CLIConfig:
+def cfg_records_export(tmp_artifact_dir: Path) -> CLIConfig:
     """Create a CLIConfig with RECORDS export level."""
     return CLIConfig(
         model_names=["test-model"],
@@ -50,11 +50,11 @@ def user_config_records_export(tmp_artifact_dir: Path) -> CLIConfig:
 
 
 @pytest.fixture
-def run_records_export(user_config_records_export: CLIConfig):
-    """v2 BenchmarkRun built from user_config_records_export."""
+def run_records_export(cfg_records_export: CLIConfig):
+    """v2 BenchmarkRun built from cfg_records_export."""
     from tests.unit.conftest import make_run_from_v1
 
-    return make_run_from_v1(user_config_records_export)
+    return make_run_from_v1(cfg_records_export)
 
 
 def make_run_with_export_level(tmp_artifact_dir: Path, export_level: ExportLevel):
@@ -551,7 +551,7 @@ class TestRecordExportResultsProcessorHttpTrace:
     """Test RecordExportResultsProcessor HTTP trace export functionality."""
 
     @pytest.fixture
-    def user_config_with_http_trace(self, tmp_artifact_dir: Path) -> CLIConfig:
+    def cfg_with_http_trace(self, tmp_artifact_dir: Path) -> CLIConfig:
         """Create a CLIConfig with export_http_trace enabled."""
         return CLIConfig(
             model_names=["test-model"],
@@ -562,11 +562,11 @@ class TestRecordExportResultsProcessorHttpTrace:
         )
 
     @pytest.fixture
-    def run_with_http_trace(self, user_config_with_http_trace: CLIConfig):
-        """v2 BenchmarkRun built from user_config_with_http_trace."""
+    def run_with_http_trace(self, cfg_with_http_trace: CLIConfig):
+        """v2 BenchmarkRun built from cfg_with_http_trace."""
         from tests.unit.conftest import make_run_from_v1
 
-        return make_run_from_v1(user_config_with_http_trace)
+        return make_run_from_v1(cfg_with_http_trace)
 
     @pytest.fixture
     def sample_trace_data(self) -> AioHttpTraceData:

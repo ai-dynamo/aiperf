@@ -29,7 +29,7 @@ class ConcreteExporter(MetricsBaseExporter):
 
 
 @pytest.fixture
-def mock_user_config():
+def mock_cfg():
     """Create a mock CLIConfig for testing."""
     return CLIConfig(
         model_names=["test-model"],
@@ -62,13 +62,13 @@ def mock_results():
 
 
 @pytest.fixture
-def exporter_config(mock_results, mock_user_config):
+def exporter_config(mock_results, mock_cfg):
     """Create ExporterConfig for testing."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        mock_user_config.artifact_directory = Path(temp_dir)
+        mock_cfg.artifact_directory = Path(temp_dir)
         yield make_exporter_config(
             results=mock_results,
-            cli_config=mock_user_config,
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -76,13 +76,13 @@ def exporter_config(mock_results, mock_user_config):
 class TestMetricsBaseExporterInitialization:
     """Tests for MetricsBaseExporter initialization."""
 
-    def test_base_exporter_initialization(self, mock_results, mock_user_config):
+    def test_base_exporter_initialization(self, mock_results, mock_cfg):
         """Verify all instance variables are set correctly from ExporterConfig."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             config = make_exporter_config(
                 results=mock_results,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -145,17 +145,15 @@ class TestMetricsBaseExporterExport:
     """Tests for export() method."""
 
     @pytest.mark.asyncio
-    async def test_export_creates_output_directory(
-        self, mock_results, mock_user_config
-    ):
+    async def test_export_creates_output_directory(self, mock_results, mock_cfg):
         """Verify directory is created if it doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "nested" / "output"
-            mock_user_config.artifact_directory = output_dir
+            mock_cfg.artifact_directory = output_dir
 
             config = make_exporter_config(
                 results=mock_results,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -169,13 +167,13 @@ class TestMetricsBaseExporterExport:
             assert output_dir.is_dir()
 
     @pytest.mark.asyncio
-    async def test_export_calls_generate_content(self, mock_results, mock_user_config):
+    async def test_export_calls_generate_content(self, mock_results, mock_cfg):
         """Verify _generate_content() is called during export."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             config = make_exporter_config(
                 results=mock_results,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -189,13 +187,13 @@ class TestMetricsBaseExporterExport:
                 mock_generate.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_export_writes_content_to_file(self, mock_results, mock_user_config):
+    async def test_export_writes_content_to_file(self, mock_results, mock_cfg):
         """Verify file contains returned content."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             config = make_exporter_config(
                 results=mock_results,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -212,13 +210,13 @@ class TestMetricsBaseExporterExport:
                 assert actual_content == test_content
 
     @pytest.mark.asyncio
-    async def test_export_handles_write_errors(self, mock_results, mock_user_config):
+    async def test_export_handles_write_errors(self, mock_results, mock_cfg):
         """Verify error is logged and exception is re-raised on write failure."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             config = make_exporter_config(
                 results=mock_results,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -246,13 +244,13 @@ class TestMetricsBaseExporterExport:
                     assert "Failed to export" in called["err"]
 
     @pytest.mark.asyncio
-    async def test_export_logs_debug_message(self, mock_results, mock_user_config):
+    async def test_export_logs_debug_message(self, mock_results, mock_cfg):
         """Verify debug message is logged with file path."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             config = make_exporter_config(
                 results=mock_results,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 

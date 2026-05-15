@@ -25,7 +25,7 @@ from aiperf.plugin.enums import GPUTelemetryCollectorType
 from tests.unit.conftest import make_run_from_v1
 
 
-def _create_user_config(
+def _create_cfg(
     gpu_telemetry: list[str] | None = None,
     no_gpu_telemetry: bool = False,
 ) -> CLIConfig:
@@ -68,7 +68,7 @@ class TestTelemetryManagerInitialization:
 
     def test_initialization_default_endpoint(self):
         """Test initialization with no user-provided endpoints uses defaults."""
-        cli_config = _create_user_config()
+        cli_config = _create_cfg()
 
         manager = self._create_manager_with_mocked_base(cli_config)
         assert manager._dcgm_endpoints == list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
@@ -76,7 +76,7 @@ class TestTelemetryManagerInitialization:
     def test_initialization_custom_endpoints(self):
         """Test initialization with custom user-provided endpoints."""
         custom_endpoint = "http://gpu-node-01:9401/metrics"
-        cli_config = _create_user_config(gpu_telemetry=[custom_endpoint])
+        cli_config = _create_cfg(gpu_telemetry=[custom_endpoint])
 
         manager = self._create_manager_with_mocked_base(cli_config)
 
@@ -92,7 +92,7 @@ class TestTelemetryManagerInitialization:
             "http://valid:9401/metrics",
             "http://another-valid:9401/metrics",
         ]
-        cli_config = _create_user_config(gpu_telemetry=valid_urls)
+        cli_config = _create_cfg(gpu_telemetry=valid_urls)
 
         manager = self._create_manager_with_mocked_base(cli_config)
 
@@ -110,7 +110,7 @@ class TestTelemetryManagerInitialization:
             "http://node2:9401/metrics",
             "http://node1:9401/metrics",  # Duplicate
         ]
-        cli_config = _create_user_config(gpu_telemetry=urls_with_duplicates)
+        cli_config = _create_cfg(gpu_telemetry=urls_with_duplicates)
 
         manager = self._create_manager_with_mocked_base(cli_config)
 
@@ -128,7 +128,7 @@ class TestTelemetryManagerInitialization:
             "http://node1:9401/metrics",
             "http://localhost:9401/metrics",  # This is also a default
         ]
-        cli_config = _create_user_config(gpu_telemetry=urls)
+        cli_config = _create_cfg(gpu_telemetry=urls)
 
         manager = self._create_manager_with_mocked_base(cli_config)
 
@@ -538,7 +538,7 @@ class TestEdgeCases:
 
     def test_invalid_endpoints_filtered_during_init(self):
         """Test that only valid URLs reach telemetry_manager (invalid ones filtered by cli_config validator)."""
-        cli_config = _create_user_config(gpu_telemetry=["http://valid:9401/metrics"])
+        cli_config = _create_cfg(gpu_telemetry=["http://valid:9401/metrics"])
 
         manager = self._create_manager_with_mocked_base(cli_config)
 
@@ -580,9 +580,9 @@ class TestBothDefaultEndpoints:
 
         return manager
 
-    def test_both_defaults_included_when_no_user_config(self):
+    def test_both_defaults_included_when_no_cli_config(self):
         """Test that both default endpoints (9400 and 9401) are included with no user config."""
-        cli_config = _create_user_config()
+        cli_config = _create_cfg()
 
         manager = self._create_manager_with_mocked_base(cli_config)
 
@@ -594,12 +594,12 @@ class TestBothDefaultEndpoints:
     def test_user_explicitly_configured_telemetry_flag(self):
         """Test that _user_explicitly_configured_telemetry flag is set correctly."""
         # Test with None (not configured)
-        cli_config = _create_user_config()
+        cli_config = _create_cfg()
         manager = self._create_manager_with_mocked_base(cli_config)
         assert manager._user_explicitly_configured_telemetry is False
 
         # Test with custom URL (configured)
-        cli_config = _create_user_config(gpu_telemetry=["http://custom:9401/metrics"])
+        cli_config = _create_cfg(gpu_telemetry=["http://custom:9401/metrics"])
         manager = self._create_manager_with_mocked_base(cli_config)
         assert manager._user_explicitly_configured_telemetry is True
 
@@ -607,19 +607,19 @@ class TestBothDefaultEndpoints:
         # same shape (urls=[]), so an explicit empty list is no longer
         # distinguishable from the default. The flag follows the v2
         # observable state (urls non-empty / metrics_file set).
-        cli_config = _create_user_config(gpu_telemetry=[])
+        cli_config = _create_cfg(gpu_telemetry=[])
         manager = self._create_manager_with_mocked_base(cli_config)
         assert manager._user_explicitly_configured_telemetry is False
 
     def test_telemetry_disabled_flag(self):
         """Test that _telemetry_disabled flag is set correctly."""
         # Test with default (not disabled)
-        cli_config = _create_user_config()
+        cli_config = _create_cfg()
         manager = self._create_manager_with_mocked_base(cli_config)
         assert manager._telemetry_disabled is False
 
         # Test with disabled
-        cli_config = _create_user_config(no_gpu_telemetry=True)
+        cli_config = _create_cfg(no_gpu_telemetry=True)
         manager = self._create_manager_with_mocked_base(cli_config)
         assert manager._telemetry_disabled is True
         assert manager._user_explicitly_configured_telemetry is False

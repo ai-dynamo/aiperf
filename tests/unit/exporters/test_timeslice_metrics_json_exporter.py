@@ -23,7 +23,7 @@ from tests.unit.exporters.conftest import make_exporter_config
 
 
 @pytest.fixture
-def mock_user_config():
+def mock_cfg():
     """Create mock CLIConfig for testing."""
     return CLIConfig(
         model_names=["test-model"],
@@ -129,16 +129,16 @@ class TestTimesliceMetricsJsonExporterInitialization:
     """Tests for TimesliceMetricsJsonExporter initialization."""
 
     def test_timeslice_json_exporter_initialization(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify _file_path is set to {base_filename}_timeslices.json."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             # Note: profile_export_json_file is already set by default config
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -149,15 +149,15 @@ class TestTimesliceMetricsJsonExporterInitialization:
             assert isinstance(exporter, MetricsJsonExporter)
 
     def test_timeslice_json_exporter_disabled_without_timeslice_data(
-        self, mock_results_without_timeslices, mock_user_config
+        self, mock_results_without_timeslices, mock_cfg
     ):
         """Verify raises DataExporterDisabled when no timeslice data."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=mock_results_without_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -167,16 +167,16 @@ class TestTimesliceMetricsJsonExporterInitialization:
             assert "no timeslice metric results found" in str(exc_info.value)
 
     def test_timeslice_json_exporter_uses_base_filename(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify uses base filename from configured JSON path."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
             # The default profile_export_json_file should have a base name we can check
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -191,15 +191,15 @@ class TestTimesliceMetricsJsonExporterGetExportInfo:
     """Tests for get_export_info() method."""
 
     def test_get_export_info_returns_correct_type(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify export_type and file_path are correct."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -214,15 +214,15 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
     """Tests for _generate_content() method."""
 
     def test_generate_content_creates_collection_structure(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify JSON has correct structure."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -236,7 +236,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
             assert "input_config" in data
             assert isinstance(data["timeslices"], list)
 
-    def test_generate_content_timeslices_have_index(self, mock_user_config):
+    def test_generate_content_timeslices_have_index(self, mock_cfg):
         """Verify each timeslice object has timeslice_index field."""
         timeslice_results = {
             i: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0)]
@@ -254,11 +254,11 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=MockResults(),
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -271,7 +271,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
             indices = [ts["timeslice_index"] for ts in data["timeslices"]]
             assert indices == [0, 1, 2]
 
-    def test_generate_content_includes_metrics_dynamically(self, mock_user_config):
+    def test_generate_content_includes_metrics_dynamically(self, mock_cfg):
         """Verify JSON has fields for all metrics at timeslice level."""
         timeslice_results = {
             0: [
@@ -301,11 +301,11 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=MockResults(),
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -319,7 +319,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
             assert "time_to_first_token" in timeslice_0
             assert "inter_token_latency" in timeslice_0
 
-    def test_generate_content_uses_json_result_format(self, mock_user_config):
+    def test_generate_content_uses_json_result_format(self, mock_cfg):
         """Verify uses JsonMetricResult format."""
         timeslice_results = {
             0: [
@@ -345,11 +345,11 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=MockResults(),
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -365,7 +365,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
             assert "min" in metric_data
             assert "max" in metric_data
 
-    def test_generate_content_different_metrics_per_timeslice(self, mock_user_config):
+    def test_generate_content_different_metrics_per_timeslice(self, mock_cfg):
         """Verify each timeslice can have different metrics."""
         timeslice_results = {
             0: [
@@ -389,11 +389,11 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=MockResults(),
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -415,15 +415,15 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
             assert "metric_c" in ts1
 
     def test_generate_content_reuses_prepare_metrics_for_json(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify _prepare_metrics_for_json is called for each timeslice."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -450,15 +450,15 @@ class TestTimesliceMetricsJsonExporterIntegration:
 
     @pytest.mark.asyncio
     async def test_export_creates_valid_json_file(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify export creates a valid JSON file."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -478,15 +478,15 @@ class TestTimesliceMetricsJsonExporterIntegration:
 
     @pytest.mark.asyncio
     async def test_export_can_deserialize_to_pydantic_model(
-        self, mock_results_with_timeslices, mock_user_config
+        self, mock_results_with_timeslices, mock_cfg
     ):
         """Verify export can be deserialized to TimesliceCollectionExportData."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=mock_results_with_timeslices,
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -502,7 +502,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
             TimesliceCollectionExportData.model_validate_json(content)
 
     @pytest.mark.asyncio
-    async def test_export_with_many_timeslices(self, mock_user_config):
+    async def test_export_with_many_timeslices(self, mock_cfg):
         """Verify export with 50 timeslices."""
         timeslice_results = {
             i: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0 * i)]
@@ -520,11 +520,11 @@ class TestTimesliceMetricsJsonExporterIntegration:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifact_directory = Path(temp_dir)
+            mock_cfg.artifact_directory = Path(temp_dir)
 
             config = make_exporter_config(
                 results=MockResults(),
-                cli_config=mock_user_config,
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 

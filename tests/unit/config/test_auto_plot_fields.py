@@ -96,7 +96,7 @@ def test_auto_plot_quick_start_uses_url_for_server_address() -> None:
 # stub. This mirrors what ``aiperf profile`` does internally.
 
 
-def _parse_user_config_args(argv: list[str]) -> CLIConfig:
+def _parse_cli_args(argv: list[str]) -> CLIConfig:
     """Parse ``argv`` through cyclopts into a ``CLIConfig`` (no execution)."""
     from cyclopts import App
 
@@ -136,7 +136,7 @@ def _required_endpoint_args() -> list[str]:
     ],
 )  # fmt: skip
 def test_cyclopts_parses_auto_plot_flag(flag: str, expected: bool) -> None:
-    uc = _parse_user_config_args([*_required_endpoint_args(), flag])
+    uc = _parse_cli_args([*_required_endpoint_args(), flag])
     assert uc.auto_plot is expected
     assert "auto_plot" in uc.model_fields_set
 
@@ -145,12 +145,12 @@ def test_cyclopts_unset_auto_plot_stays_none() -> None:
     """Without an explicit flag, ``auto_plot`` is None and not in
     ``model_fields_set`` -- the converter relies on this to defer to the
     recipe default."""
-    uc = _parse_user_config_args(_required_endpoint_args())
+    uc = _parse_cli_args(_required_endpoint_args())
     assert uc.auto_plot is None
     assert "auto_plot" not in uc.model_fields_set
 
 
 def test_cyclopts_parses_plot_required_flag() -> None:
-    uc = _parse_user_config_args([*_required_endpoint_args(), "--plot-required"])
+    uc = _parse_cli_args([*_required_endpoint_args(), "--plot-required"])
     assert uc.plot_required is True
     assert "plot_required" in uc.model_fields_set

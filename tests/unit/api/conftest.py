@@ -19,17 +19,17 @@ def api_service_config() -> CLIConfig:
 
 
 @pytest.fixture
-def api_user_config() -> CLIConfig:
+def api_cfg() -> CLIConfig:
     """Create a CLIConfig for API service testing."""
     return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
 def api_benchmark_run(
-    api_user_config: CLIConfig, api_service_config: CLIConfig
+    api_cfg: CLIConfig, api_service_config: CLIConfig
 ) -> BenchmarkRun:
     """BenchmarkRun for API service testing, with api_host/api_port set."""
-    run = make_run_from_v1(api_user_config)
+    run = make_run_from_v1(api_cfg)
     run.benchmark_id = "test-bench"
     run.cfg.runtime.api_host = "127.0.0.1"
     run.cfg.runtime.api_port = 9999

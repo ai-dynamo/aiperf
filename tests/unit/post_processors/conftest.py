@@ -312,7 +312,7 @@ async def raw_record_processor(service_id: str, run):
 
 
 @pytest.fixture
-def mock_user_config() -> "BenchmarkConfig":
+def mock_cfg() -> "BenchmarkConfig":
     """Native v2 ``BenchmarkConfig`` for post-processor tests.
 
     Built directly (no v1 CLIConfig round-trip) with the minimal required
@@ -342,8 +342,8 @@ def mock_user_config() -> "BenchmarkConfig":
 
 
 @pytest.fixture
-def mock_run(mock_user_config):
-    """v2 ``BenchmarkRun`` wrapping ``mock_user_config`` (native BenchmarkConfig).
+def mock_run(mock_cfg):
+    """v2 ``BenchmarkRun`` wrapping ``mock_cfg`` (native BenchmarkConfig).
 
     Tests should mutate ``mock_run.cfg.endpoint`` / ``mock_run.cfg.slos``
     directly — the cfg is the native object the runtime uses.
@@ -354,15 +354,15 @@ def mock_run(mock_user_config):
 
     return BenchmarkRun(
         benchmark_id=uuid.uuid4().hex,
-        cfg=mock_user_config,
-        artifact_dir=mock_user_config.artifacts.dir,
+        cfg=mock_cfg,
+        artifact_dir=mock_cfg.artifacts.dir,
         random_seed=None,
         variables={},
     )
 
 
 @pytest.fixture
-def user_config_raw(tmp_artifact_dir: Path) -> CLIConfig:
+def cfg_raw(tmp_artifact_dir: Path) -> CLIConfig:
     """Create a CLIConfig for raw record testing."""
     return CLIConfig(
         model_names=["test-model"],
@@ -374,15 +374,15 @@ def user_config_raw(tmp_artifact_dir: Path) -> CLIConfig:
 
 
 @pytest.fixture
-def run_raw(user_config_raw: CLIConfig):
-    """v2 BenchmarkRun built from the user_config_raw fixture.
+def run_raw(cfg_raw: CLIConfig):
+    """v2 BenchmarkRun built from the cfg_raw fixture.
 
     TODO: Replace v1 round-trip with direct BenchmarkConfig construction once
     the raw-record export-level wiring is straightforward to set in v2.
     """
     from tests.unit.conftest import make_run_from_v1
 
-    return make_run_from_v1(user_config_raw)
+    return make_run_from_v1(cfg_raw)
 
 
 def _create_test_request_info(

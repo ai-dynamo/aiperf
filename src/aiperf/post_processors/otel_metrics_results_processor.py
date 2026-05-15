@@ -119,10 +119,10 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         super().__init__(run=run, **kwargs)
         self.service_id = service_id or "records-manager"
         self._benchmark_id = run.benchmark_id
-        self.user_config = run.cfg
-        user_config = self.user_config
-        self._otel_metrics_url = user_config.otel.metrics_url
-        self._mlflow_live_enabled = user_config.mlflow.enabled
+        self.cfg = run.cfg
+        cfg = self.cfg
+        self._otel_metrics_url = cfg.otel.metrics_url
+        self._mlflow_live_enabled = cfg.mlflow.enabled
 
         if not self._otel_metrics_url and not self._mlflow_live_enabled:
             self.info(
@@ -159,13 +159,13 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         self._timing_gauge_state: dict[tuple[CreditPhase, str], float] = {}
         self._instrument_lock = asyncio.Lock()
         self._result_strategies: list[OTelResultsStrategyProtocol] = []
-        if self.user_config.otel.stream_metrics_enabled:
+        if self.cfg.otel.stream_metrics_enabled:
             self._result_strategies.append(MetricResultsStrategy(self))
-        if self.user_config.otel.stream_timing_enabled:
+        if self.cfg.otel.stream_timing_enabled:
             self._result_strategies.append(TimingResultsStrategy(self))
         if not self._result_strategies:
             raise PostProcessorDisabled(
-                f"--stream selection {user_config.otel.stream!r} disabled all OTel "
+                f"--stream selection {cfg.otel.stream!r} disabled all OTel "
                 "stream domains. Set --stream metrics, --stream timing, or "
                 "--stream default to enable streaming."
             )
@@ -199,10 +199,10 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             export_timeout_millis=self._export_timeout_millis,
             max_batch_records=Environment.OTEL.MAX_BATCH_RECORDS,
             resource_attributes=self._build_resource_attributes(),
-            mlflow=self.user_config.mlflow,
+            mlflow=self.cfg.mlflow,
             benchmark_id=self._benchmark_id,
             metadata_file=(
-                self.user_config.artifacts.artifact_directory
+                self.cfg.artifacts.artifact_directory
                 / MLflowDefaults.EXPORT_METADATA_FILE
             ),
         )
@@ -435,16 +435,16 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         attributes["service.instance.id"] = self.service_id
         if self._benchmark_id is not None:
             attributes["aiperf.benchmark.id"] = self._benchmark_id
-        attributes["aiperf.endpoint.type"] = str(self.user_config.endpoint.type)
+        attributes["aiperf.endpoint.type"] = str(self.cfg.endpoint.type)
         # Guard against empty model_names. EndpointConfig declares it Field(...),
         # so the CLI path always populates at least one, but the field has no
         # min_length=1 so a programmatic caller could construct an empty list
         # and an unguarded [0] would crash the fanout. Matches the guard
         # pattern in genai_semconv.py.
-        model_names = self.user_config.get_model_names()
+        model_names = self.cfg.get_model_names()
         if model_names:
             attributes["aiperf.model.name"] = model_names[0]
-        attributes.update(self.user_config.otel.custom_resource_attributes)
+        attributes.update(self.cfg.otel.custom_resource_attributes)
         return attributes
 
     def build_record_attributes(self, record: MetricRecordsData) -> dict[str, Any]:

@@ -17,7 +17,7 @@ from tests.unit.conftest import make_run_from_v1
 
 
 @pytest.fixture
-def user_config_with_endpoint() -> CLIConfig:
+def cfg_with_endpoint() -> CLIConfig:
     """Create CLIConfig with inference endpoint."""
     return CLIConfig(
         model_names=["test-model"],
@@ -27,7 +27,7 @@ def user_config_with_endpoint() -> CLIConfig:
 
 
 @pytest.fixture
-def user_config_with_server_metrics_urls() -> CLIConfig:
+def cfg_with_server_metrics_urls() -> CLIConfig:
     """Create CLIConfig with custom server metrics URLs."""
     return CLIConfig(
         model_names=["test-model"],
@@ -46,11 +46,11 @@ class TestServerMetricsManagerInitialization:
     def test_initialization_basic(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test basic initialization with inference endpoint."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         assert manager._collectors == {}
@@ -63,11 +63,11 @@ class TestServerMetricsManagerInitialization:
     def test_endpoint_discovery_from_inference_url(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that inference endpoint port is discovered by default."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         # Should include inference port (localhost:8000) by default
@@ -77,11 +77,11 @@ class TestServerMetricsManagerInitialization:
     def test_custom_server_metrics_urls_added(
         self,
         cli_config: CLIConfig,
-        user_config_with_server_metrics_urls: CLIConfig,
+        cfg_with_server_metrics_urls: CLIConfig,
     ):
         """Test that user-specified server metrics URLs are added to endpoint list."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_server_metrics_urls),
+            run=make_run_from_v1(cfg_with_server_metrics_urls),
         )
 
         assert (
@@ -94,11 +94,11 @@ class TestServerMetricsManagerInitialization:
     def test_duplicate_urls_avoided(
         self,
         cli_config: CLIConfig,
-        user_config_with_server_metrics_urls: CLIConfig,
+        cfg_with_server_metrics_urls: CLIConfig,
     ):
         """Test that duplicate URLs are deduplicated."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_server_metrics_urls),
+            run=make_run_from_v1(cfg_with_server_metrics_urls),
         )
 
         endpoint_counts = {}
@@ -116,11 +116,11 @@ class TestProfileConfigureCommand:
     async def test_configure_with_reachable_endpoints(
         self,
         cli_config: CLIConfig,
-        user_config_with_server_metrics_urls: CLIConfig,
+        cfg_with_server_metrics_urls: CLIConfig,
     ):
         """Test configuration when all endpoints are reachable."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_server_metrics_urls),
+            run=make_run_from_v1(cfg_with_server_metrics_urls),
         )
 
         with patch(
@@ -144,11 +144,11 @@ class TestProfileConfigureCommand:
     async def test_configure_with_unreachable_endpoints(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test configuration when no endpoints are reachable."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         with patch(
@@ -172,11 +172,11 @@ class TestProfileConfigureCommand:
     async def test_configure_clears_existing_collectors(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that configuration clears previous collectors."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager._collectors["old_collector"] = AsyncMock()
@@ -206,7 +206,7 @@ class TestProfileStartCommand:
     async def test_start_initializes_and_starts_collectors(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that start command starts all collectors.
 
@@ -214,7 +214,7 @@ class TestProfileStartCommand:
         This test only verifies that start() is called.
         """
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -232,7 +232,7 @@ class TestProfileStartCommand:
     async def test_start_triggers_delayed_shutdown_when_no_collectors(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that start triggers delayed shutdown when no collectors available.
 
@@ -246,7 +246,7 @@ class TestProfileStartCommand:
             return MagicMock()
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
         manager._collectors = {}  # No collectors
 
@@ -267,11 +267,11 @@ class TestProfileStartCommand:
     async def test_start_handles_initialization_failure(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test start command handles collector initialization failures."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -288,7 +288,7 @@ class TestProfileStartCommand:
     async def test_start_triggers_delayed_shutdown_when_all_collectors_fail(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that start triggers delayed shutdown when all collectors fail to start.
 
@@ -301,7 +301,7 @@ class TestProfileStartCommand:
             return MagicMock()
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -329,11 +329,11 @@ class TestManagerCallbackFunctionality:
     async def test_record_callback_sends_message(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that record callback sends ServerMetricsRecordMessage."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock()
@@ -356,11 +356,11 @@ class TestManagerCallbackFunctionality:
     async def test_error_callback_logs_error(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that error callback logs the error."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         test_error = ErrorDetails.from_exception(ValueError("Test error"))
@@ -371,11 +371,11 @@ class TestManagerCallbackFunctionality:
     async def test_record_callback_handles_send_failure(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that record callback handles message send failures gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock(
@@ -436,11 +436,11 @@ class TestExceptionHandling:
     async def test_exception_during_reachability_check(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that exceptions during reachability check are handled."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         with patch(
@@ -465,11 +465,11 @@ class TestExceptionHandling:
     async def test_exception_during_baseline_capture(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that exceptions during baseline capture are logged but don't fail configuration."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         with patch(
@@ -502,11 +502,11 @@ class TestPartialStartup:
     async def test_partial_collector_startup(
         self,
         cli_config: CLIConfig,
-        user_config_with_server_metrics_urls: CLIConfig,
+        cfg_with_server_metrics_urls: CLIConfig,
     ):
         """Test scenario where some collectors start successfully and some fail."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_server_metrics_urls),
+            run=make_run_from_v1(cfg_with_server_metrics_urls),
         )
 
         # Create 2 collectors: one succeeds, one fails
@@ -539,13 +539,13 @@ class TestProfileCompleteAndCancel:
     async def test_profile_complete_triggers_final_scrape(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete triggers final metrics scrape."""
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -566,13 +566,13 @@ class TestProfileCompleteAndCancel:
     async def test_profile_complete_handles_final_scrape_failure(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete handles final scrape failures gracefully."""
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -594,13 +594,13 @@ class TestProfileCompleteAndCancel:
     async def test_profile_complete_when_already_stopped(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete is idempotent when collectors already stopped."""
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager._collectors = {}  # Already stopped
@@ -616,13 +616,13 @@ class TestProfileCompleteAndCancel:
     async def test_profile_cancel(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile cancel stops all collectors."""
         from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -644,11 +644,11 @@ class TestLifecycleHooks:
     async def test_on_stop_hook(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that on_stop hook stops all collectors."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -666,11 +666,11 @@ class TestStopAllCollectors:
     async def test_stop_all_collectors_calls_stop(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that stop_all_collectors stops each collector."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector1 = AsyncMock()
@@ -689,11 +689,11 @@ class TestStopAllCollectors:
     async def test_stop_all_collectors_handles_failure(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that stop_all_collectors handles failures gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         mock_collector = AsyncMock()
@@ -706,11 +706,11 @@ class TestStopAllCollectors:
     async def test_stop_all_collectors_when_no_collectors(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that stop_all_collectors handles empty collectors dict."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager._collectors = {}
@@ -726,11 +726,11 @@ class TestDelayedShutdown:
     async def test_delayed_shutdown(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that delayed shutdown sleeps and then stops service."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager.stop = AsyncMock()
@@ -754,11 +754,11 @@ class TestCallbackEdgeCases:
     async def test_record_callback_with_empty_list(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that record callback handles empty record list."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock()
@@ -772,11 +772,11 @@ class TestCallbackEdgeCases:
     async def test_error_callback_handles_send_failure(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that error callback handles message send failures gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager.records_push_client.push = AsyncMock(
@@ -792,11 +792,11 @@ class TestCallbackEdgeCases:
     async def test_status_send_failure(
         self,
         cli_config: CLIConfig,
-        user_config_with_endpoint: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
     ):
         """Test that status send failures are handled gracefully."""
         manager = ServerMetricsManager(
-            run=make_run_from_v1(user_config_with_endpoint),
+            run=make_run_from_v1(cfg_with_endpoint),
         )
 
         manager.publish = AsyncMock(side_effect=Exception("Publish failed"))

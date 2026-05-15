@@ -202,8 +202,8 @@ class PlotConfig:
                 return candidate
 
         # Priority 2: User home config (auto-create if missing)
-        user_config = Path.home() / ".aiperf" / "plot_config.yaml"
-        if not user_config.exists():
+        user_yaml_path = Path.home() / ".aiperf" / "plot_config.yaml"
+        if not user_yaml_path.exists():
             default_config = Path(__file__).parent / "default_plot_config.yaml"
             if not default_config.exists():
                 raise FileNotFoundError(
@@ -211,17 +211,17 @@ class PlotConfig:
                     "This indicates a package installation issue."
                 )
 
-            user_config.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(default_config, user_config)
+            user_yaml_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(default_config, user_yaml_path)
 
-            print(f"\nCreated plot configuration: {user_config}")
+            print(f"\nCreated plot configuration: {user_yaml_path}")
             print(
                 "   Edit this file to customize plots (changes take effect on next run)\n"
             )
         else:
-            print(f"Using config: {user_config}")
+            print(f"Using config: {user_yaml_path}")
 
-        return user_config
+        return user_yaml_path
 
     def _load_yaml(self) -> dict:
         """

@@ -73,22 +73,18 @@ class TestInputsJsonCanLoad:
 
 class TestInputsJsonLoad:
     def test_load_preserves_session_ids_and_turns(
-        self, inputs_json_file: Path, default_user_config: CLIConfig
+        self, inputs_json_file: Path, default_cfg: CLIConfig
     ):
-        loader = InputsJsonPayloadLoader(
-            filename=inputs_json_file, user_config=default_user_config
-        )
+        loader = InputsJsonPayloadLoader(filename=inputs_json_file, cfg=default_cfg)
         data = loader.load_dataset()
         assert set(data.keys()) == {"session-001", "session-002"}
         assert len(data["session-001"][0].payloads) == 2
         assert len(data["session-002"][0].payloads) == 1
 
     def test_convert_produces_raw_payload_turns(
-        self, inputs_json_file: Path, default_user_config: CLIConfig
+        self, inputs_json_file: Path, default_cfg: CLIConfig
     ):
-        loader = InputsJsonPayloadLoader(
-            filename=inputs_json_file, user_config=default_user_config
-        )
+        loader = InputsJsonPayloadLoader(filename=inputs_json_file, cfg=default_cfg)
         conversations = loader.convert_to_conversations(loader.load_dataset())
         assert len(conversations) == 2
         conv = next(c for c in conversations if c.session_id == "session-001")

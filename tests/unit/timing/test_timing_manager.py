@@ -22,7 +22,7 @@ from aiperf.timing.manager import TimingManager
 from tests.unit.timing.conftest import make_dataset_with_schedule
 
 
-def _build_user_config(
+def _build_cfg(
     timing_mode: TimingMode = TimingMode.REQUEST_RATE,
 ) -> CLIConfig:
     """Build a real ``CLIConfig`` (not ``model_construct``) so the v1->v2
@@ -37,7 +37,7 @@ def _build_user_config(
 
 @pytest.fixture
 def cli_config() -> CLIConfig:
-    return _build_user_config(TimingMode.REQUEST_RATE)
+    return _build_cfg(TimingMode.REQUEST_RATE)
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ class TestTimingManagerDatasetConfiguration:
     async def test_profile_configure_waits_for_dataset_notification(
         self, create_manager, mock_metadata, timing_mode
     ) -> None:
-        cfg = _build_user_config(timing_mode)
+        cfg = _build_cfg(timing_mode)
         mgr = create_manager(cfg)
         mock_engine = MagicMock()
         mock_engine.initialize = lambda *a, **kw: asyncio.sleep(0)
@@ -124,7 +124,7 @@ class TestTimingManagerDatasetConfiguration:
 
     @pytest.mark.asyncio
     async def test_dataset_configuration_timeout(self, create_manager) -> None:
-        cfg = _build_user_config(TimingMode.FIXED_SCHEDULE)
+        cfg = _build_cfg(TimingMode.FIXED_SCHEDULE)
         mgr = create_manager(cfg)
         with (
             patch.object(Environment.DATASET, "CONFIGURATION_TIMEOUT", 0.1),
@@ -140,7 +140,7 @@ class TestTimingManagerDatasetConfiguration:
     async def test_dataset_notification_before_configure(
         self, create_manager, mock_metadata
     ) -> None:
-        cfg = _build_user_config(TimingMode.FIXED_SCHEDULE)
+        cfg = _build_cfg(TimingMode.FIXED_SCHEDULE)
         mgr = create_manager(cfg)
         await mgr._on_dataset_configured_notification(
             DatasetConfiguredNotification(
@@ -242,9 +242,7 @@ class TestTimingManagerStartProfilingAndInitialization:
                 )
             )
 
-    def test_creates_timing_config_from_user_config(
-        self, create_manager, cli_config
-    ) -> None:
+    def test_creates_timing_config_from_cfg(self, create_manager, cli_config) -> None:
         mgr = create_manager(cli_config)
         assert mgr.config.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
 

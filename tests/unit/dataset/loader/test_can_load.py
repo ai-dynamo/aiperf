@@ -173,18 +173,18 @@ class TestCustomDatasetComposerInferType:
         ],
     )  # fmt: skip
     def test_infer_from_data(
-        self, create_user_config_and_composer, data, filename, expected_type
+        self, create_cfg_and_composer, data, filename, expected_type
     ):
         """Test inferring dataset type from various data formats."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         result = composer._infer_type(data, filename=filename)
         assert result == expected_type
 
     def test_infer_random_pool_explicit_type(
-        self, create_user_config_and_composer, create_jsonl_file
+        self, create_cfg_and_composer, create_jsonl_file
     ):
         """Test inferring RandomPool with explicit type field (requires file for validation)."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         # RandomPool with explicit type requires a file path for validation
         filepath = create_jsonl_file(['{"type": "random_pool", "text": "Query"}'])
         data = {"type": "random_pool", "text": "Query"}
@@ -198,24 +198,22 @@ class TestCustomDatasetComposerInferType:
             param({"metadata": "test"}, id="unknown_metadata"),
         ],
     )  # fmt: skip
-    def test_infer_from_data_raises(self, create_user_config_and_composer, data):
+    def test_infer_from_data_raises(self, create_cfg_and_composer, data):
         """Test that unknown formats raise ValueError."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         with pytest.raises(ValueError, match="No loader can handle"):
             composer._infer_type(data)
 
-    def test_infer_explicit_type_loader_rejects_raises(
-        self, create_user_config_and_composer
-    ):
+    def test_infer_explicit_type_loader_rejects_raises(self, create_cfg_and_composer):
         """Test that a recognized type field with incompatible data raises ValueError."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         data = {"type": "single_turn", "input_length": 100}
         with pytest.raises(ValueError, match="cannot handle the data format"):
             composer._infer_type(data)
 
-    def test_infer_random_pool_with_directory(self, create_user_config_and_composer):
+    def test_infer_random_pool_with_directory(self, create_cfg_and_composer):
         """Test inferring RandomPool with directory path."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             # Create a valid file in the directory
@@ -224,9 +222,9 @@ class TestCustomDatasetComposerInferType:
             result = composer._infer_type(data=None, filename=temp_path)
             assert result == CustomDatasetType.RANDOM_POOL
 
-    def test_infer_with_filename_parameter(self, create_user_config_and_composer):
+    def test_infer_with_filename_parameter(self, create_cfg_and_composer):
         """Test inference with filename parameter for file path."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
             try:
@@ -253,10 +251,10 @@ class TestCustomDatasetComposerInferDatasetType:
         ],
     )  # fmt: skip
     def test_infer_from_file(
-        self, create_user_config_and_composer, create_jsonl_file, content, expected_type
+        self, create_cfg_and_composer, create_jsonl_file, content, expected_type
     ):
         """Test inferring dataset type from file with various content."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         filepath = create_jsonl_file(content)
         result = composer._infer_dataset_type(filepath)
         assert result == expected_type
@@ -269,27 +267,27 @@ class TestCustomDatasetComposerInferDatasetType:
         ],
     )  # fmt: skip
     def test_infer_from_file_empty(
-        self, create_user_config_and_composer, create_jsonl_file, content
+        self, create_cfg_and_composer, create_jsonl_file, content
     ):
         """Test that empty files return None (no valid lines to infer from)."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         filepath = create_jsonl_file(content)
         # Empty files have no valid lines, so the method exits the loop without calling _infer_type
         result = composer._infer_dataset_type(filepath)
         assert result is None
 
     def test_infer_from_file_invalid_json(
-        self, create_user_config_and_composer, create_jsonl_file
+        self, create_cfg_and_composer, create_jsonl_file
     ):
         """Test that invalid JSON raises an error."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         filepath = create_jsonl_file(["not valid json"])
         with pytest.raises((ValueError, Exception)):
             composer._infer_dataset_type(filepath)
 
-    def test_infer_from_directory(self, create_user_config_and_composer):
+    def test_infer_from_directory(self, create_cfg_and_composer):
         """Test inferring type from directory (should be RandomPool)."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create some files in the directory
             temp_path = Path(temp_dir)
@@ -307,9 +305,9 @@ class TestDetectionPriorityAndAmbiguity:
     The 'type' field must match the loader's expected type or be omitted.
     """
 
-    def test_explicit_type_handled_by_validation(self, create_user_config_and_composer):
+    def test_explicit_type_handled_by_validation(self, create_cfg_and_composer):
         """Test that explicit type field is validated by loaders via pydantic."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         # RandomPool with explicit type
         data = {"type": "random_pool", "text": "Hello"}
 
@@ -380,10 +378,10 @@ class TestUnrecognizedTypeFieldFallback:
     The inference logic should fall back to structural detection instead of raising."""
 
     def test_bailian_type_field_falls_through_to_structural_detection(
-        self, create_user_config_and_composer
+        self, create_cfg_and_composer
     ):
         """Bailian data with type='text' should infer as bailian_trace, not raise."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         data = {
             "chat_id": 159,
             "parent_chat_id": -1,
@@ -408,10 +406,10 @@ class TestUnrecognizedTypeFieldFallback:
         ],
     )  # fmt: skip
     def test_unrecognized_type_field_does_not_raise(
-        self, create_user_config_and_composer, type_value
+        self, create_cfg_and_composer, type_value
     ):
         """Unrecognized type field values should not raise during inference."""
-        _, composer = create_user_config_and_composer()
+        _, composer = create_cfg_and_composer()
         data = {
             "chat_id": 1,
             "parent_chat_id": -1,

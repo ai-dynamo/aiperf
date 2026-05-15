@@ -301,13 +301,13 @@ def _classify_error_type(error: Any | None) -> str | None:
 
 
 def _build_duration_attributes(
-    record: MetricRecordsData, user_config: BenchmarkConfig
+    record: MetricRecordsData, cfg: BenchmarkConfig
 ) -> dict[str, Any]:
     """Build spec-required attributes for duration/latency histograms."""
     attrs: dict[str, Any] = {}
-    attrs["gen_ai.operation.name"] = _map_operation_name(str(user_config.endpoint.type))
-    attrs["gen_ai.provider.name"] = infer_provider_name(user_config)
-    model_names = user_config.get_model_names()
+    attrs["gen_ai.operation.name"] = _map_operation_name(str(cfg.endpoint.type))
+    attrs["gen_ai.provider.name"] = infer_provider_name(cfg)
+    model_names = cfg.get_model_names()
     if model_names:
         attrs["gen_ai.request.model"] = model_names[0]
     error_type = _classify_error_type(record.error)
@@ -317,13 +317,13 @@ def _build_duration_attributes(
 
 
 def _build_token_usage_attributes(
-    record: MetricRecordsData, user_config: BenchmarkConfig, *, token_type: str
+    record: MetricRecordsData, cfg: BenchmarkConfig, *, token_type: str
 ) -> dict[str, Any]:
     """Build spec-required attributes for token usage histograms."""
     attrs: dict[str, Any] = {}
-    attrs["gen_ai.operation.name"] = _map_operation_name(str(user_config.endpoint.type))
-    attrs["gen_ai.provider.name"] = infer_provider_name(user_config)
-    model_names = user_config.get_model_names()
+    attrs["gen_ai.operation.name"] = _map_operation_name(str(cfg.endpoint.type))
+    attrs["gen_ai.provider.name"] = infer_provider_name(cfg)
+    model_names = cfg.get_model_names()
     if model_names:
         attrs["gen_ai.request.model"] = model_names[0]
     attrs["gen_ai.token.type"] = token_type
@@ -334,11 +334,11 @@ ATTRIBUTE_BUILDERS: dict[str, Callable[..., dict[str, Any]]] = {
     "request_latency": _build_duration_attributes,
     "time_to_first_token": _build_duration_attributes,
     "inter_token_latency": _build_duration_attributes,
-    "input_token_count": lambda record, user_config: _build_token_usage_attributes(
-        record, user_config, token_type="input"
+    "input_token_count": lambda record, cfg: _build_token_usage_attributes(
+        record, cfg, token_type="input"
     ),
-    "output_token_count": lambda record, user_config: _build_token_usage_attributes(
-        record, user_config, token_type="output"
+    "output_token_count": lambda record, cfg: _build_token_usage_attributes(
+        record, cfg, token_type="output"
     ),
 }
 """Per-metric attribute builder. Each returns the spec-required attributes for that metric."""
@@ -384,7 +384,7 @@ def _extract_host(url: str) -> str | None:
     return host if host else None
 
 
-def infer_provider_name(user_config: BenchmarkConfig) -> str:
+def infer_provider_name(cfg: BenchmarkConfig) -> str:
     """Determine gen_ai.provider.name attribute value.
 
     Precedence:
@@ -393,12 +393,12 @@ def infer_provider_name(user_config: BenchmarkConfig) -> str:
     (c) else '_OTHER'.
     """
     # Path (a): explicit override
-    explicit = user_config.otel.gen_ai_provider
+    explicit = cfg.otel.gen_ai_provider
     if explicit:
         return explicit
 
     # Path (b): URL host inference
-    urls = getattr(user_config.endpoint, "urls", None)
+    urls = getattr(cfg.endpoint, "urls", None)
     if urls:
         for url in urls:
             host = _extract_host(url)
@@ -417,16 +417,16 @@ def infer_provider_name(user_config: BenchmarkConfig) -> str:
 # ---------------------------------------------------------------------------
 
 
-def cross_metric_attributes(user_config: BenchmarkConfig) -> dict[str, str]:
+def cross_metric_attributes(cfg: BenchmarkConfig) -> dict[str, str]:
     """Return the three Required GenAI spec attributes for timing-strategy callers.
 
     These are merged into the attribute dict of aiperf.timing.* metrics so
     dashboards can join timing metrics with the spec-named request metrics.
     """
     attrs: dict[str, str] = {}
-    attrs["gen_ai.operation.name"] = _map_operation_name(str(user_config.endpoint.type))
-    attrs["gen_ai.provider.name"] = infer_provider_name(user_config)
-    model_names = user_config.get_model_names()
+    attrs["gen_ai.operation.name"] = _map_operation_name(str(cfg.endpoint.type))
+    attrs["gen_ai.provider.name"] = infer_provider_name(cfg)
+    model_names = cfg.get_model_names()
     if model_names:
         attrs["gen_ai.request.model"] = model_names[0]
     return attrs
@@ -442,7 +442,7 @@ def translate(
     aiperf_value: float,
     record: MetricRecordsData,
     *,
-    user_config: BenchmarkConfig,
+    cfg: BenchmarkConfig,
 ) -> GenAISemconvEmission | None:
     """Translate an AIPerf metric to its GenAI spec equivalent.
 
@@ -462,7 +462,7 @@ def translate(
 
     # Build attributes
     builder = ATTRIBUTE_BUILDERS[aiperf_metric_name]
-    attributes = builder(record, user_config)
+    attributes = builder(record, cfg)
 
     return GenAISemconvEmission(
         spec_metric_name=spec_metric_name,

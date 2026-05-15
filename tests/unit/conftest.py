@@ -381,7 +381,7 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 def cli_config() -> CLIConfig:
     """Unified CLIConfig fixture combining benchmark + service-runtime fields.
 
-    Replaces the pre-rename ``user_config`` and ``service_config`` fixtures.
+    Replaces the pre-rename ``cfg`` and ``service_config`` fixtures.
     """
     return CLIConfig(model_names=["test-model"])
 

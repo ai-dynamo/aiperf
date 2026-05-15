@@ -22,7 +22,7 @@ from tests.unit.post_processors.conftest import make_telemetry_record
 
 
 @pytest.fixture
-def mock_user_config() -> CLIConfig:
+def mock_cfg() -> CLIConfig:
     """Provide minimal CLIConfig for testing."""
     return CLIConfig(
         model_names=["test-model"],
@@ -38,11 +38,11 @@ def mock_service_config() -> CLIConfig:
 
 
 @pytest.fixture
-def mock_run(mock_user_config, mock_service_config):
-    """Provide v2 BenchmarkRun built from mock_user_config + mock_service_config."""
+def mock_run(mock_cfg, mock_service_config):
+    """Provide v2 BenchmarkRun built from mock_cfg + mock_service_config."""
     from tests.unit.conftest import make_run_from_v1
 
-    return make_run_from_v1(mock_user_config)
+    return make_run_from_v1(mock_cfg)
 
 
 @pytest.fixture

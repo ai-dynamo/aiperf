@@ -37,7 +37,7 @@ def _write_artifact(path: Path, content: str = "test") -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _make_mlflow_user_config(
+def _make_mlflow_cfg(
     tmp_path: Path,
     *,
     tracking_uri: str | None = "http://mlflow:5000",
@@ -203,7 +203,7 @@ class TestMLflowMetadataRoundtripParentRunId:
         # and uploaded alongside other artifacts.
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps({}))
 
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             parent_run_id=parent_run_id,
         )
@@ -211,7 +211,7 @@ class TestMLflowMetadataRoundtripParentRunId:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -258,7 +258,7 @@ class TestMLflowMetadataRoundtripParentRunId:
         }
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(live_metadata))
 
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             parent_run_id=parent_run_id,
         )
@@ -266,7 +266,7 @@ class TestMLflowMetadataRoundtripParentRunId:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
@@ -298,7 +298,7 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         _write_artifact(tmp_path / "plots" / "throughput.png", "fake-png")
         _write_artifact(tmp_path / "timeslices.jsonl", '{"ts":1}')
 
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             experiment="byte-equality-test",
         )
@@ -306,7 +306,7 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -336,7 +336,7 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         sample_results: ProfileResults,
     ) -> None:
         """Even with no matching artifact files, mlflow_export.json is still uploaded."""
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             experiment="empty-artifacts-test",
             artifact_globs=["nonexistent_pattern_*.xyz"],
@@ -345,7 +345,7 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -375,7 +375,7 @@ class TestMLflowTrackingUriRedactedInMetadata:
         round-trip through the uploaded artifact)."""
         _write_artifact(tmp_path / "profile_export_aiperf.json")
 
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
             experiment="redaction-test",
@@ -384,7 +384,7 @@ class TestMLflowTrackingUriRedactedInMetadata:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -421,7 +421,7 @@ class TestMLflowTrackingUriRedactedInMetadata:
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(live_metadata))
         _write_artifact(tmp_path / "profile_export_aiperf.json")
 
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             tracking_uri="postgresql://dbuser:s3cret@db:5432/mlflow",
             experiment="redaction-test",
@@ -430,7 +430,7 @@ class TestMLflowTrackingUriRedactedInMetadata:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )

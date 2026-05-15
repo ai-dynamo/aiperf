@@ -833,7 +833,7 @@ class TestRecordsManagerInitialization:
     ) -> None:
         def _fake_pull_client_init(self, run, **kwargs) -> None:
             self.run = run
-            self.user_config = run.cfg
+            self.cfg = run.cfg
             self.service_id = kwargs.get("service_id") or "records_manager"
             self.pub_client = MagicMock()
             self.attach_child_lifecycle = MagicMock()

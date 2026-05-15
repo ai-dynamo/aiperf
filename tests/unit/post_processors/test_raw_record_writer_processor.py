@@ -30,16 +30,14 @@ def sample_parsed_record(sample_parsed_record_with_raw_responses: ParsedResponse
 class TestRawRecordWriterProcessorInitialization:
     """Test RawRecordWriterProcessor initialization."""
 
-    def test_init_creates_output_directory(self, user_config_raw: CLIConfig, run_raw):
+    def test_init_creates_output_directory(self, cfg_raw: CLIConfig, run_raw):
         """Test that initialization creates the raw_records directory."""
         processor = RawRecordWriterProcessor(
             service_id="processor-1",
             run=run_raw,
         )
 
-        expected_dir = (
-            user_config_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
-        )
+        expected_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
         assert expected_dir.exists()
         assert expected_dir.is_dir()
         assert processor.output_file.parent == expected_dir
@@ -56,7 +54,7 @@ class TestRawRecordWriterProcessorInitialization:
     )
     def test_filename_sanitization(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         service_id: str,
         expected_filename: str,
@@ -68,7 +66,7 @@ class TestRawRecordWriterProcessorInitialization:
         )
         assert processor.output_file.name == expected_filename
 
-    def test_init_with_none_service_id(self, user_config_raw: CLIConfig, run_raw):
+    def test_init_with_none_service_id(self, cfg_raw: CLIConfig, run_raw):
         """Test initialization with None service_id defaults to 'processor'."""
         processor = RawRecordWriterProcessor(
             service_id=None,
@@ -85,7 +83,7 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_writes_valid_data(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
@@ -119,7 +117,7 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_with_error(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         error_parsed_record: ParsedResponseRecord,
     ):
@@ -145,7 +143,7 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_multiple_records(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
@@ -176,7 +174,7 @@ class TestRawRecordWriterProcessorFileFormat:
     @pytest.mark.asyncio
     async def test_output_is_valid_jsonl_and_record_structure(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
@@ -216,7 +214,7 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_combines_multiple_files(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
@@ -232,7 +230,7 @@ class TestRawRecordAggregator:
                     await processor.process_record(sample_parsed_record, metadata)
 
         # Run aggregator
-        exporter_config = create_exporter_config(user_config_raw)
+        exporter_config = create_exporter_config(cfg_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
 
         await aggregator.export()
@@ -244,15 +242,13 @@ class TestRawRecordAggregator:
         assert len(lines) == 6  # 3 processors * 2 records each
 
         # Verify raw_records directory is cleaned up
-        raw_records_dir = (
-            user_config_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
-        )
+        raw_records_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
         assert not raw_records_dir.exists()
 
     @pytest.mark.asyncio
-    async def test_aggregator_with_no_files(self, user_config_raw: CLIConfig, run_raw):
+    async def test_aggregator_with_no_files(self, cfg_raw: CLIConfig, run_raw):
         """Test that aggregator handles no input files gracefully."""
-        exporter_config = create_exporter_config(user_config_raw)
+        exporter_config = create_exporter_config(cfg_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
 
         # Should not raise
@@ -264,14 +260,12 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_skips_empty_lines(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
     ):
         """Test that aggregator skips empty lines in input files."""
         # Create a processor file with some empty lines
-        raw_records_dir = (
-            user_config_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
-        )
+        raw_records_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
         raw_records_dir.mkdir(parents=True, exist_ok=True)
 
         test_file = raw_records_dir / "raw_records_test.jsonl"
@@ -282,7 +276,7 @@ class TestRawRecordAggregator:
             f.write("   \n")
             f.write('{"metadata": {"session_num": 2}}\n')
 
-        exporter_config = create_exporter_config(user_config_raw)
+        exporter_config = create_exporter_config(cfg_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
 
         await aggregator.export()
@@ -296,7 +290,7 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_clears_existing_output(
         self,
-        user_config_raw: CLIConfig,
+        cfg_raw: CLIConfig,
         run_raw,
         sample_parsed_record: ParsedResponseRecord,
     ):
@@ -312,7 +306,7 @@ class TestRawRecordAggregator:
             await processor.process_record(sample_parsed_record, metadata)
 
         # Run aggregator
-        exporter_config = create_exporter_config(user_config_raw)
+        exporter_config = create_exporter_config(cfg_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
         await aggregator.export()
 

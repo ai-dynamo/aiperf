@@ -30,7 +30,7 @@ from aiperf.config.flags._section_fields import (
 )
 
 
-def test_section_fields_partition_user_config() -> None:
+def test_section_fields_partition_cli_config() -> None:
     all_section_fields = (
         ENDPOINT_FIELDS
         | INPUT_FIELDS

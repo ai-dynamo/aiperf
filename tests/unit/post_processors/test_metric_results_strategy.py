@@ -35,15 +35,15 @@ class _MetricStrategyContext:
         self.record_attributes_calls: list[Any] = []
         self.coerce_calls: list[tuple[str, Any]] = []
         self.get_histogram_calls: list[str] = []
-        self._user_config: Any = None
+        self._cfg: Any = None
 
     @property
-    def user_config(self) -> Any:
-        if self._user_config is None:
+    def cfg(self) -> Any:
+        if self._cfg is None:
             from aiperf.config import BenchmarkConfig, EndpointConfig
             from aiperf.plugin.enums import EndpointType
 
-            self._user_config = BenchmarkConfig(
+            self._cfg = BenchmarkConfig(
                 model="test-model",
                 endpoint=EndpointConfig(
                     urls=["http://localhost:8000"],
@@ -52,7 +52,7 @@ class _MetricStrategyContext:
                 dataset={"type": "synthetic"},
                 profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
             )
-        return self._user_config
+        return self._cfg
 
     async def get_or_create_histogram(
         self, metric_name: str, **kwargs: Any

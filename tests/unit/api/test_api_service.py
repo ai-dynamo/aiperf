@@ -98,12 +98,10 @@ class TestFastAPIServiceInit:
     def test_init_loads_routers(self, mock_fastapi_service: FastAPIService) -> None:
         assert len(mock_fastapi_service._routers) > 0
 
-    def test_init_with_custom_host(
-        self, mock_zmq: None, api_user_config: CLIConfig
-    ) -> None:
+    def test_init_with_custom_host(self, mock_zmq: None, api_cfg: CLIConfig) -> None:
         from tests.unit.conftest import make_run_from_v1
 
-        run = make_run_from_v1(api_user_config)
+        run = make_run_from_v1(api_cfg)
         run.cfg.runtime.api_host = "0.0.0.0"
         run.cfg.runtime.api_port = 8080
         service = FastAPIService(
@@ -120,7 +118,7 @@ class TestFastAPIServiceCORSMiddleware:
     def test_cors_middleware_added_when_origins_set(
         self,
         mock_zmq: None,
-        api_user_config: CLIConfig,
+        api_cfg: CLIConfig,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
@@ -133,7 +131,7 @@ class TestFastAPIServiceCORSMiddleware:
         )
         from tests.unit.conftest import make_run_from_v1
 
-        run = make_run_from_v1(api_user_config)
+        run = make_run_from_v1(api_cfg)
         run.cfg.runtime.api_port = 8080
         service = FastAPIService(
             run=run,
@@ -145,7 +143,7 @@ class TestFastAPIServiceCORSMiddleware:
     def test_no_cors_middleware_when_origins_empty(
         self,
         mock_zmq: None,
-        api_user_config: CLIConfig,
+        api_cfg: CLIConfig,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
@@ -156,7 +154,7 @@ class TestFastAPIServiceCORSMiddleware:
         )
         from tests.unit.conftest import make_run_from_v1
 
-        run = make_run_from_v1(api_user_config)
+        run = make_run_from_v1(api_cfg)
         run.cfg.runtime.api_port = 8080
         service = FastAPIService(
             run=run,

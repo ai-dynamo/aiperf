@@ -33,7 +33,7 @@ def create_jsonl_file():
 
 
 @pytest.fixture
-def create_user_config_and_composer(mock_tokenizer_cls):
+def create_cfg_and_composer(mock_tokenizer_cls):
     """Create a CLIConfig and CustomDatasetComposer for testing."""
 
     from tests.unit.conftest import make_run_from_v1
@@ -55,7 +55,7 @@ def create_user_config_and_composer(mock_tokenizer_cls):
 
 
 @pytest.fixture
-def default_user_config() -> CLIConfig:
+def default_cfg() -> CLIConfig:
     """Create a default CLIConfig for testing."""
     return CLIConfig(model_names=["test-model"])
 

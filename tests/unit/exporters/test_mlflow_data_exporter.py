@@ -33,7 +33,7 @@ def _write_artifact(path: Path, content: str = "test") -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _make_mlflow_user_config(
+def _make_mlflow_cfg(
     tmp_path: Path,
     *,
     tracking_uri: str | None = "http://mlflow:5000",
@@ -200,8 +200,8 @@ def sample_results() -> ProfileResults:
 
 
 @pytest.fixture
-def mlflow_user_config(tmp_path: Path) -> BenchmarkConfig:
-    return _make_mlflow_user_config(
+def mlflow_cfg(tmp_path: Path) -> BenchmarkConfig:
+    return _make_mlflow_cfg(
         tmp_path,
         run_name="nightly-run",
         tags="team:perf,env:ci",
@@ -214,7 +214,7 @@ class TestMLflowDataExporter:
     ) -> None:
         config = ExporterConfig(
             results=sample_results,
-            cfg=_make_mlflow_user_config(tmp_path, tracking_uri=None),
+            cfg=_make_mlflow_cfg(tmp_path, tracking_uri=None),
             telemetry_results=None,
         )
         with pytest.raises(
@@ -223,12 +223,10 @@ class TestMLflowDataExporter:
         ):
             MLflowDataExporter(config)
 
-    def test_disabled_without_results(
-        self, mlflow_user_config: BenchmarkConfig
-    ) -> None:
+    def test_disabled_without_results(self, mlflow_cfg: BenchmarkConfig) -> None:
         config = ExporterConfig(
             results=None,
-            cfg=mlflow_user_config,
+            cfg=mlflow_cfg,
             telemetry_results=None,
         )
         with pytest.raises(DataExporterDisabled, match="no profile results"):
@@ -240,7 +238,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: BenchmarkConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         _write_artifact(tmp_path / "profile_export_aiperf.json")
         _write_artifact(tmp_path / "profile_export_aiperf_timeslices.json")
@@ -251,7 +249,7 @@ class TestMLflowDataExporter:
         state = _install_fake_mlflow_modules(monkeypatch)
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_user_config,
+            cfg=mlflow_cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id="bench-upload-001"),
         )
@@ -339,13 +337,13 @@ class TestMLflowDataExporter:
         _write_artifact(tmp_path / "plots" / "latency.png")
 
         state = _install_fake_mlflow_modules(monkeypatch)
-        user_config = _make_mlflow_user_config(
+        cfg = _make_mlflow_cfg(
             tmp_path,
             artifact_globs=["plots/**/*.png"],
         )
         config = ExporterConfig(
             results=sample_results,
-            cfg=user_config,
+            cfg=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
@@ -364,7 +362,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: BenchmarkConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         _write_artifact(tmp_path / "profile_export_aiperf.json")
         live_run_id = "live-run-555"
@@ -389,7 +387,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_user_config,
+            cfg=mlflow_cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
@@ -453,7 +451,7 @@ class TestMLflowDataExporter:
         self,
         monkeypatch: pytest.MonkeyPatch,
         sample_results: ProfileResults,
-        mlflow_user_config: BenchmarkConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         for module_name in ("mlflow", "mlflow.entities", "mlflow.tracking"):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
@@ -470,7 +468,7 @@ class TestMLflowDataExporter:
         exporter = MLflowDataExporter(
             ExporterConfig(
                 results=sample_results,
-                cfg=mlflow_user_config,
+                cfg=mlflow_cfg,
                 telemetry_results=None,
             )
         )
@@ -483,7 +481,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: BenchmarkConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         """Regression: ``export()`` must terminate a hung subprocess on timeout.
 
@@ -506,7 +504,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_user_config,
+            cfg=mlflow_cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
@@ -524,7 +522,7 @@ class TestMLflowDataExporter:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         sample_results: ProfileResults,
-        mlflow_user_config: BenchmarkConfig,
+        mlflow_cfg: BenchmarkConfig,
     ) -> None:
         """Regression: if the spawn child dies before writing to the queue
         (spawn bootstrap failure, SIGKILL/OOM, native crash), the parent must
@@ -544,7 +542,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_user_config,
+            cfg=mlflow_cfg,
             telemetry_results=None,
         )
         await mlflow_export_subprocess.export_with_timeout(

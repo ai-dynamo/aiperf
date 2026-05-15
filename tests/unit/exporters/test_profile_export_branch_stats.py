@@ -7,7 +7,7 @@ DAG-shaped runs export BranchOrchestrator counters under
 consumers don't see a spurious empty block.
 
 The original test body (written against the v1 ExporterConfig shape
-with ``user_config``/``service_config`` kwargs) needs porting to the
+with ``cfg``/``service_config`` kwargs) needs porting to the
 v2 ExporterConfig shape (``cfg=BenchmarkConfig`` + ``run=BenchmarkRun``).
 Restore from the cleanup-gpu-config merge once the port is done.
 """
@@ -15,7 +15,7 @@ Restore from the cleanup-gpu-config merge once the port is done.
 import pytest
 
 pytest.skip(
-    "ExporterConfig.user_config/service_config kwargs removed in v2 refactor "
+    "ExporterConfig.cfg/service_config kwargs removed in v2 refactor "
     "(v2 uses cfg=BenchmarkConfig + run=BenchmarkRun); test needs rewriting "
     "against the v2 ExporterConfig shape. Port pending.",
     allow_module_level=True,

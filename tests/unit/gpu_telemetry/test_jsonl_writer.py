@@ -23,7 +23,7 @@ from tests.unit.post_processors.conftest import aiperf_lifecycle, make_telemetry
 
 
 @pytest.fixture
-def user_config_telemetry_export(tmp_artifact_dir: Path) -> CLIConfig:
+def cfg_telemetry_export(tmp_artifact_dir: Path) -> CLIConfig:
     """Create a CLIConfig for telemetry export testing."""
     return CLIConfig(
         model_names=["test-model"],
@@ -33,9 +33,9 @@ def user_config_telemetry_export(tmp_artifact_dir: Path) -> CLIConfig:
 
 
 @pytest.fixture
-def run_telemetry_export(user_config_telemetry_export, cli_config):
+def run_telemetry_export(cfg_telemetry_export, cli_config):
     """Build a v2 BenchmarkRun from the telemetry-export cli_config fixture."""
-    return make_run_from_v1(user_config_telemetry_export)
+    return make_run_from_v1(cfg_telemetry_export)
 
 
 @pytest.fixture

@@ -17,12 +17,12 @@ from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
 
 
 @pytest.fixture
-def base_user_config():
+def base_cfg():
     """Create a minimal CLIConfig for testing."""
     return CLIConfig(url="http://localhost:8000", model_names=["test-model"])
 
 
-def create_user_config(
+def create_cfg(
     gpu_telemetry: list[str] | None = None,
     no_gpu_telemetry: bool = False,
 ) -> CLIConfig:

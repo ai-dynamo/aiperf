@@ -34,17 +34,17 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._user_config = exporter_config.cfg
+        self._cfg = exporter_config.cfg
 
-        if not self._user_config.artifacts.export_outputs_json:
+        if not self._cfg.artifacts.export_outputs_json:
             raise DataExporterDisabled(
                 "OutputsJsonExporter is disabled (--export-outputs-json not set)"
             )
 
-        self._file_path = self._user_config.artifacts.outputs_json_file
-        self._jsonl_path = self._user_config.artifacts.profile_export_jsonl_file
+        self._file_path = self._cfg.artifacts.outputs_json_file
+        self._jsonl_path = self._cfg.artifacts.profile_export_jsonl_file
         self._fragments_dir = (
-            self._user_config.artifacts.artifact_directory
+            self._cfg.artifacts.artifact_directory
             / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         )
 

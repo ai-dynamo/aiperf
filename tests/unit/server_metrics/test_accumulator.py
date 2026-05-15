@@ -21,7 +21,7 @@ from tests.unit.conftest import make_run_from_v1
 
 
 @pytest.fixture
-def mock_user_config() -> BenchmarkRun:
+def mock_cfg() -> BenchmarkRun:
     """Provide a minimal BenchmarkRun for testing (built from a v1 CLIConfig)."""
     user_cfg = CLIConfig(
         model_names=["test-model"],
@@ -82,28 +82,28 @@ def sample_server_metrics_record(
 class TestServerMetricsResultsProcessor:
     """Test cases for ServerMetricsResultsProcessor."""
 
-    async def test_initialization(self, mock_user_config: BenchmarkRun) -> None:
+    async def test_initialization(self, mock_cfg: BenchmarkRun) -> None:
         """Test processor initialization sets up hierarchy."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         assert isinstance(processor._server_metrics_hierarchy, ServerMetricsHierarchy)
 
     async def test_process_server_metrics_record(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
         sample_server_metrics_record: ServerMetricsRecord,
     ) -> None:
         """Test processing a server metrics record adds it to the hierarchy."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         await processor.process_server_metrics_record(sample_server_metrics_record)
 
         endpoint_url = sample_server_metrics_record.endpoint_url
         assert endpoint_url in processor._server_metrics_hierarchy.endpoints
 
-    async def test_export_results_no_data(self, mock_user_config: BenchmarkRun) -> None:
+    async def test_export_results_no_data(self, mock_cfg: BenchmarkRun) -> None:
         """Test export_results returns None when no data collected."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         result = await processor.export_results(
             start_ns=1_000_000_000,
@@ -114,10 +114,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_data(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
     ) -> None:
         """Test export_results returns ServerMetricsResults with collected data."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         # Add multiple records
         for i in range(5):
@@ -149,11 +149,11 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_error_summary(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
         sample_server_metrics_record: ServerMetricsRecord,
     ) -> None:
         """Test export_results includes error summary when provided."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         await processor.process_server_metrics_record(sample_server_metrics_record)
 
@@ -179,10 +179,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_time_filter(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
     ) -> None:
         """Test export_results includes the provided time filter."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         # Add records
         for i in range(5):
@@ -212,10 +212,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_multiple_endpoints(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
     ) -> None:
         """Test export_results handles multiple endpoints correctly."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         endpoints = ["http://node1:8081/metrics", "http://node2:8081/metrics"]
 
@@ -247,10 +247,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_labeled_metrics(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
     ) -> None:
         """Test export_results handles metrics with labels correctly."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         for i in range(3):
             gauge = MetricFamily(
@@ -281,10 +281,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_computes_endpoint_metadata(
         self,
-        mock_user_config: BenchmarkRun,
+        mock_cfg: BenchmarkRun,
     ) -> None:
         """Test export_results computes duration, scrape count, and latency correctly."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(mock_cfg)
 
         # Add 5 records with known timing
         scrape_latency_ns = 10_000_000  # 10ms
@@ -322,10 +322,10 @@ class TestServerMetricsResultsProcessor:
         assert summary.info.median_update_interval_ms == 1000.0
 
     async def test_export_results_median_robust_to_outliers(
-        self, mock_user_config: BenchmarkRun
+        self, mock_cfg: BenchmarkRun
     ):
         """Test that median_update_interval_ms is robust to outliers."""
-        processor = ServerMetricsAccumulator(run=mock_user_config)
+        processor = ServerMetricsAccumulator(run=mock_cfg)
 
         # Create records with non-uniform intervals:
         # Intervals: 1s, 1s, 1s, 5s (outlier)

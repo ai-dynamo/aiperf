@@ -98,18 +98,18 @@ def jsonl_file(tmp_path):
 
 
 class TestSingleTurnInlineParity:
-    def test_inline_matches_file(self, jsonl_file, default_user_config):
+    def test_inline_matches_file(self, jsonl_file, default_cfg):
         records = [
             {"text": "What is ML?"},
             {"text": "Explain GANs.", "output_length": 200},
             {"text": "Define AI."},
         ]
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
 
         file_loader = SingleTurnDatasetLoader(filename=jsonl_file(records), run=run)
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_user_config)
+        run2 = make_run_from_v1(default_cfg)
         inline_loader = SingleTurnDatasetLoader(inline_records=records, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -124,16 +124,16 @@ class TestSingleTurnInlineParity:
         )
         assert file_texts == inline_texts
 
-    def test_inline_three_records_load_correctly(self, default_user_config):
+    def test_inline_three_records_load_correctly(self, default_cfg):
         records = [{"text": "one"}, {"text": "two"}]
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
         loader = SingleTurnDatasetLoader(inline_records=records, run=run)
         data = loader.load_dataset()
         assert sum(len(v) for v in data.values()) == 2
 
 
 class TestMultiTurnInlineParity:
-    def test_inline_matches_file(self, jsonl_file, default_user_config):
+    def test_inline_matches_file(self, jsonl_file, default_cfg):
         records = [
             {
                 "session_id": "chat_1",
@@ -148,12 +148,12 @@ class TestMultiTurnInlineParity:
                 ],
             },
         ]
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
 
         file_loader = MultiTurnDatasetLoader(filename=jsonl_file(records), run=run)
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_user_config)
+        run2 = make_run_from_v1(default_cfg)
         inline_loader = MultiTurnDatasetLoader(inline_records=records, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -180,7 +180,7 @@ def _make_mock_prompt_generator() -> Mock:
 
 
 class TestMooncakeTraceInlineParity:
-    def test_inline_matches_file(self, jsonl_file, default_user_config):
+    def test_inline_matches_file(self, jsonl_file, default_cfg):
         records = [
             {
                 "timestamp": 0,
@@ -202,7 +202,7 @@ class TestMooncakeTraceInlineParity:
             },
         ]
 
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
         file_loader = MooncakeTraceDatasetLoader(
             filename=jsonl_file(records),
             run=run,
@@ -210,7 +210,7 @@ class TestMooncakeTraceInlineParity:
         )
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_user_config)
+        run2 = make_run_from_v1(default_cfg)
         inline_loader = MooncakeTraceDatasetLoader(
             inline_records=records,
             run=run2,
@@ -232,19 +232,17 @@ class TestMooncakeTraceInlineParity:
 
 
 class TestRandomPoolInlineParity:
-    def test_inline_single_pool_matches_single_file(
-        self, jsonl_file, default_user_config
-    ):
+    def test_inline_single_pool_matches_single_file(self, jsonl_file, default_cfg):
         records = [
             {"text": "What is ML?", "type": "random_pool"},
             {"text": "Explain GANs.", "type": "random_pool"},
             {"text": "Define AI.", "type": "random_pool"},
         ]
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
         file_loader = RandomPoolDatasetLoader(filename=jsonl_file(records), run=run)
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_user_config)
+        run2 = make_run_from_v1(default_cfg)
         inline_loader = RandomPoolDatasetLoader(inline_records=records, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -256,7 +254,7 @@ class TestRandomPoolInlineParity:
         inline_pool = next(iter(inline_data.values()))
         assert len(file_pool) == len(inline_pool) == 3
 
-    def test_inline_multi_pool_matches_directory(self, tmp_path, default_user_config):
+    def test_inline_multi_pool_matches_directory(self, tmp_path, default_cfg):
         d = tmp_path / "pools"
         d.mkdir()
         (d / "queries.jsonl").write_text(
@@ -267,7 +265,7 @@ class TestRandomPoolInlineParity:
             '{"text": "P1", "type": "random_pool"}\n'
             '{"text": "P2", "type": "random_pool"}\n'
         )
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
         file_loader = RandomPoolDatasetLoader(filename=d, run=run)
         file_data = file_loader.load_dataset()
 
@@ -281,7 +279,7 @@ class TestRandomPoolInlineParity:
                 {"text": "P2", "type": "random_pool"},
             ],
         }
-        run2 = make_run_from_v1(default_user_config)
+        run2 = make_run_from_v1(default_cfg)
         inline_loader = RandomPoolDatasetLoader(inline_records=inline, run=run2)
         inline_data = inline_loader.load_dataset()
 
@@ -336,7 +334,7 @@ def _make_sagemaker_record(
 
 
 class TestSageMakerInlineParity:
-    def test_inline_matches_file(self, jsonl_file, default_user_config):
+    def test_inline_matches_file(self, jsonl_file, default_cfg):
         records = [
             _make_sagemaker_record(
                 inference_time="2026-04-29T00:00:01Z",
@@ -358,7 +356,7 @@ class TestSageMakerInlineParity:
             ),
         ]
 
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
         file_loader = SageMakerDataCaptureLoader(
             filename=jsonl_file(records),
             run=run,
@@ -366,7 +364,7 @@ class TestSageMakerInlineParity:
         )
         file_data = file_loader.load_dataset()
 
-        run2 = make_run_from_v1(default_user_config)
+        run2 = make_run_from_v1(default_cfg)
         inline_loader = SageMakerDataCaptureLoader(
             inline_records=records,
             run=run2,
@@ -397,7 +395,7 @@ class TestSageMakerInlineParity:
         assert file_ts == inline_ts
         assert file_ts[0] == 0.0
 
-    def test_inline_records_does_not_crash_on_none_filename(self, default_user_config):
+    def test_inline_records_does_not_crash_on_none_filename(self, default_cfg):
         """Regression: SageMaker load_dataset must not call filename.is_dir()
         when inline_records is set (filename is None)."""
         records = [
@@ -407,7 +405,7 @@ class TestSageMakerInlineParity:
                 user_message="just one",
             )
         ]
-        run = make_run_from_v1(default_user_config)
+        run = make_run_from_v1(default_cfg)
         loader = SageMakerDataCaptureLoader(
             inline_records=records,
             run=run,

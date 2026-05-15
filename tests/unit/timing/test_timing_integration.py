@@ -26,7 +26,7 @@ class TestTimingConfigurationIntegration:
 
     # ``test_timestamps_triggers_fixed_schedule`` was removed in v2: trace-timestamp
     # auto-detection of FIXED_SCHEDULE happened inside the legacy
-    # ``TimingConfig.from_user_config`` path. The v1 -> v2 resolver builds the
+    # ``TimingConfig.from_cfg`` path. The v1 -> v2 resolver builds the
     # ``BenchmarkConfig`` (and its phases) before any dataset file is read, so it
     # cannot flip a phase to FIXED_SCHEDULE based on file content. Users now opt
     # in explicitly via ``--fixed-schedule`` (or the ``trace_replay`` YAML

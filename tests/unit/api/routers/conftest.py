@@ -42,16 +42,16 @@ def router_service_config() -> CLIConfig:
 
 
 @pytest.fixture
-def router_user_config() -> CLIConfig:
+def router_cfg() -> CLIConfig:
     """CLIConfig for router testing."""
     return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
 def router_benchmark_run(
-    router_user_config: CLIConfig, router_service_config: CLIConfig
+    router_cfg: CLIConfig, router_service_config: CLIConfig
 ) -> BenchmarkRun:
     """BenchmarkRun for router testing."""
-    run = make_run_from_v1(router_user_config)
+    run = make_run_from_v1(router_cfg)
     run.benchmark_id = "test-bench"
     return run
