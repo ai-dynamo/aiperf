@@ -14,10 +14,8 @@ from tests.unit.timing.conftest import make_credit
 class TestStickyCreditRouterFairLoadBalancing:
     """Test fair load balancing for first turns."""
 
-    async def test_routes_to_least_loaded_worker(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_routes_to_least_loaded_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-1")
         router._register_worker("worker-2")
@@ -49,10 +47,8 @@ class TestStickyCreditRouterFairLoadBalancing:
         assert len(router._sticky_sessions) == 1
         assert list(router._sticky_sessions.values())[0] == "worker-2"
 
-    async def test_creates_conversation_assignment(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_creates_conversation_assignment(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
 
@@ -63,10 +59,8 @@ class TestStickyCreditRouterFairLoadBalancing:
         assert len(router._sticky_sessions) == 1
         assert router._sticky_sessions["test-corr-id"] == "worker-A"
 
-    async def test_error_if_no_workers_available(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_error_if_no_workers_available(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         credit = make_credit()
 
         with pytest.raises(RuntimeError, match="No workers available"):
@@ -76,10 +70,8 @@ class TestStickyCreditRouterFairLoadBalancing:
 class TestStickyCreditRouterStickyRouting:
     """Test sticky routing for subsequent turns."""
 
-    async def test_routes_to_assigned_worker(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_routes_to_assigned_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
         router._register_worker("worker-B")
@@ -101,10 +93,8 @@ class TestStickyCreditRouterStickyRouting:
         assert worker_id == "worker-A"
         assert router._sticky_sessions[instance_id] == "worker-A"
 
-    async def test_cleans_up_assignment_on_final_turn(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_cleans_up_assignment_on_final_turn(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
 
@@ -126,11 +116,9 @@ class TestStickyCreditRouterStickyRouting:
         assert instance_id not in router._sticky_sessions
 
     async def test_fallback_to_fair_load_if_assignment_missing(
-        self, service_config
+        self, benchmark_run
     ) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
         router._register_worker("worker-B")
@@ -159,10 +147,8 @@ class TestStickyCreditRouterStickyRouting:
 class TestStickyCreditRouterLoadTracking:
     """Test worker load tracking."""
 
-    async def test_track_credit_sent(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_track_credit_sent(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-1")
 
         assert router._workers["worker-1"].in_flight_credits == 0
@@ -175,10 +161,8 @@ class TestStickyCreditRouterLoadTracking:
         assert router._workers["worker-1"].in_flight_credits == 2
         assert router._workers["worker-1"].total_sent_credits == 2
 
-    async def test_track_credit_returned(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_track_credit_returned(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-1")
 
         router._workers["worker-1"].in_flight_credits = 5
@@ -200,20 +184,16 @@ class TestStickyCreditRouterLoadTracking:
         assert router._workers["worker-1"].in_flight_credits == 3
         assert router._workers["worker-1"].total_completed_credits == 2
 
-    async def test_register_worker(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_register_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-A")
 
         assert "worker-A" in router._workers
         assert router._workers["worker-A"].in_flight_credits == 0
         assert router._workers["worker-A"].total_completed_credits == 0
 
-    async def test_unregister_worker(self, service_config) -> None:
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+    async def test_unregister_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-A")
         router._unregister_worker("worker-A")
 
@@ -223,11 +203,9 @@ class TestStickyCreditRouterLoadTracking:
 class TestStickyCreditRouterCompleteScenario:
     """Test complete routing scenario with multiple conversations."""
 
-    async def test_five_turn_conversation(self, service_config) -> None:
+    async def test_five_turn_conversation(self, benchmark_run) -> None:
         """Test routing a complete 5-turn conversation."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-A")
@@ -266,11 +244,9 @@ class TestStickyCreditRouterCompleteScenario:
         # Assignment should be cleaned up after final turn
         assert instance_id not in router._sticky_sessions
 
-    async def test_multiple_conversations_balanced(self, service_config) -> None:
+    async def test_multiple_conversations_balanced(self, benchmark_run) -> None:
         """Test that multiple conversations are balanced across workers."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         for i in range(3):
@@ -313,11 +289,9 @@ class TestStickyCreditRouterCompleteScenario:
 class TestStickyCreditRouterEdgeCases:
     """Test edge cases and error handling."""
 
-    async def test_single_worker(self, service_config) -> None:
+    async def test_single_worker(self, benchmark_run) -> None:
         """Test with only one worker."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("only-worker")
 
@@ -334,11 +308,9 @@ class TestStickyCreditRouterEdgeCases:
             worker_id = router._router_client.send_to.call_args[0][0]
             assert worker_id == "only-worker"
 
-    async def test_unequal_worker_loads(self, service_config) -> None:
+    async def test_unequal_worker_loads(self, benchmark_run) -> None:
         """Test fair load balancing with significantly unequal loads."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-overloaded")
@@ -358,11 +330,9 @@ class TestStickyCreditRouterEdgeCases:
         worker_id = router._router_client.send_to.call_args[0][0]
         assert worker_id == "worker-idle"
 
-    async def test_worker_registration_idempotent(self, service_config) -> None:
+    async def test_worker_registration_idempotent(self, benchmark_run) -> None:
         """Test that re-registering worker is safe."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._workers["worker-1"].in_flight_credits = 5
@@ -374,11 +344,9 @@ class TestStickyCreditRouterEdgeCases:
 class TestStickyCreditRouterFirstToken:
     """Test FirstToken message handling."""
 
-    async def test_first_token_callback_called(self, service_config) -> None:
+    async def test_first_token_callback_called(self, benchmark_run) -> None:
         """Test that first token callback is invoked."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         callback_received = []
 
@@ -401,11 +369,9 @@ class TestStickyCreditRouterFirstToken:
         assert callback_received[0].phase == CreditPhase.PROFILING
         assert callback_received[0].ttft_ns == 150_000_000
 
-    async def test_first_token_no_callback_does_not_error(self, service_config) -> None:
+    async def test_first_token_no_callback_does_not_error(self, benchmark_run) -> None:
         """Test that FirstToken without callback set doesn't cause error."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-1")
 
         first_token = FirstToken(
@@ -417,11 +383,9 @@ class TestStickyCreditRouterFirstToken:
         # Should not raise
         await router._handle_router_message("worker-1", first_token)
 
-    async def test_first_token_warmup_phase(self, service_config) -> None:
+    async def test_first_token_warmup_phase(self, benchmark_run) -> None:
         """Test that FirstToken works for warmup phase."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         received_phases = []
 
@@ -446,12 +410,10 @@ class TestStickyCreditRouterLateJoiningWorker:
     """Test fair handling of late-joining workers (thundering herd prevention)."""
 
     async def test_late_joiner_gets_average_virtual_credits(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Late-joining worker should initialize with average virtual_sent_credits."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -469,13 +431,9 @@ class TestStickyCreditRouterLateJoiningWorker:
         assert router._workers["worker-3"].virtual_sent_credits == 50
         assert router._workers["worker-3"].total_sent_credits == 0
 
-    async def test_late_joiner_not_preferred_over_existing(
-        self, service_config
-    ) -> None:
+    async def test_late_joiner_not_preferred_over_existing(self, benchmark_run) -> None:
         """Late-joining worker should not get all requests due to zero credits."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -505,11 +463,9 @@ class TestStickyCreditRouterLateJoiningWorker:
         assert credits_per_worker["worker-2"] == 10
         assert credits_per_worker["worker-3"] == 10
 
-    async def test_late_joiner_without_existing_workers(self, service_config) -> None:
+    async def test_late_joiner_without_existing_workers(self, benchmark_run) -> None:
         """First worker to join should have virtual_sent_credits = 0."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         assert router._workers["worker-1"].virtual_sent_credits == 0
@@ -518,12 +474,10 @@ class TestStickyCreditRouterLateJoiningWorker:
         assert router._workers["worker-2"].virtual_sent_credits == 0
 
     async def test_virtual_credits_vs_total_credits_semantics(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Verify virtual and total credits track independently."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -550,12 +504,10 @@ class TestStickyCreditRouterCancellation:
     """Test credit cancellation behavior."""
 
     async def test_cancel_all_credits_sends_to_workers_with_in_flight(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test that cancel_all_credits sends to workers with in-flight credits."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -576,12 +528,10 @@ class TestStickyCreditRouterCancellation:
         assert call_args[1].credit_ids == {1, 2, 3}
 
     async def test_cancel_all_credits_no_workers_with_in_flight(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test cancel_all_credits when no workers have in-flight credits."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -592,11 +542,9 @@ class TestStickyCreditRouterCancellation:
         # Should not send any messages
         router._router_client.send_to.assert_not_called()
 
-    async def test_cancel_sets_cancellation_pending_flag(self, service_config) -> None:
+    async def test_cancel_sets_cancellation_pending_flag(self, benchmark_run) -> None:
         """Test that cancel_all_credits sets _cancellation_pending flag."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         assert router._cancellation_pending is False
@@ -610,12 +558,10 @@ class TestStickyCreditRouterWorkerUnregistration:
     """Test worker unregistration edge cases."""
 
     async def test_unregister_with_active_sessions_clears_sticky(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test that unregistering worker clears sticky sessions."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._workers["worker-1"].active_sessions = 2
@@ -629,12 +575,10 @@ class TestStickyCreditRouterWorkerUnregistration:
         assert "session-2" not in router._sticky_sessions
 
     async def test_unregister_during_cancellation_suppresses_warning(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test that unregistering with in-flight during cancellation doesn't warn."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._cancellation_pending = True
 
         router._register_worker("worker-1")
@@ -645,11 +589,9 @@ class TestStickyCreditRouterWorkerUnregistration:
 
         assert "worker-1" not in router._workers
 
-    async def test_unregister_unknown_worker_is_safe(self, service_config) -> None:
+    async def test_unregister_unknown_worker_is_safe(self, benchmark_run) -> None:
         """Test that unregistering unknown worker doesn't crash."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         # Should not raise
         router._unregister_worker("never-registered")
@@ -658,11 +600,9 @@ class TestStickyCreditRouterWorkerUnregistration:
 class TestStickyCreditRouterMinLoadTracking:
     """Test minimum load tracking for fair load balancing."""
 
-    async def test_min_load_updates_after_credit_sent(self, service_config) -> None:
+    async def test_min_load_updates_after_credit_sent(self, benchmark_run) -> None:
         """Test that min_load updates correctly when credit sent."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._register_worker("worker-2")
@@ -677,11 +617,9 @@ class TestStickyCreditRouterMinLoadTracking:
         # Both workers now at 1, min_load should be 1
         assert router._min_load == 1
 
-    async def test_min_load_updates_after_credit_returned(self, service_config) -> None:
+    async def test_min_load_updates_after_credit_returned(self, benchmark_run) -> None:
         """Test that min_load updates correctly when credit returned."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._register_worker("worker-2")
@@ -701,12 +639,10 @@ class TestStickyCreditRouterMinLoadTracking:
         assert router._min_load == 0
 
     async def test_min_load_recalculates_after_unregister_last_at_min(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test min_load recalculation when last worker at min is unregistered."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._register_worker("worker-2")
@@ -729,11 +665,9 @@ class TestStickyCreditRouterMinLoadTracking:
 class TestStickyCreditRouterErrorTracking:
     """Test error tracking in credit returns."""
 
-    async def test_track_credit_returned_with_error(self, service_config) -> None:
+    async def test_track_credit_returned_with_error(self, benchmark_run) -> None:
         """Test that error_reported flag increments error counter."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._track_credit_sent("worker-1", 1)
@@ -745,11 +679,9 @@ class TestStickyCreditRouterErrorTracking:
         assert router._workers["worker-1"].total_errors_reported == 1
         assert router._workers["worker-1"].total_completed_credits == 1
 
-    async def test_track_credit_cancelled_with_error(self, service_config) -> None:
+    async def test_track_credit_cancelled_with_error(self, benchmark_run) -> None:
         """Test that cancelled credit with error tracks both."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._track_credit_sent("worker-1", 1)
@@ -767,12 +699,10 @@ class TestStickyCreditRouterCreditValidation:
     """Test credit validation."""
 
     async def test_send_credit_with_empty_correlation_id_raises(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test that send_credit raises if x_correlation_id is empty string."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-1")
 
         # Create credit with empty x_correlation_id (bypasses the "if not" check)
@@ -795,12 +725,10 @@ class TestStickyCreditRouterTieBreaking:
     """Test tie-breaking behavior when multiple workers at min load."""
 
     async def test_prefers_worker_with_fewer_active_sessions(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test tie-breaking prefers workers with fewer active sessions."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -823,12 +751,10 @@ class TestStickyCreditRouterTieBreaking:
         assert worker_id == "worker-1"
 
     async def test_prefers_worker_with_fewer_virtual_credits(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test tie-breaking prefers workers with fewer virtual credits."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -849,11 +775,9 @@ class TestStickyCreditRouterTieBreaking:
         worker_id = router._router_client.send_to.call_args[0][0]
         assert worker_id == "worker-1"
 
-    async def test_prefers_worker_with_older_last_sent(self, service_config) -> None:
+    async def test_prefers_worker_with_older_last_sent(self, benchmark_run) -> None:
         """Test tie-breaking prefers workers with older last_sent_at_ns."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")
@@ -879,12 +803,10 @@ class TestStickyCreditRouterMarkComplete:
     """Test mark_credits_complete behavior."""
 
     async def test_mark_complete_suppresses_orphan_warnings(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test that mark_credits_complete suppresses orphan session warnings."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
         router._workers["worker-1"].active_sessions = 2
@@ -903,12 +825,10 @@ class TestStickyCreditRouterStickySessionReassignment:
     """Test sticky session reassignment when worker becomes unavailable."""
 
     async def test_reassigns_to_new_worker_if_sticky_worker_gone(
-        self, service_config
+        self, benchmark_run
     ) -> None:
         """Test that sticky session is reassigned if assigned worker is gone."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
 
         router._register_worker("worker-1")

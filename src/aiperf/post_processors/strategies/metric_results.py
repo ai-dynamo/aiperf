@@ -43,7 +43,7 @@ class MetricResultsStrategy(OTelResultsStrategyProtocol):
                 metric_name,
                 numeric_values[0],
                 record_data,
-                user_config=self._context.user_config,
+                cfg=self._context.cfg,
             )
 
             if emission is not None:

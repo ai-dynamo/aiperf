@@ -1,11 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.environment import Environment
 from aiperf.common.models import MetricResult
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -45,8 +44,8 @@ class TestRealtimeMetricsTable:
     ):
         """Test that metrics are skipped based on flags and configuration using real metrics"""
         with patch.object(Environment.DEV, "SHOW_INTERNAL_METRICS", show_internal):
-            service_config = ServiceConfig()
-            table = RealtimeMetricsTable(service_config)
+            run = Mock()
+            table = RealtimeMetricsTable(run)
 
             metric_result = MetricResult(
                 tag=metric_tag,

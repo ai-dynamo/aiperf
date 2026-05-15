@@ -1,11 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config.user_config import UserConfig
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class SpeedBenchLoader(BaseHFDatasetLoader):
@@ -50,12 +54,12 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun | None = None,
         category: str | None = None,
         **kwargs,
     ) -> None:
         self.category = category
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     async def convert_to_conversations(
         self, data: dict[str, Any]

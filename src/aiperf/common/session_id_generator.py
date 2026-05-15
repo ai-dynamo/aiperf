@@ -12,7 +12,7 @@ Usage:
     from aiperf.common.session_id_generator import SessionIDGenerator
 
     # Each component creates its own generator
-    generator = SessionIDGenerator(seed=user_config.input.random_seed)
+    generator = SessionIDGenerator(seed=42)
 
     # Get next ID
     session_id = generator.next()  # "session_000000" if seed provided, UUID if not

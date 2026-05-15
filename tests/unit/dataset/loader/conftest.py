@@ -8,14 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import (
-    ConversationConfig,
-    EndpointConfig,
-    InputConfig,
-    InputTokensConfig,
-    PromptConfig,
-    UserConfig,
-)
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 
 
@@ -40,33 +33,31 @@ def create_jsonl_file():
 
 
 @pytest.fixture
-def create_user_config_and_composer(mock_tokenizer_cls):
-    """Create a UserConfig and CustomDatasetComposer for testing."""
+def create_cfg_and_composer(mock_tokenizer_cls):
+    """Create a CLIConfig and CustomDatasetComposer for testing."""
+
+    from tests.unit.conftest import make_run_from_cli
 
     def _create():
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig.model_construct(
-                file="test_data.jsonl",
-                conversation=ConversationConfig(num=5),
-                prompt=PromptConfig(
-                    input_tokens=InputTokensConfig(mean=10, stddev=2),
-                ),
-            ),
+        config = CLIConfig.model_construct(
+            model_names=["test-model"],
+            input_file="test_data.jsonl",
+            conversation_num=5,
         )
         tokenizer = mock_tokenizer_cls.from_pretrained(
             "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
         )
-        composer = CustomDatasetComposer(config, tokenizer)
+        run = make_run_from_cli(config)
+        composer = CustomDatasetComposer(run=run, tokenizer=tokenizer)
         return config, composer
 
     return _create
 
 
 @pytest.fixture
-def default_user_config() -> UserConfig:
-    """Create a default UserConfig for testing."""
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def default_cfg() -> CLIConfig:
+    """Create a default CLIConfig for testing."""
+    return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture

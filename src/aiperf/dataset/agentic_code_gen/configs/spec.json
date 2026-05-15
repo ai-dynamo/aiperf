@@ -342,33 +342,33 @@
   "additionalProperties": true,
   "description": "Full configuration for synthesizing Agentic Code sessions.\n\ninitial_context is derived: L1 + L1.5 + sampled L2. Not directly configured.\n\nThis schema is a reference for recognized Agentic Code generator config fields. AIPerf config parsing is permissive for forward compatibility: unknown fields are accepted by the base model, but only the documented properties below are interpreted by the generator.",
   "properties": {
-    "block_size": {
+    "blockSize": {
       "default": 512,
       "description": "KV cache page size in tokens",
       "minimum": 1,
-      "title": "Block Size",
+      "title": "Blocksize",
       "type": "integer"
     },
     "cache": {
       "$ref": "#/$defs/CacheLayerConfig",
       "description": "Cache layer config"
     },
-    "generation_length": {
+    "generationLength": {
       "$ref": "#/$defs/LognormalParams",
       "description": "Output token distribution"
     },
-    "inter_turn_delay": {
+    "interTurnDelay": {
       "$ref": "#/$defs/MixtureDelayConfig",
       "description": "Inter-turn delay mixture model"
     },
-    "max_prompt_tokens": {
+    "maxPromptTokens": {
       "default": 200000,
       "description": "Context window limit",
       "minimum": 1,
-      "title": "Max Prompt Tokens",
+      "title": "Maxprompttokens",
       "type": "integer"
     },
-    "new_tokens_per_turn": {
+    "newTokensPerTurn": {
       "$ref": "#/$defs/NewTokensPerTurnConfig",
       "description": "New tokens added per turn"
     },
@@ -383,15 +383,15 @@
       ],
       "description": "Reset probability config"
     },
-    "restart_initial_probability": {
+    "restartInitialProbability": {
       "default": 0.0,
       "description": "Initial probability that a primary session is split into a restart continuation. The probability decays linearly to zero across the first 75% of generated primary sessions, so the observed continuation count is lower than this value.",
       "maximum": 1.0,
       "minimum": 0.0,
-      "title": "Restart Initial Probability",
+      "title": "Restartinitialprobability",
       "type": "number"
     },
-    "restart_turn_range": {
+    "restartTurnRange": {
       "default": [
         5,
         15
@@ -402,7 +402,7 @@
       },
       "maxItems": 2,
       "minItems": 2,
-      "title": "Restart Turn Range",
+      "title": "Restartturnrange",
       "type": "array"
     },
     "turns": {

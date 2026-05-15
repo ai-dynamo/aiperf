@@ -74,6 +74,16 @@ class CommAddress(CaseInsensitiveStrEnum):
     RAW_INFERENCE_PROXY_BACKEND = "raw_inference_proxy_backend"
     """Backend address for the InferenceParser to receive raw inference messages from Workers."""
 
+    # Referenced by aiperf.config.comm.*.
+    CREDIT_RETURN_ROUTER = "credit_return_router"
+    """Address for credit-return ROUTER-DEALER traffic (separate from CREDIT_ROUTER for high-throughput modes)."""
+
+    CONTROL = "control"
+    """Control-plane address for service-manager commands."""
+
+    GROUP_LIFECYCLE = "group_lifecycle"
+    """Address for worker-group lifecycle signaling."""
+
 
 class CommandType(CaseInsensitiveStrEnum):
     REALTIME_METRICS = "realtime_metrics"
@@ -262,6 +272,17 @@ class ImageFormat(CaseInsensitiveStrEnum):
     """Randomly select PNG or JPEG for each image."""
 
 
+class ImageSource(CaseInsensitiveStrEnum):
+    """Source image generation mode for multimodal benchmarking."""
+
+    ASSETS = "assets"
+    """Load source images from the bundled assets/source_images directory."""
+
+    NOISE = "noise"
+    """Generate random noise images on the fly. Produces diverse, unique images
+    without requiring files on disk."""
+
+
 class IPVersion(CaseInsensitiveStrEnum):
     """IP version for HTTP socket connections."""
 
@@ -354,6 +375,9 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
     RANDOM = "random"
     """Randomly select a model for each prompt using uniform distribution."""
+
+    WEIGHTED = "weighted"
+    """Select a model with probability proportional to a per-model weight."""
 
 
 class PrometheusMetricType(CaseInsensitiveStrEnum):
@@ -577,3 +601,81 @@ class WorkerStatus(CaseInsensitiveStrEnum):
     ERROR = "error"
     IDLE = "idle"
     STALE = "stale"
+
+
+# =============================================================================
+# Surface consumed by `aiperf.config` (BenchmarkPlan, SweepConfig,
+# ArtifactsConfig, etc.).
+# =============================================================================
+
+
+class CommunicationType(CaseInsensitiveStrEnum):
+    """Type of inter-process communication transport."""
+
+    IPC = "ipc"
+    """Unix domain sockets (single machine)."""
+
+    TCP = "tcp"
+    """TCP sockets (multi-machine)."""
+
+    DUAL = "dual"
+    """Dual-bind: IPC for co-located services, TCP for remote workers (Kubernetes)."""
+
+
+class DatasetType(CaseInsensitiveStrEnum):
+    """Defines the source type for benchmark datasets."""
+
+    SYNTHETIC = "synthetic"
+    """Generate synthetic prompts programmatically."""
+
+    FILE = "file"
+    """Load prompts from a local file."""
+
+    PUBLIC = "public"
+    """Use a well-known public dataset."""
+
+
+class OptimizationDirection(CaseInsensitiveStrEnum):
+    """Direction of optimization for a metric.
+
+    MAXIMIZE: Higher values are preferred (e.g. throughput, goodput).
+    MINIMIZE: Lower values are preferred (e.g. latency, TTFT, p99).
+    """
+
+    MAXIMIZE = "maximize"
+    MINIMIZE = "minimize"
+
+
+class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
+    """Mode for discovering server metrics endpoints in distributed environments."""
+
+    AUTO = "auto"
+    """Automatically detect environment and use appropriate discovery method."""
+
+    KUBERNETES = "kubernetes"
+    """Use Kubernetes API to discover inference-server pods."""
+
+    DISABLED = "disabled"
+    """Disable automatic discovery. Only use explicitly provided URLs."""
+
+
+class SweepMode(CaseInsensitiveStrEnum):
+    """Execution order for sweep + confidence composition.
+
+    REPEATED: for trial in trials: for value in values
+        All values tested per trial before moving to next trial.
+
+    INDEPENDENT: for value in values: for trial in trials
+        All trials completed per value before moving to next value.
+    """
+
+    INDEPENDENT = "independent"
+    REPEATED = "repeated"
+
+
+class ExportFormat(CaseInsensitiveStrEnum):
+    """Defines the file format for record-level exports."""
+
+    JSON = "json"
+    JSONL = "jsonl"
+    CSV = "csv"

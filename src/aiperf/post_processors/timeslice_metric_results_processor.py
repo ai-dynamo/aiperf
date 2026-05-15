@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections import defaultdict
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config import UserConfig
+from collections import defaultdict
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.models import MetricResult
@@ -14,6 +15,9 @@ from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class TimesliceMetricResultsProcessor(MetricResultsProcessor):
     """Processor for metric results in timeslice mode.
@@ -21,16 +25,16 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
     Groups metrics by time slices based on request timestamps and slice_duration.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any):
+        super().__init__(run=run, **kwargs)
 
-        if self.user_config.output.slice_duration is None:
+        if self.run.cfg.artifacts.slice_duration is None:
             raise PostProcessorDisabled(
                 "TimesliceMetricResultsProcessor requires slice_duration to be set"
             )
 
         self._slice_duration_ns: int = int(
-            self.user_config.output.slice_duration * NANOS_PER_SECOND
+            self.run.cfg.artifacts.slice_duration * NANOS_PER_SECOND
         )
 
         # Set up aggregate metric object default initialization for each timeslice

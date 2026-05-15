@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Inline Dataset
+# description: Embed dataset records directly in the YAML config (no separate JSONL file required).
+# category: Datasets
+# tags: inline, dataset, yaml-config
+# difficulty: beginner
+# features: inline-records, single-turn, multi-turn, random-pool
+#
+# Inline Datasets
+# ===============
+# `dataset.records:` lets you embed the benchmark dataset directly in the
+# YAML config, as an alternative to `dataset.path:` pointing at a JSONL file.
+# Useful for k8s ConfigMaps, shareable repros, and small regression fixtures.
+#
+# Run: aiperf profile --config inline_dataset.yaml
+
+schemaVersion: "2.0"
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+
+  # ----- Pick ONE of the three dataset blocks below ------------------------
+  # Each block is a complete `dataset:` definition. Comment out the two you
+  # aren't using. They differ only in `format:` and the shape of `records:`.
+
+  # 1) Single-turn: each record is one independent prompt.
+  dataset:
+    type: file
+    format: single_turn
+    records:
+      - {text: "What is machine learning?"}
+      - {text: "Explain GANs in two sentences.", output_length: 200}
+      - {text: "How does backpropagation work?"}
+      - {text: "What are transformers?"}
+      - {text: "Define reinforcement learning."}
+
+  # 2) Multi-turn: each record is a complete conversation with multiple turns.
+  # dataset:
+  #   type: file
+  #   format: multi_turn
+  #   records:
+  #     - session_id: chat_1
+  #       turns:
+  #         - {text: "What is machine learning?"}
+  #         - {text: "Can you give me a concrete example?"}
+  #     - session_id: chat_2
+  #       turns:
+  #         - {text: "Explain neural networks."}
+  #         - {text: "How do they differ from traditional algorithms?"}
+  #         - {text: "Which architecture for image classification?"}
+
+  # 3) Random pool with multiple named pools (mirrors a directory-of-JSONLs
+  #    on disk). Each pool name keys a list of records that gets sampled
+  #    independently, then merged into conversations.
+  # dataset:
+  #   type: file
+  #   format: random_pool
+  #   sampling: random
+  #   records:
+  #     queries:
+  #       - {text: "What is your refund policy?", type: random_pool}
+  #       - {text: "How do I reset my password?", type: random_pool}
+  #     passages:
+  #       - {text: "Refunds are processed within 5 business days.", type: random_pool}
+  #       - {text: "Click 'Forgot password' on the login page.", type: random_pool}
+
+  phases:
+    type: concurrency
+    concurrency: 4
+    requests: 50

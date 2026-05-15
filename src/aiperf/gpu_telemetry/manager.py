@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress, CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
@@ -22,6 +23,9 @@ from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import GPUTelemetryCollectorType, PluginType
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 __all__ = ["GPUTelemetryManager"]
 
@@ -48,21 +52,20 @@ class GPUTelemetryManager(BaseComponentService):
     - Follows centralized architecture patterns
 
     Args:
-        service_config: Service-level configuration (logging, communication, etc.)
-        user_config: User-provided configuration including gpu_telemetry list
+        run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
+            **kwargs,
         )
 
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
@@ -72,15 +75,20 @@ class GPUTelemetryManager(BaseComponentService):
         self._collectors: dict[str, GPUTelemetryCollectorProtocol] = {}
         self._collector_id_to_url: dict[str, str] = {}
 
-        self._telemetry_disabled = user_config.gpu_telemetry_disabled
+        gpu_telemetry_cfg = self.run.cfg.gpu_telemetry
+        self._telemetry_disabled = not gpu_telemetry_cfg.enabled
+        # "Explicitly configured" means the user supplied URLs or a replay
+        # metrics file. ``urls`` is always ``[]`` when unset (no None vs []
+        # distinction), so emptiness alone is the unset signal.
         self._user_explicitly_configured_telemetry = (
-            user_config.gpu_telemetry is not None and not self._telemetry_disabled
+            bool(gpu_telemetry_cfg.urls or gpu_telemetry_cfg.metrics_file)
+            and not self._telemetry_disabled
         )
 
-        self._collector_type = user_config.gpu_telemetry_collector_type
+        self._collector_type = gpu_telemetry_cfg.collector
 
         # DCGM-specific endpoint configuration
-        user_endpoints = user_config.gpu_telemetry_urls or []
+        user_endpoints = gpu_telemetry_cfg.urls or []
         if isinstance(user_endpoints, str):
             user_endpoints = [user_endpoints]
 
@@ -102,6 +110,9 @@ class GPUTelemetryManager(BaseComponentService):
         )
 
         self._collection_interval = Environment.GPU.COLLECTION_INTERVAL
+
+        # Task for delayed shutdown, created when no endpoints are reachable
+        self._shutdown_task: asyncio.Task[None] | None = None
 
     @staticmethod
     def _normalize_dcgm_url(url: str) -> str:
@@ -331,7 +342,7 @@ class GPUTelemetryManager(BaseComponentService):
         """
         if not self._collectors:
             # Telemetry disabled status already sent in _profile_configure_command, only shutdown here
-            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
+            self._shutdown_task = self.execute_async(self._delayed_shutdown())
             return
 
         started_count = 0
@@ -351,7 +362,7 @@ class GPUTelemetryManager(BaseComponentService):
                 endpoints_configured=self._compute_endpoints_for_display([]),
                 endpoints_reachable=[],
             )
-            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
+            self._shutdown_task = self.execute_async(self._delayed_shutdown())
             return
 
     @on_command(CommandType.PROFILE_CANCEL)

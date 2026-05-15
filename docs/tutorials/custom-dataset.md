@@ -83,7 +83,8 @@ aiperf profile \
     --custom-dataset-type single_turn \
     --streaming \
     --url localhost:8000 \
-    --concurrency 2
+    --concurrency 2 \
+    --request-count 10
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
@@ -131,6 +132,33 @@ artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
 Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
+### Inline alternative
+
+Same content as `prompts.jsonl`, embedded in the AIPerf YAML config:
+
+```yaml
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: file
+    format: single_turn
+    records:
+      - {text: "What is machine learning?"}
+      - {text: "Explain neural networks."}
+      - {text: "How does backpropagation work?"}
+      - {text: "What are transformers?"}
+      - {text: "Define reinforcement learning."}
+  phases:
+    type: concurrency
+    concurrency: 2
+    requests: 100
+```
+
+See [Inline Datasets](inline-datasets.md) for the full feature reference.
+
 ### Per-Request Output Length
 
 Control the maximum output tokens per request using the `output_length` field:
@@ -150,7 +178,8 @@ aiperf profile \
     --custom-dataset-type single_turn \
     --streaming \
     --url localhost:8000 \
-    --osl 200
+    --osl 200 \
+    --request-count 10
 ```
 
 **Precedence:** Per-line `output_length` takes priority over the global `--osl` flag. Lines without `output_length` fall back to `--osl` if set (200 in this example), or let the server decide the output length.
@@ -204,7 +233,8 @@ aiperf profile \
     --custom-dataset-type multi_turn \
     --streaming \
     --url localhost:8000 \
-    --concurrency 2
+    --concurrency 2 \
+    --request-count 10
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
@@ -255,6 +285,33 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 - Turns execute sequentially within each conversation
 - Multiple conversations run concurrently (up to `--concurrency`)
 - Each turn supports `output_length` and `extra` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints)
+
+### Inline alternative
+
+```yaml
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: file
+    format: multi_turn
+    records:
+      - session_id: chat_1
+        turns:
+          - {text: "What is machine learning?"}
+          - {text: "Can you give me an example?"}
+      - session_id: chat_2
+        turns:
+          - {text: "Explain neural networks."}
+          - {text: "How do they differ from traditional algorithms?"}
+          - {text: "Which architecture for image classification?"}
+  phases:
+    type: concurrency
+    concurrency: 2
+    requests: 100
+```
 
 ---
 
@@ -350,6 +407,31 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 - Randomly samples 50 requests from 8-entry pool
 - Sampling with replacement (entries can repeat)
 - Use `--random-seed` for reproducibility
+
+### Inline alternative (multi-pool)
+
+```yaml
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: file
+    format: random_pool
+    sampling: random
+    records:
+      queries:
+        - {text: "What is your refund policy?", type: random_pool}
+        - {text: "How do I reset my password?", type: random_pool}
+      passages:
+        - {text: "Refunds are processed within 5 business days.", type: random_pool}
+        - {text: "Click 'Forgot password' on the login page.", type: random_pool}
+  phases:
+    type: concurrency
+    concurrency: 2
+    requests: 50
+```
 
 ---
 

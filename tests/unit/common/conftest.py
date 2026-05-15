@@ -11,8 +11,8 @@ import pytest
 from rich.console import Console
 
 from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig
 from aiperf.common.tokenizer_display import TokenizerDisplayEntry
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.timing.manager import TimingManager
 from aiperf.workers.worker import Worker
 from tests.harness import mock_plugin
@@ -182,14 +182,12 @@ def mock_log_queue() -> MagicMock:
 
 
 @pytest.fixture
-def service_config_no_uvloop(
-    service_config: ServiceConfig, monkeypatch
-) -> ServiceConfig:
-    """Create a ServiceConfig with uvloop disabled for testing."""
+def service_config_no_uvloop(cli_config: CLIConfig, monkeypatch) -> CLIConfig:
+    """Create a CLIConfig with uvloop disabled for testing."""
     from aiperf.common.environment import Environment
 
     monkeypatch.setattr(Environment.SERVICE, "DISABLE_UVLOOP", True)
-    return service_config
+    return cli_config
 
 
 @dataclass

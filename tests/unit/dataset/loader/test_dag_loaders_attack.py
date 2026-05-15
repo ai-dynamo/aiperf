@@ -26,7 +26,7 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.config.flags import CLIConfig
 from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
 from aiperf.dataset.loader.raw_payload import RawPayloadDatasetLoader
@@ -59,8 +59,8 @@ def _basic_conv(sid: str, n_turns: int = 1) -> dict:
     }
 
 
-def _user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def _cfg() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"], url="http://localhost:8000")
 
 
 # ===========================================================================
@@ -709,7 +709,7 @@ def test_raw_payload_empty_line_skipped(tmp_path: Path):
         + orjson.dumps({"messages": [{"role": "user", "content": "b"}]})
         + b"\n"
     )
-    loader = RawPayloadDatasetLoader(filename=p, user_config=_user_config())
+    loader = RawPayloadDatasetLoader(filename=p, cfg=_cfg())
     data = loader.load_dataset()
     # Two distinct sessions (one per non-blank line).
     assert len(data) == 2
@@ -721,7 +721,7 @@ def test_raw_payload_truncated_json_line_raises_json_decode_error(tmp_path: Path
     catch the right exception type."""
     p = tmp_path / "payloads.jsonl"
     p.write_bytes(b'{"messages":[{"role":"user","content":"a"')
-    loader = RawPayloadDatasetLoader(filename=p, user_config=_user_config())
+    loader = RawPayloadDatasetLoader(filename=p, cfg=_cfg())
     with pytest.raises(ValueError):
         loader.load_dataset()
 
@@ -731,7 +731,7 @@ def test_raw_payload_binary_garbage_line_raises_value_error(tmp_path: Path):
     on parse — never silently dropped."""
     p = tmp_path / "payloads.jsonl"
     p.write_bytes(b"\x00\x01\x02\xff\xfe\xfd\n")
-    loader = RawPayloadDatasetLoader(filename=p, user_config=_user_config())
+    loader = RawPayloadDatasetLoader(filename=p, cfg=_cfg())
     with pytest.raises(ValueError):
         loader.load_dataset()
 
@@ -742,7 +742,7 @@ def test_raw_payload_missing_messages_field_rejected(tmp_path: Path):
     """
     p = tmp_path / "payloads.jsonl"
     p.write_bytes(orjson.dumps({"model": "x", "max_tokens": 16}) + b"\n")
-    loader = RawPayloadDatasetLoader(filename=p, user_config=_user_config())
+    loader = RawPayloadDatasetLoader(filename=p, cfg=_cfg())
     with pytest.raises(ValueError, match=r"payloads\.jsonl:1.*messages"):
         loader.load_dataset()
 
@@ -764,7 +764,7 @@ def test_inputs_json_missing_top_level_data_raises(tmp_path: Path):
     raises a clear KeyError or ValueError on load."""
     p = tmp_path / "inputs.json"
     p.write_bytes(orjson.dumps({"not_data": []}))
-    loader = InputsJsonPayloadLoader(filename=p, user_config=_user_config())
+    loader = InputsJsonPayloadLoader(filename=p, cfg=_cfg())
     with pytest.raises((KeyError, ValueError)):
         loader.load_dataset()
 
@@ -778,7 +778,7 @@ def test_inputs_json_session_missing_session_id_raises(tmp_path: Path):
             {"data": [{"payloads": [{"messages": [{"role": "user", "content": "u"}]}]}]}
         )
     )
-    loader = InputsJsonPayloadLoader(filename=p, user_config=_user_config())
+    loader = InputsJsonPayloadLoader(filename=p, cfg=_cfg())
     with pytest.raises((KeyError, ValueError)):
         loader.load_dataset()
 
@@ -788,7 +788,7 @@ def test_inputs_json_empty_payloads_list_rejected(tmp_path: Path):
     is rejected with a field-path-bearing ValidationError."""
     p = tmp_path / "inputs.json"
     p.write_bytes(orjson.dumps({"data": [{"session_id": "abc", "payloads": []}]}))
-    loader = InputsJsonPayloadLoader(filename=p, user_config=_user_config())
+    loader = InputsJsonPayloadLoader(filename=p, cfg=_cfg())
     with pytest.raises(ValueError) as excinfo:
         loader.load_dataset()
     assert "payloads" in str(excinfo.value)
@@ -822,7 +822,7 @@ def test_inputs_json_duplicate_session_ids_rejected_with_index(tmp_path: Path):
             }
         )
     )
-    loader = InputsJsonPayloadLoader(filename=p, user_config=_user_config())
+    loader = InputsJsonPayloadLoader(filename=p, cfg=_cfg())
     with pytest.raises(ValueError, match=r"data\[1\] duplicate session_id 'dup'"):
         loader.load_dataset()
 
@@ -847,7 +847,7 @@ def test_inputs_json_duplicate_session_ids_should_be_rejected(tmp_path: Path):
             }
         )
     )
-    loader = InputsJsonPayloadLoader(filename=p, user_config=_user_config())
+    loader = InputsJsonPayloadLoader(filename=p, cfg=_cfg())
     with pytest.raises(ValueError, match="duplicate"):
         loader.load_dataset()
 
@@ -856,6 +856,6 @@ def test_inputs_json_data_not_a_list_raises(tmp_path: Path):
     """``data`` typed as a string (not a list) raises on iteration."""
     p = tmp_path / "inputs.json"
     p.write_bytes(orjson.dumps({"data": "not a list"}))
-    loader = InputsJsonPayloadLoader(filename=p, user_config=_user_config())
+    loader = InputsJsonPayloadLoader(filename=p, cfg=_cfg())
     with pytest.raises((TypeError, ValueError)):
         loader.load_dataset()

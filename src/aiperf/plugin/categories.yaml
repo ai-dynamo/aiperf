@@ -160,6 +160,25 @@ results_processor:
     Final stage of metrics pipeline for aggregated statistics and summaries.
     One-to-many mapping: multiple processors can be loaded simultaneously.
 
+gpu_telemetry_processor:
+  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
+  enum: GPUTelemetryProcessorType
+  description: |
+    GPU telemetry processors aggregate and export GPU telemetry records locally
+    within GPUTelemetryManager. Side-channel pipeline that keeps telemetry
+    records in their origin process rather than routing through RecordsManager.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
+
+server_metrics_processor:
+  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
+  enum: ServerMetricsProcessorType
+  description: |
+    Server metrics processors aggregate and export Prometheus server metrics
+    records locally within ServerMetricsManager. Side-channel pipeline that
+    keeps server metrics records in their origin process rather than routing
+    through RecordsManager.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
+
 # =============================================================================
 # Accuracy Categories
 # =============================================================================
@@ -301,3 +320,56 @@ gpu_telemetry_collector:
     GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
     Supports DCGM HTTP endpoints and plugin-defined local collectors.
     One-to-one mapping based on gpu_telemetry_collector configuration.
+
+# =============================================================================
+# Search Recipe Category
+# =============================================================================
+
+search_recipe:
+  protocol: aiperf.search_recipes._base:SearchRecipe
+  enum: SearchRecipeType
+  description: |
+    Search recipes are named, plugin-registered presets that compile down to
+    AdaptiveSearchSweep (Bayesian Optimization) or sweep.parameters (grid) in
+    the CLI converter (`aiperf.config.flags._converter_optionals.expand_search_recipe`,
+    lifted onto the top-level sweep envelope by `aiperf.config.flags.converter
+    ._apply_recipe_sweep_parameters`). Selected via `--search-recipe <name>` on
+    the CLI. One-to-one mapping per benchmark run.
+
+search_recipe_post_process:
+  protocol: aiperf.search_recipes.post_process:PostProcessHandler
+  enum: SearchRecipePostProcessType
+  description: |
+    Post-process handlers run after `SweepAnalyzer.compute()` in
+    `aggregate_sweep_and_export` and emit derived artifacts (curves, knee
+    points) into `sweep_aggregate/`. Handlers are stateless and one instance
+    is reused per recipe. Selected indirectly via a recipe's PostProcessSpec.
+    One-to-one mapping per recipe-emitted PostProcessSpec.
+
+# =============================================================================
+# Convergence Criterion Category
+# =============================================================================
+
+convergence_criterion:
+  protocol: aiperf.orchestrator.convergence.base:ConvergenceCriterion
+  metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata
+  enum: ConvergenceCriterionType
+  description: |
+    Convergence criteria decide when benchmark metrics have stabilized across
+    repeated runs and the adaptive trial loop can stop. Each criterion declares
+    its statistical assumptions (min samples, confidence-level usage, JSONL
+    consumption) via metadata so the CLI can validate `--convergence-*` flags
+    before importing scipy/statsmodels. Selected via `--convergence-mode <name>`.
+    One-to-one mapping per benchmark run.
+
+search_planner:
+  protocol: aiperf.orchestrator.search_planner.base:SearchPlanner
+  metadata_class: aiperf.plugin.schema.schemas:SearchPlannerMetadata
+  enum: SearchPlannerType
+  description: |
+    Search planners drive the adaptive outer loop, proposing the next variation
+    via `ask()` and absorbing observed metrics via `tell()`. Each declares
+    dimension-type and objective-direction support via metadata so the CLI can
+    validate `--search-space` shape before importing the planner's heavy
+    soft-dep tree (optuna, botorch, scipy, etc.). Selected via `--search-planner <name>`.
+    One-to-one mapping per benchmark run.

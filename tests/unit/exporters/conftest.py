@@ -4,6 +4,7 @@
 """Shared test fixtures for data exporters."""
 
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -26,7 +27,51 @@ from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
+from tests.unit.conftest import make_cfg_from_v1
+
+
+def make_exporter_config(
+    *,
+    results=None,
+    cli_config: CLIConfig | None = None,
+    telemetry_results=None,
+    server_metrics_results=None,
+    artifact_directory: Path | None = None,
+    cfg=None,
+    run=None,
+) -> ExporterConfig:
+    """Test-only ExporterConfig factory that accepts legacy v1 kwargs.
+
+    Bridges tests still passing v1 ``CLIConfig`` to the v2
+    ``ExporterConfig(cfg=BenchmarkConfig)`` constructor by resolving v1 -> v2
+    via ``make_cfg_from_v1``. If ``artifact_directory`` is not given but
+    ``cli_config.artifact_directory`` is set on the v1 config, that
+    value is used to override ``cfg.artifacts.dir`` (mirroring the legacy
+    behavior tests previously relied on).
+    """
+    if cfg is None:
+        if (
+            artifact_directory is None
+            and cli_config is not None
+            and "artifact_directory" in cli_config.model_fields_set
+        ):
+            artifact_directory = cli_config.artifact_directory
+        cfg = make_cfg_from_v1(
+            cli_config or CLIConfig(),
+            artifact_directory=artifact_directory,
+        )
+    elif artifact_directory is not None:
+        cfg.artifacts.dir = Path(artifact_directory)
+    return ExporterConfig(
+        results=results,
+        cfg=cfg,
+        telemetry_results=telemetry_results,
+        server_metrics_results=server_metrics_results,
+        run=run,
+    )
 
 
 @pytest.fixture

@@ -26,6 +26,7 @@ from aiperf.plugin.constants import (
 )
 from aiperf.plugin.extensible_enums import ExtensibleStrEnum, _normalize_name
 from aiperf.plugin.schema.schemas import (
+    ConvergenceCriterionMetadata,
     CustomDatasetLoaderMetadata,
     EndpointMetadata,
     GPUTelemetryCollectorMetadata,
@@ -33,6 +34,7 @@ from aiperf.plugin.schema.schemas import (
     PluginsManifest,
     PluginSpec,
     PublicDatasetLoaderMetadata,
+    SearchPlannerMetadata,
     ServiceMetadata,
     TransportMetadata,
 )
@@ -934,10 +936,14 @@ if TYPE_CHECKING:
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
+    from aiperf.orchestrator.convergence.base import ConvergenceCriterion
+    from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, GPUTelemetryProcessorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServerMetricsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
+    from aiperf.search_recipes._base import SearchRecipe
+    from aiperf.search_recipes.post_process import PostProcessHandler
     from aiperf.timing.intervals import IntervalGeneratorProtocol
     from aiperf.timing.ramping import RampStrategyProtocol
     from aiperf.timing.strategies.core import TimingStrategyProtocol
@@ -1005,6 +1011,14 @@ if TYPE_CHECKING:
     @overload
     def iter_all(category: Literal[PluginType.RESULTS_PROCESSOR, "results_processor"]) -> Iterator[tuple[PluginEntry, type[BaseMetricsProcessor]]]: ...
     @overload
+    def get_class(category: Literal[PluginType.GPU_TELEMETRY_PROCESSOR, "gpu_telemetry_processor"], name_or_class_path: GPUTelemetryProcessorType | str) -> type[BaseMetricsProcessor]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.GPU_TELEMETRY_PROCESSOR, "gpu_telemetry_processor"]) -> Iterator[tuple[PluginEntry, type[BaseMetricsProcessor]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.SERVER_METRICS_PROCESSOR, "server_metrics_processor"], name_or_class_path: ServerMetricsProcessorType | str) -> type[BaseMetricsProcessor]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.SERVER_METRICS_PROCESSOR, "server_metrics_processor"]) -> Iterator[tuple[PluginEntry, type[BaseMetricsProcessor]]]: ...
+    @overload
     def get_class(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"], name_or_class_path: AccuracyGraderType | str) -> type[AccuracyGraderProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"]) -> Iterator[tuple[PluginEntry, type[AccuracyGraderProtocol]]]: ...
@@ -1056,6 +1070,22 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.GPU_TELEMETRY_COLLECTOR, "gpu_telemetry_collector"], name_or_class_path: GPUTelemetryCollectorType | str) -> type[GPUTelemetryCollectorProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.GPU_TELEMETRY_COLLECTOR, "gpu_telemetry_collector"]) -> Iterator[tuple[PluginEntry, type[GPUTelemetryCollectorProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.SEARCH_RECIPE, "search_recipe"], name_or_class_path: SearchRecipeType | str) -> type[SearchRecipe]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.SEARCH_RECIPE, "search_recipe"]) -> Iterator[tuple[PluginEntry, type[SearchRecipe]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.SEARCH_RECIPE_POST_PROCESS, "search_recipe_post_process"], name_or_class_path: SearchRecipePostProcessType | str) -> type[PostProcessHandler]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.SEARCH_RECIPE_POST_PROCESS, "search_recipe_post_process"]) -> Iterator[tuple[PluginEntry, type[PostProcessHandler]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.CONVERGENCE_CRITERION, "convergence_criterion"], name_or_class_path: ConvergenceCriterionType | str) -> type[ConvergenceCriterion]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.CONVERGENCE_CRITERION, "convergence_criterion"]) -> Iterator[tuple[PluginEntry, type[ConvergenceCriterion]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.SEARCH_PLANNER, "search_planner"], name_or_class_path: SearchPlannerType | str) -> type[SearchPlanner]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.SEARCH_PLANNER, "search_planner"]) -> Iterator[tuple[PluginEntry, type[SearchPlanner]]]: ...
     @overload
     def get_class(category: PluginType | PluginTypeStr, name_or_class_path: str) -> type: ...
     # fmt: on
@@ -1233,6 +1263,32 @@ def is_trace_dataset(name: str) -> bool:
     return get_dataset_loader_metadata(name).is_trace
 
 
+def get_convergence_criterion_metadata(name: str) -> ConvergenceCriterionMetadata:
+    """Get typed metadata for a convergence criterion plugin.
+
+    Args:
+        name: Convergence criterion plugin name (e.g., 'ci_width', 'cv', 'distribution').
+
+    Returns:
+        Validated ConvergenceCriterionMetadata instance.
+    """
+    return get_entry("convergence_criterion", name).get_typed_metadata(
+        ConvergenceCriterionMetadata
+    )
+
+
+def get_search_planner_metadata(name: str) -> SearchPlannerMetadata:
+    """Get typed metadata for a search planner plugin.
+
+    Args:
+        name: Search planner plugin name (e.g., 'bayesian').
+
+    Returns:
+        Validated SearchPlannerMetadata instance.
+    """
+    return get_entry("search_planner", name).get_typed_metadata(SearchPlannerMetadata)
+
+
 # Mapping of categories to their metadata classes (for categories with typed metadata)
 _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "endpoint": EndpointMetadata,
@@ -1240,6 +1296,8 @@ _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "plot": PlotMetadata,
     "service": ServiceMetadata,
     "custom_dataset_loader": CustomDatasetLoaderMetadata,
+    "convergence_criterion": ConvergenceCriterionMetadata,
+    "search_planner": SearchPlannerMetadata,
     "gpu_telemetry_collector": GPUTelemetryCollectorMetadata,
 }
 

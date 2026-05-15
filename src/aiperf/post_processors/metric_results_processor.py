@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config import UserConfig
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.enums import (
     MetricDictValueTypeT,
     MetricFlags,
@@ -23,6 +24,9 @@ from aiperf.metrics.metric_dicts import MetricAggregator, MetricArray, MetricRes
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class MetricResultsProcessor(BaseMetricsProcessor):
     """Processor for metric results.
@@ -31,8 +35,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
     It is responsible for processing the results and returning them to the RecordsManager, as well as summarizing the results.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any):
+        super().__init__(run=run, **kwargs)
         # For derived metrics, we don't care about splitting up the error metrics
         # Note: _setup_metrics returns metrics in dependency order, which includes
         # non-derived dependencies. We filter to only include actual derived metrics.
@@ -87,9 +91,10 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                     if tag not in results_dict:
                         # The metric class shape doesn't change mid-run, so the
                         # storage type can be picked at first-touch. List values
-                        # go to the bounded t-digest aggregator (today only
-                        # inter_chunk_latency would otherwise blow past pod RAM
-                        # at ramp scale); scalar values stay in MetricArray.
+                        # go to the bounded t-digest aggregator (e.g.
+                        # inter_chunk_latency, which would otherwise blow past
+                        # pod RAM at ramp scale); scalar values stay in
+                        # MetricArray.
                         results_dict[tag] = (
                             TDigestListMetricAggregator()
                             if isinstance(value, list)

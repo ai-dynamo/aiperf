@@ -4,7 +4,7 @@
 -->
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus.
+Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
@@ -25,7 +25,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - `BaseComponentService` for services, `BaseService` for SystemController only.
 - Message bus for inter-service communication - no shared mutable state.
 - CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
-- YAML plugin registry for extensible features (`plugins.yaml`).
+- YAML plugin registry for extensible features (`src/aiperf/plugin/plugins.yaml`).
 - Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
 - Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
 - No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
@@ -37,6 +37,10 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
 - No emojis in code or comments.
 - Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
+
+## NaN/Inf Discipline
+
+Numeric metric values crossing a serialization boundary or feeding a numerical algorithm must be finite or explicitly `None`. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
 
 ## Build and Test Commands
 
@@ -68,7 +72,7 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 ## Adding a New Service
 
 1. Create class extending `BaseComponentService` with `@on_message` handlers
-2. Register in `plugins.yaml` under `service` category with `class`, `description`, `metadata`
+2. Register in `src/aiperf/plugin/plugins.yaml` under `service` category with `class`, `description`, `metadata`
 3. Add message type to `common/enums/enums.py` if new messages needed
 4. Create message class in `messages/` with `message_type` field
 5. Validate with `aiperf plugins --validate`
@@ -83,9 +87,13 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 ## Adding a New Plugin
 
 1. Create plugin class implementing the appropriate base
-2. Add entry to `plugins.yaml` with `class`, `description`, `metadata`
+2. Add entry to `src/aiperf/plugin/plugins.yaml` with `class`, `description`, `metadata`
 3. Validate with `make validate-plugin-schemas`
 4. Use via `plugins.get_class(PluginType.X, 'name')`
+
+## Adding a New CLI Flag
+
+See `docs/dev/patterns.md` § "Adding a New CLI Flag". CLIConfig is flat; never add a nested config class.
 
 ## Testing Conventions
 
@@ -122,14 +130,26 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - Validator gate convention: unsupported constructs raise `NotImplementedError` with a leading `"<loc>: <reason>"` prefix where `<loc>` identifies the conversation/turn (e.g. `"conversation 'foo' turn 3: ..."`). New validators must follow this shape.
 - Per-turn payload contract: `extra_body` / `max_tokens` / `model` are dispatch-turn only; `raw_tools` is the lone field that walks history (system-prompt-like). Dataset rows author `extra`, not `extra_body`. See `docs/dev/patterns.md` "Per-turn dataset `extra`".
 
+## Plot Envelope Section
+
+`AIPerfConfig.plot: PlotEnvelopeConfig | None` lets a single AIPerf YAML own its
+visualization. Two forms: bare-string path (`plot: ./plots/baseline.yaml`,
+resolved relative to the AIPerf YAML's dir) or inline dict mirroring
+`src/aiperf/plot/default_plot_config.yaml`. When set, `~/.aiperf/plot_config.yaml`
+is ignored and `artifacts.auto_plot` flips to True (unless explicitly False).
+The auto-plot callback materializes the resolved envelope to
+`<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>` reproduces.
+See `src/aiperf/config/plot.py` for the Pydantic models.
+
 ## Pre-Commit Checklist
 
 1. Review diff: all lines required?
 2. `ruff format . && ruff check --fix .`
 3. `uv run pytest tests/unit/ -n auto`
-4. Type hints on all functions
-5. `Field(description=...)` on all Pydantic fields
-6. `git commit -s`
+4. `uv run pytest tests/unit/property/ -n auto` (mechanical NaN/inf and field-validator invariants)
+5. Type hints on all functions
+6. `Field(description=...)` on all Pydantic fields
+7. `git commit -s`
 
 ## Four-File Sync Rule
 

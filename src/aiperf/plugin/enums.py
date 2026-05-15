@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import create_enum
 
-__all__ = ["APIRouterType", "APIRouterTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
+__all__ = ["APIRouterType", "APIRouterTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "ConvergenceCriterionType", "ConvergenceCriterionTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetFormat", "DatasetFormatStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "GPUTelemetryProcessorType", "GPUTelemetryProcessorTypeStr", "PhaseType", "PhaseTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "SearchPlannerType", "SearchPlannerTypeStr", "SearchRecipePostProcessType", "SearchRecipePostProcessTypeStr", "SearchRecipeType", "SearchRecipeTypeStr", "ServerMetricsProcessorType", "ServerMetricsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
 
 # Plugin Protocol Categories
 if TYPE_CHECKING:
@@ -81,6 +81,14 @@ ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
 """Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.OTEL_METRICS_STREAMER, ResultsProcessorType.TIMESLICE"""
 
+GPUTelemetryProcessorTypeStr: TypeAlias = str
+GPUTelemetryProcessorType = plugins.create_enum(PluginType.GPU_TELEMETRY_PROCESSOR, "GPUTelemetryProcessorType", module=__name__)
+"""Dynamic enum for gpu telemetry processor. Example: GPUTelemetryProcessorType.GPU_TELEMETRY_ACCUMULATOR, GPUTelemetryProcessorType.GPU_TELEMETRY_JSONL_WRITER"""
+
+ServerMetricsProcessorTypeStr: TypeAlias = str
+ServerMetricsProcessorType = plugins.create_enum(PluginType.SERVER_METRICS_PROCESSOR, "ServerMetricsProcessorType", module=__name__)
+"""Dynamic enum for server metrics processor. Example: ServerMetricsProcessorType.SERVER_METRICS_ACCUMULATOR, ServerMetricsProcessorType.SERVER_METRICS_JSONL_WRITER"""
+
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
 """Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.LIGHTEVAL_GPQA, AccuracyGraderType.MULTIPLE_CHOICE"""
@@ -111,7 +119,7 @@ ServiceType = plugins.create_enum(PluginType.SERVICE, "ServiceType", module=__na
 
 ServiceRunTypeStr: TypeAlias = str
 ServiceRunType = plugins.create_enum(PluginType.SERVICE_MANAGER, "ServiceRunType", module=__name__)
-"""Dynamic enum for service manager. Example: ServiceRunType.KUBERNETES, ServiceRunType.MULTIPROCESSING"""
+"""Dynamic enum for service manager. Example: ServiceRunType.MULTIPROCESSING"""
 
 CommunicationBackendStr: TypeAlias = str
 CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "CommunicationBackend", module=__name__)
@@ -132,3 +140,51 @@ PlotType = plugins.create_enum(PluginType.PLOT, "PlotType", module=__name__)
 GPUTelemetryCollectorTypeStr: TypeAlias = str
 GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECTOR, "GPUTelemetryCollectorType", module=__name__)
 """Dynamic enum for gpu telemetry collector. Example: GPUTelemetryCollectorType.AMDSMI, GPUTelemetryCollectorType.DCGM, GPUTelemetryCollectorType.PYNVML"""
+
+SearchRecipeTypeStr: TypeAlias = str
+SearchRecipeType = plugins.create_enum(PluginType.SEARCH_RECIPE, "SearchRecipeType", module=__name__)
+"""Dynamic enum for search recipe. Example: SearchRecipeType.CONCURRENCY_RAMP, SearchRecipeType.MAX_THROUGHPUT_ITL_SLA, SearchRecipeType.PREFILL_TTFT_CURVE"""
+
+SearchRecipePostProcessTypeStr: TypeAlias = str
+SearchRecipePostProcessType = plugins.create_enum(PluginType.SEARCH_RECIPE_POST_PROCESS, "SearchRecipePostProcessType", module=__name__)
+"""Dynamic enum for search recipe post process. Example: SearchRecipePostProcessType.DEGRADATION_KNEE_DETECT, SearchRecipePostProcessType.PARETO_SWEEP_EXPORT, SearchRecipePostProcessType.TTFT_CURVE_FIT"""
+
+ConvergenceCriterionTypeStr: TypeAlias = str
+ConvergenceCriterionType = plugins.create_enum(PluginType.CONVERGENCE_CRITERION, "ConvergenceCriterionType", module=__name__)
+"""Dynamic enum for convergence criterion. Example: ConvergenceCriterionType.CI_WIDTH, ConvergenceCriterionType.CV, ConvergenceCriterionType.DISTRIBUTION"""
+
+SearchPlannerTypeStr: TypeAlias = str
+SearchPlannerType = plugins.create_enum(PluginType.SEARCH_PLANNER, "SearchPlannerType", module=__name__)
+"""Dynamic enum for search planner. Example: SearchPlannerType.BAYESIAN, SearchPlannerType.OPTUNA, SearchPlannerType.SMOOTH_ISOTONIC"""
+
+# =============================================================================
+# Composite Enums (merged from multiple categories)
+# =============================================================================
+
+PhaseTypeStr: TypeAlias = str
+def _build_phasetype_members() -> dict[str, str]:
+    members: dict[str, str] = {}
+    for entry in plugins.list_entries(PluginType.ARRIVAL_PATTERN):
+        alias = {'concurrency_burst': 'concurrency'}.get(entry.name, entry.name)
+        if alias.upper() not in members:
+            members[alias.upper()] = alias
+    for entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
+        if entry.name in {'request_rate'}:
+            continue
+        alias = {'user_centric_rate': 'user_centric'}.get(entry.name, entry.name)
+        if alias.upper() not in members:
+            members[alias.upper()] = alias
+    return members
+PhaseType = create_enum("PhaseType", _build_phasetype_members(), module=__name__)
+"""Load generation type for benchmark phases. Example: PhaseType.CONCURRENCY, PhaseType.CONSTANT, PhaseType.FIXED_SCHEDULE"""
+
+DatasetFormatStr: TypeAlias = str
+def _build_datasetformat_members() -> dict[str, str]:
+    members: dict[str, str] = {}
+    for entry in plugins.list_entries(PluginType.CUSTOM_DATASET_LOADER):
+        alias = {}.get(entry.name, entry.name)
+        if alias.upper() not in members:
+            members[alias.upper()] = alias
+    return members
+DatasetFormat = create_enum("DatasetFormat", _build_datasetformat_members(), module=__name__)
+"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because ``--custom-dataset-type`` resolves into ``benchmark.datasets[].file.format``. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BURST_GPT_TRACE, DatasetFormat.DAG_JSONL"""

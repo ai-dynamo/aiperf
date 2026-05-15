@@ -10,13 +10,13 @@ import asyncio
 import sys
 import uuid
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.models import ServiceRunInfo
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.types import ServiceTypeT
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.controller.base_service_manager import BaseServiceManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
@@ -34,11 +34,10 @@ class FakeServiceManager(BaseServiceManager):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
+        super().__init__(required_services, run, **kwargs)
         self.services: dict[str, ServiceProtocol] = {}
         self.warning(
             "*** Using FakeServiceManager in-process mode to bypass multiprocessing. This is for component integration testing only. ***"
@@ -53,11 +52,10 @@ class FakeServiceManager(BaseServiceManager):
         for _ in range(num_replicas):
             service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
 
-            # Deep copy configs to simulate separate process behavior
+            # Deep copy run to simulate separate process behavior
             # (in production each process deserializes its own copy)
             service = ServiceClass(
-                service_config=self.service_config.model_copy(deep=True),
-                user_config=self.user_config.model_copy(deep=True),
+                run=self.run.model_copy(deep=True),
                 service_id=service_id,
             )
 

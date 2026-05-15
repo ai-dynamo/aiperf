@@ -1,16 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import base64
 import io
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import soundfile as sf
 from datasets import Audio as HFAudio
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _ASR_PROMPT = "Transcribe this audio."
 _MAX_DURATION_SECONDS = 30
@@ -46,12 +50,12 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun | None = None,
         audio_column: str = "audio",
         **kwargs,
     ) -> None:
         self.audio_column = audio_column
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     def _audio_from_bytes(self, audio_value: _HFAudioBytesRow) -> list[Audio]:
         """Decode raw HF audio bytes into an AIPerf Audio object.

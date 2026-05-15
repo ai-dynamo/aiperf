@@ -7,19 +7,19 @@ import pytest
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_benchmark_run
 
 
-def _make_user_config(n_shots: int | None = None) -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU, n_shots=n_shots),
+def _make_run(n_shots: int | None = None):
+    accuracy: dict = {"benchmark": AccuracyBenchmarkType.MMLU}
+    if n_shots is not None:
+        accuracy["n_shots"] = n_shots
+    return make_benchmark_run(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy=accuracy,
     )
 
 
@@ -37,7 +37,7 @@ class TestLoadBenchmarkProblemsNShots:
         un-called — we assert that metadata's ``default_n_shots`` is
         ignored when the user provides their own value.
         """
-        user_config = _make_user_config(n_shots=3)
+        run = _make_run(n_shots=3)
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -57,7 +57,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={"default_n_shots": 99},
             ),
         ):
-            result = await load_benchmark_problems(user_config)
+            result = await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=3, enable_cot=False
@@ -67,9 +67,9 @@ class TestLoadBenchmarkProblemsNShots:
     async def test_metadata_default_enable_cot_used_when_unset(self) -> None:
         """When ``enable_cot`` is None, the benchmark's
         ``default_enable_cot`` from plugin metadata is honored."""
-        user_config = _make_user_config(n_shots=0)
+        run = _make_run(n_shots=0)
         # AccuracyConfig.enable_cot defaults to None now; explicitly None.
-        user_config.accuracy.enable_cot = None
+        run.cfg.accuracy.enable_cot = None
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -88,7 +88,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={"default_enable_cot": True},
             ),
         ):
-            await load_benchmark_problems(user_config)
+            await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=0, enable_cot=True
@@ -97,8 +97,8 @@ class TestLoadBenchmarkProblemsNShots:
     async def test_explicit_enable_cot_overrides_metadata(self) -> None:
         """When the user explicitly sets ``enable_cot`` (True or False),
         the metadata default is ignored."""
-        user_config = _make_user_config(n_shots=0)
-        user_config.accuracy.enable_cot = False
+        run = _make_run(n_shots=0)
+        run.cfg.accuracy.enable_cot = False
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -117,7 +117,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={"default_enable_cot": True},
             ),
         ):
-            await load_benchmark_problems(user_config)
+            await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=0, enable_cot=False
@@ -125,7 +125,7 @@ class TestLoadBenchmarkProblemsNShots:
 
     async def test_falls_back_to_default_n_shots_from_metadata(self) -> None:
         """When n_shots is None, default_n_shots from plugin metadata is used."""
-        user_config = _make_user_config(n_shots=None)
+        run = _make_run(n_shots=None)
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -144,7 +144,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={"default_n_shots": 5},
             ),
         ):
-            result = await load_benchmark_problems(user_config)
+            result = await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=5, enable_cot=False
@@ -155,7 +155,7 @@ class TestLoadBenchmarkProblemsNShots:
         self,
     ) -> None:
         """When n_shots is None and metadata has no default_n_shots, n_shots defaults to 0."""
-        user_config = _make_user_config(n_shots=None)
+        run = _make_run(n_shots=None)
         problem = _make_problem()
 
         mock_benchmark = AsyncMock()
@@ -174,7 +174,7 @@ class TestLoadBenchmarkProblemsNShots:
                 return_value={},
             ),
         ):
-            result = await load_benchmark_problems(user_config)
+            result = await load_benchmark_problems(run)
 
         mock_benchmark.load_problems.assert_awaited_once_with(
             tasks=None, n_shots=0, enable_cot=False

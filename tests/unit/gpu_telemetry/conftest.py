@@ -8,32 +8,28 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.config.flags.cli_config import CLIConfig
 from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
 
 
 @pytest.fixture
-def base_user_config():
-    """Create a minimal UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(url="http://localhost:8000", model_names=["test-model"])
-    )
+def base_cfg():
+    """Create a minimal CLIConfig for testing."""
+    return CLIConfig(url="http://localhost:8000", model_names=["test-model"])
 
 
-def create_user_config(
+def create_cfg(
     gpu_telemetry: list[str] | None = None,
     no_gpu_telemetry: bool = False,
-) -> UserConfig:
-    """Helper to create UserConfig with GPU telemetry settings."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            url="http://localhost:8000", model_names=["test-model"]
-        ),
+) -> CLIConfig:
+    """Helper to create CLIConfig with GPU telemetry settings."""
+    return CLIConfig(
+        url="http://localhost:8000",
+        model_names=["test-model"],
         gpu_telemetry=gpu_telemetry,
         no_gpu_telemetry=no_gpu_telemetry,
     )

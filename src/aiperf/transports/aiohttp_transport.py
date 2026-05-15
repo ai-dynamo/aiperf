@@ -9,6 +9,7 @@ import binascii
 import time
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 import orjson
@@ -38,6 +39,18 @@ from aiperf.transports.base_transports import (
     FirstTokenCallback,
     TransportMetadata,
 )
+
+
+def _has_http_scheme(url: str) -> bool:
+    """Return True if ``url`` already starts with ``http://`` or ``https://``.
+
+    Case-insensitive: an uppercase ``HTTP://`` scheme counts as already-schemed,
+    so we don't prepend a second ``http://`` and produce ``http://HTTP://...``.
+    The ``://`` check is preferred over ``urlsplit().scheme`` because urlsplit
+    parses ``localhost:8000`` as scheme=``localhost``.
+    """
+    lowered = url.lower()
+    return lowered.startswith(("http://", "https://"))
 
 
 class ConnectionLeaseManager(AIPerfLoggerMixin):
@@ -193,6 +206,11 @@ class AioHttpTransport(BaseTransport):
         When multiple URLs are configured, uses request_info.url_index to select
         the appropriate URL for load balancing.
 
+        Path-joining happens on the URL's path component only; any query string
+        or fragment in the base URL is preserved untouched. Dedup of an overlap
+        between the base path tail and the appended path runs in both the
+        custom-endpoint and metadata branches via :meth:`_dedup_path_overlap`.
+
         Args:
             request_info: Request context with model endpoint info
 
@@ -202,15 +220,21 @@ class AioHttpTransport(BaseTransport):
         endpoint_info = request_info.model_endpoint.endpoint
 
         # Start with base URL - use url_index for multi-URL load balancing
-        base_url = endpoint_info.get_url(request_info.url_index).rstrip("/")
+        raw_base_url = endpoint_info.get_url(request_info.url_index)
+        # Ensure scheme is present so urlsplit populates path/query/fragment
+        # correctly (otherwise 'localhost:8000/x' parses as scheme='localhost').
+        if not _has_http_scheme(raw_base_url):
+            raw_base_url = f"http://{raw_base_url}"
 
-        # Determine the endpoint path
-        if endpoint_info.custom_endpoint:
-            # Use custom endpoint path if provided
-            path = endpoint_info.custom_endpoint.lstrip("/")
-            url = f"{base_url}/{path}"
+        split = urlsplit(raw_base_url)
+        base_path = split.path.rstrip("/")
+
+        # Determine the endpoint path component to append.
+        # custom_endpoint is checked with `is not None` so that the empty string
+        # is distinguishable from "unset" — empty-string means "no path append".
+        if endpoint_info.custom_endpoint is not None:
+            sub_path = endpoint_info.custom_endpoint.lstrip("/")
         else:
-            # Get endpoint path from endpoint metadata
             endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
             endpoint_path = endpoint_metadata.endpoint_path
             if (
@@ -218,17 +242,38 @@ class AioHttpTransport(BaseTransport):
                 and endpoint_metadata.streaming_path is not None
             ):
                 endpoint_path = endpoint_metadata.streaming_path
-            if not endpoint_path:
-                # No endpoint path, just use base URL
-                url = base_url
+            sub_path = (endpoint_path or "").lstrip("/")
 
-            else:
-                path = endpoint_path.lstrip("/")
-                # Handle /v1 base URL with v1/ path prefix to avoid duplication
-                if base_url.endswith("/v1") and path.startswith("v1/"):
-                    path = path.removeprefix("v1/")
-                url = f"{base_url}/{path}"
-        return url if url.startswith("http") else f"http://{url}"
+        # Path overlap dedup is exact-match on raw path; %-encoded slashes are not decoded.
+        new_path = self._dedup_path_overlap(base_path, sub_path)
+
+        return urlunsplit(
+            (split.scheme, split.netloc, new_path, split.query, split.fragment)
+        )
+
+    @staticmethod
+    def _dedup_path_overlap(base_path: str, sub_path: str) -> str:
+        """Join ``base_path`` and ``sub_path`` while collapsing tail/head overlap.
+
+        Three cases are deduped:
+
+        * ``sub_path`` is empty: the base path is returned unchanged.
+        * ``base_path`` already ends with the full ``sub_path`` (e.g. user wrote
+          the complete endpoint URL): the base path is returned unchanged.
+        * ``base_path`` ends with ``/v1`` and ``sub_path`` starts with ``v1/``:
+          the leading ``v1/`` on the sub-path is dropped before joining, so a
+          ``/v1`` base plus a metadata path of ``v1/chat/completions`` produces
+          ``/v1/chat/completions`` rather than ``/v1/v1/chat/completions``.
+
+        Otherwise the two are joined with a single ``/``.
+        """
+        if not sub_path:
+            return base_path
+        if base_path.endswith("/" + sub_path):
+            return base_path
+        if base_path.endswith("/v1") and sub_path.startswith("v1/"):
+            sub_path = sub_path.removeprefix("v1/")
+        return f"{base_path}/{sub_path}"
 
     async def send_request(
         self,

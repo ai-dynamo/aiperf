@@ -3,8 +3,8 @@
 import asyncio
 import time
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
@@ -25,6 +25,9 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 # TODO: Should we create non-tokenizer based parsers?
 class InferenceResultParser(CommunicationMixin):
@@ -32,19 +35,14 @@ class InferenceResultParser(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: "BenchmarkRun",
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
-            user_config
-        )
+        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(run)
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )
@@ -52,9 +50,8 @@ class InferenceResultParser(CommunicationMixin):
         endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
         # if the user config is set to use server token counts.
-        self.disable_tokenization: bool = (
-            user_config.endpoint.use_server_token_count
-            or (not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input)
+        self.disable_tokenization: bool = run.cfg.endpoint.use_server_token_count or (
+            not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
         )
         self.debug(
             lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
@@ -74,7 +71,7 @@ class InferenceResultParser(CommunicationMixin):
             )
             return
 
-        tokenizer_config = self.user_config.tokenizer
+        tokenizer_config = self.run.cfg.tokenizer
         self.info(
             f"Configuring tokenizers for inference result parser (resolve_alias: {tokenizer_config.should_resolve_alias})"
         )
@@ -104,7 +101,7 @@ class InferenceResultParser(CommunicationMixin):
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                tokenizer_config = self.user_config.tokenizer
+                tokenizer_config = self.run.cfg.tokenizer
                 self.tokenizers[model] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
                     tokenizer_config.get_tokenizer_name_for_model(model),
@@ -213,11 +210,11 @@ class InferenceResultParser(CommunicationMixin):
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             request_record.responses = None
 
         # Compute token counts based on configuration
-        if self.user_config.endpoint.use_server_token_count:
+        if self.run.cfg.endpoint.use_server_token_count:
             token_counts = await self._compute_server_token_counts(resp)
         elif not self.disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(

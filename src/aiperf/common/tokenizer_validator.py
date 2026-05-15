@@ -1,44 +1,187 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Early tokenizer validation and preloading before spawning services."""
+"""Early tokenizer validation and HuggingFace cache warming.
+
+This module runs before any service processes are spawned and has two jobs:
+
+1. **Alias resolution** -- fast HF Hub API calls to resolve short names
+   (e.g. "qwen3-0.6b") to canonical repo IDs. Runs in the parent process since
+   it's lightweight and network-only.
+
+2. **Cache warming** -- full ``Tokenizer.from_pretrained`` calls that
+   download model files into the HF disk cache. These run in a
+   ``ProcessPoolExecutor`` so the parent process never imports the
+   Rust-backed tokenizer internals that create threads and other state
+   incompatible with ``fork()``. Once the cache is warm, child service
+   processes set ``HF_HUB_OFFLINE=1`` (see ``bootstrap.py``) and load
+   from disk with zero network traffic, eliminating the thundering-herd
+   problem that occurs when N record processors all hit the Hub concurrently.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import multiprocessing as mp
+import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.config import UserConfig
-
-
-def validate_tokenizer_early(
-    user_config: UserConfig, logger: AIPerfLogger
-) -> dict[str, str] | None:
-    """Validate tokenizers before spawning services.
-
-    Resolves aliases using fast API calls. Full tokenizer loading happens later.
-
-    Args:
-        user_config: Configuration containing tokenizer settings.
-        logger: Logger for output.
-
-    Returns:
-        Mapping of model names to resolved tokenizer names, or None if skipped.
-
-    Raises:
-        SystemExit: If tokenizer validation fails.
-    """
     from rich.console import Console
 
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.config import BenchmarkConfig
+
+
+# ---------------------------------------------------------------------------
+# Subprocess cache warming
+# ---------------------------------------------------------------------------
+
+
+def _init_worker(log_level: str) -> None:
+    """ProcessPoolExecutor initializer: bootstrap logging in each worker."""
+    import logging
+
+    # basicConfig is a no-op when handlers already exist; force the level so
+    # _cache_tokenizer's logger.info calls are visible at the expected level.
+    logging.basicConfig(level=log_level)
+    logging.root.setLevel(log_level)
+
+
+def _cache_tokenizer(
+    name: str, trust_remote_code: bool, revision: str
+) -> tuple[str, float]:
+    """Subprocess target: download one tokenizer into the HF disk cache.
+
+    Must be module-level so ``ProcessPoolExecutor`` can pickle it.
+    """
+    from aiperf.common.models.error_models import ErrorDetails
+    from aiperf.common.tokenizer import Tokenizer
+
+    begin = time.perf_counter()
+    try:
+        Tokenizer.from_pretrained(
+            name,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+            resolve_alias=False,
+        )
+    except Exception as e:
+        # ProcessPoolExecutor replaces __cause__/__context__ with _RemoteTraceback
+        # when re-raising in the parent. Capture the chain here while it's intact
+        # so the parent can still route to the correct error insight.
+        e.cause_chain = ErrorDetails._build_cause_chain(e)
+        raise
+    return name, time.perf_counter() - begin
+
+
+def _partition_cached_names(
+    names: set[str],
+    *,
+    revision: str,
+    logger: AIPerfLogger,
+) -> tuple[set[str], set[str]]:
+    """Split *names* into (already_cached, to_fetch) using on-disk cache state."""
+    from aiperf.common.tokenizer import _is_hf_cached
+
+    already_cached: set[str] = set()
+    to_fetch: set[str] = set()
+    for name in names:
+        if _is_hf_cached(name, revision):
+            already_cached.add(name)
+        else:
+            to_fetch.add(name)
+
+    if already_cached:
+        logger.info(f"HF cache hit (skipping prefetch): {sorted(already_cached)}")
+
+    return already_cached, to_fetch
+
+
+def _prefetch_tokenizers(
+    names: set[str],
+    *,
+    trust_remote_code: bool,
+    revision: str,
+    logger: AIPerfLogger,
+    console: Console,
+) -> None:
+    """Cache unique tokenizers concurrently, one subprocess each.
+
+    On failure, displays a rich diagnostic panel and exits.
+    """
+    import logging as _logging
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    from aiperf.common.models import ErrorDetails
+    from aiperf.common.tokenizer_display import display_tokenizer_validation_error
+
+    _, to_fetch = _partition_cached_names(names, revision=revision, logger=logger)
+    if not to_fetch:
+        return
+
+    names = to_fetch
+    count = len(names)
+    log_level = _logging.getLevelName(_logging.getLogger().getEffectiveLevel())
+    logger.info(
+        f"Prefetching {count} tokenizer{'s' if count > 1 else ''} into HF cache..."
+    )
+    start = time.perf_counter()
+    with ProcessPoolExecutor(
+        max_workers=count,
+        initializer=_init_worker,
+        initargs=(log_level,),
+    ) as pool:
+        futures = {
+            pool.submit(_cache_tokenizer, n, trust_remote_code, revision): n
+            for n in names
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                _, elapsed = future.result()
+                logger.info(f"  Cached {name} ({elapsed:.2f}s)")
+            except Exception as e:  # noqa: BLE001 - tokenizer prefetch may raise arbitrary HF/network/subprocess errors; surface via rich panel
+                # Print the raw traceback to stderr above the panel; the panel
+                # gives a curated message but the chained traceback is what's
+                # needed when the failure is in a less-common HF/repo path.
+                import traceback
+
+                traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
+                sys.stderr.flush()
+                cause_chain = getattr(e, "cause_chain", None)
+                details = ErrorDetails.from_exception(e)
+                display_tokenizer_validation_error(
+                    getattr(e, "tokenizer_name", None) or name,
+                    cause_chain=cause_chain or details.cause_chain,
+                    error_message=details.message,
+                    cause_message=details.cause,
+                    console=console,
+                )
+                sys.exit(1)
+    total = time.perf_counter() - start
+    logger.info(f"{count} tokenizer{'s' if count > 1 else ''} cached • {total:.1f}s")
+
+
+# ---------------------------------------------------------------------------
+# Alias resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_aliases(
+    names: list[str], logger: AIPerfLogger, console: Console
+) -> dict[str, str]:
+    """Resolve tokenizer names to canonical HF repo IDs.
+
+    Exits on ambiguous or failed lookups.
+
+    Returns:
+        Mapping of ``{original_name: resolved_name}``.
+    """
     from aiperf.common.tokenizer import (
-        BUILTIN_TOKENIZER_NAME,
-        TIKTOKEN_ENCODING_NAMES,
         Tokenizer,
     )
     from aiperf.common.tokenizer_display import (
@@ -46,56 +189,7 @@ def validate_tokenizer_early(
         display_tokenizer_ambiguous_name,
         log_tokenizer_validation_results,
     )
-    from aiperf.plugin import plugins
 
-    endpoint_meta = plugins.get_endpoint_metadata(user_config.endpoint.type)
-
-    # Skip if using server token counts with non-synthetic data
-    input_cfg = user_config.input
-    is_synthetic = (
-        input_cfg.public_dataset is None
-        and input_cfg.custom_dataset_type is None
-        and input_cfg.file is None
-    )
-    if user_config.endpoint.use_server_token_count and not is_synthetic:
-        logger.debug("Using server token counts, skipping tokenizer validation")
-        return None
-
-    if not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input:
-        logger.debug("Endpoint doesn't require tokenizer, skipping validation")
-        return None
-
-    # Determine tokenizers to validate
-    tokenizer_cfg = user_config.tokenizer
-    model_names = user_config.endpoint.model_names
-    names = [tokenizer_cfg.name] if tokenizer_cfg.name else list(model_names)
-
-    # tiktoken-backed tokenizers need no HF resolution
-    if (
-        tokenizer_cfg.name == BUILTIN_TOKENIZER_NAME
-        or tokenizer_cfg.name in TIKTOKEN_ENCODING_NAMES
-    ):
-        logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
-        return {model: tokenizer_cfg.name for model in model_names}
-
-    # Fake-model-name fallback: when --tokenizer is unset, names that look
-    # like LLM-hallucinated placeholders default to builtin instead of an HF
-    # Hub lookup. Explicit --tokenizer always wins.
-    fake_to_builtin: dict[str, str] = {}
-    if not tokenizer_cfg.name:
-        fake_to_builtin, real_models = _partition_fake_models(model_names, logger)
-        if not real_models:
-            # All models are placeholders. Mutate tokenizer_cfg.name so every
-            # downstream consumer (child processes that read
-            # cfg.tokenizer.name directly, the preload step, the dataset
-            # manager's tokenizer loader) sees `builtin` without depending
-            # on resolved_names propagation.
-            tokenizer_cfg.name = BUILTIN_TOKENIZER_NAME
-            return fake_to_builtin
-        names = real_models
-
-    # Validate and resolve aliases
-    console = Console()
     entries: list[TokenizerDisplayEntry] = []
     resolved: dict[str, str] = {}
 
@@ -103,7 +197,7 @@ def validate_tokenizer_early(
     for name in names:
         try:
             result = Tokenizer.resolve_alias(name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - validator must surface any HF/network failure to the user as a startup error
             logger.error(f"Failed to validate tokenizer '{name}': {e}")
             sys.exit(1)
 
@@ -121,9 +215,102 @@ def validate_tokenizer_early(
         )
 
     log_tokenizer_validation_results(entries, logger, time.perf_counter() - start)
+    return resolved
 
-    # Build final mapping
-    if tokenizer_cfg.name:
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+
+def validate_tokenizer_early(
+    config: BenchmarkConfig, logger: AIPerfLogger
+) -> dict[str, str] | None:
+    """Resolve aliases and warm the HF cache (see module docstring).
+
+    Returns:
+        Mapping of ``{model_name: resolved_tokenizer_name}``, or ``None``
+        if tokenizer validation was skipped (e.g. server token counts).
+
+    Raises:
+        SystemExit: If alias resolution, ambiguity check, or caching fails.
+    """
+    from rich.console import Console
+
+    from aiperf.common.enums import DatasetType
+    from aiperf.common.tokenizer import (
+        BUILTIN_TOKENIZER_NAME,
+        TIKTOKEN_ENCODING_NAMES,
+    )
+    from aiperf.plugin import plugins
+
+    endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
+
+    # Skip if using server token counts with non-synthetic data
+    default_dataset = config.get_default_dataset()
+    is_synthetic = getattr(default_dataset, "type", None) == DatasetType.SYNTHETIC
+    if config.endpoint.use_server_token_count and not is_synthetic:
+        logger.debug("Using server token counts, skipping tokenizer validation")
+        return None
+
+    if not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input:
+        logger.debug("Endpoint doesn't require tokenizer, skipping validation")
+        return None
+
+    tokenizer_cfg = config.tokenizer
+    model_names = config.get_model_names()
+    names = (
+        [tokenizer_cfg.name]
+        if tokenizer_cfg and tokenizer_cfg.name
+        else list(model_names)
+    )
+
+    if tokenizer_cfg and (
+        tokenizer_cfg.name == BUILTIN_TOKENIZER_NAME
+        or tokenizer_cfg.name in TIKTOKEN_ENCODING_NAMES
+    ):
+        logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
+        return {model: tokenizer_cfg.name for model in model_names}
+
+    # Fake-model-name fallback: when --tokenizer is unset, names that look
+    # like LLM-hallucinated placeholders default to builtin instead of an HF
+    # Hub lookup. Explicit --tokenizer always wins.
+    fake_to_builtin: dict[str, str] = {}
+    if not (tokenizer_cfg and tokenizer_cfg.name):
+        fake_to_builtin, real_models = _partition_fake_models(model_names, logger)
+        if not real_models:
+            # All models are placeholders. Mutate config.tokenizer so every
+            # downstream consumer (forkserver preload env, child processes
+            # that read cfg.tokenizer.name directly, the dataset_manager's
+            # tokenizer loader) sees `builtin` without depending on
+            # run.resolved.tokenizer_names propagation.
+            from aiperf.config import TokenizerConfig
+
+            if tokenizer_cfg is None:
+                config.tokenizer = TokenizerConfig(name=BUILTIN_TOKENIZER_NAME)
+            else:
+                tokenizer_cfg.name = BUILTIN_TOKENIZER_NAME
+            return fake_to_builtin
+        names = real_models
+
+    console = Console()
+    resolved = _resolve_aliases(names, logger, console)
+
+    # Skip if already in offline mode -- the cache is assumed warm.
+    if os.environ.get("HF_HUB_OFFLINE") and os.environ.get("TRANSFORMERS_OFFLINE"):
+        logger.info("HF offline mode already set, skipping cache warming")
+    else:
+        _prefetch_tokenizers(
+            set(resolved.values()),
+            trust_remote_code=tokenizer_cfg.trust_remote_code
+            if tokenizer_cfg
+            else False,
+            revision=tokenizer_cfg.revision if tokenizer_cfg else "main",
+            logger=logger,
+            console=console,
+        )
+
+    if tokenizer_cfg and tokenizer_cfg.name:
         return {model: resolved[tokenizer_cfg.name] for model in model_names}
     return {**fake_to_builtin, **resolved}
 

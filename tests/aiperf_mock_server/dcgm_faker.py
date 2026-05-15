@@ -8,15 +8,34 @@ from dataclasses import dataclass
 
 @dataclass
 class GPUConfig:
+    """Hardware specifications for a GPU model."""
+
     model: str
+    """GPU model name as reported by nvidia-smi."""
+
     memory_gb: int
+    """Total framebuffer memory in gigabytes."""
+
     max_power_w: int
+    """Maximum power draw in watts."""
+
     idle_power_w: int
+    """Idle power draw in watts."""
+
     sm_clock_base_mhz: int
+    """Base SM clock frequency in MHz."""
+
     sm_clock_boost_mhz: int
+    """Boost SM clock frequency in MHz."""
+
     mem_clock_mhz: int
+    """Memory clock frequency in MHz."""
+
     temp_idle_c: int
+    """Idle GPU temperature in Celsius."""
+
     temp_max_c: int
+    """Maximum GPU temperature in Celsius."""
 
 
 GPU_CONFIGS = {
@@ -55,24 +74,55 @@ class FakeGPU:
     """Single GPU state and metrics."""
 
     idx: int
-    cfg: GPUConfig
-    rng: random.Random
-    load_offset: float
+    """GPU index in the system."""
 
-    # Default values for metrics
+    cfg: GPUConfig
+    """Hardware configuration for this GPU."""
+
+    rng: random.Random
+    """Random number generator for metric noise."""
+
+    load_offset: float
+    """Per-GPU load offset for variation between GPUs."""
+
     energy: float = 0.0
+    """Cumulative energy consumption in millijoules."""
+
     power_viol: float = 0.0
+    """Cumulative power violation duration in microseconds."""
+
     thermal_viol: float = 0.0
+    """Cumulative thermal violation duration in microseconds."""
+
     xid: int = 0
+    """XID error count."""
+
     util: float = 0.0
+    """GPU utilization percentage."""
+
     power: float = 0.0
+    """Current power draw in watts."""
+
     temp: float = 0.0
+    """Current GPU temperature in Celsius."""
+
     mem_temp: float = 0.0
+    """Current memory temperature in Celsius."""
+
     mem_used: float = 0.0
+    """Framebuffer memory used in MiB."""
+
     mem_free: float = 0.0
+    """Framebuffer memory free in MiB."""
+
     sm_clk: float = 0.0
+    """Current SM clock frequency in MHz."""
+
     mem_clk: float = 0.0
+    """Current memory clock frequency in MHz."""
+
     mem_copy: float = 0.0
+    """Memory copy utilization percentage."""
 
     def __post_init__(self):
         self.uuid = f"GPU-{self.rng.randint(10**8, 10**9):08x}-{self.rng.randint(0, 0xFFFF):04x}-{self.rng.randint(0, 0xFFFF):04x}-{self.rng.randint(0, 0xFFFF):04x}-{self.rng.randint(0, 10**12):012x}"

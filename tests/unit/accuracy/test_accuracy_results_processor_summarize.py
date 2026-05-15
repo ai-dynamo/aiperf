@@ -4,21 +4,19 @@
 import pytest
 
 from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_benchmark_run
 
 
 def _make_processor() -> AccuracyResultsProcessor:
-    user_config = UserConfig(
-        endpoint=EndpointConfig(
+    return AccuracyResultsProcessor(
+        run=make_benchmark_run(
             model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
+            endpoint_type=EndpointType.COMPLETIONS,
             streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+            accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+        )
     )
-    return AccuracyResultsProcessor(user_config=user_config)
 
 
 @pytest.mark.asyncio

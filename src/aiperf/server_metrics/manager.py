@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress, CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_stop
@@ -20,6 +22,9 @@ from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class ServerMetricsManager(BaseComponentService):
@@ -37,21 +42,20 @@ class ServerMetricsManager(BaseComponentService):
     - Follows centralized architecture patterns
 
     Args:
-        service_config: Service-level configuration (logging, communication, etc.)
-        user_config: User-provided configuration including server_metrics endpoints
+        run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
+            **kwargs,
         )
 
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
@@ -59,11 +63,11 @@ class ServerMetricsManager(BaseComponentService):
         )
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
-        self._server_metrics_disabled = user_config.server_metrics_disabled
+        self._server_metrics_disabled = not self.run.cfg.server_metrics.enabled
 
         # Collect metrics from all endpoint URLs (for multi-URL load balancing)
         self._server_metrics_endpoints: list[str] = []
-        for url in user_config.endpoint.urls:
+        for url in self.run.cfg.endpoint.urls:
             normalized_url = normalize_metrics_endpoint_url(url)
             if normalized_url not in self._server_metrics_endpoints:
                 self._server_metrics_endpoints.append(normalized_url)
@@ -72,9 +76,9 @@ class ServerMetricsManager(BaseComponentService):
         )
 
         # Add user-specified URLs if provided
-        if user_config.server_metrics_urls:
-            # Add user URLs, avoiding duplicates
-            for url in user_config.server_metrics_urls:
+        user_urls = self.run.cfg.server_metrics.urls
+        if user_urls:
+            for url in user_urls:
                 normalized_url = normalize_metrics_endpoint_url(url)
                 if normalized_url not in self._server_metrics_endpoints:
                     self._server_metrics_endpoints.append(normalized_url)
@@ -186,7 +190,7 @@ class ServerMetricsManager(BaseComponentService):
         """
         if not self._collectors:
             # Server metrics disabled status already sent in _profile_configure_command, only shutdown here
-            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
+            self._shutdown_task = self.execute_async(self._delayed_shutdown())
             return
 
         started_count = 0
@@ -206,7 +210,7 @@ class ServerMetricsManager(BaseComponentService):
                 endpoints_configured=self._server_metrics_endpoints,
                 endpoints_reachable=[],
             )
-            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
+            self._shutdown_task = self.execute_async(self._delayed_shutdown())
             return
         elif started_count < total_collectors:
             self.warning(

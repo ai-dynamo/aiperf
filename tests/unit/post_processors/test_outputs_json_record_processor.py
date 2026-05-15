@@ -6,15 +6,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
-from pydantic import ValidationError
 
-from aiperf.common.config import EndpointConfig, OutputConfig, UserConfig
-from aiperf.common.enums import ExportLevel
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
     ParsedResponseRecord,
 )
+from aiperf.config import ArtifactsConfig, BenchmarkConfig, EndpointConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.outputs_json_record_processor import (
     OutputsJsonRecordProcessor,
@@ -22,27 +20,47 @@ from aiperf.post_processors.outputs_json_record_processor import (
 from tests.unit.post_processors.conftest import aiperf_lifecycle
 
 
+def _make_config(tmp_path: Path, *, export_outputs_json: bool) -> BenchmarkConfig:
+    return BenchmarkConfig(
+        model="test-model",
+        endpoint=EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.CHAT,
+            streaming=False,
+        ),
+        dataset={"type": "synthetic"},
+        profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+        artifacts=ArtifactsConfig(
+            dir=tmp_path,
+            export_outputs_json=export_outputs_json,
+            records=["jsonl"],
+        ),
+    )
+
+
 class TestOutputsJsonRecordProcessorDisabled:
     """Tests for OutputsJsonRecordProcessor disabled state."""
 
     def test_disabled_when_flag_not_set(self, tmp_path: Path) -> None:
         """Raises PostProcessorDisabled when export_outputs_json is False."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            ),
-            output=OutputConfig(
-                artifact_directory=tmp_path,
-                export_outputs_json=False,
-            ),
-        )
+        config = _make_config(tmp_path, export_outputs_json=False)
 
         with pytest.raises(PostProcessorDisabled):
             OutputsJsonRecordProcessor(
                 service_id="processor-1",
-                user_config=config,
+                run=MagicMock(cfg=config),
+            )
+
+    def test_disabled_accepts_plugin_loader_run_argument(self, tmp_path: Path) -> None:
+        """Raises PostProcessorDisabled when instantiated through the plugin loader contract."""
+        config = _make_config(tmp_path, export_outputs_json=False)
+        run = MagicMock()
+        run.cfg = config
+
+        with pytest.raises(PostProcessorDisabled):
+            OutputsJsonRecordProcessor(
+                run=run,
+                service_id="processor-1",
             )
 
 
@@ -52,18 +70,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_writes_fragment(self, tmp_path: Path) -> None:
         """Creates a mock ParsedResponseRecord with content_responses, calls process_record, verifies fragment is written."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            ),
-            output=OutputConfig(
-                artifact_directory=tmp_path,
-                export_outputs_json=True,
-                export_level=ExportLevel.RECORDS,
-            ),
-        )
+        config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
         resp1 = MagicMock()
@@ -83,7 +90,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            user_config=config,
+            run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -95,18 +102,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
         """Verifies response text is concatenated from content_responses."""
         import orjson
 
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            ),
-            output=OutputConfig(
-                artifact_directory=tmp_path,
-                export_outputs_json=True,
-                export_level=ExportLevel.RECORDS,
-            ),
-        )
+        config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
         resp1 = MagicMock()
@@ -126,7 +122,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            user_config=config,
+            run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -144,18 +140,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
         """When content_responses is empty, response_text is None."""
         import orjson
 
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            ),
-            output=OutputConfig(
-                artifact_directory=tmp_path,
-                export_outputs_json=True,
-                export_level=ExportLevel.RECORDS,
-            ),
-        )
+        config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
         type(record).content_responses = PropertyMock(return_value=[])
@@ -171,7 +156,7 @@ class TestOutputsJsonRecordProcessorProcessRecord:
 
         processor = OutputsJsonRecordProcessor(
             service_id="processor-1",
-            user_config=config,
+            run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
             await proc.process_record(record, metadata)
@@ -183,13 +168,10 @@ class TestOutputsJsonRecordProcessorProcessRecord:
         assert "response_text" not in fragment
 
 
-class TestOutputConfigExportOutputsJsonValidation:
-    """Tests for OutputConfig validation of export_outputs_json."""
+class TestArtifactsConfigExportOutputsJsonValidation:
+    """Tests for ArtifactsConfig export_outputs_json wiring."""
 
-    def test_export_outputs_json_with_summary_raises(self) -> None:
-        """export_outputs_json=True with export_level=summary raises ValueError."""
-        with pytest.raises(ValidationError, match="export-outputs-json"):
-            OutputConfig(
-                export_outputs_json=True,
-                export_level=ExportLevel.SUMMARY,
-            )
+    def test_export_outputs_json_can_be_enabled_with_records_export(self) -> None:
+        """export_outputs_json=True is represented directly on ArtifactsConfig."""
+        config = ArtifactsConfig(export_outputs_json=True, records=["jsonl"])
+        assert config.export_outputs_json is True

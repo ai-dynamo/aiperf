@@ -13,17 +13,15 @@ from aiperf.orchestrator.aggregation import (
     ConfidenceMetric,
 )
 from aiperf.orchestrator.models import (
-    RunConfig,
     RunResult,
 )
 from aiperf.orchestrator.orchestrator import (
     MultiRunOrchestrator,
 )
 from aiperf.orchestrator.strategies import (
+    AdaptiveStrategy,
     ExecutionStrategy,
     FixedTrialsStrategy,
-    ParameterSweepStrategy,
-    SweepConfidenceStrategy,
     SweepMode,
 )
 
@@ -32,12 +30,10 @@ __all__ = [
     "AggregationStrategy",
     "ConfidenceAggregation",
     "ConfidenceMetric",
+    "AdaptiveStrategy",
     "ExecutionStrategy",
     "FixedTrialsStrategy",
     "MultiRunOrchestrator",
-    "ParameterSweepStrategy",
-    "RunConfig",
     "RunResult",
-    "SweepConfidenceStrategy",
     "SweepMode",
 ]

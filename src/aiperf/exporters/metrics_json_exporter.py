@@ -4,11 +4,16 @@
 from collections.abc import Iterable
 from datetime import datetime
 
+import orjson
+
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
     JsonExportData,
     JsonMetricResult,
+    RunInfo,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
@@ -20,8 +25,13 @@ class MetricsJsonExporter(MetricsBaseExporter):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+        summary = exporter_config.cfg.artifacts.summary
+        if summary is False or "json" not in summary:
+            raise DataExporterDisabled(
+                "MetricsJsonExporter disabled: 'json' not in artifacts.summary"
+            )
         super().__init__(exporter_config, **kwargs)
-        self._file_path = exporter_config.user_config.output.profile_export_json_file
+        self._file_path = exporter_config.cfg.artifacts.profile_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}",
             lambda: f"Initializing MetricsJsonExporter with file path: {self._file_path}",
@@ -61,8 +71,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
         export_data = JsonExportData(
             schema_version=JsonExportData.SCHEMA_VERSION,
             aiperf_version=aiperf_version,
-            benchmark_id=self._user_config.benchmark_id,
-            input_config=self._user_config,
+            benchmark_id=self._run.benchmark_id if self._run is not None else None,
+            input_config=self._cfg,
+            run_info=_build_run_metadata(self._run),
             was_cancelled=self._results.was_cancelled,
             error_summary=self._results.error_summary,
             start_time=start_time,
@@ -86,9 +97,17 @@ class MetricsJsonExporter(MetricsBaseExporter):
             lambda: f"Exporting data to JSON file: {export_data}",
             lambda: f"Exporting data to JSON file: {self._file_path}",
         )
-        return export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
+        # Pydantic's model_dump_json silently coerces NaN/inf to JSON null,
+        # which collides with explicit-None ("metric was missing") semantics
+        # downstream. Round-trip through model_dump + scrub_non_finite +
+        # orjson.dumps so non-finite values are rewritten to null only when
+        # they were genuinely numerically absent.
+        payload = export_data.model_dump(
+            mode="json", exclude_unset=True, exclude_none=True
         )
+        return orjson.dumps(
+            scrub_non_finite(payload), option=orjson.OPT_INDENT_2
+        ).decode("utf-8")
 
     def _prepare_metrics_for_json(
         self, metric_results: Iterable[MetricResult]
@@ -105,3 +124,24 @@ class MetricsJsonExporter(MetricsBaseExporter):
         """
         prepared = self._prepare_metrics(metric_results)
         return {tag: result.to_json_result() for tag, result in prepared.items()}
+
+
+def _build_run_metadata(run) -> RunInfo | None:
+    # Why: surfacing per-run reproducibility in profile_export_aiperf.json
+    # eliminates the need for a downstream reader to also load the internal
+    # run_config.json handoff file (which is multi-run only and absent on
+    # single-run paths).
+    if run is None:
+        return None
+    variation = getattr(run, "variation", None)
+    return RunInfo(
+        benchmark_id=run.benchmark_id,
+        sweep_id=getattr(run, "sweep_id", None),
+        random_seed=run.random_seed,
+        trial=run.trial,
+        run_label=run.label or None,
+        variation_label=variation.label if variation is not None else None,
+        variation_index=variation.index if variation is not None else None,
+        variation_values=dict(variation.values) if variation is not None else None,
+        cli_command=getattr(run, "cli_command", None),
+    )

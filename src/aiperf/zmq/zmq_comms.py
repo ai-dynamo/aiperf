@@ -10,18 +10,18 @@ from typing import TYPE_CHECKING
 import zmq.asyncio
 
 from aiperf.common.base_comms import BaseCommunication
-from aiperf.common.config import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
 from aiperf.common.enums import CommAddress, LifecycleState
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.singleton import Singleton
+from aiperf.config.comm import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
 if TYPE_CHECKING:
-    from aiperf.common.config import BaseZMQCommunicationConfig
     from aiperf.common.protocols import CommunicationClientProtocol
     from aiperf.common.types import CommAddressType
+    from aiperf.config.comm.base import BaseZMQCommunicationConfig
     from aiperf.plugin.enums import CommClientType
 
 

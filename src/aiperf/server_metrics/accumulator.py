@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from aiperf.common.config import UserConfig
 from aiperf.common.constants import (
     MILLIS_PER_SECOND,
     NANOS_PER_MILLIS,
@@ -31,6 +32,9 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.server_metrics.export_stats import compute_stats
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class ServerMetricsAccumulator(BaseMetricsProcessor):
@@ -60,53 +64,24 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     - All timeslices have identical duration for fair comparison
 
     Args:
-        user_config: User configuration including server_metrics settings
+        run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         **kwargs: Additional arguments passed to base class
 
     Raises:
         PostProcessorDisabled: If --no-server-metrics flag is set
-
-    Example:
-        >>> from aiperf.common.config import UserConfig
-        >>> from aiperf.common.models import ServerMetricsRecord, MetricFamily, MetricSample
-        >>> # Create accumulator
-        >>> config = UserConfig(...)
-        >>> accumulator = ServerMetricsAccumulator(user_config=config)
-        >>>
-        >>> # Process records from collection
-        >>> record = ServerMetricsRecord(
-        ...     timestamp_ns=1_000_000_000,
-        ...     endpoint_url="http://localhost:8081/metrics",
-        ...     metrics={
-        ...         "http_requests_total": MetricFamily(
-        ...             type=PrometheusMetricType.COUNTER,
-        ...             description="Total HTTP requests",
-        ...             samples=[MetricSample(value=1500)]
-        ...         )
-        ...     }
-        ... )
-        >>> await accumulator.process_server_metrics_record(record)
-        >>>
-        >>> # Export results after profiling
-        >>> results = accumulator.export_results(
-        ...     start_ns=1_000_000_000,  # Profiling start
-        ...     end_ns=10_000_000_000    # Profiling end
-        ... )
-        >>> results.endpoint_summaries["localhost:8081"].metrics["http_requests_total"]
-        CounterMetricData(description="Total HTTP requests", series=[...])
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        if user_config.server_metrics_disabled:
+    def __init__(self, run: BenchmarkRun, **kwargs: Any):
+        if not run.cfg.server_metrics.enabled:
             raise PostProcessorDisabled(
                 "Server metrics results processor is disabled via --no-server-metrics"
             )
 
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
         self._server_metrics_hierarchy = ServerMetricsHierarchy()
         # Use slice_duration from config for windowed stats
-        self._slice_duration: float | None = user_config.output.slice_duration
+        self._slice_duration: float | None = self.run.cfg.artifacts.slice_duration
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -161,7 +136,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
-            benchmark_id=self.user_config.benchmark_id,
+            benchmark_id=self.run.benchmark_id,
             endpoint_summaries=endpoint_summaries,
             start_ns=start_ns,
             end_ns=end_ns,
@@ -336,7 +311,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             time_filter: Time range filter for the profiling period
         """
         # Check if Parquet format is enabled
-        if ServerMetricsFormat.PARQUET not in self.user_config.server_metrics_formats:
+        if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics.formats:
             self.debug("Parquet format not selected, skipping export")
             return
 

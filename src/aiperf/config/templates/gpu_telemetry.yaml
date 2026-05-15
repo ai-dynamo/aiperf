@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: GPU Telemetry (DCGM / pynvml)
+# description: Collect GPU power, utilization, memory, and temperature during a benchmark via DCGM or pynvml.
+# category: Advanced
+# tags: gpu, telemetry, dcgm, pynvml, power, utilization
+# difficulty: intermediate
+# features: gpu telemetry, dcgm, pynvml, realtime dashboard
+#
+# GPU Telemetry Benchmark
+# =======================
+# Collects per-GPU metrics (power, utilization, memory, temperature, clocks,
+# XID errors) alongside inference latency. Exports a separate
+# `gpu_telemetry_export.json` next to the standard profile export.
+#
+# Two collector backends:
+#   - dcgm   : scrapes DCGM exporter Prometheus endpoints (works across nodes)
+#   - pynvml : reads the local NVIDIA driver directly (no DCGM container)
+#
+# Display modes:
+#   - summary           : aggregate table after the run (default)
+#   - realtime_dashboard: live TUI with a GPU panel during the run
+#
+# DCGM endpoints localhost:9400 and localhost:9401 are always attempted.
+# Add additional URLs (multi-node) by listing them under `urls:`.
+#
+# Run: aiperf profile --config gpu_telemetry.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 500
+    isl: {mean: 256, stddev: 50}
+    osl: {mean: 256, stddev: 25}
+
+  warmup:
+    type: concurrency
+    requests: 50
+    concurrency: 4
+
+  profiling:
+    type: concurrency
+    concurrency: 16
+    requests: 500
+
+  gpuTelemetry:
+    enabled: true
+    collector: dcgm           # Switch to "pynvml" for local-only collection without DCGM
+    mode: summary             # Switch to "realtime_dashboard" to get a live GPU panel in the TUI
+    urls:
+      - http://localhost:9400/metrics   # Standard DCGM exporter port
+      - http://localhost:9401/metrics   # Dynamo's bundled DCGM exporter port
+      # Multi-node example: append additional exporters here
+      # - http://node1:9400/metrics
+      # - http://node2:9400/metrics
+
+  artifacts:
+    dir: ./artifacts/gpu_telemetry
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 30s        # Per-window stats so you can correlate latency with GPU load over time

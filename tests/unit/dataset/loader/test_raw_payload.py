@@ -6,8 +6,8 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
+from aiperf.config.flags import CLIConfig
 from aiperf.dataset.loader.raw_payload import RawPayloadDatasetLoader
 
 
@@ -88,33 +88,27 @@ class TestRawPayloadCanLoad:
 
 class TestRawPayloadLoad:
     def test_single_file_one_session_per_line(
-        self, jsonl_file: Path, default_user_config: UserConfig
+        self, jsonl_file: Path, default_cfg: CLIConfig
     ):
-        loader = RawPayloadDatasetLoader(
-            filename=jsonl_file, user_config=default_user_config
-        )
+        loader = RawPayloadDatasetLoader(filename=jsonl_file, cfg=default_cfg)
         data = loader.load_dataset()
         assert len(data) == 2
         for payloads in data.values():
             assert len(payloads) == 1
 
     def test_directory_one_file_per_session_multi_turn(
-        self, jsonl_dir: Path, default_user_config: UserConfig
+        self, jsonl_dir: Path, default_cfg: CLIConfig
     ):
-        loader = RawPayloadDatasetLoader(
-            filename=jsonl_dir, user_config=default_user_config
-        )
+        loader = RawPayloadDatasetLoader(filename=jsonl_dir, cfg=default_cfg)
         data = loader.load_dataset()
         assert len(data) == 2
         turn_counts = sorted(len(payloads) for payloads in data.values())
         assert turn_counts == [1, 2]
 
     def test_convert_produces_raw_payload_turns(
-        self, jsonl_file: Path, default_user_config: UserConfig
+        self, jsonl_file: Path, default_cfg: CLIConfig
     ):
-        loader = RawPayloadDatasetLoader(
-            filename=jsonl_file, user_config=default_user_config
-        )
+        loader = RawPayloadDatasetLoader(filename=jsonl_file, cfg=default_cfg)
         conversations = loader.convert_to_conversations(loader.load_dataset())
         assert all(
             c.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES

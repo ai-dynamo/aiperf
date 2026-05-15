@@ -1,0 +1,2 @@
+# Auto-generated baseline of metric-named float fields not yet FiniteFloat-annotated.
+# Adding a new violation must either fix the field, whitelist it in code, or add it here with a follow-up issue.

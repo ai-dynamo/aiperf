@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Goodput / SLO Benchmark
+# description: Measure good requests/sec that meet latency SLO thresholds at multiple load levels.
+# category: Load Testing
+# tags: goodput, slo, latency, multi-phase
+# difficulty: intermediate
+# features: SLOs, multi-phase, poisson arrival, slice_duration
+#
+# Goodput / SLO Benchmark
+# =======================
+# Measures "good" requests per second that meet all SLO thresholds.
+# A request is "good" only if it meets ALL specified SLO criteria.
+#
+# Use case: Find maximum sustainable throughput while meeting latency SLAs
+#
+# Reference: DistServe paper (https://arxiv.org/pdf/2401.09670)
+#
+# Run: aiperf profile --config goodput_slo.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000
+    path: /v1/chat/completions
+    type: chat
+    streaming: true # Required for TTFT and ITL measurement
+    timeout: 120.0
+
+  dataset:
+    type: synthetic
+    entries: 5000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 256, stddev: 50}
+
+  phases:
+  # Warmup
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 100
+      concurrency: 16
+
+  # Goodput measurement at the target load. Adjust rate/concurrency to find
+  # the maximum sustainable throughput while still meeting the SLOs below.
+    - name: profiling
+      type: poisson
+      duration: 120
+      rate: 30.0
+      concurrency: 100
+      gracePeriod: 60
+
+# SLO definitions - request is "good" if ALL thresholds are met
+  slos:
+    request_latency: 5000 # Max 5 seconds E2E latency (ms)
+    time_to_first_token: 500 # Max 500ms TTFT
+    inter_token_latency: 50 # Max 50ms between tokens
+    output_token_throughput_per_user: 20.0 # Min 20 tokens/sec/user output rate
+
+  artifacts:
+    dir: ./artifacts/goodput_slo
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 30

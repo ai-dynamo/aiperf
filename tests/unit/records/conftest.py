@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import (
     ErrorDetails,
@@ -69,14 +68,15 @@ def sample_turn():
 
 
 @pytest.fixture
-def inference_result_parser(user_config):
+def inference_result_parser(cli_config):
     """Create an InferenceResultParser with mocked dependencies."""
+    from tests.unit.conftest import make_run_from_cli
 
-    def mock_communication_init(self, service_config, **kwargs):
+    def mock_communication_init(self, run, **kwargs):
         from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
-        AIPerfLifecycleMixin.__init__(self, service_config=service_config, **kwargs)
-        self.service_config = service_config
+        AIPerfLifecycleMixin.__init__(self, **kwargs)
+        self.run = run
         self.comms = MagicMock()
         for method in [
             "trace_or_debug",
@@ -92,16 +92,10 @@ def inference_result_parser(user_config):
         patch(
             "aiperf.common.mixins.CommunicationMixin.__init__", mock_communication_init
         ),
-        patch(
-            "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
-        ),
         patch("aiperf.plugin.plugins.get_class"),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
-        parser = InferenceResultParser(
-            service_config=ServiceConfig(),
-            user_config=user_config,
-        )
+        parser = InferenceResultParser(run=make_run_from_cli(cli_config))
         return parser
 
 

@@ -31,10 +31,13 @@ class IntervalGeneratorConfig(AIPerfBaseModel):
         ..., description="The arrival pattern to use."
     )
     request_rate: float | None = Field(
-        default=None, description="The request rate (requests per second)."
+        default=None,
+        gt=0,
+        description="The request rate (requests per second).",
     )
     arrival_smoothness: float | None = Field(
         default=None,
+        gt=0,
         description="The smoothness parameter for gamma distribution arrivals.",
     )
 

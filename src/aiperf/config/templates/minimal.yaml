@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Minimal Configuration
+# description: Bare minimum config using shorthand forms -- the fastest way to get started.
+# category: Getting Started
+# tags: quick-start, simple
+# difficulty: beginner
+# features: shorthand syntax
+#
+# Minimal Configuration
+# =====================
+# The fastest way to benchmark a model. Uses shorthand forms that AIPerf
+# auto-expands:
+#   model:   -> models.items[0].name  (single string becomes a model list)
+#   dataset: -> datasets[0]            (singular becomes a one-entry list named "default")
+#   phases:  -> phases[0]              (single flat config becomes a one-entry list)
+#
+# Both snake_case and camelCase keys are accepted in all config files.
+#
+# Run: aiperf profile --config minimal.yaml
+
+schemaVersion: "2.0"
+
+benchmark:
+  # "model:" is shorthand for models: { items: [{ name: ... }] }
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000 # Path auto-detected from endpoint type (chat -> /v1/chat/completions)
+
+  # "dataset:" (singular) is shorthand for datasets: [{name: default, ...}]
+  dataset:
+    type: synthetic
+    entries: 100
+    prompts:
+      isl: 512
+      osl: 128
+
+  # Flat "phases:" with a "type:" key is shorthand for phases: [{name: profiling, ...}]
+  phases:
+    type: concurrency
+    concurrency: 8
+    requests: 100

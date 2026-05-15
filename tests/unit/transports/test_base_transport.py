@@ -338,6 +338,118 @@ class TestBaseTransport:
         assert url == "http://localhost:8000/v1/chat/completions"
 
 
+class TestSessionHeader:
+    """Tests for --session-header rename of X-Correlation-ID."""
+
+    def _make_transport(self, session_header: str | None = None) -> FakeTransport:
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000"],
+                session_header=session_header,
+            ),
+        )
+        return FakeTransport(model_endpoint=model_endpoint)
+
+    def _make_request_info(
+        self, transport: FakeTransport, x_correlation_id: str = "conv-uuid-123"
+    ) -> RequestInfo:
+        return RequestInfo(
+            model_endpoint=transport.model_endpoint,
+            turns=[],
+            endpoint_headers={},
+            endpoint_params={},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-id",
+            x_correlation_id=x_correlation_id,
+            conversation_id="conv-id",
+        )
+
+    def test_default_sends_x_correlation_id(self):
+        """Without --session-header, X-Correlation-ID is used as before."""
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert "X-Session-ID" not in headers
+
+    def test_session_header_replaces_x_correlation_id(self):
+        """With --session-header, the configured name is used instead of X-Correlation-ID."""
+        transport = self._make_transport(session_header="X-Session-ID")
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert "X-Correlation-ID" not in headers
+
+    def test_session_header_custom_name(self):
+        """Any header name is accepted."""
+        transport = self._make_transport(session_header="My-Pod-Affinity-Key")
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["My-Pod-Affinity-Key"] == "conv-uuid-123"
+        assert "X-Correlation-ID" not in headers
+
+    def test_different_conversations_get_different_values(self):
+        """Two conversations with different UUIDs produce different header values."""
+        transport = self._make_transport(session_header="X-Session-ID")
+        ri_a = self._make_request_info(transport, x_correlation_id="uuid-aaa")
+        ri_b = self._make_request_info(transport, x_correlation_id="uuid-bbb")
+
+        headers_a = transport.build_headers(ri_a)
+        headers_b = transport.build_headers(ri_b)
+
+        assert headers_a["X-Session-ID"] == "uuid-aaa"
+        assert headers_b["X-Session-ID"] == "uuid-bbb"
+        assert headers_a["X-Session-ID"] != headers_b["X-Session-ID"]
+
+    def test_static_headers_unaffected(self):
+        """Static --header values appear alongside the session header."""
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000"],
+                headers=[("Authorization", "Bearer tok"), ("X-Custom", "val")],
+                session_header="X-Session-ID",
+            ),
+        )
+        transport = FakeTransport(model_endpoint=model_endpoint)
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[],
+            endpoint_headers={"Authorization": "Bearer tok", "X-Custom": "val"},
+            endpoint_params={},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-id",
+            x_correlation_id="conv-uuid-123",
+            conversation_id="conv-id",
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers["X-Custom"] == "val"
+        assert "X-Correlation-ID" not in headers
+
+
 class TestTransportMetadata:
     """Tests for TransportMetadata model."""
 
