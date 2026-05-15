@@ -19,12 +19,29 @@
 		test coverage clean install install-app docker docker-run first-time-setup \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
+		kubernetes-tests-ci test-kubernetes-ci \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
 		generate-all-docs test-stress stress-tests test-fern-docs internal-help help \
+		generate-crd check-crd check-chart-consistency crd-release benchmark-resources \
+		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
+		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
+		kube-install-jobset kube-install-dynamo \
+		kube-install-kueue kube-remove-kueue \
+		kube-install-prometheus kube-install-loki \
+		kube-push \
+		kube-deploy-mock kube-remove-mock \
+		kube-deploy-vllm kube-remove-vllm kube-vllm-logs \
+		kube-deploy-sglang kube-remove-sglang kube-sglang-logs \
+		kube-deploy-trtllm kube-remove-trtllm kube-trtllm-logs \
+		kube-deploy-dynamo kube-remove-dynamo kube-dynamo-logs \
+		kube-deploy-lora kube-remove-lora \
+		kube-run kube-run-detach kube-dry-run \
+		kube-run-local kube-run-local-detach kube-dry-run-local \
+		helm-lint helm-template helm-package ui-sync \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -297,6 +314,194 @@ generate-config-schema: #? generate JSON Schema for AIPerf YAML config files.
 
 check-config-schema: #? check if the AIPerf config JSON Schema is up-to-date.
 	$(activate_venv) && python -m tools.generate_config_schema --check $(args)
+
+generate-crd: #? generate Kubernetes CRD YAML from AIPerfConfig model.
+	$(activate_venv) && python -m tools.generate_crd $(args)
+
+check-crd: #? check if CRD YAML is up-to-date.
+	$(activate_venv) && python -m tools.generate_crd --check $(args)
+
+check-chart-consistency: #? assert operator code-side defaults match the Helm chart's values.yaml.
+	$(activate_venv) && python tools/check_chart_consistency.py
+
+crd-release: #? render the Helm CRD template to dist/aiperfjob-crd.yaml for release.
+	$(activate_venv) && mkdir -p dist && \
+		helm template aiperf-operator deploy/helm/aiperf-operator \
+			--show-only templates/crd-aiperfjob.yaml \
+			> dist/aiperfjob-crd.yaml
+	@echo "Wrote dist/aiperfjob-crd.yaml"
+
+generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py
+
+generate-all-docs: #? generate all documentation files.
+	$(activate_venv) && ./tools/generate_cli_docs.py
+	$(activate_venv) && ./tools/generate_env_vars_docs.py
+
+add-copyright: #? add the copyright header to the files.
+	$(activate_venv) && ./tools/add_copyright.py
+
+# ---------------------------------------------------------------------------
+# Kubernetes cluster management (dev/kube.py)
+# ---------------------------------------------------------------------------
+
+KUBE = $(activate_venv) && python dev/kube.py
+
+kube-setup: #? set up local K8s cluster with all dependencies (Kind/Minikube).
+	$(KUBE) setup $(args)
+
+kube-doctor: #? check prerequisites and cluster health.
+	$(KUBE) doctor $(args)
+
+kube-status: #? show status of cluster, images, and deployments.
+	$(KUBE) status
+
+kube-cleanup: #? delete AIPerf benchmark resources (keep cluster).
+	$(KUBE) cleanup
+
+kube-teardown: #? delete the entire local cluster.
+	$(KUBE) teardown
+
+kube-reload: #? rebuild images and reload into cluster.
+	$(KUBE) reload
+
+kube-build: #? build AIPerf and mock-server Docker images.
+	$(KUBE) build
+
+kube-load: #? load Docker images into the cluster.
+	$(KUBE) load
+
+kube-logs: #? view AIPerf benchmark pod logs.
+	$(KUBE) logs $(args)
+
+kube-cluster-create: #? create a new Kind/Minikube cluster.
+	$(KUBE) cluster-create
+
+kube-cluster-delete: #? delete the Kind/Minikube cluster.
+	$(KUBE) cluster-delete
+
+kube-install-jobset: #? install the JobSet CRD.
+	$(KUBE) install-jobset
+
+kube-install-dynamo: #? install the Dynamo operator.
+	$(KUBE) install-dynamo
+
+kube-install-kueue: #? install Kueue and seed default ClusterQueue/LocalQueue.
+	$(KUBE) install-kueue
+
+kube-remove-kueue: #? remove Kueue and default queues.
+	$(KUBE) remove-kueue
+
+kube-install-prometheus: #? install kube-prometheus-stack (Prometheus + Grafana).
+	$(KUBE) install-prometheus
+
+kube-install-loki: #? install loki-stack (Loki + Promtail).
+	$(KUBE) install-loki
+
+kube-push: #? retag and docker push the aiperf image. Pass --registry (required) / --tag.
+	$(KUBE) push $(args)
+
+kube-deploy-mock: #? deploy the mock inference server.
+	$(KUBE) deploy-mock
+
+kube-remove-mock: #? remove the mock inference server.
+	$(KUBE) remove-mock
+
+kube-deploy-vllm: #? deploy a standalone vLLM server.
+	$(KUBE) deploy-vllm $(args)
+
+kube-remove-vllm: #? remove the vLLM server.
+	$(KUBE) remove-vllm
+
+kube-vllm-logs: #? view vLLM server logs.
+	$(KUBE) vllm-logs $(args)
+
+kube-deploy-sglang: #? deploy a standalone SGLang server.
+	$(KUBE) deploy-sglang $(args)
+
+kube-remove-sglang: #? remove the SGLang server.
+	$(KUBE) remove-sglang
+
+kube-sglang-logs: #? view SGLang server logs.
+	$(KUBE) sglang-logs $(args)
+
+kube-deploy-trtllm: #? deploy a standalone TensorRT-LLM server.
+	$(KUBE) deploy-trtllm $(args)
+
+kube-remove-trtllm: #? remove the TensorRT-LLM server.
+	$(KUBE) remove-trtllm
+
+kube-trtllm-logs: #? view TensorRT-LLM server logs.
+	$(KUBE) trtllm-logs $(args)
+
+kube-deploy-dynamo: #? deploy a Dynamo inference server.
+	$(KUBE) deploy-dynamo $(args)
+
+kube-remove-dynamo: #? remove the Dynamo server.
+	$(KUBE) remove-dynamo
+
+kube-dynamo-logs: #? view Dynamo pod logs.
+	$(KUBE) dynamo-logs $(args)
+
+kube-deploy-lora: #? deploy a LoRA adapter.
+	$(KUBE) deploy-lora $(args)
+
+kube-remove-lora: #? remove a LoRA adapter.
+	$(KUBE) remove-lora $(args)
+
+kube-run: #? run an AIPerf benchmark (attached).
+	$(KUBE) run $(args)
+
+kube-run-detach: #? run an AIPerf benchmark (detached).
+	$(KUBE) run-detach $(args)
+
+kube-dry-run: #? print benchmark manifest without running.
+	$(KUBE) dry-run $(args)
+
+kube-run-local: #? run single-pod benchmark (attached). Pass aiperf args after '--'.
+	$(KUBE) run-local $(args)
+
+kube-run-local-detach: #? run single-pod benchmark (detached). Pass aiperf args after '--'.
+	$(KUBE) run-local-detach $(args)
+
+kube-dry-run-local: #? print single-pod manifest without running. Pass aiperf args after '--'.
+	$(KUBE) dry-run-local $(args)
+
+# ---------------------------------------------------------------------------
+# Helm chart targets for deploy/helm/aiperf-operator.
+# helm-lint validates chart structure; helm-template smoke-checks rendering
+# without cluster access; helm-package produces a versioned tarball in dist/.
+# ---------------------------------------------------------------------------
+
+helm-lint: #? lint the aiperf-operator Helm chart.
+	helm lint deploy/helm/aiperf-operator
+
+helm-template: #? smoke-check Helm chart rendering (no cluster required).
+	helm template test deploy/helm/aiperf-operator > /dev/null
+
+helm-package: #? package the aiperf-operator Helm chart into dist/.
+	mkdir -p dist/
+	helm package deploy/helm/aiperf-operator -d dist/
+
+ui-sync: #? overlay src/aiperf/operator/ui-v1/ into the running operator pod (requires developer.uiOverride.enabled). Set CTX=<context> NS=<namespace> DEST=<path> to override defaults.
+	@CTX_ARG=""; if [ -n "$$CTX" ]; then CTX_ARG="--context $$CTX"; fi; \
+	NS="$${NS:-aiperf-system}"; \
+	POD=$$(kubectl $$CTX_ARG -n $$NS get pod -l app.kubernetes.io/name=aiperf-operator,app.kubernetes.io/component=operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POD" ]; then echo "no operator pod in namespace $$NS (set NS=<namespace> CTX=<context> to override)" >&2; exit 1; fi; \
+	DEST="$${DEST:-/var/aiperf/ui-v1-override}"; \
+	echo "syncing src/aiperf/operator/ui-v1/ -> $${CTX:-<default-ctx>}/$$NS/$$POD:$$DEST/ (results-server)"; \
+	tar -C src/aiperf/operator/ui-v1 -cf - . | \
+		kubectl $$CTX_ARG -n $$NS exec -i $$POD -c results-server -- \
+			python -c "import sys, tarfile; tarfile.open(fileobj=sys.stdin.buffer, mode='r|').extractall('$$DEST', filter='data')" && \
+	echo "done — hard-refresh your browser (Ctrl-Shift-R / Cmd-Shift-R)"
+
+.PHONY: install-e2e-browsers test-e2e
+
+install-e2e-browsers: ## Install Playwright Chromium for e2e UI tests
+	uv run playwright install chromium --with-deps || uv run playwright install chromium
+
+test-e2e: ## Run operator web UI e2e tests
+	uv run pytest tests/e2e/ -m e2e -n auto
 
 generate-plugin-enums: #? generate the plugin enum stubs (enums.py and enums.pyi).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py --enums
