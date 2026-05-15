@@ -221,7 +221,7 @@
     "gpu_telemetry_collector": {
       "title": "GPU Telemetry Collector Plugins",
       "type": "object",
-      "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and pynvml Python library.\nOne-to-one mapping based on gpu_telemetry_collector configuration.",
+      "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and plugin-defined local collectors.\nOne-to-one mapping based on gpu_telemetry_collector configuration.",
       "additionalProperties": {
         "$ref": "#/$defs/GpuTelemetryCollectorPlugin"
       }
@@ -1605,25 +1605,24 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "description": "Config-time metadata for GPU telemetry collector plugins.\n\nLocal collectors set ``is_local`` so ``--gpu-telemetry <name>`` is treated\nas an in-process collector keyword instead of a DCGM URL. Native binding\nvalidation lives on the collector class itself via ``validate_environment``\nso each implementation owns its own dependency check.",
+          "properties": {
+            "is_local": {
+              "default": false,
+              "description": "Whether this collector runs in-process against the local host.",
+              "title": "Is Local",
+              "type": "boolean"
             }
-          ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          },
+          "title": "GPUTelemetryCollectorMetadata",
+          "type": "object"
         }
       },
       "required": [
         "class"
       ],
       "title": "GPU Telemetry Collector Plugin",
-      "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and pynvml Python library.\nOne-to-one mapping based on gpu_telemetry_collector configuration."
+      "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and plugin-defined local collectors.\nOne-to-one mapping based on gpu_telemetry_collector configuration."
     }
   }
 }

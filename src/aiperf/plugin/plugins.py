@@ -28,6 +28,7 @@ from aiperf.plugin.extensible_enums import ExtensibleStrEnum, _normalize_name
 from aiperf.plugin.schema.schemas import (
     CustomDatasetLoaderMetadata,
     EndpointMetadata,
+    GPUTelemetryCollectorMetadata,
     PlotMetadata,
     PluginsManifest,
     PluginSpec,
@@ -1204,6 +1205,22 @@ def get_public_dataset_loader_metadata(name: str) -> PublicDatasetLoaderMetadata
     )
 
 
+def get_gpu_telemetry_collector_metadata(
+    name: str,
+) -> GPUTelemetryCollectorMetadata:
+    """Get typed metadata for a GPU telemetry collector plugin.
+
+    Args:
+        name: Collector plugin name (e.g., 'dcgm', 'pynvml', 'amdsmi').
+
+    Returns:
+        Validated GPUTelemetryCollectorMetadata instance.
+    """
+    return get_entry("gpu_telemetry_collector", name).get_typed_metadata(
+        GPUTelemetryCollectorMetadata
+    )
+
+
 def is_trace_dataset(name: str) -> bool:
     """Check if a custom dataset loader is a trace-format dataset.
 
@@ -1223,6 +1240,7 @@ _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "plot": PlotMetadata,
     "service": ServiceMetadata,
     "custom_dataset_loader": CustomDatasetLoaderMetadata,
+    "gpu_telemetry_collector": GPUTelemetryCollectorMetadata,
 }
 
 
