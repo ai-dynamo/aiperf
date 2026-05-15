@@ -517,13 +517,3 @@ generate-plugin-schemas: #? generate JSON schemas for categories.yaml and plugin
 
 validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against their schemas.
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py --validate
-
-generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
-	$(activate_venv) && ./tools/generate_plugin_artifacts.py
-
-generate-all-docs: #? generate all documentation files.
-	$(activate_venv) && ./tools/generate_cli_docs.py
-	$(activate_venv) && ./tools/generate_env_vars_docs.py
-
-add-copyright: #? add the copyright header to the files.
-	$(activate_venv) && ./tools/add_copyright.py
