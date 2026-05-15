@@ -22,7 +22,7 @@ We'll create a plugin for a hypothetical "Echo API" that returns the input text 
 ## Prerequisites
 
 - Python 3.10+
-- AIPerf installed (`pip install aiperf`)
+- AIPerf installed (`uv pip install aiperf`)
 - Basic understanding of Python async/await and Pydantic
 
 ## Key Concepts
@@ -212,7 +212,7 @@ endpoint:
 From your plugin directory, install into the **same Python environment** where AIPerf is installed. AIPerf discovers plugins via entry points, which only works when both packages share the same environment.
 
 ```bash
-pip install -e .
+uv pip install -e .
 ```
 
 You should see:
@@ -221,14 +221,14 @@ You should see:
 Successfully installed my-aiperf-plugins-0.1.0
 ```
 
-> **Important**: If you use `uv`, virtual environments, or conda, make sure you activate the environment where AIPerf is installed before running `pip install`.
+> **Important**: If you use virtual environments or conda, make sure you activate the environment where AIPerf is installed before running `uv pip install`.
 
 ## Step 5: Verify Installation
 
 Confirm both packages are installed in the same environment:
 
 ```bash
-pip show aiperf my-aiperf-plugins
+uv pip show aiperf my-aiperf-plugins
 ```
 
 You should see both packages listed in the same environment:
@@ -296,7 +296,7 @@ You should see:
 ```text
 Validating plugins...
 
-✓ Class paths
+Class paths: OK
 
 All checks passed
 ```
@@ -350,7 +350,7 @@ if __name__ == "__main__":
 Start the server:
 
 ```bash
-pip install fastapi uvicorn orjson cyclopts
+uv pip install fastapi uvicorn orjson cyclopts
 python echo_server.py &
 ```
 
@@ -383,7 +383,6 @@ aiperf profile \
   --url http://localhost:8000 \
   --endpoint-type echo \
   --tokenizer gpt2 \
-  --extra-inputs echo_prefix:"[ECHO] " \
   --synthetic-input-tokens-mean 100 \
   --concurrency 4 \
   --request-count 100
@@ -429,7 +428,7 @@ class TestEchoEndpoint:
         assert result is not None and result.data.text
 ```
 
-> **Fixtures**: Create `conftest.py` with `mock_model_endpoint`, `mock_request_info`, and `mock_response` fixtures. See AIPerf's test utilities for examples.
+> **Fixtures**: The `mock_model_endpoint`, `mock_request_info`, and `mock_response` fixtures in this snippet are illustrative, not built into AIPerf. Create them in your package's `conftest.py` (or replace them with concrete `RequestInfo` / response objects) before running the test.
 
 ## Understanding the Code
 
@@ -484,7 +483,7 @@ TypeNotFoundError: Type 'echo' not found for category 'endpoint'.
 ```
 
 **Solutions:**
-1. Ensure `pip install -e .` completed successfully
+1. Ensure `uv pip install -e .` completed successfully
 2. Check the entry point in `pyproject.toml` matches your package structure
 3. Run `aiperf plugins --validate` to check for errors
 

@@ -52,6 +52,8 @@ navigation:
         contents:
           - page: Custom Dataset Guide
             path: ../pages-dev/tutorials/custom-dataset.md
+          - page: Inline Datasets
+            path: ../pages-dev/tutorials/inline-datasets.md
           - page: Custom Prompt Benchmarking
             path: ../pages-dev/tutorials/custom-prompt-benchmarking.md
           - page: Profile with ShareGPT Dataset
@@ -122,8 +124,10 @@ navigation:
             path: ../pages-dev/tutorials/goodput.md
           - page: Multi-Run Confidence Reporting
             path: ../pages-dev/tutorials/multi-run-confidence.md
-          - page: Parameter Sweeping
-            path: ../pages-dev/tutorials/parameter-sweeping.md
+          - page: Parameter Sweeps
+            path: ../pages-dev/tutorials/sweeps.md
+          - page: Adaptive Search
+            path: ../pages-dev/tutorials/adaptive-search.md
           - page: Time Slicing for Performance Analysis
             path: ../pages-dev/tutorials/timeslices.md
           - page: HTTP Trace Metrics Guide
@@ -132,6 +136,8 @@ navigation:
             path: ../pages-dev/tutorials/working-with-profile-exports.md
           - page: Visualization and Plotting with AIPerf
             path: ../pages-dev/tutorials/plot.md
+          - page: Auto-Plot After `aiperf profile`
+            path: ../pages-dev/tutorials/auto-plot.md
           - page: User-Centric Timing for KV Cache Benchmarking
             path: ../pages-dev/tutorials/user-centric-timing.md
           - page: GPU Telemetry with AIPerf
@@ -141,12 +147,25 @@ navigation:
       - section: Configuration
         collapsed: true
         contents:
+          - page: YAML Configuration Files
+            path: ../pages-dev/tutorials/yaml-config.md
+          - page: Sampling Distributions in YAML Configs
+            path: ../pages-dev/tutorials/yaml-distributions.md
           - page: User Interface
             path: ../pages-dev/tutorials/ui-types.md
           - page: Using Local Tokenizers Without HuggingFace
             path: ../pages-dev/tutorials/local-tokenizer.md
           - page: "Random Number Generation & Reproducibility"
             path: ../pages-dev/reproducibility.md
+  - section: Sweeping & Adaptive Search
+    collapsed: true
+    contents:
+      - page: Search Recipes
+        path: ../pages-dev/sweeping/search-recipes.md
+      - page: Bayesian Optimization
+        path: ../pages-dev/sweeping/bayesian-optimization.md
+      - page: Space-filling Sweeps (Sobol, Latin Hypercube)
+        path: ../pages-dev/sweeping/space-filling.md
   - section: Benchmark Modes
     collapsed: true
     contents:
@@ -182,6 +201,8 @@ navigation:
         path: ../pages-dev/reference/vendor-usage-fields.md
       - page: JSON Export Schema
         path: ../pages-dev/reference/json-export-schema.md
+      - page: YAML Config Roadmap
+        path: ../pages-dev/reference/yaml-config-roadmap.md
   - section: Server Metrics
     collapsed: true
     contents:
@@ -207,6 +228,8 @@ navigation:
         path: ../pages-dev/api/synthesis.md
       - page: Sweep Aggregates API Reference
         path: ../pages-dev/api/sweep-aggregates.md
+      - page: Search History API Reference
+        path: ../pages-dev/api/search-history.md
   - section: Architecture & Internals
     collapsed: true
     contents:
@@ -218,8 +241,14 @@ navigation:
         path: ../pages-dev/diagrams/mixins.md
       - page: AIPerf Code Patterns
         path: ../pages-dev/dev/patterns.md
+      - page: Global Property-Test Invariants
+        path: ../pages-dev/dev/global-invariants.md
+      - page: Sweep Orchestrator (Dev Reference)
+        path: ../pages-dev/dev/sweep-orchestrator.md
+      - page: YAML Config Future Goals
+        path: ../pages-dev/dev/yaml-config-future-goals.md
   - section: Troubleshooting
     collapsed: true
     contents:
-      - page: Parameter Sweeping Errors
-        path: ../pages-dev/troubleshooting/parameter-sweeping-errors.md
+      - page: Sweep & Adaptive Search Errors
+        path: ../pages-dev/troubleshooting/sweeps.md

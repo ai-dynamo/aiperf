@@ -73,3 +73,39 @@ Example output:
 │               Goodput (requests/sec) │     0.14 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
 └──────────────────────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
 ```
+
+## SLA-feasibility gate: `good_request_fraction`
+
+The `goodput` metric above answers "how many SLO-compliant requests per second?", but it does not by itself tell you whether your run met an attainment target like "95% of requests under SLO." For that, AIPerf exposes a sibling derived metric, `good_request_fraction`, defined as:
+
+```python
+good_request_fraction = good_request_count / (request_count + error_request_count)
+```
+
+The fraction is in `[0.0, 1.0]`. Errors land in the denominator on purpose: a backend that sheds load under pressure should not score 1.0 just because the requests it did serve happened to stay under the latency budget. On clean runs with zero errors, `error_request_count` is not produced (it carries the `ERROR_ONLY` flag and is only emitted for invalid records), so the denominator reduces to `request_count` and the fraction is computed from valid requests alone. When no requests were attempted at all, the metric returns `0.0`.
+
+The same `--goodput` invocation that produces `goodput` also produces `good_request_fraction` — no extra flag is required:
+
+```bash
+aiperf profile \
+    -m Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --request-count 1000 \
+    --goodput "request_latency:250 inter_token_latency:10"
+```
+
+`good_request_fraction` is hidden from the console table (`NO_CONSOLE`) but is written to `profile_export_aiperf.json`, the CSV, and the Parquet output, so you can read it from CI:
+
+```bash
+# Fail the build if fewer than 99% of requests met every SLO.
+python -c '
+import orjson, sys
+data = orjson.loads(open("artifacts/profile_export_aiperf.json", "rb").read())
+frac = data["good_request_fraction"]["avg"]
+sys.exit(0 if frac >= 0.99 else 1)
+'
+```
+
+The [`max-goodput-under-slo`](../sweeping/search-recipes.md) search recipe consumes this metric directly: it attaches the SLA filter `good_request_fraction:avg:ge:<--slo-attainment-fraction>` so Bayesian optimization marks any concurrency level that misses the attainment target as infeasible while still maximizing the underlying `goodput` rate.
