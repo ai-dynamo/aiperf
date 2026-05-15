@@ -15,6 +15,33 @@ This module provides utility functions for validating and parsing configuration 
 """
 
 
+# Non-HTTP URI schemes that must never be silently rewritten to ``http://`` —
+# doing so would either smuggle a foreign scheme past the validator (e.g.
+# ``javascript:1234`` becoming ``http://javascript:1234``) or corrupt it into
+# an "invalid port" message. The ``://`` check below already handles forms
+# like ``ftp://host`` and ``file:///path``; this list catches the
+# ``scheme:opaque`` forms that lack the authority separator.
+_FOREIGN_URI_SCHEMES = frozenset(
+    {
+        "data",
+        "file",
+        "ftp",
+        "ftps",
+        "gopher",
+        "javascript",
+        "ldap",
+        "ldaps",
+        "mailto",
+        "sftp",
+        "ssh",
+        "tel",
+        "vbscript",
+        "ws",
+        "wss",
+    }
+)
+
+
 def normalize_http_url(url: str) -> str:
     """Prepend ``http://`` to a URL that has no scheme component.
 
@@ -29,8 +56,18 @@ def normalize_http_url(url: str) -> str:
     ``://`` check is also case-insensitive (matches ``http://``, ``HTTPS://``,
     ``ftp://`` etc.) and preserves the original scheme; URLs with non-HTTP
     schemes are passed through unmodified rather than corrupted.
+
+    A bare ``scheme:opaque`` form (no ``://``) like ``javascript:alert(1)``
+    or ``data:text/plain;...`` is left alone when the prefix is a recognized
+    foreign URI scheme, so the downstream validator surfaces "missing scheme
+    or host" instead of silently rewriting the input to ``http://javascript:...``.
     """
-    return url if "://" in url else f"http://{url}"
+    if "://" in url:
+        return url
+    prefix, sep, _ = url.partition(":")
+    if sep and prefix.lower() in _FOREIGN_URI_SCHEMES:
+        return url
+    return f"http://{url}"
 
 
 def normalize_http_urls(urls: list[str]) -> list[str]:
