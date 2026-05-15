@@ -239,6 +239,10 @@ Additional input parameters to include in every API request payload. Specify as 
 Custom HTTP headers to include with every request. Specify as `Header:Value` pairs (e.g., `--header X-Custom-Header:value`) or as JSON string. Can be specified multiple times. Useful for custom authentication, tracking, or API-specific requirements. Combined with auto-generated headers (e.g., `Authorization` from `--api-key`).
 <br/>_Default: `[]`_
 
+#### `--session-header` `<str>`
+
+HTTP header name to use for the per-session affinity identifier. When set, the stable per-session ID is sent under this header name instead of the default `X-Correlation-ID`. Useful when the inference server routes requests by a specific header (e.g., `--session-header X-Session-ID`).
+
 #### `--input-file` `<str>`
 
 Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
