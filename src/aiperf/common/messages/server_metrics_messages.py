@@ -4,7 +4,7 @@ import msgspec
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ServerMetricsRecord
+from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.models.server_metrics_models import (
     ProcessServerMetricsResult,
     ServerMetricsEndpointSummary,
@@ -50,3 +50,4 @@ class ServerMetricsRecordMessage(
 
     collector_id: str
     record: ServerMetricsRecord | None = None
+    error: ErrorDetails | None = None

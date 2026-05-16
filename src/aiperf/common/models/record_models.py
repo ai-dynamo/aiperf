@@ -536,6 +536,7 @@ class RecordContext(AIPerfBaseModel):
     )
     session_num: int | None = Field(
         default=None,
+        ge=0,
         description="The sequential number of the session in the benchmark. For single-turn datasets,"
         " this is the request index; for multi-turn datasets, the session index. Populated by the"
         " credit issuer before transport dispatch; may be None for ad-hoc records.",

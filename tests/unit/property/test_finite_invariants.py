@@ -370,6 +370,9 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # AdaptiveSearchSweep.outcome_constraints: list[OutcomeConstraint], not a
     # numeric field. Per-element OutcomeConstraint.bound is already FiniteFloat.
     "AdaptiveSearchSweep.outcome_constraints",
+    # RequestRecord.clock_offset_ns: signed difference between wall-clock and
+    # monotonic perf-counter; values legitimately span the int range.
+    "RequestRecord.clock_offset_ns",
 }
 
 

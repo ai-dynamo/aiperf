@@ -3,6 +3,7 @@
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import msgspec
 import pytest
 
 from aiperf.common.enums import CommandType
@@ -84,8 +85,8 @@ class TestSystemControllerExitScenarios:
     ):
         """Test that SystemController exits when receiving a CommandErrorResponse for profile_configure."""
         error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_CONFIGURE}
+            msgspec.structs.replace(
+                error_response, command=CommandType.PROFILE_CONFIGURE
             )
         ]
         # Mock the command responses (using fail-fast method)
@@ -116,8 +117,8 @@ class TestSystemControllerExitScenarios:
     ):
         """Test that SystemController exits when receiving a CommandErrorResponse for profile_start."""
         error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_START}
+            msgspec.structs.replace(
+                error_response, command=CommandType.PROFILE_START
             )
         ]
         # Mock the command responses (using fail-fast method)

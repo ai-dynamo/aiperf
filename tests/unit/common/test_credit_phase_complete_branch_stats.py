@@ -54,7 +54,7 @@ class TestCreditPhaseCompleteBranchStats:
             stats=phase_stats,
             branch_stats=stats,
         )
-        rebuilt = CreditPhaseCompleteMessage.model_validate(msg.model_dump())
+        rebuilt = CreditPhaseCompleteMessage.from_json(msg.model_dump())
         assert rebuilt.branch_stats == stats
 
 
