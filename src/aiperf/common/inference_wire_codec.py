@@ -36,32 +36,6 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
 )
-from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
-
-
-def _trace_data_to_wire(trace_data: BaseTraceData | None) -> dict[str, Any] | None:
-    """Serialize a Pydantic trace-data model to a wire-safe dict.
-
-    The discriminator is stored in the ``trace_type`` field (already on the
-    model). Reconstruct with ``_wire_to_trace_data``.
-    """
-    if trace_data is None:
-        return None
-    return trace_data.model_dump(mode="json")
-
-
-def _wire_to_trace_data(payload: dict[str, Any] | None) -> BaseTraceData | None:
-    """Reconstruct a Pydantic trace-data model from its wire dict.
-
-    Dispatches on the ``trace_type`` discriminator to the right subclass.
-    Unknown discriminators fall through to BaseTraceData.
-    """
-    if payload is None:
-        return None
-    trace_type = payload.get("trace_type")
-    if trace_type == "aiohttp":
-        return AioHttpTraceData.model_validate(payload)
-    return BaseTraceData.model_validate(payload)
 
 
 def _json_safe(value: Any) -> Any:
@@ -208,7 +182,7 @@ def build_inference_results_wire_message(
             user_context_message=request_info.user_context_message,
         )
 
-    trace_data = _trace_data_to_wire(record.trace_data) if include_trace_data else None
+    trace_data = record.trace_data if include_trace_data else None
 
     wire_record = InferenceWireRecord(
         metadata=WireRequestMetadata(
@@ -305,7 +279,7 @@ def wire_record_to_request_record(
         credit_drop_latency=wire_record.credit_drop_latency,
         cancellation_perf_ns=wire_record.cancellation_perf_ns,
         clock_offset_ns=wire_record.clock_offset_ns,
-        trace_data=_wire_to_trace_data(wire_record.trace_data),
+        trace_data=wire_record.trace_data,
         turns=turns,
     )
     if wire_record.raw_payload is not None:

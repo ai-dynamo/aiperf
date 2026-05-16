@@ -3,12 +3,11 @@
 
 from typing import Any
 
-from pydantic import Field, SerializeAsAny, field_validator
+from pydantic import Field, SerializeAsAny, field_serializer, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import MessageType, MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.metric_records_wire import _trace_data_to_wire
 from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
@@ -16,6 +15,18 @@ from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.types import MessageTypeT, MetricTagT
 
 _logger = AIPerfLogger(__name__)
+
+
+def _serialize_trace_data(v: BaseTraceData | None) -> dict[str, Any] | None:
+    """Serialize a msgspec.Struct trace-data instance to a JSON-safe dict.
+
+    BaseTraceData is a msgspec.Struct so Pydantic does not know how to
+    serialize it natively. ``model_dump()`` on the Struct returns a plain
+    dict (with the ``trace_type`` discriminator) suitable for orjson.
+    """
+    if v is None:
+        return None
+    return v.model_dump()
 
 
 class InferenceResultsMessage(BaseServiceMessage):
@@ -55,6 +66,12 @@ class MetricRecordsData(AIPerfBaseModel):
             return BaseTraceData.from_json(v)
         return v
 
+    @field_serializer("trace_data")
+    def serialize_trace_data(
+        self, v: BaseTraceData | None
+    ) -> dict[str, Any] | None:
+        return _serialize_trace_data(v)
+
     @property
     def valid(self) -> bool:
         """Whether the request was valid."""
@@ -91,6 +108,12 @@ class MetricRecordsMessage(BaseServiceMessage):
             return BaseTraceData.from_json(v)
         return v
 
+    @field_serializer("trace_data")
+    def serialize_trace_data(
+        self, v: BaseTraceData | None
+    ) -> dict[str, Any] | None:
+        return _serialize_trace_data(v)
+
     @property
     def valid(self) -> bool:
         """Whether the request was valid."""
@@ -111,7 +134,7 @@ class MetricRecordsMessage(BaseServiceMessage):
         return MetricRecordsData(
             metadata=self.metadata,
             metrics=metrics,
-            trace_data=_trace_data_to_wire(self.trace_data),
+            trace_data=self.trace_data,
             error=self.error,
         )
 

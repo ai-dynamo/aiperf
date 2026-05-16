@@ -16,6 +16,7 @@ from pydantic import (
     PlainSerializer,
     RootModel,
     SerializeAsAny,
+    field_serializer,
     field_validator,
 )
 from pydantic.functional_validators import AfterValidator
@@ -744,6 +745,15 @@ class RequestRecord(AIPerfBaseModel):
         if isinstance(v, dict):
             return BaseTraceData.from_json(v)
         return v
+
+    @field_serializer("trace_data")
+    def serialize_trace_data(
+        self, v: BaseTraceData | None
+    ) -> dict[str, Any] | None:
+        """Serialize the msgspec.Struct trace_data to a JSON-safe dict for Pydantic."""
+        if v is None:
+            return None
+        return v.model_dump()
 
     @property
     def was_cancelled(self) -> bool:

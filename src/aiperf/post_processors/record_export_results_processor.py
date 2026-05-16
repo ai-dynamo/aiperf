@@ -71,14 +71,11 @@ class RecordExportResultsProcessor(
                 return
 
             # Convert trace data to export format (wall-clock timestamps) if enabled.
-            # The wire form carries trace_data as a plain dict (msgspec
-            # single-custom-type limit); reconstruct the Pydantic model first.
+            # trace_data is a native msgspec Struct (BaseTraceData / AioHttpTraceData)
+            # on the wire; call its to_export() directly.
             export_trace_data = None
             if self.export_http_trace and record_data.trace_data:
-                from aiperf.common.metric_records_wire import _wire_to_trace_data
-
-                trace_data = _wire_to_trace_data(record_data.trace_data)
-                export_trace_data = trace_data.to_export() if trace_data else None
+                export_trace_data = record_data.trace_data.to_export()
 
             record_info = MetricRecordInfo(
                 metadata=record_data.metadata,

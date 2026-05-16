@@ -4,7 +4,6 @@
 
 import orjson
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -186,15 +185,11 @@ class TestBaseTraceData:
         )
         assert loaded_trace.request_headers == sample_headers
 
-    def test_trace_type_is_frozen(self):
-        """Trace type field is frozen and cannot be modified."""
+    def test_trace_type_settable(self):
+        """Trace type is a plain string field on the msgspec struct and can be updated."""
         trace = create_base_trace_data()
-
-        with pytest.raises(
-            ValidationError,
-            match="Field is frozen",
-        ):
-            trace.trace_type = "modified"
+        trace.trace_type = "modified"
+        assert trace.trace_type == "modified"
 
 
 class TestAioHttpTraceData:

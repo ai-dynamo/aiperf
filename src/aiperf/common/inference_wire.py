@@ -16,12 +16,14 @@ from msgspec import Struct
 
 from aiperf.common.enums import MessageType
 from aiperf.common.metric_records_wire import WireErrorDetails
+from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 
-# Trace data is carried on the wire as a plain dict (trace_type discriminator
-# + fields) because on main BaseTraceData / AioHttpTraceData are Pydantic
-# (not msgspec) models, and msgspec unions may contain at most one custom
-# type. The codec handles model_dump/reconstruct on either side.
-TraceDataWireT: TypeAlias = dict[str, Any]
+# Trace data rides the wire as a native msgspec tagged union. Both
+# BaseTraceData and AioHttpTraceData are msgspec.Struct subclasses with
+# distinct tag values (set via tag="base" / tag="aiohttp"), so the
+# decoder dispatches to the right concrete type without a dict
+# round-trip.
+TraceDataWireT: TypeAlias = BaseTraceData | AioHttpTraceData
 
 
 class WireText(Struct, frozen=True, kw_only=True, omit_defaults=True):
@@ -207,7 +209,7 @@ class InferenceWireRecord(Struct, frozen=True, kw_only=True, omit_defaults=True)
     """Estimated clock offset in nanoseconds for cross-process time alignment."""
 
     trace_data: TraceDataWireT | None = None
-    """Trace data serialized as a dict for wire transit (msgspec union limit)."""
+    """Native trace data (msgspec Struct, tag-union over BaseTraceData / AioHttpTraceData)."""
 
     request_headers: dict[str, str] | None = None
     """HTTP request headers sent to the inference server."""

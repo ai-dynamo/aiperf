@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from time import perf_counter_ns, time_ns
 from typing import Any, ClassVar, Literal
 
+import msgspec
+from msgspec import Struct, field
 from pydantic import ConfigDict, Field, computed_field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -310,10 +314,22 @@ class AioHttpTraceDataExport(TraceDataExport):
         return None
 
 
-class BaseTraceData(AIPerfBaseModel):
-    """Base trace data model.
+class BaseTraceData(
+    Struct,
+    kw_only=True,
+    omit_defaults=True,
+    tag_field="__struct_tag",
+    tag="base",
+):
+    """Base trace data captured via perf_counter_ns().
 
-    Captures timing information for trace data lifecycle using perf_counter_ns().
+    Native msgspec Struct so instances can be embedded directly in msgpack
+    wire envelopes (worker -> record-processor and RP -> records-manager)
+    without a dict round-trip. Polymorphic decoding is driven by the
+    msgspec tag field; the separate ``trace_type`` field is a free-form
+    label used by the export layer (TraceDataExport subclasses).
+
+    Captures timing information for trace data lifecycle.
 
     Fields organized by phase:
 
@@ -325,17 +341,17 @@ class BaseTraceData(AIPerfBaseModel):
       - request_send_start_perf_ns: Request send start
       - request_headers: Request headers dictionary
       - request_headers_sent_perf_ns: Request headers sent complete
-      - request_chunks: List of (timestamp_perf_ns, size_bytes) tuples (only with --export-http-trace)
-      - request_send_end_perf_ns: Request send end (last chunk written to socket)
+      - request_chunks: List of (timestamp_perf_ns, size_bytes) tuples
+      - request_send_end_perf_ns: Request send end
       - request_chunks_count: Number of request chunks sent
       - request_bytes_total: Total bytes sent
 
     Response Receive Phase:
       - response_status_code: Response status code
-      - response_receive_start_perf_ns: Response receive start (first body chunk)
+      - response_receive_start_perf_ns: Response receive start
       - response_headers: Response headers dictionary
-      - response_headers_received_perf_ns: Response headers received (aiohttp on_request_end)
-      - response_chunks: List of (timestamp_perf_ns, size_bytes) tuples (only with --export-http-trace)
+      - response_headers_received_perf_ns: Response headers received
+      - response_chunks: List of (timestamp_perf_ns, size_bytes) tuples
       - response_chunks_count: Number of response chunks received
       - response_bytes_total: Total bytes received
       - response_receive_end_perf_ns: Response receive end
@@ -343,127 +359,55 @@ class BaseTraceData(AIPerfBaseModel):
     Error Tracking:
       - error_timestamp_perf_ns: Error timestamp (if any)
 
-    Note: All *_perf_ns fields use time.perf_counter_ns() for high-precision measurements.
+    Note: All *_perf_ns fields use time.perf_counter_ns().
     """
 
-    # For auto-routed-model serialization and deserialization
+    # ClassVar to preserve the old discriminator-field convention used by some
+    # callsites. Not a msgspec field (msgspec ignores ClassVar).
     discriminator_field: ClassVar[str] = "trace_type"
 
-    trace_type: str = Field(
-        ...,
-        description="The type of the trace. This is typically the name of the library used",
-        frozen=True,
-    )
+    trace_type: str = "base"
+    """Free-form label identifying the trace source (e.g. 'aiohttp', 'httpcore')."""
 
     # Reference Timestamps for converting between wall-clock and perf_counter time.
-    reference_time_ns: int | None = Field(
-        default=None,
-        description="A reference timestamp in wall-clock time for helping with timing calculations (time.time_ns()).",
-    )
-    reference_perf_ns: int | None = Field(
-        default=None,
-        description="A reference perf timestamp for helping with timing calculations (time.perf_counter_ns()). "
-        "This is the perf_counter_ns value when the reference_time_ns was set.",
-    )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Initialize the reference time_ns and perf_counter_ns timestamps."""
-        if self.reference_time_ns is None or self.reference_perf_ns is None:
-            # NOTE: perf_counter is slightly faster than time_ns, so we do it first for tighter coupling.
-            #       We also do them as a single operation to avoid timing gaps between the two functions.
-            self.reference_perf_ns, self.reference_time_ns = (
-                perf_counter_ns(),
-                time_ns(),
-            )
+    reference_time_ns: int | None = None
+    """Wall-clock reference for converting perf timestamps (time.time_ns())."""
+    reference_perf_ns: int | None = None
+    """Perf counter reference paired with reference_time_ns."""
 
     # Request Send Phase
-    request_send_start_perf_ns: int | None = Field(
-        default=None,
-        description="When the HTTP request started being sent (perf_counter_ns).",
-    )
-    request_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the request.",
-    )
-    request_headers_sent_perf_ns: int | None = Field(
-        default=None,
-        description="When the request headers were sent to the server (perf_counter_ns).",
-    )
-    request_chunks: list[tuple[int, int]] = Field(
-        default_factory=list,
-        description="Request chunks as (timestamp_perf_ns, size_bytes) tuples. "
-        "Only populated when collect_trace_chunks is enabled (--export-http-trace). "
-        "Maps to aiohttp's on_request_chunk_sent events. These are transport-layer writes, not application messages.",
-    )
-    request_send_end_perf_ns: int | None = Field(
-        default=None,
-        description="When the request body finished being sent (last chunk written to socket, perf_counter_ns). "
-        "This is the true 'request send complete' time - more accurate than response_headers_received_perf_ns "
-        "which fires after response headers are received (includes network round-trip). "
-        "Set by on_request_chunk_sent trace callback on each chunk; final value is the last chunk timestamp.",
-    )
-    request_chunks_count: int = Field(
-        default=0,
-        ge=0,
-        description="Number of request chunks sent.",
-    )
-    request_bytes_total: int = Field(
-        default=0,
-        ge=0,
-        description="Total bytes sent in request chunks.",
-    )
+    request_send_start_perf_ns: int | None = None
+    request_headers: dict[str, str] | None = None
+    request_headers_sent_perf_ns: int | None = None
+    request_chunks: list[tuple[int, int]] = field(default_factory=list)
+    request_send_end_perf_ns: int | None = None
+    request_chunks_count: int = 0
+    request_bytes_total: int = 0
 
     # Response Receive Phase
-    response_status_code: int | None = Field(
-        default=None,
-        description="The status code of the response.",
-    )
-    response_reason: str | None = Field(
-        default=None,
-        description="The HTTP status reason phrase (e.g., 'OK', 'Not Found').",
-    )
-    response_receive_start_perf_ns: int | None = Field(
-        default=None,
-        description="When the response started being received from the server (perf_counter_ns).",
-    )
-    response_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the response.",
-    )
-    response_headers_received_perf_ns: int | None = Field(
-        default=None,
-        description="When the response headers were received from the server (perf_counter_ns).",
-    )
-    response_chunks: list[tuple[int, int]] = Field(
-        default_factory=list,
-        description="Response chunks as (timestamp_perf_ns, size_bytes) tuples. "
-        "Only populated when collect_trace_chunks is enabled (--export-http-trace). "
-        "Maps to aiohttp's on_response_chunk_received events. These are transport-layer reads, not application messages (SSE events).",
-    )
-    response_chunks_count: int = Field(
-        default=0,
-        ge=0,
-        description="Number of response chunks received.",
-    )
-    response_bytes_total: int = Field(
-        default=0,
-        ge=0,
-        description="Total bytes received in response chunks.",
-    )
-    response_receive_end_perf_ns: int | None = Field(
-        default=None,
-        description="When the response finished being received from the server (perf_counter_ns).",
-    )
+    response_status_code: int | None = None
+    response_reason: str | None = None
+    response_receive_start_perf_ns: int | None = None
+    response_headers: dict[str, str] | None = None
+    response_headers_received_perf_ns: int | None = None
+    response_chunks: list[tuple[int, int]] = field(default_factory=list)
+    response_chunks_count: int = 0
+    response_bytes_total: int = 0
+    response_receive_end_perf_ns: int | None = None
 
     # Errors
-    error_timestamp_perf_ns: int | None = Field(
-        default=None,
-        description="When an exception occurred during the request (perf_counter_ns). "
-        "Maps to aiohttp's on_request_exception event.",
-    )
+    error_timestamp_perf_ns: int | None = None
+
+    def __post_init__(self) -> None:
+        """Initialize reference time_ns and perf_counter_ns timestamps in a tight pair."""
+        if self.reference_time_ns is None or self.reference_perf_ns is None:
+            # perf_counter is slightly faster than time_ns; do it first for tight coupling.
+            perf, wall = perf_counter_ns(), time_ns()
+            self.reference_perf_ns = perf
+            self.reference_time_ns = wall
 
     def _convert_perf_to_wall(self, perf_ns: int | None) -> int | None:
-        """Convert perf_counter timestamp to wall-clock timestamp.
+        """Convert a perf_counter timestamp to wall-clock time using the stored reference.
 
         Args:
             perf_ns: Perf counter timestamp to convert
@@ -480,65 +424,108 @@ class BaseTraceData(AIPerfBaseModel):
             )
         return self.reference_time_ns + (perf_ns - self.reference_perf_ns)
 
+    def model_dump(
+        self,
+        *,
+        exclude_none: bool = False,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a JSON-safe dict of the trace data.
+
+        Mirrors the prior Pydantic API for callsites that still use ``model_dump``.
+        The ``mode`` argument is accepted for signature parity but ignored — all
+        fields here are JSON-native (ints, strings, dicts, lists of tuples).
+        """
+        data: dict[str, Any] = {}
+        for name in self.__struct_fields__:
+            value = getattr(self, name)
+            if exclude_none and value is None:
+                continue
+            data[name] = value
+        return data
+
+    @classmethod
+    def model_validate(cls, data: Any) -> BaseTraceData:
+        """Construct a trace-data instance from a dict (Pydantic API parity)."""
+        return cls.from_json(data)
+
+    @classmethod
+    def from_json(
+        cls, json_or_dict: str | bytes | bytearray | dict[str, Any]
+    ) -> BaseTraceData:
+        """Rehydrate a trace-data instance from its dict/JSON representation.
+
+        Routes to the correct subclass via the ``trace_type`` discriminator.
+        Unknown discriminators fall through to ``BaseTraceData``.
+        """
+        if isinstance(json_or_dict, (bytes, bytearray, str)):
+            data = msgspec.json.decode(json_or_dict)
+        else:
+            data = dict(json_or_dict)
+        trace_type = data.get("trace_type")
+        target: type[BaseTraceData] = (
+            AioHttpTraceData if trace_type == "aiohttp" else cls
+        )
+        # msgspec.convert handles type coercion (e.g. list -> tuple for chunks)
+        # while accepting plain dicts. strict=False tolerates extra fields.
+        return msgspec.convert(data, target, strict=False)
+
     def to_export(self) -> TraceDataExport:
         """Convert to export model with wall-clock timestamps.
 
-        Uses TraceDataExport's _model_lookup_table to auto-detect the correct export class
-        based on trace_type (leverages the auto-routed-model infrastructure).
+        Routes to the correct ``TraceDataExport`` subclass via the
+        ``trace_type`` discriminator (leveraging the auto-routed-model
+        registry on ``TraceDataExport``).
 
         Returns:
             TraceDataExport (or subclass) with all perf_counter timestamps converted to wall-clock time
         """
-        # Auto-detect export class using the trace_type discriminator
-        # This leverages the existing auto-routed-model infrastructure
         export_class = TraceDataExport._model_lookup_table.get(
             self.trace_type, TraceDataExport
         )
 
-        # Get all fields from the model
-        data = self.model_dump()
-
-        # Convert all *_perf_ns fields to *_ns (wall-clock)
-        export_data = {}
-        for key, value in data.items():
-            if key in ("reference_time_ns", "reference_perf_ns"):
+        export_data: dict[str, Any] = {}
+        for name in self.__struct_fields__:
+            if name in ("reference_time_ns", "reference_perf_ns"):
                 # Skip reference fields (not needed in export)
                 continue
-            elif key.endswith("_perf_ns"):
+            value = getattr(self, name)
+            if name.endswith("_perf_ns"):
                 # Smart conversion: just replace _perf_ns with _ns
-                export_key = key.replace("_perf_ns", "_ns")
-
-                # Convert timestamp field
+                export_key = name.replace("_perf_ns", "_ns")
                 if isinstance(value, list):
-                    # Convert list of timestamps
                     export_data[export_key] = [
                         self._convert_perf_to_wall(ts) for ts in value
                     ]
                 else:
-                    # Convert single timestamp
                     export_data[export_key] = self._convert_perf_to_wall(value)
-            elif key in ("request_chunks", "response_chunks"):
-                # Convert (timestamp_perf_ns, size_bytes) tuples - timestamp is first element
-                export_data[key] = [
+            elif name in ("request_chunks", "response_chunks"):
+                # Convert (timestamp_perf_ns, size_bytes) tuples
+                export_data[name] = [
                     (self._convert_perf_to_wall(ts), size) for ts, size in value
                 ]
             else:
-                # Copy non-timestamp fields as-is
-                export_data[key] = value
+                export_data[name] = value
 
         return export_class(**export_data)
 
 
-class AioHttpTraceData(BaseTraceData):
-    """Comprehensive trace data for aiohttp requests using the tracing event system.
+class AioHttpTraceData(
+    BaseTraceData,
+    kw_only=True,
+    omit_defaults=True,
+    tag="aiohttp",
+):
+    """Trace data for aiohttp requests extending BaseTraceData with connection-level timing.
 
-    Extends BaseTraceData with aiohttp-specific connection and network timing details.
+    Native msgspec Struct (tag="aiohttp") so it round-trips through the
+    msgpack wire codec without a dict conversion step.
 
     Additional fields organized by phase:
 
     Connection Pool Phase:
-      - connection_pool_wait_start_perf_ns: Queue wait start for an available connection
-      - connection_pool_wait_end_perf_ns: Queue wait end for an available connection
+      - connection_pool_wait_start_perf_ns: Queue wait start
+      - connection_pool_wait_end_perf_ns: Queue wait end
 
     Connection Reuse:
       - connection_reused_perf_ns: Existing connection reused timestamp
@@ -546,91 +533,39 @@ class AioHttpTraceData(BaseTraceData):
     DNS Resolution Phase:
       - dns_lookup_start_perf_ns: DNS resolution start
       - dns_lookup_end_perf_ns: DNS resolution complete
-      - dns_cache_hit_perf_ns: DNS cache hit occurred
-      - dns_cache_miss_perf_ns: DNS cache miss occurred
+      - dns_cache_hit_perf_ns: DNS cache hit
+      - dns_cache_miss_perf_ns: DNS cache miss
 
     TCP Connection Phase (only for new connections):
-      - tcp_connect_start_perf_ns: TCP connection establishment start
-      - tcp_connect_end_perf_ns: TCP connection established
-        Note: For HTTPS, this includes both TCP and TLS handshake time combined.
-
-    Note: Inherits all fields from BaseTraceData (reference, request, response, error).
-          All timestamps use perf_counter_ns() for high-precision measurements.
+      - tcp_connect_start_perf_ns: TCP+TLS handshake start
+      - tcp_connect_end_perf_ns: TCP+TLS handshake end
     """
 
     trace_type: str = "aiohttp"
 
     # Connection Pool
-    connection_pool_wait_start_perf_ns: int | None = Field(
-        default=None,
-        description="When the request started waiting for an available connection from the pool (perf_counter_ns). "
-        "Maps to aiohttp's on_connection_queued_start event.",
-    )
-    connection_pool_wait_end_perf_ns: int | None = Field(
-        default=None,
-        description="When an available connection was obtained from the pool (perf_counter_ns). "
-        "Maps to aiohttp's on_connection_queued_end event.",
-    )
+    connection_pool_wait_start_perf_ns: int | None = None
+    connection_pool_wait_end_perf_ns: int | None = None
 
     # TCP Connection (only set if a new connection is created)
-    tcp_connect_start_perf_ns: int | None = Field(
-        default=None,
-        description="When TCP connection establishment started (perf_counter_ns). "
-        "Maps to aiohttp's on_connection_create_start event.",
-    )
-    tcp_connect_end_perf_ns: int | None = Field(
-        default=None,
-        description="When TCP connection establishment completed (perf_counter_ns). "
-        "Maps to aiohttp's on_connection_create_end event.",
-    )
+    tcp_connect_start_perf_ns: int | None = None
+    tcp_connect_end_perf_ns: int | None = None
 
     # Connection Reuse
-    connection_reused_perf_ns: int | None = Field(
-        default=None,
-        description="When an existing connection was reused from the pool (perf_counter_ns). "
-        "Maps to aiohttp's on_connection_reuseconn event.",
-    )
+    connection_reused_perf_ns: int | None = None
 
     # DNS Resolution
-    dns_lookup_start_perf_ns: int | None = Field(
-        default=None,
-        description="When DNS resolution started for the hostname (perf_counter_ns). "
-        "Maps to aiohttp's on_dns_resolvehost_start event.",
-    )
-    dns_lookup_end_perf_ns: int | None = Field(
-        default=None,
-        description="When DNS resolution completed for the hostname (perf_counter_ns). "
-        "Maps to aiohttp's on_dns_resolvehost_end event.",
-    )
-    dns_cache_hit_perf_ns: int | None = Field(
-        default=None,
-        description="When a DNS cache hit occurred (perf_counter_ns). "
-        "Maps to aiohttp's on_dns_cache_hit event.",
-    )
-    dns_cache_miss_perf_ns: int | None = Field(
-        default=None,
-        description="When a DNS cache miss occurred (perf_counter_ns). "
-        "Maps to aiohttp's on_dns_cache_miss event.",
-    )
+    dns_lookup_start_perf_ns: int | None = None
+    dns_lookup_end_perf_ns: int | None = None
+    dns_cache_hit_perf_ns: int | None = None
+    dns_cache_miss_perf_ns: int | None = None
 
-    # Connection Socket Info (captured in on_request_end, works for new + reused)
-    local_ip: str | None = Field(
-        default=None,
-        description="Local IP address used for the connection.",
-    )
-    local_port: int | None = Field(
-        default=None,
-        ge=1,
-        le=65535,
-        description="Local (ephemeral) port used for the connection.",
-    )
-    remote_ip: str | None = Field(
-        default=None,
-        description="Remote IP address of the server (resolved from DNS).",
-    )
-    remote_port: int | None = Field(
-        default=None,
-        ge=1,
-        le=65535,
-        description="Remote port of the server.",
-    )
+    # Connection Socket Info (captured in on_request_end)
+    local_ip: str | None = None
+    local_port: int | None = None
+    remote_ip: str | None = None
+    remote_port: int | None = None
+
+
+# Type alias for unions that carry either concrete trace-data struct on the wire.
+TraceDataT = BaseTraceData | AioHttpTraceData
