@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.config.dataset.defaults import InputTokensDefaults
+from aiperf.config.defaults import InputTokensDefaults
 
 
 def _stable_hash(data: str | tuple) -> int:

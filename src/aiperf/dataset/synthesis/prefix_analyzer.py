@@ -11,7 +11,7 @@ import numpy as np
 import orjson
 
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.config.dataset.defaults import InputTokensDefaults
+from aiperf.config.defaults import InputTokensDefaults
 from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats
 from aiperf.dataset.synthesis.radix_tree import RadixTree
 
@@ -49,7 +49,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         trace_file = Path(trace_file)
 
         # First pass: collect all data
-        with open(trace_file, encoding="utf-8") as f:
+        with open(trace_file) as f:
             for line in f:
                 if line.strip():
                     data = orjson.loads(line)
