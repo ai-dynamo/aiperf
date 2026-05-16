@@ -114,9 +114,9 @@ def create_model_endpoint_info(**config_kwargs: Any) -> "ModelEndpointInfo":
         ),
         endpoint=EndpointInfo(
             type=endpoint_cfg.type,
-            base_url=endpoint_cfg.urls[0] if endpoint_cfg.urls else "",
+            base_urls=list(endpoint_cfg.urls),
             streaming=endpoint_cfg.streaming,
-            path=endpoint_cfg.path,
+            custom_endpoint=endpoint_cfg.path,
             extra=list((endpoint_cfg.extra or {}).items()),
             api_key=endpoint_cfg.api_key,
             headers=list((endpoint_cfg.headers or {}).items()),
