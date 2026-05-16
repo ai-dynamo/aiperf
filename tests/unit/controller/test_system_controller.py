@@ -3,16 +3,35 @@
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import msgspec
 import pytest
 
-from aiperf.common.enums import CommandType
+from aiperf.common.control_structs import CommandErr, Registration, RegistrationAck
+from aiperf.common.enums import (
+    CommandType,
+    LifecycleState,
+    WorkerStartupState,
+    WorkerStatus,
+)
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.messages.command_messages import CommandErrorResponse
+from aiperf.common.exceptions import (
+    LifecycleOperationError,
+    ServiceRegistrationTimeoutError,
+)
+from aiperf.common.messages.worker_messages import (
+    WorkerPodStateMessage,
+    WorkerStatusSummaryMessage,
+)
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.common.service_registry import ServiceRegistry
+from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.config.accuracy import AccuracyConfig
 from aiperf.controller.system_controller import SystemController
-from aiperf.plugin.enums import AccuracyBenchmarkType
+from aiperf.plugin.enums import (
+    AccuracyBenchmarkType,
+    EndpointType,
+    ServiceRunType,
+    ServiceType,
+)
 from tests.unit.controller.conftest import MockTestException
 
 
@@ -59,18 +78,16 @@ class TestSystemController:
     ):
         """Test that SystemController does not exit when start services succeeds."""
         mock_service_manager.start.return_value = None
-        mock_service_manager.wait_for_all_services_registration.return_value = None
         system_controller._start_profiling_all_services = AsyncMock(return_value=None)
-        system_controller._profile_configure_all_services = AsyncMock(return_value=None)
+        system_controller._wait_for_all_configured = AsyncMock(return_value=None)
 
         await system_controller._start_services()
         # Verify that no exit errors were recorded
         assert len(system_controller._exit_errors) == 0
 
         assert mock_service_manager.start.called
-        assert mock_service_manager.wait_for_all_services_registration.called
+        assert system_controller._wait_for_all_configured.called
         assert system_controller._start_profiling_all_services.called
-        assert system_controller._profile_configure_all_services.called
 
 
 class TestSystemControllerExitScenarios:
@@ -81,48 +98,38 @@ class TestSystemControllerExitScenarios:
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_configure."""
-        error_responses = [
-            msgspec.structs.replace(
-                error_response, command=CommandType.PROFILE_CONFIGURE
-            )
-        ]
-        # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
-            return_value=error_responses
+        """Test that SystemController records configure errors when a service returns CommandErr."""
+        error_response = CommandErr(
+            cid="test-cid",
+            sid="test-service",
+            error=str(mock_exception),
+            traceback="",
         )
+        system_controller._send_control_command = AsyncMock(return_value=error_response)
 
-        with pytest.raises(
-            LifecycleOperationError,
-            match="Failed to perform operation 'Configure Profiling'",
-        ):
-            await system_controller._profile_configure_all_services()
+        await system_controller._configure_single_service("test-service")
 
-        # Verify that exit errors were recorded
-        assert_exit_error(
-            system_controller,
-            error_response.error,
-            "Configure Profiling",
-            error_responses[0].service_id,
-        )
+        assert len(system_controller._configure_errors) == 1
+        assert isinstance(system_controller._configure_errors[0], CommandErr)
+        assert system_controller._configure_errors[0].error == str(mock_exception)
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_start_error_response(
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_start."""
+        """Test that SystemController exits when receiving a CommandErr for profile_start."""
         error_responses = [
-            msgspec.structs.replace(
-                error_response, command=CommandType.PROFILE_START
+            CommandErr(
+                cid="test-cid",
+                sid="test-service",
+                error=str(mock_exception),
+                traceback="",
             )
         ]
-        # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=error_responses
         )
 
@@ -132,13 +139,9 @@ class TestSystemControllerExitScenarios:
         ):
             await system_controller._start_profiling_all_services()
 
-        # Verify that exit errors were recorded
-        assert_exit_error(
-            system_controller,
-            error_response.error,
-            "Start Profiling",
-            error_responses[0].service_id,
-        )
+        assert len(system_controller._exit_errors) == 1
+        assert system_controller._exit_errors[0].operation == "Start Profiling"
+        assert system_controller._exit_errors[0].service_id == "test-service"
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_service_manager_initialize_error(
@@ -189,17 +192,17 @@ class TestSystemControllerExitScenarios:
         )
 
     @pytest.mark.asyncio
-    async def test_system_controller_exits_on_wait_for_all_services_registration_error(
+    async def test_system_controller_exits_on_wait_for_all_configured_error(
         self,
         system_controller: SystemController,
         mock_service_manager: AsyncMock,
         mock_exception: MockTestException,
     ):
-        """Test that SystemController exits when the service manager wait_for_all_services_registration fails."""
+        """Test that SystemController exits when _wait_for_all_configured fails."""
         mock_service_manager.start.return_value = None
-        mock_service_manager.wait_for_all_services_registration.side_effect = (
-            LifecycleOperationError(
-                operation="Register Service",
+        system_controller._wait_for_all_configured = AsyncMock(
+            side_effect=LifecycleOperationError(
+                operation="Configure Profiling",
                 original_exception=mock_exception,
                 lifecycle_id=system_controller.id,
             )
@@ -211,11 +214,11 @@ class TestSystemControllerExitScenarios:
         assert_exit_error(
             system_controller,
             LifecycleOperationError(
-                operation="Register Service",
+                operation="Configure Profiling",
                 original_exception=mock_exception,
                 lifecycle_id=system_controller.id,
             ),
-            "Register Services",
+            "Configure Services",
             system_controller.id,
         )
 
@@ -264,11 +267,9 @@ class TestSignalHandling:
         self, system_controller: SystemController, mock_service_manager: AsyncMock
     ):
         """First Ctrl+C sets _was_cancelled flag via _cancel_profiling."""
-        # Mock the command response
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
-        system_controller.stop = AsyncMock()  # Prevent actual stop
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller.control_router = AsyncMock()
+        system_controller.stop = AsyncMock()
 
         assert system_controller._was_cancelled is False
 
@@ -281,24 +282,22 @@ class TestSignalHandling:
     async def test_cancel_profiling_sends_profile_cancel_command(
         self, system_controller: SystemController, mock_service_manager: AsyncMock
     ):
-        """_cancel_profiling sends ProfileCancelCommand to all services."""
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
+        """_cancel_profiling sends PROFILE_CANCEL to all services."""
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller.control_router = AsyncMock()
         system_controller.stop = AsyncMock()
 
         await system_controller._cancel_profiling()
 
-        # Verify ProfileCancelCommand was sent
-        system_controller.send_command_and_wait_for_all_responses.assert_called_once()
-        call_args = system_controller.send_command_and_wait_for_all_responses.call_args
-        assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+        system_controller._send_control_command_to_all.assert_called_once()
 
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController
     ):
         """_print_cancel_warning prints to console."""
-        with patch("aiperf.controller.system_controller.Console") as mock_console_class:
+        with patch(
+            "aiperf.controller.system_controller_output.Console"
+        ) as mock_console_class:
             mock_console = MagicMock()
             mock_console_class.return_value = mock_console
 
@@ -312,7 +311,9 @@ class TestSignalHandling:
         self, system_controller: SystemController
     ):
         """_print_force_quit_warning prints to console."""
-        with patch("aiperf.controller.system_controller.Console") as mock_console_class:
+        with patch(
+            "aiperf.controller.system_controller_output.Console"
+        ) as mock_console_class:
             mock_console = MagicMock()
             mock_console_class.return_value = mock_console
 
@@ -350,22 +351,517 @@ class TestSignalHandling:
         system_controller._kill.assert_called_once()
 
 
+class TestKubernetesMode:
+    """Test Kubernetes-specific behavior in SystemController."""
+
+    def _create_system_controller(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> tuple[SystemController, MagicMock]:
+        """Create a SystemController with custom config, mimicking the conftest pattern.
+
+        Returns:
+            Tuple of (controller, mock_proxy_class) so callers can inspect ProxyManager kwargs.
+        """
+        from pathlib import Path
+
+        run = BenchmarkRun(
+            benchmark_id="test",
+            cfg=config.benchmark,
+            artifact_dir=Path("/tmp/test"),
+        )
+        mock_ui = AsyncMock()
+        mock_comm = AsyncMock()
+        mock_comm.create_reply_client = MagicMock(return_value=AsyncMock())
+
+        def mock_get_class(protocol, name):
+            if protocol == "service_manager":
+                return lambda **kwargs: mock_service_manager
+            if protocol == "ui":
+                return lambda **kwargs: mock_ui
+            if protocol == "communication":
+                return lambda **kwargs: mock_comm
+            raise ValueError(f"Unknown protocol: {protocol}")
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+            patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
+            patch(
+                "aiperf.controller.system_controller.ZMQStreamingRouterClient",
+                return_value=AsyncMock(),
+            ),
+            patch(
+                "aiperf.common.mixins.communication_mixin.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+        ):  # fmt: skip
+            mock_proxy.return_value = AsyncMock()
+            controller = SystemController(
+                run=run,
+                service_id="test_controller",
+            )
+            controller.stop = AsyncMock()
+            controller.publish = AsyncMock()
+            return controller, mock_proxy
+
+    def test_kubernetes_mode_requires_group_managers_not_direct_children(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Group-managed K8s topology should require pod managers, not direct child services."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 12
+        config.benchmark.runtime.workers_per_pod = 5
+        config.benchmark.runtime.record_processors_per_pod = 2
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        assert controller.required_services[ServiceType.WORKER_GROUP_MANAGER] == 3
+        assert ServiceType.WORKER not in controller.required_services
+        assert ServiceType.RECORD_PROCESSOR not in controller.required_services
+        assert ServiceType.WORKER_MANAGER not in controller.required_services
+
+    def test_multiprocessing_mode_requires_worker_group_manager_not_direct_children(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Local mode should require a worker-group manager instead of direct worker children."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        assert controller.required_services[ServiceType.WORKER_GROUP_MANAGER] == 1
+        assert ServiceType.WORKER not in controller.required_services
+        assert ServiceType.RECORD_PROCESSOR not in controller.required_services
+        assert ServiceType.WORKER_MANAGER not in controller.required_services
+
+    def test_keep_api_running_true_in_kubernetes_with_api_port(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode with api_port set, keep_api_running should be True."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = 9090
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        is_k8s_mode = (
+            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        assert keep_api_running
+
+    def test_keep_api_running_false_in_local_mode(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In local mode, keep_api_running should be False."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        is_k8s_mode = (
+            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        assert not keep_api_running
+
+    def test_keep_api_running_false_in_kubernetes_without_api_port(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode without api_port, keep_api_running should be False."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = None
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        is_k8s_mode = (
+            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        assert not keep_api_running
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_start_services_does_not_re_run_required_services(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Kubernetes startup should let the service manager handle required services once."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = None
+        config.benchmark.gpu_telemetry.enabled = False
+        config.benchmark.server_metrics.enabled = False
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._wait_for_all_configured = AsyncMock(return_value=None)
+        controller._wait_for_sufficient_worker_pods = AsyncMock(return_value=None)
+        controller._start_profiling_all_services = AsyncMock(return_value=None)
+        controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
+
+        await controller._start_services()
+
+        mock_service_manager.start.assert_awaited_once()
+        mock_service_manager.run_service.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_local_start_services_does_not_re_run_group_children_directly(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Local startup should let the service manager own the WorkerGroupManager topology."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.api_port = None
+        config.benchmark.gpu_telemetry.enabled = False
+        config.benchmark.server_metrics.enabled = False
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._wait_for_all_configured = AsyncMock(return_value=None)
+        controller._start_profiling_all_services = AsyncMock(return_value=None)
+        controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
+
+        await controller._start_services()
+
+        mock_service_manager.start.assert_awaited_once()
+        mock_service_manager.run_service.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_start_services_waits_for_sufficient_worker_pods(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Kubernetes startup should wait for sufficient worker-pod readiness before profiling."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = None
+        config.benchmark.gpu_telemetry.enabled = False
+        config.benchmark.server_metrics.enabled = False
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._wait_for_all_configured = AsyncMock(return_value=None)
+        controller._wait_for_sufficient_worker_pods = AsyncMock(return_value=None)
+        controller._start_profiling_all_services = AsyncMock(return_value=None)
+        controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
+
+        await controller._start_services()
+
+        controller._wait_for_sufficient_worker_pods.assert_awaited_once_with(
+            timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
+        )
+        controller._start_profiling_all_services.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_on_worker_pod_state_marks_controller_ready(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Pod snapshots should drive Kubernetes readiness gating."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 2
+        config.benchmark.runtime.workers_per_pod = 2
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        await controller._on_worker_pod_state(
+            WorkerPodStateMessage(
+                service_id="wpm_0",
+                pod_index="0",
+                benchmark_generation="gen-1",
+                dataset_generation="data-1",
+                declared_workers=2,
+                declared_record_processors=1,
+                router_connected_workers=2,
+                dispatchable_workers=1,
+                ready_workers=1,
+                ready_record_processors=1,
+                degraded_workers=1,
+                degraded_record_processors=0,
+                pod_state="ready",
+                admission_state="dispatchable",
+            )
+        )
+
+        assert controller._has_sufficient_ready_worker_pods() is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_sufficient_worker_pods_requests_refresh(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Pod readiness wait should actively request pod snapshot refreshes."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        ServiceRegistry.expect_service("wpm_0", ServiceType.WORKER_GROUP_MANAGER)
+        ServiceRegistry.register(
+            service_id="wpm_0",
+            service_type=ServiceType.WORKER_GROUP_MANAGER,
+            first_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+
+        async def send_control_command(service_id: str, cmd: str, timeout: float):
+            assert service_id == "wpm_0"
+            assert cmd == CommandType.REPORT_WORKER_STATUS_SUMMARY
+            controller._pod_states["0"] = WorkerPodStateMessage(
+                service_id="wpm_0",
+                pod_index="0",
+                benchmark_generation="gen-1",
+                dataset_generation="data-1",
+                declared_workers=2,
+                declared_record_processors=1,
+                router_connected_workers=2,
+                dispatchable_workers=1,
+                ready_workers=1,
+                ready_record_processors=1,
+                degraded_workers=1,
+                degraded_record_processors=0,
+                pod_state="ready",
+                admission_state="dispatchable",
+            )
+            controller._all_workers_ready_event.set()
+            return None
+
+        controller._send_control_command = AsyncMock(side_effect=send_control_command)
+
+        await controller._wait_for_sufficient_worker_pods(timeout=1.0)
+
+        controller._send_control_command.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_wait_for_sufficient_worker_pods_times_out_without_capacity(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Pod readiness wait should time out when no dispatchable pod arrives."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._send_control_command = AsyncMock(return_value=None)
+
+        with pytest.raises(
+            ServiceRegistrationTimeoutError,
+            match="sufficient worker pod readiness",
+        ):
+            await controller._wait_for_sufficient_worker_pods(timeout=0.01)
+
+    def test_kubernetes_mode_disables_raw_inference_proxy(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode, raw inference proxy is disabled (worker pods run it locally).
+
+        Event-bus proxy is also off by default because the dedicated event-bus-proxy
+        sidecar container owns it (see ``AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED``).
+        """
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
+        call_kwargs = mock_proxy_cls.call_args[1]
+        assert call_kwargs["enable_event_bus"] is False
+        assert call_kwargs["enable_dataset_manager"] is True
+        assert call_kwargs["enable_raw_inference"] is False
+
+    def test_kubernetes_mode_with_sidecar_disabled_hosts_event_bus(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With the sidecar flag off, SystemController hosts the event-bus proxy itself."""
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        monkeypatch.setattr(K8sEnvironment, "EVENT_BUS_SIDECAR_ENABLED", False)
+        _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
+        call_kwargs = mock_proxy_cls.call_args[1]
+        assert call_kwargs["enable_event_bus"] is True
+
+    def test_multiprocessing_mode_disables_controller_raw_inference_proxy(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In local group-managed mode, WorkerGroupManager owns the raw inference proxy."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
+        call_kwargs = mock_proxy_cls.call_args[1]
+        assert call_kwargs["enable_event_bus"] is True
+        assert call_kwargs["enable_dataset_manager"] is True
+        assert call_kwargs["enable_raw_inference"] is False
+
+    @pytest.mark.asyncio
+    async def test_wpm_registration_logs_capacity(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """WPM Registration with capacity fields logs pod capacity info."""
+        from aiperf.common.service_registry import ServiceRegistry
+
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 8
+        config.benchmark.runtime.workers_per_pod = 4
+        config.benchmark.runtime.record_processors_per_pod = 1
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        msg = Registration(
+            sid="wpm_pod0",
+            rid="r1",
+            stype="worker_group_manager",
+            state="running",
+            num_workers=4,
+            num_record_processors=1,
+        )
+        result = await controller._handle_control_message("identity_0", msg)
+
+        assert isinstance(result, RegistrationAck)
+        assert ServiceRegistry.is_registered("wpm_pod0")
+
+    @pytest.mark.asyncio
+    async def test_wpm_registration_warns_on_capacity_mismatch(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """WPM registrations that disagree with configured pod capacity should warn."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 8
+        config.benchmark.runtime.workers_per_pod = 4
+        config.benchmark.runtime.record_processors_per_pod = 1
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        msg = Registration(
+            sid="wpm_pod0",
+            rid="r1",
+            stype="worker_group_manager",
+            state="running",
+            num_workers=3,
+            num_record_processors=2,
+        )
+
+        with patch.object(controller, "warning") as mock_warning:
+            result = await controller._handle_control_message("identity_0", msg)
+
+        assert isinstance(result, RegistrationAck)
+        mock_warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_group_registration_stores_capacity_without_expanding_expectations(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Group registrations should track declared capacity without expecting child services."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 8
+        config.benchmark.runtime.workers_per_pod = 4
+        config.benchmark.runtime.record_processors_per_pod = 1
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+        rps_before = ServiceRegistry.expected_by_type.get(
+            ServiceType.RECORD_PROCESSOR, 0
+        )
+
+        msg = Registration(
+            sid="wpm_pod0",
+            rid="r1",
+            stype="worker_group_manager",
+            state="running",
+            num_workers=4,
+            num_record_processors=1,
+        )
+        result = await controller._handle_control_message("identity_0", msg)
+
+        assert isinstance(result, RegistrationAck)
+        assert controller._declared_group_capacities["wpm_pod0"] == (4, 1)
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+            == workers_before
+        )
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.RECORD_PROCESSOR, 0)
+            == rps_before
+        )
+
+    @pytest.mark.asyncio
+    async def test_registration_without_capacity_does_not_modify_expectations(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Regular service Registration (no capacity fields) should not change expectations."""
+        from aiperf.common.service_registry import ServiceRegistry
+
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+        rps_before = ServiceRegistry.expected_by_type.get(
+            ServiceType.RECORD_PROCESSOR, 0
+        )
+
+        msg = Registration(
+            sid="timing_manager_0",
+            rid="r1",
+            stype="timing_manager",
+            state="running",
+        )
+        await controller._handle_control_message("id_0", msg)
+
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+            == workers_before
+        )
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.RECORD_PROCESSOR, 0)
+            == rps_before
+        )
+
+    @pytest.mark.asyncio
+    async def test_worker_status_summary_tracks_pending_startup_states(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Worker status summaries should surface pending worker startup phases."""
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        await controller._on_worker_status_summary(
+            WorkerStatusSummaryMessage(
+                service_id="worker-manager",
+                worker_statuses={
+                    "worker_a": WorkerStatus.IDLE,
+                    "worker_b": WorkerStatus.IDLE,
+                },
+                worker_startup_states={
+                    "worker_a": WorkerStartupState.WAITING_FOR_DATASET,
+                    "worker_b": WorkerStartupState.ROUTER_PROBING,
+                },
+            )
+        )
+
+        assert controller._summarize_pending_worker_startup_states(
+            {"worker_a", "worker_b", "worker_c"}
+        ) == {
+            "waiting_for_dataset": 1,
+            "router_probing": 1,
+        }
+
+
 class TestAccuracyTemperatureWarning:
     """Tests for _should_warn_accuracy_temperature."""
 
-    def _make_controller_with_accuracy(
+    def _setup_accuracy(
         self,
         system_controller: SystemController,
-        extra_inputs=None,
+        extra_inputs: dict | None = None,
     ) -> SystemController:
-        from aiperf.config.accuracy import AccuracyConfig as V2AccuracyConfig
-
-        system_controller.run.cfg.accuracy = V2AccuracyConfig(
-            benchmark=AccuracyBenchmarkType.MMLU
-        )
-        # extra_inputs in v1 is list[tuple[str, Any]]; v2 endpoint.extra mirrors
-        # the same shape (Pydantic validator coerces dict if needed).
-        system_controller.run.cfg.endpoint.extra = extra_inputs
+        cfg = system_controller.run.cfg
+        if cfg.accuracy is None:
+            cfg.accuracy = AccuracyConfig()
+        cfg.accuracy.benchmark = AccuracyBenchmarkType.MMLU
+        cfg.endpoint.extra = extra_inputs or {}
         return system_controller
 
     def test_no_warning_when_accuracy_disabled(
@@ -376,39 +872,31 @@ class TestAccuracyTemperatureWarning:
     def test_warning_when_accuracy_enabled_no_extra_inputs(
         self, system_controller: SystemController
     ) -> None:
-        self._make_controller_with_accuracy(system_controller, extra_inputs=None)
+        self._setup_accuracy(system_controller, extra_inputs=None)
         assert system_controller._should_warn_accuracy_temperature()
 
     def test_warning_when_temperature_nonzero(
         self, system_controller: SystemController
     ) -> None:
-        self._make_controller_with_accuracy(
-            system_controller, extra_inputs=[("temperature", 1.0)]
-        )
+        self._setup_accuracy(system_controller, extra_inputs={"temperature": 1.0})
         assert system_controller._should_warn_accuracy_temperature()
 
     def test_no_warning_when_temperature_zero(
         self, system_controller: SystemController
     ) -> None:
-        self._make_controller_with_accuracy(
-            system_controller, extra_inputs=[("temperature", 0)]
-        )
+        self._setup_accuracy(system_controller, extra_inputs={"temperature": 0})
         assert not system_controller._should_warn_accuracy_temperature()
 
     def test_no_warning_when_temperature_stringified_zero(
         self, system_controller: SystemController
     ) -> None:
-        self._make_controller_with_accuracy(
-            system_controller, extra_inputs=[("temperature", "0")]
-        )
+        self._setup_accuracy(system_controller, extra_inputs={"temperature": "0"})
         assert not system_controller._should_warn_accuracy_temperature()
 
     def test_warning_when_temperature_stringified_nonzero(
         self, system_controller: SystemController
     ) -> None:
-        self._make_controller_with_accuracy(
-            system_controller, extra_inputs=[("temperature", "0.5")]
-        )
+        self._setup_accuracy(system_controller, extra_inputs={"temperature": "0.5"})
         assert system_controller._should_warn_accuracy_temperature()
 
 
@@ -422,12 +910,13 @@ class TestSSLVerificationWarning:
         """Test that a warning is logged when SSL verification is disabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
-            return_value=[]
-        )
-
-        with patch.object(system_controller, "warning") as mock_warning:
-            await system_controller._profile_configure_all_services()
+        with (
+            patch.object(
+                system_controller, "_all_expected_configured", return_value=True
+            ),
+            patch.object(system_controller, "warning") as mock_warning,
+        ):
+            await system_controller._wait_for_all_configured(timeout=5.0)
 
             mock_warning.assert_called_once()
             warning_message = mock_warning.call_args[0][0]
@@ -440,11 +929,12 @@ class TestSSLVerificationWarning:
         """Test that no warning is logged when SSL verification is enabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
-            return_value=[]
-        )
-
-        with patch.object(system_controller, "warning") as mock_warning:
-            await system_controller._profile_configure_all_services()
+        with (
+            patch.object(
+                system_controller, "_all_expected_configured", return_value=True
+            ),
+            patch.object(system_controller, "warning") as mock_warning,
+        ):
+            await system_controller._wait_for_all_configured(timeout=5.0)
 
             mock_warning.assert_not_called()

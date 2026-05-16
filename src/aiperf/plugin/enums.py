@@ -159,15 +159,15 @@ SearchPlannerType = plugins.create_enum(PluginType.SEARCH_PLANNER, "SearchPlanne
 
 AccumulatorTypeStr: TypeAlias = str
 AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType", module=__name__)
-"""Dynamic enum for accumulator (no concrete plugins registered)"""
+"""Dynamic enum for accumulator. Example: AccumulatorType.GPU_TELEMETRY, AccumulatorType.METRIC_RESULTS, AccumulatorType.SERVER_METRICS"""
 
 StreamExporterTypeStr: TypeAlias = str
 StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExporterType", module=__name__)
-"""Dynamic enum for stream exporter (no concrete plugins registered)"""
+"""Dynamic enum for stream exporter. Example: StreamExporterType.GPU_TELEMETRY_JSONL_WRITER, StreamExporterType.RECORD_EXPORT, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
 
 AnalyzerTypeStr: TypeAlias = str
 AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=__name__)
-"""Dynamic enum for analyzer (no concrete plugins registered)"""
+"""Dynamic enum for analyzer. Example: AnalyzerType.ACCURACY_RESULTS, AnalyzerType.STEADY_STATE"""
 
 # =============================================================================
 # Composite Enums (merged from multiple categories)

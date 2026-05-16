@@ -847,6 +847,91 @@ results_processor:
       summary accuracy metrics. Self-disables when accuracy mode is off.
 
 # =============================================================================
+# Accumulators
+# =============================================================================
+# Accumulators ingest typed records and produce summary aggregates.
+# One-to-many mapping: multiple accumulators loaded simultaneously per record type.
+# =============================================================================
+accumulator:
+  gpu_telemetry:
+    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+    description: |
+      GPU telemetry accumulator that aggregates GPU telemetry records and computes
+      metrics in a hierarchical structure. Loaded when telemetry is enabled.
+    metadata:
+      record_types: [gpu_telemetry]
+
+  metric_results:
+    class: aiperf.metrics.accumulator:MetricsAccumulator
+    description: |
+      Numpy-backed metrics accumulator that ingests inference metric records,
+      stores per-tag time series with timestamps, and produces summaries with
+      optional timeslicing. Always loaded.
+    metadata:
+      record_types: [metric_records]
+
+  server_metrics:
+    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
+    description: |
+      Server metrics accumulator that aggregates Prometheus server metrics records
+      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+    metadata:
+      record_types: [server_metrics]
+
+# =============================================================================
+# Stream Exporters
+# =============================================================================
+# Stream exporters write each record to an external sink (e.g. JSONL files)
+# as it arrives. Finalized after all records are processed.
+# One-to-many mapping: multiple exporters loaded simultaneously.
+# =============================================================================
+stream_exporter:
+  gpu_telemetry_jsonl_writer:
+    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
+    description: |
+      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
+      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
+      export config.
+    metadata:
+      record_types: [gpu_telemetry]
+
+  record_export:
+    class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
+    description: |
+      Record export JSONL writer that writes per-record metrics to JSONL files with
+      display unit conversion and filtering. Enabled when export_level is RECORDS.
+    metadata:
+      record_types: [metric_records]
+
+  server_metrics_jsonl_writer:
+    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
+    description: |
+      Server metrics JSONL writer that exports per-record server metrics data to
+      JSONL files in slim format.
+    metadata:
+      record_types: [server_metrics]
+
+# =============================================================================
+# Analyzers
+# =============================================================================
+# Analyzers derive results from accumulators at summarization time.
+# No record ingestion. One-to-many: multiple analyzers loaded simultaneously.
+# =============================================================================
+analyzer:
+  steady_state:
+    class: aiperf.post_processors.steady_state_analyzer:SteadyStateAnalyzer
+    description: |
+      Steady-state detection and windowed metric computation. Reads columnar
+      arrays from MetricsAccumulator, detects ramp-up/ramp-down phases, and
+      computes metrics over the stable window. Enabled via --steady-state flag.
+
+  accuracy_results:
+    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
+    description: |
+      Accuracy results processor that aggregates grading results and computes
+      summary accuracy metrics. Self-disables when accuracy mode is off.
+
+# =============================================================================
 # GPU Telemetry Processors
 # =============================================================================
 # GPU telemetry processors aggregate and export GPU telemetry records locally

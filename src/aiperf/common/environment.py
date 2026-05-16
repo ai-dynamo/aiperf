@@ -168,6 +168,18 @@ class _DatasetSettings(BaseSettings):
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
     )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=0,
+        le=20,
+        default=3,
+        description="Maximum number of retries for dataset download in Kubernetes worker pods",
+    )
+    DOWNLOAD_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Initial delay in seconds between dataset download retries (doubles each retry)",
+    )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -707,6 +719,17 @@ class _ServerMetricsSettings(BaseSettings):
         description="Time in seconds to continue collecting metrics after profiling completes, "
         "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
     )
+    PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Seconds the records manager waits for the system controller to relay "
+        "PROFILE_COMPLETE to GPU telemetry, server metrics, and worker group manager. The "
+        "relay blocks on the slowest scrape (Prometheus query + Parquet write), which can "
+        "exceed 30s on contended clusters. A timeout here is non-fatal: the records manager "
+        "logs a warning and continues to _process_results so the operator's results-fetch "
+        "loop still sees a complete export.",
+    )
     COLLECTION_INTERVAL: float = Field(
         ge=0.001,
         le=300.0,
@@ -807,6 +830,20 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=5.0,
         description="Interval in seconds between heartbeat messages for component services",
+    )
+    HEARTBEAT_MISSED_THRESHOLD: int = Field(
+        ge=1,
+        le=100,
+        default=3,
+        description="Number of missed heartbeat intervals before a service is considered stale",
+    )
+    POD_FAILURE_ABORT_THRESHOLD_PERCENT: int = Field(
+        ge=0,
+        le=100,
+        default=100,
+        description="Percentage of worker pods that must fail before aborting the benchmark. "
+        "For example, 50 means abort when 50%+ of worker pods have failed. "
+        "Set to 100 to abort only when all workers are gone. Set to 0 to disable pod failure abort.",
     )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
@@ -1051,6 +1088,13 @@ class _WorkerSettings(BaseSettings):
         le=1000.0,
         default=0.5,
         description="Interval in seconds between worker status summary messages",
+    )
+    DEFAULT_WORKERS_PER_POD: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Default number of worker subprocesses per Kubernetes worker pod. "
+        "Each pod downloads the dataset once and shares it across workers via mmap.",
     )
 
 

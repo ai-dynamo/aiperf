@@ -1,40 +1,68 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
+import contextlib
+import os
 import traceback
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC, RECORDS_CODEC
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
+from aiperf.common.hooks import (
+    background_task,
+    on_command,
+    on_message,
+    on_pull_message,
+    on_start,
+    on_stop,
+)
+from aiperf.common.pod_lifecycle_structs import (
+    GroupManagerToPeerMessage,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    GroupPeerShutdown,
+    GroupTokenizerReady,
+    _send_group_peer_hello_with_retry,
+)
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_message, on_pull_message
-from aiperf.common.messages import (
-    DatasetConfiguredNotification,
-    InferenceResultsMessage,
-    MetricRecordsMessage,
-    ProfileConfigureCommand,
+from aiperf.common.inference_wire import (
+    InferenceResultsWireMessage,
+    wire_message_to_request_record,
+)
+from aiperf.common.messages import DatasetConfiguredNotification
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsData,
+    build_metric_records_batch_wire_message,
+    build_metric_records_data,
+    build_metric_records_wire_message,
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
-    MetricRecordMetadata,
     ParsedResponseRecord,
     RequestRecord,
 )
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
-from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.protocols import (
+    PushClientProtocol,
+    StreamingDealerClientProtocol,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records.inference_result_parser import InferenceResultParser
-
-if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class RecordProcessor(PullClientMixin, BaseComponentService):
@@ -45,7 +73,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        run: "BenchmarkRun",
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
@@ -55,17 +83,41 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
+            pull_client_codec=RAW_INFERENCE_CODEC,
             **kwargs,
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
+            codec=RECORDS_CODEC,
         )
-        self.tokenizers: dict[str, Tokenizer] = {}
-        self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(self.run)
+        self._pending_metric_records: list[MetricRecordsData] = []
+        self._ingest_batch_size = Environment.RECORD.INGEST_BATCH_SIZE
+        # Bundle paths advertised by WGM via GroupTokenizerReady. Empty when
+        # not running with a worker-group manager (local mode); the readiness
+        # event is pre-set in that case so configure() doesn't block.
+        self._tokenizer_bundles: dict[str, str] = {}
+        self._tokenizer_ready: asyncio.Event = asyncio.Event()
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            self._tokenizer_ready.set()
         self.inference_result_parser = InferenceResultParser(
             run=self.run,
+            tokenizer_bundles=self._tokenizer_bundles,
+            tokenizer_ready=self._tokenizer_ready,
         )
+        self._pod_index = os.environ.get("AIPERF_POD_INDEX")
+        self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
+        if self.run.cfg.runtime.uses_worker_group_manager:
+            self.pod_lifecycle_dealer_client = (
+                self.comms.create_streaming_dealer_client(
+                    address=CommAddress.GROUP_LIFECYCLE,
+                    identity=self.service_id,
+                    bind=False,
+                    decode_type=GroupManagerToPeerMessage,
+                )
+            )
+            self.pod_lifecycle_dealer_client.register_receiver(
+                self._on_pod_lifecycle_message
+            )
 
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
@@ -98,26 +150,137 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
 
-    @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
+    def _uses_controller_control_channel(self) -> bool:
+        """Record processors stay off the controller control channel in group mode."""
+        return not self.run.cfg.runtime.uses_worker_group_manager
+
+    async def _on_pod_lifecycle_message(
+        self, message: GroupManagerToPeerMessage
     ) -> None:
-        """Configure the tokenizers."""
+        """Handle group-local lifecycle messages from WorkerGroupManager."""
+        if isinstance(message, GroupTokenizerReady):
+            await self._on_tokenizer_ready(message)
+            return
+        if not isinstance(message, GroupPeerCommand):
+            return
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        if message.command == str(CommandType.PROFILE_CONFIGURE):
+            await self._configure_for_profiling()
+        elif message.command == str(CommandType.SHUTDOWN):
+            await self.stop()
+        elif message.command == str(CommandType.ABORT):
+            # WGM has failed its own lifecycle. Hard-exit so kubelet restarts
+            # this container alongside the WGM — a clean self.stop() here
+            # would exit 0 and leave the pod partially ready with no record
+            # processors. Best-effort ack first; the WGM is already on its
+            # way out so delivery is not required.
+            self.error(
+                f"Received ABORT from WorkerGroupManager; force-exiting "
+                f"{self.service_id} so kubelet restarts this container"
+            )
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            os._exit(1)
+        else:
+            self.warning(f"Unknown group-local command: {message.command}")
+            return
+        try:
+            await self.pod_lifecycle_dealer_client.send(
+                GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+            )
+        except Exception as e:  # noqa: BLE001 - ABORT-path ack is best-effort; peer is already shutting down and we os._exit() next
+            self.debug(
+                f"Failed to ack group-local command (peer already disconnected?): {e!r}"
+            )
+
+    @on_start
+    async def _register_with_worker_group_manager(self) -> None:
+        """Register this record processor with the group-local lifecycle router."""
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        await _send_group_peer_hello_with_retry(
+            self.pod_lifecycle_dealer_client,
+            service_id=self.service_id,
+            service_type=str(self.service_type),
+            pod_index=self._pod_index,
+            logger=self,
+        )
+
+    @on_stop
+    async def _notify_worker_group_manager_shutdown(self) -> None:
+        """Notify WorkerGroupManager that local record flushing is complete."""
+        await self._flush_pending_metric_records()
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        try:
+            await self.pod_lifecycle_dealer_client.send(
+                GroupPeerShutdown(
+                    service_id=self.service_id,
+                    service_type=str(self.service_type),
+                )
+            )
+        except Exception as e:  # noqa: BLE001 - shutdown notify is best-effort; WGM already left the group-local channel
+            self.warning(
+                f"Failed to send GroupPeerShutdown (peer already disconnected?): {e!r}"
+            )
+
+    @background_task(
+        interval=Environment.RECORD.INGEST_BATCH_FLUSH_INTERVAL, immediate=False
+    )
+    async def _flush_pending_metric_records_task(self) -> None:
+        """Flush buffered metric records on a timer."""
+        await self._flush_pending_metric_records()
+
+    async def _configure_for_profiling(self) -> None:
+        """Configure parser state needed before profiling begins."""
         await self.inference_result_parser.configure()
 
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(self, message: Command) -> None:
+        """Configure the tokenizers."""
+        await self._configure_for_profiling()
+
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _profile_complete_command(
+        self,
+        message: Command,  # noqa: ARG002
+    ) -> None:
+        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+
+        RecordsManager sends PROFILE_COMPLETE after all records are processed
+        but before exporting/aggregating results. Stopping children here ensures
+        buffered writers flush to disk before the RawRecordAggregator reads them.
+        """
+        for child in self._children:
+            await child.stop()
+
     async def get_tokenizer(self, model: str) -> Tokenizer:
-        """Get the tokenizer for a given model."""
-        async with self.tokenizer_lock:
-            if model not in self.tokenizers:
-                tokenizer_config = self.run.cfg.tokenizer
-                self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
-                )
-            return self.tokenizers[model]
+        """Return the model's tokenizer.
+
+        Single source of truth for the tokenizer in this process is
+        ``self.inference_result_parser.tokenizers``. RP delegates to the
+        parser to avoid loading the same HF tokenizer twice into RAM
+        (~10-50 MB per duplicate).
+        """
+        return await self.inference_result_parser.get_tokenizer(model)
+
+    async def _on_tokenizer_ready(self, message: GroupTokenizerReady) -> None:
+        """Record bundles published by WGM and unblock waiters."""
+        if not message.success:
+            self.error(
+                f"Tokenizer download failed in WGM: {message.error_message}; "
+                f"force-exiting RP so kubelet restarts the pod"
+            )
+            os._exit(1)
+        self._tokenizer_bundles.update(message.bundles)
+        self._tokenizer_ready.set()
+        self.info(
+            f"Tokenizer bundles ready: {sorted(self._tokenizer_bundles)} "
+            f"(advertised by {message.service_id})"
+        )
 
     def _create_metric_record_metadata(
         self,
@@ -146,9 +309,16 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         cancellation_time_ns = compute_time_ns(
             start_time_ns, start_perf_ns, record.cancellation_perf_ns
         )
+        # credit_received_ns is captured directly from the worker's MonotonicClock
+        # at the instant the credit arrives — same clock domain as credit_issued_ns.
+        credit_received_ns = (
+            record.request_info.credit_received_ns if record.request_info else None
+        )
 
         return MetricRecordMetadata(
+            request_num=record.request_info.credit_num,
             credit_issued_ns=record.request_info.credit_issued_ns,
+            credit_received_ns=credit_received_ns,
             request_start_ns=start_time_ns,
             request_ack_ns=request_ack_ns,
             request_end_ns=request_end_ns,
@@ -158,18 +328,82 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             benchmark_phase=record.request_info.credit_phase,
             x_request_id=record.request_info.x_request_id,
             x_correlation_id=record.request_info.x_correlation_id,
-            session_num=record.request_info.credit_num,
+            session_num=record.request_info.session_num
+            if record.request_info.session_num is not None
+            else record.request_info.credit_num,
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
-            agent_depth=record.request_info.agent_depth,
-            parent_correlation_id=record.request_info.parent_correlation_id,
+            clock_offset_ns=record.clock_offset_ns,
         )
 
+    def _merge_metric_results(
+        self, raw_results: list[MetricRecordDict | BaseException]
+    ) -> MetricRecordDict:
+        """Merge processor result dicts into the downstream metric payload."""
+        metrics: MetricRecordDict = {}
+        for result in raw_results:
+            if isinstance(result, BaseException):
+                self.error(
+                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
+                )
+                continue
+            metrics.update(result)
+        return metrics
+
+    async def _flush_pending_metric_records(self) -> None:
+        """Flush buffered metric records to the records channel."""
+        if not self._pending_metric_records:
+            return
+        pending_records = self._pending_metric_records
+        self._pending_metric_records = []
+
+        if len(pending_records) == 1:
+            record = pending_records[0]
+            await self.records_push_client.push(
+                build_metric_records_wire_message(
+                    service_id=self.service_id,
+                    metadata=record.metadata,
+                    metrics=record.metrics,
+                    trace_data=record.trace_data,
+                    error=record.error,
+                )
+            )
+            return
+
+        await self.records_push_client.push(
+            build_metric_records_batch_wire_message(
+                service_id=self.service_id,
+                records=pending_records,
+            )
+        )
+
+    async def _enqueue_metric_record(
+        self,
+        *,
+        metadata: MetricRecordMetadata,
+        metrics: MetricRecordDict,
+        trace_data: BaseTraceData | None,
+        error: ErrorDetails | None,
+    ) -> None:
+        """Buffer a metric record and flush when the batch fills."""
+        self._pending_metric_records.append(
+            build_metric_records_data(
+                metadata=metadata,
+                metrics=metrics,
+                trace_data=trace_data,
+                error=error,
+            )
+        )
+        if len(self._pending_metric_records) >= self._ingest_batch_size:
+            await self._flush_pending_metric_records()
+
     @on_pull_message(MessageType.INFERENCE_RESULTS)
-    async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
+    async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
-        record = message.record
+        worker_id, record = wire_message_to_request_record(
+            message=message,
+        )
 
         # Capture last response timestamp before parsing frees raw SSE data.
         last_response_perf_ns = (
@@ -180,33 +414,22 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         # Free raw SSE messages now that parsing extracted what it needs.
         # Skip when RAW export is active -- the raw writer needs them.
-        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             record.responses = None
 
         metadata = self._create_metric_record_metadata(
-            record, message.service_id, last_response_perf_ns
+            record, worker_id, last_response_perf_ns
         )
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
+        metrics = self._merge_metric_results(raw_results)
 
-        results = []
-        for result in raw_results:
-            if isinstance(result, BaseException):
-                self.error(
-                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
-                )
-            else:
-                results.append(result)
-
-        await self.records_push_client.push(
-            MetricRecordsMessage(
-                service_id=self.service_id,
-                metadata=metadata,
-                results=results,
-                trace_data=trace_data,
-                error=error,
-            )
+        await self._enqueue_metric_record(
+            metadata=metadata,
+            metrics=metrics,
+            trace_data=trace_data,
+            error=error,
         )
 
     def _free_record_data(
@@ -215,7 +438,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Free large data structures from the record after all processors have run.
 
         All metrics and post-processors consume these fields during _process_record().
-        The only data sent downstream in MetricRecordsMessage is metadata, results,
+        The only data sent downstream on the records wire is metadata, metrics,
         trace_data, and error -- so everything else can be released here.
 
         We assign None to fields typed as non-optional lists (turns, responses) to let
@@ -224,7 +447,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """
         trace_data = record.trace_data
         error = record.error
-        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             record.responses = None
         record.turns = None
         record.trace_data = None
@@ -251,6 +474,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
 
 def main() -> None:
+    """Bootstrap the record processor service as a standalone process entry point."""
     from aiperf.common.bootstrap import bootstrap_and_run_service
     from aiperf.plugin.enums import ServiceType
 

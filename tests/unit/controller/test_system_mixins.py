@@ -127,29 +127,6 @@ class TestSetupSignalHandlers:
         for task in tasks:
             assert task not in signal_handler_instance._signal_tasks
 
-    @pytest.mark.asyncio
-    async def test_task_cleanup_on_completion(self, signal_handler_instance):
-        """Test that tasks are cleaned up via done callback."""
-        callback = AsyncMock()
-
-        signal_handler_instance.setup_signal_handlers(callback)
-
-        # Create a task and add to set
-        task = asyncio.create_task(callback(signal.SIGINT))
-        signal_handler_instance._signal_tasks.add(task)
-
-        # Verify task is in set
-        assert task in signal_handler_instance._signal_tasks
-
-        # Add done callback
-        task.add_done_callback(signal_handler_instance._signal_tasks.discard)
-
-        # Await task to ensure it completes
-        await task
-
-        # Task should be removed from set
-        assert task not in signal_handler_instance._signal_tasks
-
 
 class TestSignalHandlerEdgeCases:
     """Test edge cases and error scenarios."""

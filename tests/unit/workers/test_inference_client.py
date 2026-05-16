@@ -2,24 +2,52 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
-import warnings
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.dataset_models import Text, Turn
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.common.redact import REDACTED_VALUE
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.config import BenchmarkConfig, BenchmarkRun
+from aiperf.plugin.enums import TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/test"],
+    },
+    "datasets": [
+        {
+            "name": "default",
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    ],
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
+
+
+def _make_run(**overrides: Any) -> BenchmarkRun:
+    config = _make_config(**overrides)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
 
 
 @pytest.fixture
@@ -112,21 +140,12 @@ class TestInferenceClient:
     """Tests for InferenceClient functionality."""
 
     @pytest.fixture
-    def model_endpoint(self):
-        """Create a test ModelEndpointInfo."""
-        return ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        )
+    def benchmark_run(self):
+        """Create a test BenchmarkRun."""
+        return _make_run()
 
     @pytest.fixture
-    def inference_client(self, model_endpoint, mock_http_transport_entry):
+    def inference_client(self, benchmark_run, mock_http_transport_entry):
         """Create an InferenceClient instance."""
         mock_transport = MagicMock()
         mock_endpoint = MagicMock()
@@ -151,18 +170,13 @@ class TestInferenceClient:
                 return_value=[mock_http_transport_entry],
             ),
         ):
-            return InferenceClient(
-                model_endpoint=model_endpoint, service_id="test-service-id"
-            )
+            return InferenceClient(run=benchmark_run, service_id="test-service-id")
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_headers(
-        self, inference_client, model_endpoint, sample_request_info
+        self, inference_client, sample_request_info
     ):
         """Test that send_request sets endpoint_headers on request_info and redacts after transport."""
-        model_endpoint.endpoint.api_key = "test-key"
-        model_endpoint.endpoint.headers = [("X-Custom", "value")]
-
         request_info = sample_request_info
 
         expected_headers = {
@@ -184,11 +198,9 @@ class TestInferenceClient:
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_params(
-        self, inference_client, model_endpoint, sample_request_info
+        self, inference_client, sample_request_info
     ):
         """Test that send_request sets endpoint_params on request_info."""
-        model_endpoint.endpoint.url_params = {"api-version": "v1", "timeout": "30"}
-
         request_info = sample_request_info
 
         expected_params = {"api-version": "v1", "timeout": "30"}
@@ -207,7 +219,6 @@ class TestInferenceClient:
     async def test_send_request_calls_transport(
         self,
         inference_client,
-        model_endpoint,
         sample_request_info,
         sample_request_record,
     ):
@@ -227,117 +238,15 @@ class TestInferenceClient:
         assert record == expected_record
 
     @pytest.mark.asyncio
-    async def test_send_request_sends_raw_payload_without_endpoint_formatting(
-        self, inference_client, sample_request_info
+    async def test_send_request_raises_on_empty_turns(
+        self, inference_client, benchmark_run
     ):
-        """Test that raw_payload turns bypass endpoint payload formatting."""
-        raw_payload = {
-            "messages": [{"role": "user", "content": "exact body"}],
-            "temperature": 0.7,
-            "vendor_flag": {"preserve": True},
-        }
-        request_info = sample_request_info
-        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
-        expected_record = RequestRecord(request_info=request_info)
-        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
-        inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
-        )
-
-        await inference_client.send_request(request_info)
-
-        inference_client.endpoint.format_payload.assert_not_called()
-        call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-
-    @pytest.mark.asyncio
-    async def test_send_request_sends_empty_raw_payload_without_formatting(
-        self, inference_client, sample_request_info
-    ):
-        """Test that an empty raw_payload is still a verbatim payload."""
-        raw_payload = {}
-        request_info = sample_request_info
-        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
-        expected_record = RequestRecord(request_info=request_info)
-        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
-        inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
-        )
-
-        await inference_client.send_request(request_info)
-
-        inference_client.endpoint.format_payload.assert_not_called()
-        call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-
-    @pytest.mark.asyncio
-    async def test_send_request_preserves_raw_payload_formatter_conflicts(
-        self, inference_client, sample_request_info
-    ):
-        """Test raw_payload top-level fields are not overwritten by endpoint defaults."""
-        raw_payload = {
-            "messages": [{"role": "user", "content": "authored"}],
-            "model": "payload-model",
-            "stream": True,
-            "max_tokens": 17,
-            "temperature": 0.01,
-            "tools": [{"type": "function", "function": {"name": "do_it"}}],
-        }
-        request_info = sample_request_info
-        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
-        expected_record = RequestRecord(request_info=request_info)
-        inference_client.endpoint.format_payload.return_value = {
-            "model": "endpoint-model",
-            "stream": False,
-            "messages": [{"role": "user", "content": "rewritten"}],
-        }
-        inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
-        )
-
-        await inference_client.send_request(request_info)
-
-        call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-        assert call_args.kwargs["payload"]["model"] == "payload-model"
-        assert call_args.kwargs["payload"]["stream"] is True
-        assert call_args.kwargs["payload"]["messages"][0]["content"] == "authored"
-
-    @pytest.mark.asyncio
-    async def test_send_request_formats_when_only_earlier_turn_has_raw_payload(
-        self, inference_client, sample_request_info
-    ):
-        """Test raw_payload passthrough is scoped to the current turn."""
-        request_info = sample_request_info
-        request_info.turns = [
-            Turn(
-                role="user",
-                raw_payload={"messages": [{"role": "user", "content": "old"}]},
-            ),
-            Turn(role="user", texts=[Text(contents=["current"])]),
-        ]
-        expected_payload = {"messages": [{"role": "user", "content": "current"}]}
-        expected_record = RequestRecord(request_info=request_info)
-        inference_client.endpoint.format_payload.return_value = expected_payload
-        inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
-        )
-
-        await inference_client.send_request(request_info)
-
-        inference_client.endpoint.format_payload.assert_called_once_with(request_info)
-        call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == expected_payload
-
-    @pytest.mark.asyncio
-    async def test_send_request_raises_on_empty_turns(self, inference_client):
         """Test that send_request raises ValueError when turns is empty."""
         request_info = RequestInfo(
-            model_endpoint=inference_client.model_endpoint,
             turns=[],
             turn_index=0,
             credit_num=42,
-            credit_phase=CreditPhase.PROFILING,
+            credit_phase="profiling",
             x_request_id="test-id",
             x_correlation_id="test-corr",
             conversation_id="test-conv",
@@ -346,7 +255,9 @@ class TestInferenceClient:
         with pytest.raises(ValueError, match="no turns"):
             await inference_client.send_request(request_info)
 
-    def test_enrich_request_record_uses_last_turn_model(self, inference_client):
+    def test_enrich_request_record_uses_last_turn_model(
+        self, inference_client, benchmark_run
+    ):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
 
         In MESSAGE_ARRAY_WITH_RESPONSES mode, turn_list has only 1 element
@@ -359,11 +270,10 @@ class TestInferenceClient:
             model="standalone-model",
         )
         request_info = RequestInfo(
-            model_endpoint=inference_client.model_endpoint,
             turns=[turn],
             turn_index=3,
             credit_num=0,
-            credit_phase=CreditPhase.PROFILING,
+            credit_phase="profiling",
             x_request_id="test-id",
             x_correlation_id="test-corr",
             conversation_id="test-conv",
@@ -375,63 +285,8 @@ class TestInferenceClient:
             end_perf_ns=2000,
         )
 
-        result = inference_client._finalize_request_record(
+        result = inference_client._enrich_request_record(
             record=record, request_info=request_info
         )
 
         assert result.model_name == "standalone-model"
-
-    @pytest.mark.parametrize(
-        "base_url",
-        [
-            param("http://127.0.0.1:8000", id="explicit-http"),
-            param("https://api.example.com", id="explicit-https"),
-        ],
-    )  # fmt: skip
-    def test_auto_detected_transport_serializes_without_pydantic_warning(
-        self, base_url, mock_http_transport_entry
-    ):
-        """InferenceClient must set transport as a TransportType enum, not a bare str.
-
-        Assigning the raw plugin name string post-validation triggers
-        PydanticSerializationUnexpectedValue at model_dump() time because the
-        field is typed TransportType | None but holds a plain str.
-        """
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_urls=[base_url],
-            ),
-        )
-
-        def mock_get_class(protocol, name):
-            return MagicMock()
-
-        with (
-            patch(
-                "aiperf.workers.inference_client.plugins.get_class",
-                side_effect=mock_get_class,
-            ),
-            patch(
-                "aiperf.workers.inference_client.plugins.list_entries",
-                return_value=[mock_http_transport_entry],
-            ),
-        ):
-            InferenceClient(model_endpoint=model_endpoint, service_id="test-svc")
-
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always")
-            model_endpoint.model_dump()
-
-        pydantic_warnings = [
-            w
-            for w in captured
-            if "PydanticSerializationUnexpectedValue" in str(w.message)
-        ]
-        assert not pydantic_warnings, (
-            f"Unexpected Pydantic serialization warnings for {base_url!r}: {pydantic_warnings}"
-        )

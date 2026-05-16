@@ -200,3 +200,8 @@ class BenchmarkHelpersMixin:
     def server_metrics_formats(self) -> list[ServerMetricsFormat]:
         """Server metrics export formats."""
         return self.server_metrics.formats  # type: ignore[attr-defined]
+
+    @property
+    def output(self):  # type: ignore[no-untyped-def]
+        """Alias for artifacts config (convenience access via config.output.*)."""
+        return self.artifacts  # type: ignore[attr-defined]
