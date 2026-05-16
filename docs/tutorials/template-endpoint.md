@@ -210,6 +210,205 @@ aiperf profile \
   --concurrency 2
 ```
 
+## YAML Config with Templates
+
+Template endpoints work seamlessly with YAML configs, distributions, and sweeps. The Jinja2 template goes in `endpoint.template.body`.
+
+### Basic YAML Config
+
+```yaml
+benchmark:
+  models:
+    - custom-llm
+
+  endpoint:
+    urls:
+      - http://localhost:8000/generate # ${INFERENCE_URL:http://localhost:8000/generate}
+    type: template
+    streaming: true
+    timeout: 120.0
+    template:
+      body: |
+        {
+          "model": {{ model|tojson }},
+          "prompt": {{ text|tojson }},
+          "max_new_tokens": {{ max_tokens|tojson }},
+          "stream": {{ stream|lower }}
+        }
+      response_field: generated_text
+
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {mean: 512, median: 400}
+        osl: {mean: 256, stddev: 80, min: 16, max: 1024}
+
+  phases:
+    - name: profiling
+      type: poisson
+      rate: 20.0
+      duration: 120
+      concurrency: 32
+      grace_period: 30
+```
+
+### Custom Embedding API with Batch Distributions
+
+```yaml
+benchmark:
+  models:
+    - embedding-model
+
+  endpoint:
+    urls:
+      - http://localhost:8000/embed
+    type: template
+    template:
+      body: |
+        {
+          "input": {{ texts|tojson }},
+          "model": {{ model|tojson }},
+          "encoding_format": "float"
+        }
+      response_field: "data[0].embedding"
+
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl:
+          peaks:
+            - {mean: 64, stddev: 10, weight: 60}
+            - {mean: 512, stddev: 50, weight: 40}
+        batch_size: 4
+
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 16
+      requests: 1000
+```
+
+### Ranking API with Passage Distributions
+
+```yaml
+benchmark:
+  models:
+    - rerank-model
+
+  endpoint:
+    urls:
+      - http://localhost:8000/rerank
+    type: template
+    template:
+      body: |
+        {
+          "query": {{ query|tojson }},
+          "passages": {{ passages|tojson }},
+          "model": {{ model|tojson }}
+        }
+      response_field: "results"
+
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: normal, mean: 32, stddev: 8}
+      rankings:
+        passages: {type: normal, mean: 10, stddev: 3}
+        passage_tokens: {type: lognormal, mean: 128, median: 96}
+        query_tokens: {type: normal, mean: 32, stddev: 8}
+
+  phases:
+    - name: profiling
+      type: poisson
+      rate: 50.0
+      duration: 120
+      concurrency: 32
+      grace_period: 30
+```
+
+### Sweep Across Template APIs
+
+Use scenario sweeps to benchmark multiple custom API formats:
+
+```yaml
+benchmark:
+  models:
+    - custom-llm
+
+  endpoint:
+    urls:
+      - http://localhost:8000/v1
+    type: template
+    template:
+      body: |
+        {
+          "text": {{ text|tojson }},
+          "model": {{ model|tojson }}
+        }
+
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: normal, mean: 256, stddev: 50}
+        osl: 128
+
+  phases:
+    - name: profiling
+      type: poisson
+      rate: 20.0
+      duration: 60
+      concurrency: 32
+
+  artifacts:
+    dir: ./artifacts/template_sweep
+    summary: [json]
+sweep:
+  type: scenarios
+  runs:
+    - name: generate_endpoint
+      benchmark:
+        endpoint:
+          urls: ["http://localhost:8000/generate"]
+          template:
+            body: '{"prompt": {{ text|tojson }}, "max_tokens": {{ max_tokens|tojson
+              }}}'
+            response_field: generated_text
+
+    - name: chat_endpoint
+      benchmark:
+        endpoint:
+          urls: ["http://localhost:8000/chat"]
+          template:
+            body: '{"messages": [{"role": "user", "content": {{ text|tojson }}}],
+              "model": {{ model|tojson }}}'
+            response_field: "choices[0].message.content"
+
+    - name: completions_endpoint
+      benchmark:
+        endpoint:
+          urls: ["http://localhost:8000/completions"]
+          template:
+            body: '{"prompt": {{ text|tojson }}, "max_tokens": {{ max_tokens|tojson
+              }}, "stream": {{ stream|lower }}}'
+
+multi_run:
+  num_runs: 3
+  cooldown_seconds: 10.0
+  confidence_level: 0.95
+```
+
+<Note>
+Jinja2 templates are only supported in the `endpoint.template.body` field for request payload formatting. YAML config values use environment variables (`${VAR:default}`) for dynamic substitution, not Jinja2 syntax.
+</Note>
+
 ## Tips
 
 - **Always use `|tojson`** for string/list values to properly escape JSON

@@ -41,8 +41,6 @@ navigation:
       path: tutorials/nim-image-retrieval.md
     - page: SGLang Image Generation
       path: tutorials/image-generation.md
-    - page: SGLang Image Edit
-      path: tutorials/sglang-image-edit.md
     - page: SGLang Video Generation
       path: tutorials/sglang-video-generation.md
     - page: Synthetic Video Generation
@@ -54,8 +52,6 @@ navigation:
     contents:
     - page: Custom Dataset Guide
       path: tutorials/custom-dataset.md
-    - page: Inline Datasets
-      path: tutorials/inline-datasets.md
     - page: Custom Prompt Benchmarking
       path: tutorials/custom-prompt-benchmarking.md
     - page: Profile with ShareGPT Dataset
@@ -86,10 +82,6 @@ navigation:
       path: tutorials/burst-gpt-trace.md
     - page: Replay SageMaker Data Capture Traces
       path: tutorials/sagemaker-data-capture.md
-    - page: Raw Payload Replay
-      path: tutorials/raw-payload-replay.md
-    - page: Inputs JSON Replay
-      path: tutorials/inputs-json-replay.md
     - page: Multi-Turn Conversations
       path: tutorials/multi-turn.md
     - page: Sequence Length Distributions for Advanced Benchmarking
@@ -126,9 +118,21 @@ navigation:
       path: tutorials/goodput.md
     - page: Multi-Run Confidence Reporting
       path: tutorials/multi-run-confidence.md
-    - page: Parameter Sweeps
+    - page: Parameter Sweeping
+      path: tutorials/parameter-sweeping.md
+    - page: Sweeps Quick-Start
       path: tutorials/sweeps.md
-    - page: Adaptive Search
+    - page: Distribution Reference
+      path: tutorials/distributions.md
+    - page: YAML Config Reference
+      path: tutorials/yaml-config.md
+    - page: Bayesian Optimization
+      path: sweeping/bayesian-optimization.md
+    - page: Search Recipes
+      path: sweeping/search-recipes.md
+    - page: Find the Maximum Passing Concurrency
+      path: sweeping/find-max-passing-concurrency.md
+    - page: Adaptive Search Tutorial
       path: tutorials/adaptive-search.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
@@ -138,37 +142,23 @@ navigation:
       path: tutorials/working-with-profile-exports.md
     - page: Visualization and Plotting with AIPerf
       path: tutorials/plot.md
-    - page: Auto-Plot After `aiperf profile`
-      path: tutorials/auto-plot.md
     - page: User-Centric Timing for KV Cache Benchmarking
       path: tutorials/user-centric-timing.md
     - page: GPU Telemetry with AIPerf
       path: tutorials/gpu-telemetry.md
-    - page: OpenTelemetry MLflow Integration
-      path: tutorials/otel-mlflow.md
   - section: Configuration
     collapsed: true
     contents:
-    - page: YAML Configuration Files
-      path: tutorials/yaml-config.md
-    - page: Sampling Distributions in YAML Configs
-      path: tutorials/yaml-distributions.md
     - page: User Interface
       path: tutorials/ui-types.md
     - page: Using Local Tokenizers Without HuggingFace
       path: tutorials/local-tokenizer.md
+    - page: Migrating to the Envelope Config Shape
+      path: tutorials/migrating-config.md
+    - page: Migrating K8s Resources to the Unified Spec
+      path: tutorials/migrating-k8s-resources.md
     - page: "Random Number Generation & Reproducibility"
       path: reproducibility.md
-
-- section: Sweeping & Adaptive Search
-  collapsed: true
-  contents:
-  - page: Search Recipes
-    path: sweeping/search-recipes.md
-  - page: Bayesian Optimization
-    path: sweeping/bayesian-optimization.md
-  - page: Space-filling Sweeps (Sobol, Latin Hypercube)
-    path: sweeping/space-filling.md
 
 - section: Benchmark Modes
   collapsed: true
@@ -177,8 +167,66 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
-  - page: Conversation DAG Benchmarks
-    path: benchmark-modes/dag.md
+
+- section: Kubernetes
+  collapsed: true
+  contents:
+  - page: Getting Started on Kubernetes
+    path: kubernetes/getting-started.md
+  - page: End-to-End Workflow
+    path: kubernetes/workflow.md
+  - page: Config Init and Manifest Generation
+    path: kubernetes/init-and-generate.md
+  - page: Kubernetes Configuration Reference
+    path: kubernetes/configuration.md
+  - page: Production Deployment
+    path: kubernetes/production.md
+  - page: RBAC and Security
+    path: kubernetes/rbac-security.md
+  - page: Monitoring and Observability
+    path: kubernetes/monitoring.md
+  - page: Config Validation
+    path: kubernetes/validate.md
+  - page: CRD Validation Rules
+    path: kubernetes/crd-validation.md
+  - page: Preflight Checks
+    path: kubernetes/preflight.md
+  - page: Debug Command
+    path: kubernetes/debug-command.md
+  - page: Attach to a Running Benchmark
+    path: kubernetes/attach.md
+  - page: Logs
+    path: kubernetes/logs.md
+  - page: Watch Diagnosis Issues
+    path: kubernetes/diagnosis-issues.md
+  - page: Results Server API Reference
+    path: kubernetes/results-api.md
+  - page: Web Dashboard
+    path: kubernetes/dashboard-ui.md
+  - page: UI Dev Iteration (in-cluster overlay)
+    path: kubernetes/ui-dev-iteration.md
+  - page: Controller Pod Sidecars
+    path: kubernetes/sidecars.md
+  - page: Memory Estimator
+    path: kubernetes/memory-estimator.md
+  - page: Kueue Integration
+    path: kubernetes/kueue.md
+  - page: GPU Telemetry on Kubernetes
+    path: kubernetes/gpu-telemetry.md
+  - page: Direct Mode (no operator)
+    path: kubernetes/direct-mode.md
+  - page: Adaptive Search on Kubernetes
+    path: kubernetes/adaptive-search.md
+  - page: Parameter Sweeps on Kubernetes
+    path: kubernetes/sweeps.md
+  - page: AIPerfJob Status Subresource (AIP-0002)
+    path: kubernetes/aip-0002-status.md
+  - page: User-Defined Output Files
+    path: kubernetes/user-files.md
+  - page: AI-Assisted Deployment Guide
+    path: kubernetes/ai-deployment-guide.md
+  - page: AI-Assisted Debugging Guide
+    path: kubernetes/ai-debugging-guide.md
 
 - section: Accuracy
   collapsed: true
@@ -203,12 +251,12 @@ navigation:
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
-  - page: Vendor Usage Field Reference
-    path: reference/vendor-usage-fields.md
+  - page: Adaptive-Search Architecture
+    path: reference/adaptive-search-architecture.md
+  - page: Time Synchronization
+    path: reference/time-synchronization.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
-  - page: YAML Config Roadmap
-    path: reference/yaml-config-roadmap.md
 
 - section: Server Metrics
   collapsed: true
@@ -245,21 +293,49 @@ navigation:
   contents:
   - page: Architecture of AIPerf
     path: architecture.md
+  - page: Kubernetes Flow
+    path: dev/kubernetes-flow.md
+  - page: Sweep Architecture Overview
+    path: dev/sweep-architecture-overview.md
+  - page: Sweep Orchestrator Flow
+    path: dev/sweep-orchestrator-flow.md
   - page: Metrics Flow
     path: diagrams/metrics-flow.md
   - page: Mixins
     path: diagrams/mixins.md
   - page: AIPerf Code Patterns
     path: dev/patterns.md
-  - page: Global Property-Test Invariants
-    path: dev/global-invariants.md
-  - page: Sweep Orchestrator (Dev Reference)
-    path: dev/sweep-orchestrator.md
-  - page: YAML Config Future Goals
-    path: dev/yaml-config-future-goals.md
+  - page: "Research-Grade Algorithms: Gap Analysis"
+    path: dev/gap-analysis-research-grade-algorithms.md
+  - page: "Proposal: Statistical Foundations"
+    path: dev/proposal-statistical-foundations.md
+  - page: "Proposal: Confidence Intervals"
+    path: dev/proposal-confidence-intervals.md
+  - page: "Proposal: Coordinated Omission & Latency Decomposition"
+    path: dev/proposal-coordinated-omission-and-latency-decomposition.md
+  - page: "Proposal: Advanced Analysis"
+    path: dev/proposal-advanced-analysis.md
+  - page: "Research: Client/Server Latency Correlation"
+    path: dev/research-client-server-latency-correlation.md
+  - page: "Research: GPU Utilization × Throughput"
+    path: dev/research-gpu-utilization-throughput-correlation.md
+  - page: "Research: KV-Cache × Latency"
+    path: dev/research-kv-cache-latency-correlation.md
+  - page: "Research: Power × Thermal × Performance"
+    path: dev/research-power-thermal-performance-correlation.md
+  - page: "Research: Prefill/Decode Interference"
+    path: dev/research-prefill-decode-interference-correlation.md
+  - page: "Research: Queue Depth × Scheduling"
+    path: dev/research-queue-depth-scheduling-correlation.md
+  - page: "Research: SLO Compliance × Multi-Signal"
+    path: dev/research-slo-compliance-multi-signal-correlation.md
+  - page: "Research: Token Throughput Discrepancy"
+    path: dev/research-token-throughput-discrepancy-correlation.md
 
 - section: Troubleshooting
   collapsed: true
   contents:
-  - page: Sweep & Adaptive Search Errors
-    path: troubleshooting/sweeps.md
+  - page: Parameter Sweeping Errors
+    path: troubleshooting/parameter-sweeping-errors.md
+  - page: Adaptive Search Errors
+    path: troubleshooting/adaptive-search-errors.md

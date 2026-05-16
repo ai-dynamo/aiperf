@@ -51,40 +51,19 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Usage Completion Tokens](#usage-completion-tokens)
     - [Usage Total Tokens](#usage-total-tokens)
     - [Usage Reasoning Tokens](#usage-reasoning-tokens)
-    - [Usage Prompt Cache Read Tokens](#usage-prompt-cache-read-tokens)
-    - [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens)
-    - [Usage Prompt Cache Miss Tokens](#usage-prompt-cache-miss-tokens)
-    - [Usage Prompt Audio Tokens](#usage-prompt-audio-tokens)
-    - [Usage Completion Audio Tokens](#usage-completion-audio-tokens)
-    - [Usage Prompt Audio Seconds](#usage-prompt-audio-seconds)
-    - [Usage Tool Use Prompt Tokens](#usage-tool-use-prompt-tokens)
-    - [Usage Accepted Prediction Tokens](#usage-accepted-prediction-tokens)
-    - [Usage Rejected Prediction Tokens](#usage-rejected-prediction-tokens)
     - [Total Usage Prompt Tokens](#total-usage-prompt-tokens)
     - [Total Usage Completion Tokens](#total-usage-completion-tokens)
     - [Total Usage Total Tokens](#total-usage-total-tokens)
-    - [Total Usage Reasoning Tokens](#total-usage-reasoning-tokens)
-    - [Total Usage Prompt Cache Read Tokens](#total-usage-prompt-cache-read-tokens)
-    - [Overall Usage Prompt Cache Read %](#overall-usage-prompt-cache-read-)
-    - [Total Usage Prompt Cache Write Tokens](#total-usage-prompt-cache-write-tokens)
-    - [Total Usage Prompt Cache Miss Tokens](#total-usage-prompt-cache-miss-tokens)
-    - [Total Usage Prompt Audio Tokens](#total-usage-prompt-audio-tokens)
-    - [Total Usage Completion Audio Tokens](#total-usage-completion-audio-tokens)
-    - [Total Usage Prompt Audio Seconds](#total-usage-prompt-audio-seconds)
-    - [Total Usage Tool Use Prompt Tokens](#total-usage-tool-use-prompt-tokens)
-    - [Total Usage Accepted Prediction Tokens](#total-usage-accepted-prediction-tokens)
-    - [Total Usage Rejected Prediction Tokens](#total-usage-rejected-prediction-tokens)
   - [Usage Discrepancy Metrics](#usage-discrepancy-metrics)
-    - [Usage Prompt Diff %](#usage-prompt-diff-)
-    - [Usage Completion Diff %](#usage-completion-diff-)
-    - [Usage Reasoning Diff %](#usage-reasoning-diff-)
+    - [Usage Prompt Tokens Diff %](#usage-prompt-tokens-diff-)
+    - [Usage Completion Tokens Diff %](#usage-completion-tokens-diff-)
+    - [Usage Reasoning Tokens Diff %](#usage-reasoning-tokens-diff-)
     - [Usage Discrepancy Count](#usage-discrepancy-count)
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
     - [OSL Mismatch Diff %](#osl-mismatch-diff-)
     - [OSL Mismatch Count](#osl-mismatch-count)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
-    - [Good Request Fraction](#good-request-fraction)
     - [Goodput](#goodput)
   - [Error Metrics](#error-metrics)
     - [Error Input Sequence Length](#error-input-sequence-length)
@@ -104,7 +83,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [HTTP Sending](#http-sending)
     - [HTTP Waiting (TTFB)](#http-waiting-ttfb)
     - [HTTP Receiving](#http-receiving)
-    - [HTTP Duration (excl. conn)](#http-duration-excl-conn)
+    - [HTTP Duration](#http-duration)
     - [HTTP Connection Overhead](#http-connection-overhead)
     - [HTTP Total Time](#http-total-time)
     - [HTTP Data Sent](#http-data-sent)
@@ -511,7 +490,7 @@ num_images = sum(len(image.contents) for turn in request.turns for image in turn
 
 **Notes:**
 - Requires at least one image in at least one turn.
-- Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+- Not displayed in console output (`NO_CONSOLE` flag).
 
 ---
 
@@ -734,173 +713,6 @@ usage_reasoning_tokens = response.usage.completion_tokens_details.reasoning_toke
 
 ---
 
-### Usage Prompt Cache Read Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of prompt tokens that were served from cache (cache hits) as reported by the API's `usage` field for a single request.
-
-**Formula:**
-```python
-# OpenAI shape: nested under prompt_tokens_details
-usage_prompt_cache_read_tokens = response.usage.prompt_tokens_details.cached_tokens  # from last non-None response
-# Anthropic shape: top-level
-usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from last non-None response
-```
-
-**Notes:**
-- Taken from the API response `usage` object, not computed by AIPerf.
-- OpenAI surfaces cache reads as `prompt_tokens_details.cached_tokens` (or `input_tokens_details.cached_tokens`); writes are transparent and not reported.
-- Anthropic surfaces cache reads at the top level as `cache_read_input_tokens`; writes are reported separately as [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens).
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Prompt Cache Write Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of prompt tokens written to cache (cache creations) as reported by the API's `usage.cache_creation_input_tokens` field for a single request. Anthropic-specific.
-
-**Formula:**
-```python
-usage_prompt_cache_write_tokens = response.usage.cache_creation_input_tokens  # from last non-None response
-```
-
-**Notes:**
-- Taken from the API response `usage` object, not computed by AIPerf.
-- Reported only by APIs that bill cache writes separately (Anthropic). OpenAI does not surface cache writes — they happen transparently and are not billed separately, so this metric is empty for OpenAI workloads.
-- Cache writes are typically billed at a premium relative to ordinary input tokens but enable cheap reads on subsequent requests, so the metric is intentionally not flagged "larger is better."
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Prompt Audio Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of audio tokens from the prompt as reported by the API's `usage.prompt_tokens_details.audio_tokens` field for a single request.
-
-**Formula:**
-```python
-usage_prompt_audio_tokens = response.usage.prompt_tokens_details.audio_tokens  # from last non-None response
-```
-
-**Notes:**
-- Taken from the API response `usage` object, not computed by AIPerf.
-- Only available for audio-capable endpoints.
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Completion Audio Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of audio tokens in the completion as reported by the API's `usage.completion_tokens_details.audio_tokens` field for a single request.
-
-**Formula:**
-```python
-usage_completion_audio_tokens = response.usage.completion_tokens_details.audio_tokens  # from last non-None response
-```
-
-**Notes:**
-- Taken from the API response `usage` object, not computed by AIPerf.
-- Only available for audio-capable endpoints.
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Accepted Prediction Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of accepted prediction tokens as reported by the API's `usage.completion_tokens_details.accepted_prediction_tokens` field for a single request. These are tokens from a predicted completion that the model actually used.
-
-**Formula:**
-```python
-usage_accepted_prediction_tokens = response.usage.completion_tokens_details.accepted_prediction_tokens  # from last non-None response
-```
-
-**Notes:**
-- Taken from the API response `usage` object, not computed by AIPerf.
-- Only relevant when using predicted outputs (speculative decoding).
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Rejected Prediction Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of rejected prediction tokens as reported by the API's `usage.completion_tokens_details.rejected_prediction_tokens` field for a single request. These are tokens from a predicted completion that the model did not use.
-
-**Formula:**
-```python
-usage_rejected_prediction_tokens = response.usage.completion_tokens_details.rejected_prediction_tokens  # from last non-None response
-```
-
-**Notes:**
-- Taken from the API response `usage` object, not computed by AIPerf.
-- Only relevant when using predicted outputs (speculative decoding).
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Prompt Cache Miss Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of prompt tokens that *missed* cache (and required fresh processing) as reported by the API's `usage.prompt_cache_miss_tokens` field for a single request. **DeepSeek-specific.**
-
-**Formula:**
-```python
-usage_prompt_cache_miss_tokens = response.usage.prompt_cache_miss_tokens  # from last non-None response
-```
-
-**Notes:**
-- DeepSeek bills cache hits and misses at different rates and surfaces both as their own fields. Other vendors don't report a separate miss count (you can derive it from `prompt_tokens - prompt_cache_read_tokens`, but it's not its own first-class field).
-- Not flagged "larger is better" — misses are unhelpful (they're the part you didn't cache).
-- For streaming responses, uses the last non-None value reported.
-
----
-
-### Usage Tool Use Prompt Tokens
-
-**Type:** [Record Metric](#record-metrics)
-
-The number of prompt tokens consumed by tool / function-call declarations sent in the request, separate from user-content prompt tokens. **Gemini-specific.**
-
-**Formula:**
-```python
-# Gemini wraps usage in usageMetadata; the property reads through the envelope.
-usage_tool_use_prompt_tokens = response.usage.toolUsePromptTokenCount  # from last non-None response
-```
-
-**Notes:**
-- Surfaces what fraction of input tokens are spent on function/tool definitions vs user content. Useful for tool-heavy agentic workloads.
-- Other vendors fold tool definitions into the regular `prompt_tokens` count, so this metric will raise `NoMetricValue` for OpenAI / Anthropic / etc.
-- For streaming responses, uses the last non-None value reported.
-
-
-### Usage Prompt Audio Seconds
-
-**Type:** [Record Metric](#record-metrics)
-
-The audio duration of the input prompt in **seconds (not tokens)** as reported by the API's `usage.prompt_audio_seconds` field for a single request. **Mistral-specific.**
-
-**Formula:**
-```python
-usage_prompt_audio_seconds = response.usage.prompt_audio_seconds  # from last non-None response
-```
-
-**Notes:**
-- Distinct from [Usage Prompt Audio Tokens](#usage-prompt-audio-tokens) — this is a duration in seconds, not a token count. Both can coexist for frameworks that report both.
-- Returned as `float` (so `12.5s` is preserved exactly even when the API reports an integer).
-- For streaming responses, uses the last non-None value reported.
-
----
-
 ### Total Usage Prompt Tokens
 
 **Type:** [Derived Metric](#derived-metrics)
@@ -949,190 +761,12 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 
 ---
 
-### Total Usage Reasoning Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported reasoning tokens across all requests.
-
-**Formula:**
-```python
-total_usage_reasoning_tokens = sum(r.usage_reasoning_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported reasoning tokens across all requests.
-
----
-
-### Total Usage Prompt Cache Read Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported prompt cache-read tokens across all requests.
-
-**Formula:**
-```python
-total_usage_prompt_cache_read_tokens = sum(r.usage_prompt_cache_read_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported cache-read prompt tokens across all requests (OpenAI `prompt_tokens_details.cached_tokens` or Anthropic top-level `cache_read_input_tokens`).
-
----
-
-### Overall Usage Prompt Cache Read %
-
-**Type:** [Derived Metric](#derived-metrics)
-
-Run-aggregate share of input tokens served from prompt cache, weighted by token volume. Computed from the run totals so a request with 10k prompt tokens contributes 100x as much weight as a request with 100 prompt tokens — the resulting number reflects the actual fraction of input tokens the API served from cache across the whole benchmark.
-
-**Formula:**
-```python
-overall_usage_prompt_cache_read_pct = (
-    total_usage_prompt_cache_read_tokens / total_usage_prompt_tokens
-) * 100
-```
-
-**Notes:**
-- No value is produced if `total_usage_prompt_tokens` is zero (e.g. all requests errored before reporting usage).
-
----
-
-### Total Usage Prompt Cache Write Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported prompt cache-write (cache creation) tokens across all requests. Anthropic-specific.
-
-**Formula:**
-```python
-total_usage_prompt_cache_write_tokens = sum(r.usage_prompt_cache_write_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported cache-write prompt tokens across all requests (Anthropic top-level `cache_creation_input_tokens`). Empty for OpenAI workloads.
-
----
-
-### Total Usage Prompt Audio Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported prompt audio tokens across all requests.
-
-**Formula:**
-```python
-total_usage_prompt_audio_tokens = sum(r.usage_prompt_audio_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported prompt audio tokens across all requests.
-
----
-
-### Total Usage Completion Audio Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported completion audio tokens across all requests.
-
-**Formula:**
-```python
-total_usage_completion_audio_tokens = sum(r.usage_completion_audio_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported completion audio tokens across all requests.
-
----
-
-### Total Usage Accepted Prediction Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported accepted prediction tokens across all requests.
-
-**Formula:**
-```python
-total_usage_accepted_prediction_tokens = sum(r.usage_accepted_prediction_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported accepted prediction tokens across all requests.
-
----
-
-### Total Usage Rejected Prediction Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported rejected prediction tokens across all requests.
-
-**Formula:**
-```python
-total_usage_rejected_prediction_tokens = sum(r.usage_rejected_prediction_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates server-reported rejected prediction tokens across all requests.
-
----
-
-### Total Usage Prompt Cache Miss Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported prompt cache-miss tokens across all requests. **DeepSeek-specific.**
-
-**Formula:**
-```python
-total_usage_prompt_cache_miss_tokens = sum(r.usage_prompt_cache_miss_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates DeepSeek's top-level `prompt_cache_miss_tokens` across all requests. Empty for vendors that don't surface a separate miss field.
-
----
-
-### Total Usage Tool Use Prompt Tokens
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported tool-use prompt tokens across all requests. **Gemini-specific.**
-
-**Formula:**
-```python
-total_usage_tool_use_prompt_tokens = sum(r.usage_tool_use_prompt_tokens for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates Gemini's `toolUsePromptTokenCount` across all requests. Useful for understanding what fraction of total prompt tokens were spent on tool/function declarations in tool-heavy agentic workloads.
-
----
-
-### Total Usage Prompt Audio Seconds
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The sum of all API-reported prompt audio durations across all requests, in **seconds (not tokens)**. **Mistral-specific.**
-
-**Formula:**
-```python
-total_usage_prompt_audio_seconds = sum(r.usage_prompt_audio_seconds for r in records if r.valid)
-```
-
-**Notes:**
-- Aggregates Mistral's `prompt_audio_seconds`. Unit is seconds; do not confuse with [Total Usage Prompt Audio Tokens](#total-usage-prompt-audio-tokens).
-
----
-
 ## Usage Discrepancy Metrics
 
 > [!NOTE]
 > These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies.
 
-### Usage Prompt Diff %
+### Usage Prompt Tokens Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -1149,7 +783,7 @@ usage_prompt_tokens_diff_pct = abs((usage_prompt_tokens - input_sequence_length)
 
 ---
 
-### Usage Completion Diff %
+### Usage Completion Tokens Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -1166,7 +800,7 @@ usage_completion_tokens_diff_pct = abs((usage_completion_tokens - output_sequenc
 
 ---
 
-### Usage Reasoning Diff %
+### Usage Reasoning Tokens Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -1256,7 +890,7 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 | [vLLM](https://docs.vllm.ai/en/latest/api/vllm/sampling_params/) | `min_tokens` | Default: 0 |
 | [TensorRT-LLM](https://nvidia.github.io/TensorRT-LLM/llm-api/reference.html) | `min_tokens` | Default: 1 |
 | [SGLang](https://github.com/sgl-project/sglang) | `min_new_tokens` | Default: 0 |
-| [TGI](https://github.com/huggingface/text-generation-inference) | `min_new_tokens` | Unclear API support; TGI in maintenance mode |
+| [TGI](https://github.com/huggingface/text-generation-inference) | `min_new_tokens` | ⚠️ Unclear API support; TGI in maintenance mode |
 
 ---
 
@@ -1280,34 +914,6 @@ good_request_count = sum(1 for r in records if r.all_slos_met)
 - Requires SLO thresholds to be configured (e.g., `--goodput`).
 - Only counts requests where ALL SLO constraints are satisfied.
 - Used to calculate Goodput metric.
-
----
-
-### Good Request Fraction
-
-**Type:** [Derived Metric](#derived-metrics)
-
-**Tag:** `good_request_fraction`
-
-The fraction of all attempted requests that satisfied every per-request SLO. Returns a ratio in `[0.0, 1.0]`. Errored requests count toward the denominator so a backend that drops traffic under load cannot look "good" simply because the surviving requests stayed under the latency budget.
-
-**Formula:**
-```python
-attempted = request_count + error_request_count
-good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
-```
-
-**Flags:** `GOODPUT | LARGER_IS_BETTER | NO_CONSOLE`
-
-**Unit:** `RATIO` (0.0–1.0)
-
-**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
-
-**Notes:**
-- Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
-- Returns `0.0` when no requests were attempted (`request_count + error_request_count == 0`).
-- Hidden from console output (`NO_CONSOLE`); appears in JSON, CSV, and Parquet exports.
-- Powers the SLA-feasibility gate of the [`max-goodput-under-slo`](sweeping/search-recipes.md) search recipe (`good_request_fraction:avg:ge:<attainment>`); without it, the recipe filter dereferences a missing tag and Bayesian optimization treats every iteration as infeasible.
 
 ---
 
@@ -1359,7 +965,7 @@ The sum of all input tokens from requests that resulted in errors.
 
 **Formula:**
 ```python
-total_error_isl = sum(r.error_isl for r in records if not r.valid)
+total_error_isl = sum(r.input_sequence_length for r in records if not r.valid)
 ```
 
 **Notes:**
@@ -1593,7 +1199,7 @@ http_req_receiving = response_receive_end_perf_ns - response_receive_start_perf_
 
 ---
 
-### HTTP Duration (excl. conn)
+### HTTP Duration
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -1711,7 +1317,7 @@ http_req_chunks_sent = trace.request_chunks_count
 ```
 
 **Notes:**
-- Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+- Not displayed in console output (`NO_CONSOLE` flag).
 
 ---
 
@@ -1727,7 +1333,7 @@ http_req_chunks_received = trace.response_chunks_count
 ```
 
 **Notes:**
-- Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+- Not displayed in console output (`NO_CONSOLE` flag).
 
 ---
 
@@ -1779,6 +1385,7 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-streaming-only"></a>`STREAMING_ONLY` | Only computed for streaming responses | Requires Server-Sent Events (SSE) with multiple response chunks; skipped for non-streaming requests |
 | <a id="flag-error-only"></a>`ERROR_ONLY` | Only computed for error requests | Tracks error-specific information; computed only for invalid/failed requests |
 | <a id="flag-produces-tokens-only"></a>`PRODUCES_TOKENS_ONLY` | Only computed for token-producing endpoints | Requires endpoints that return text/token content; skipped for embeddings and non-generative endpoints |
+| <a id="flag-no-console"></a>`NO_CONSOLE` | Not displayed in console output | Metric computed but excluded from terminal display; available in JSON/CSV/JSONL exports and used by other metrics |
 | <a id="flag-larger-is-better"></a>`LARGER_IS_BETTER` | Higher values indicate better performance | Used for throughput and count metrics to indicate optimization direction |
 | <a id="flag-internal"></a>`INTERNAL` | Internal AIPerf metric | Used for AIPerf system diagnostics; not displayed in console or exported without developer mode |
 | <a id="flag-supports-audio-only"></a>`SUPPORTS_AUDIO_ONLY` | Only computed for audio endpoints | Requires audio-capable endpoints; skipped for other endpoint types |
@@ -1802,148 +1409,3 @@ These flags are combinations of multiple individual flags for convenience:
 | <a id="flag-streaming-tokens-only"></a>`STREAMING_TOKENS_ONLY` | `STREAMING_ONLY` + `PRODUCES_TOKENS_ONLY` | Requires both streaming support and token-producing endpoints |
 
 ---
-
-# Metric Console Group Reference
-
-The `console_group` class attribute on a metric controls which console table the metric appears in (or hides it entirely). It is independent of [`MetricFlags`](#metric-flags-reference) — flags filter by axis (`ERROR_ONLY`, `INTERNAL`, `EXPERIMENTAL`); `console_group` selects a display bucket.
-
-| Group | Description |
-|-------|-------------|
-| <a id="group-none"></a>`MetricConsoleGroup.NONE` | Hidden from console; still exported to JSON/CSV/JSONL. Replaces the legacy `NO_CONSOLE` flag. |
-| <a id="group-default"></a>`MetricConsoleGroup.DEFAULT` | Standard `LLM Metrics` table. Default for new metrics. |
-| <a id="group-usage"></a>`MetricConsoleGroup.USAGE` | API-reported usage token metrics (prompt/completion/total). Rendered as `LLM Metrics: Usage`. |
-| <a id="group-cache"></a>`MetricConsoleGroup.CACHE` | Cache-related token metrics (e.g. prompt cache hits). |
-| <a id="group-prediction"></a>`MetricConsoleGroup.PREDICTION` | Speculative prediction token metrics (accepted/rejected). |
-| <a id="group-audio"></a>`MetricConsoleGroup.AUDIO` | Audio token metrics (prompt/completion). |
-| <a id="group-reasoning"></a>`MetricConsoleGroup.REASONING` | Reasoning token metrics. |
-
-Set as a class attribute on a `BaseMetric` subclass:
-
-```python
-class MyUsageMetric(BaseRecordMetric[int]):
-    tag = "my_usage_metric"
-    console_group = MetricConsoleGroup.USAGE
-```
-
----
-
-## Timing Namespace (`aiperf.timing.*`)
-
-The `TimingResultsStrategy` emits phase-level timing snapshots as OTel counters and up-down-counters under the `aiperf.timing.*` namespace. These metrics track credit-phase progression in real time and are sourced from `CreditPhaseStats` fields.
-
-### Counters
-
-| Metric Name | OTel Instrument | Unit | Description | `CreditPhaseStats` Field | Requirement |
-|---|---|---|---|---|---|
-| `aiperf.timing.requests.sent` | Counter | `1` | Total requests dispatched in this phase | `requests_sent` | 13.2 |
-| `aiperf.timing.requests.completed` | Counter | `1` | Requests that received a complete response | `requests_completed` | 13.2 |
-| `aiperf.timing.requests.cancelled` | Counter | `1` | Requests cancelled before completion | `requests_cancelled` | 13.2 |
-| `aiperf.timing.requests.errors` | Counter | `1` | Requests that ended in error | `request_errors` | 13.2 |
-| `aiperf.timing.sessions.sent` | Counter | `1` | Sessions initiated in this phase | `sent_sessions` | 13.2 |
-| `aiperf.timing.sessions.completed` | Counter | `1` | Sessions that finished all turns | `completed_sessions` | 13.2 |
-| `aiperf.timing.sessions.cancelled` | Counter | `1` | Sessions cancelled before completion | `cancelled_sessions` | 13.2 |
-| `aiperf.timing.sessions.turns_total` | Counter | `1` | Cumulative session turns executed | `total_session_turns` | 13.2 |
-
-### Up-Down-Counters (Gauges)
-
-| Metric Name | OTel Instrument | Unit | Description | `CreditPhaseStats` Field | Requirement |
-|---|---|---|---|---|---|
-| `aiperf.timing.requests.in_flight` | UpDownCounter | `1` | Requests currently awaiting a response | `in_flight_requests` | 13.2 |
-| `aiperf.timing.sessions.in_flight` | UpDownCounter | `1` | Sessions with at least one turn in progress | `in_flight_sessions` | 13.2 |
-| `aiperf.timing.phase.timeout_triggered` | UpDownCounter | `1` | Whether the phase hard-timeout fired (0 or 1) | `timeout_triggered` | 13.2 |
-| `aiperf.timing.phase.grace_timeout_triggered` | UpDownCounter | `1` | Whether the grace-period timeout fired (0 or 1) | `grace_period_timeout_triggered` | 13.2 |
-| `aiperf.timing.phase.was_cancelled` | UpDownCounter | `1` | Whether the phase was user-cancelled (0 or 1) | `was_cancelled` | 13.2 |
-| `aiperf.timing.phase.elapsed_sec` | UpDownCounter | `s` | Wall-clock seconds elapsed in the phase | `requests_elapsed_time` | 13.2 |
-
-**Notes:**
-- All timing metrics carry the three GenAI spec Required attributes (`gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`) so they can be joined with spec-named request metrics in dashboards.
-- Counter metrics emit deltas (current - previous snapshot) and skip zero-delta updates.
-- Up-down-counter metrics emit the signed difference from the previous snapshot and skip near-zero (< 1e-9) deltas.
-
----
-
-## OpenTelemetry GenAI Semantic Convention Mapping
-
-AIPerf translates its internal metric names onto the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/) so that downstream dashboards and alerting can consume spec-standard metric names directly.
-
-### Metric Name Rename Table
-
-| AIPerf Source | GenAI Spec Metric | Unit | Instrument |
-|---|---|---|---|
-| `request_latency` | `gen_ai.client.operation.duration` | s | Histogram |
-| `time_to_first_token` | `gen_ai.client.operation.time_to_first_chunk` | s | Histogram |
-| `inter_token_latency` | `gen_ai.client.operation.time_per_output_chunk` | s | Histogram |
-| `input_token_count` + `output_token_count` (merged) | `gen_ai.client.token.usage` with `gen_ai.token.type=input\|output` | {token} | Histogram |
-
-Duration metrics are converted from nanoseconds to seconds. Token counts use the identity conversion.
-
-### `gen_ai.operation.name` Mapping
-
-Derived from the AIPerf `endpoint.type` configuration value:
-
-| AIPerf `endpoint.type` | `gen_ai.operation.name` |
-|---|---|
-| `chat` | `chat` |
-| `completions` | `text_completion` |
-| `embeddings` | `embeddings` |
-| anything else | `chat` (fallback) |
-
-### `gen_ai.provider.name` Host Auto-Inference
-
-The provider attribute is resolved using the following precedence:
-
-1. Explicit `--gen-ai-provider` CLI override (highest priority)
-2. Host pattern inference from the endpoint URL (see table below)
-3. `_OTHER` fallback
-
-| URL Host Pattern | Provider Value |
-|---|---|
-| `api.openai.com` | `openai` |
-| `api.anthropic.com` | `anthropic` |
-| `api.deepseek.com` | `deepseek` |
-| `api.mistral.ai` | `mistral_ai` |
-| `api.cohere.ai` / `api.cohere.com` | `cohere` |
-| `api.x.ai` | `x_ai` |
-| `api.groq.com` | `groq` |
-| `api.perplexity.ai` | `perplexity` |
-| `generativelanguage.googleapis.com` | `gcp.gemini` |
-| `*-aiplatform.googleapis.com` | `gcp.vertex_ai` |
-| `bedrock-runtime.*.amazonaws.com` | `aws.bedrock` |
-| `*.openai.azure.com` | `azure.ai.openai` |
-| `*.services.ai.azure.com` | `azure.ai.inference` |
-| `*.ibm.com` (with Watsonx paths) | `ibm.watsonx.ai` |
-| anything else | `_OTHER` |
-
-### `error.type` Classification
-
-Error conditions on individual requests are classified into spec-standard `error.type` attribute values:
-
-| AIPerf Condition | `error.type` Value |
-|---|---|
-| asyncio/HTTP timeout | `timeout` |
-| HTTP 5xx response | `http_5xx` |
-| HTTP 4xx response | `http_4xx` |
-| JSON parse error | `parse_error` |
-| User-initiated cancel | `cancelled` |
-| anything else | `_OTHER` |
-
-The `error.type` attribute is only attached when an error is present; successful requests omit it entirely.
-
-### Timing Namespace and GenAI Spec Interoperability
-
-The `aiperf.timing.*` metrics retain AIPerf-specific names because the GenAI semantic convention specification has no equivalent phase-level timing metrics. However, these metrics receive the same Required attributes (`gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`) as the spec-named request metrics so that downstream systems can join across both namespaces for correlation and alerting.
-
-### Metrics NOT Emitted
-
-AIPerf is a client-side benchmarking tool and does **not** emit any server-side metrics:
-
-- No `gen_ai.server.*` metrics are produced.
-
-AIPerf also does **not** emit any opt-in GenAI events:
-
-- `gen_ai.input.messages`
-- `gen_ai.output.messages`
-- `gen_ai.system_instructions`
-- `gen_ai.tool.definitions`
-
-These events are excluded because AIPerf's purpose is performance measurement, not request/response content logging.

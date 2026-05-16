@@ -64,7 +64,7 @@ Registry (singleton)
 | Built-in Plugins | `src/aiperf/plugin/plugins.yaml` | Built-in plugin registrations |
 | Schemas | `src/aiperf/plugin/schema/schemas.py` | Pydantic models for validation |
 | Enums | `src/aiperf/plugin/enums.py` | Auto-generated enums from registry |
-| CLI | `src/aiperf/cli_commands/plugins.py` | Plugin exploration commands |
+| CLI | `src/aiperf/cli_commands/plugins_cli.py` | Plugin exploration commands |
 
 ## Architecture
 
@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 33 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf supports 37 plugin categories organized by function:
 
 ### Timing Categories
 
@@ -119,13 +119,11 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 | `dataset_sampler` | `DatasetSamplingStrategy` | Sampling strategies (random, sequential, shuffle) |
 | `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
 | `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
-| `public_dataset_loader` | `PublicDatasetType` | Shared benchmark dataset fetchers (HTTP, HuggingFace) |
 
 ### Endpoint and Transport Categories
 
 | Category | Enum | Description |
 |----------|------|-------------|
-| `api_router` | `APIRouterType` | Lifecycle-managed HTTP/WebSocket routers exposed via `BaseRouter` |
 | `endpoint` | `EndpointType` | API endpoint implementations (chat, completions, embeddings, etc.) |
 | `transport` | `TransportType` | Network transport (HTTP via aiohttp) |
 
@@ -134,11 +132,19 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 | Category | Enum | Description |
 |----------|------|-------------|
 | `record_processor` | `RecordProcessorType` | Per-record metric computation |
-| `results_processor` | `ResultsProcessorType` | Aggregated results computation |
-| `gpu_telemetry_processor` | `GPUTelemetryProcessorType` | Side-channel GPU telemetry aggregation/export within `GPUTelemetryManager` |
-| `server_metrics_processor` | `ServerMetricsProcessorType` | Side-channel Prometheus server metrics aggregation/export within `ServerMetricsManager` |
+| `accumulator` | `AccumulatorType` | Record ingestion, time-range queries, and summarization |
+| `stream_exporter` | `StreamExporterType` | Streaming record export (e.g. JSONL files) |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
 | `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
+
+### Orchestrator Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `convergence_criterion` | `ConvergenceCriterionType` | Statistical convergence detection across repeated runs (CI-width / CV / distribution / third-party). Selected via `--convergence-mode <name>`. |
+| `search_planner` | `SearchPlannerType` | Adaptive outer-loop search planners (Bayesian today; future Optuna, Nevergrad). Selected via `--search-planner <name>`; pairs with `--search-recipe`. |
+| `search_recipe` | `SearchRecipeType` | Named search-space presets that compile to either an `AdaptiveSearchSweep` (BO) or a sweep grid. Selected via `--search-recipe <name>`. |
+| `search_recipe_post_process` | `SearchRecipePostProcessType` | Post-process handlers that emit derived artifacts (curves, knee points) into `sweep_aggregate/` after sweep aggregation. |
 
 ### Accuracy Categories
 
@@ -159,7 +165,7 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 | Category | Enum | Description |
 |----------|------|-------------|
 | `service` | `ServiceType` | Core AIPerf services |
-| `service_manager` | `ServiceRunType` | Service orchestration. The built-in `multiprocessing` service-manager plugin is registered; Kubernetes execution is referenced by future-facing code paths but is not a registered service-manager plugin in this checkout. |
+| `service_manager` | `ServiceRunType` | Service orchestration (multiprocessing, Kubernetes) |
 
 ### Visualization and Telemetry Categories
 
@@ -175,15 +181,6 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 | `communication` | `CommunicationBackend` | ZMQ backends (IPC, TCP, dual-bind) |
 | `communication_client` | `CommClientType` | Socket patterns (PUB, SUB, PUSH, PULL) |
 | `zmq_proxy` | `ZMQProxyType` | Message routing proxies |
-
-### Sweep / Adaptive Search Categories
-
-| Category | Enum | Description |
-|----------|------|-------------|
-| `search_recipe` | `SearchRecipeType` | Named presets that compile to AdaptiveSearchSweep or grid sweep parameters; selected via `--search-recipe` |
-| `search_recipe_post_process` | `SearchRecipePostProcessType` | Stateless handlers emitting derived artifacts (curves, knee points) into `sweep_aggregate/` after `SweepAnalyzer.compute()` |
-| `convergence_criterion` | `ConvergenceCriterionType` | Decides when metrics have stabilized across repeated runs; selected via `--convergence-mode` |
-| `search_planner` | `SearchPlannerType` | Drives the adaptive outer loop via `ask()`/`tell()`; selected via `--search-planner` |
 
 ## Using Plugins
 
@@ -214,7 +211,6 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 | `get_transport_metadata(name)` | `TransportMetadata` | Typed transport config |
 | `get_plot_metadata(name)` | `PlotMetadata` | Typed plot config |
 | `get_service_metadata(name)` | `ServiceMetadata` | Typed service config |
-| `get_gpu_telemetry_collector_metadata(name)` | `GPUTelemetryCollectorMetadata` | Typed GPU collector config |
 
 ## Creating Custom Plugins
 
@@ -232,7 +228,7 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 | 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
 | 2 | `plugins.yaml` | Register with class path, description, and metadata |
 | 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
-| 4 | Terminal | `uv pip install -e . && aiperf plugins endpoint my_custom` |
+| 4 | Terminal | `pip install -e . && aiperf plugins endpoint my_custom` |
 
 ### Minimal Endpoint Example
 
@@ -314,7 +310,6 @@ Category-specific metadata is validated against Pydantic models in `aiperf.plugi
 | `TransportMetadata` | `transport_type`, `url_schemes` |
 | `PlotMetadata` | `display_name`, `category` |
 | `ServiceMetadata` | `required`, `auto_start`, `disable_gc`, `replicable` |
-| `GPUTelemetryCollectorMetadata` | `is_local` |
 
 ## CLI Commands
 
@@ -387,12 +382,9 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
 | `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
-| `image_edit` | `ImageEditEndpoint` | OpenAI Image Edit (image-to-image) API; multipart upload of reference image + prompt to `/v1/images/edits`. Compatible with SGLang FLUX.2 unified diffusion serving. |
 | `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
-| `image_retrieval` | `ImageRetrievalEndpoint` | Image retrieval API |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
-| `responses` | `ResponsesEndpoint` | OpenAI Responses API |
 | `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
 | `template` | `TemplateEndpoint` | Template for custom endpoints |
 | `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
@@ -464,7 +456,7 @@ TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
 **Solutions**:
 1. Verify the plugin is registered in `plugins.yaml`
 2. Check the entry point is defined in `pyproject.toml`
-3. Reinstall the package in the active environment: `uv pip install -e .`
+3. Reinstall the package: `pip install -e .`
 4. Run `aiperf plugins --validate` to check for errors
 
 ### Module Import Errors

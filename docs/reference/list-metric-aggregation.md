@@ -20,7 +20,7 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | `sum` | running `float64` | bit-exact (within float round-off across summation orders) |
 | `min`, `max` | running scalars | bit-exact |
 | `avg` | `sum / count` | bit-exact |
-| `std` | `sqrt(max(0, sum_sq/count − avg²))` | bit-exact (population std, matches `np.std`) |
+| `std` | Welford online M2 | bit-exact (population std, matches `np.std`) |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
 Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
