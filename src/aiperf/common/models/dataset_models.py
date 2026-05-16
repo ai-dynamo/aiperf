@@ -315,6 +315,11 @@ class ConversationMetadata(AIPerfBaseModel):
         default=None,
         description="DAG child's parent conversation_id; None for roots.",
     )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Optional per-conversation context-mode override. "
+        "Falls back to DatasetMetadata.default_context_mode when None.",
+    )
     accuracy_ground_truth: str | None = Field(
         default=None,
         description="Ground-truth answer for this conversation (accuracy mode only). "
