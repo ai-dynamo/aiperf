@@ -86,7 +86,14 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
                 "BaseTransport requires either run=BenchmarkRun(...) or "
                 "model_endpoint=ModelEndpointInfo(...)."
             )
+        # Source-compat: synthesize the missing ``model_endpoint`` so test
+        # harnesses (and main-keeper code) reading ``self.model_endpoint``
+        # keep working when only ``run`` was passed in.
+        if model_endpoint is None:
+            from aiperf.endpoints.base_endpoint import _model_endpoint_from_run
+            model_endpoint = _model_endpoint_from_run(run)
         self.run: BenchmarkRun = run
+        self.model_endpoint = model_endpoint
         from aiperf import __version__
 
         self.user_agent: str = f"aiperf/{__version__}"
