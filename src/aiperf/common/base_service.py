@@ -108,7 +108,15 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
     @on_command(CommandType.SHUTDOWN)
     async def _on_shutdown_command(self, message: CommandMessage) -> None:
-        self.debug(f"Received shutdown command from {message.service_id}")
+        # ``message`` may be either the bus-envelope CommandMessage (has
+        # ``service_id``) or a bare ``Command`` struct from a unit test;
+        # fall back to ``cid`` so the log line stays useful in both.
+        sender = (
+            getattr(message, "service_id", None)
+            or getattr(message, "cid", None)
+            or "<unknown>"
+        )
+        self.debug(f"Received shutdown command from {sender}")
         # Send an acknowledged response back to the sender, because we won't be able to send it after we stop.
         await self.publish(
             CommandAcknowledgedResponse.from_command_message(message, self.service_id)

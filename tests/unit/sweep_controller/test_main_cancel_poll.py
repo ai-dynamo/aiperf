@@ -201,11 +201,11 @@ async def test_main_cancels_poll_task_in_finally(monkeypatch, tmp_path):
             return base / "aggregate"
 
     monkeypatch.setattr(
-        "aiperf._cli_runner_helpers.build_strategy",
+        "aiperf.cli_runner._strategy.build_strategy",
         lambda plan, logger: _Strategy(),
     )
     monkeypatch.setattr(
-        "aiperf._cli_runner_helpers.aggregate_and_export",
+        "aiperf.cli_runner._aggregate.aggregate_and_export",
         lambda *a, **kw: None,
     )
 

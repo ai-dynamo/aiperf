@@ -137,8 +137,20 @@ class TestTDigestListMetricAggregator:
         array_agg.extend(values.tolist())
         array_result = array_agg.to_result(tag="t", header="T", unit="ms")
 
-        # Same field set on the Pydantic model.
-        assert set(digest_result.model_fields_set) == set(array_result.model_fields_set)
+        # Same set of non-None fields on the dataclass.
+        import dataclasses as _dc
+
+        digest_set = {
+            f.name
+            for f in _dc.fields(digest_result)
+            if getattr(digest_result, f.name) is not None
+        }
+        array_set = {
+            f.name
+            for f in _dc.fields(array_result)
+            if getattr(array_result, f.name) is not None
+        }
+        assert digest_set == array_set
         # Bit-exact stats.
         assert digest_result.count == array_result.count
         assert digest_result.min == pytest.approx(array_result.min)

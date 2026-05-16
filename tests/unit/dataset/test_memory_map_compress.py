@@ -79,7 +79,11 @@ class TestCompressOnlyRoundTrip:
             decompressed_data = reader.read()
         decompressed_index = dctx.decompress(metadata.index_file_path.read_bytes())
 
-        roundtrip_conv = msgspec.json.decode(decompressed_data, type=Conversation)
+        # Branch encodes via orjson.dumps(conversation.model_dump()) so the
+        # canonical decode path is Conversation.model_validate_json (rather
+        # than msgspec.json.decode, which on Pydantic types only round-trips
+        # when the underlying class is a msgspec.Struct).
+        roundtrip_conv = Conversation.model_validate_json(decompressed_data)
         assert roundtrip_conv.session_id == "sess-1"
 
         index = MemoryMapDatasetIndex.model_validate_json(decompressed_index)

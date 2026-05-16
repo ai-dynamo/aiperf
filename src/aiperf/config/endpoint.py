@@ -438,7 +438,7 @@ class EndpointConfig(BaseConfig):
             if parsed.scheme.lower() not in ("http", "https"):
                 raise ValueError(
                     f"URL {url!r} has unsupported scheme {parsed.scheme!r}. "
-                    f"Expected 'http' or 'https'."
+                    f"Expected http:// or https://."
                 )
             # Validate the port if one is present. urlparse.port raises
             # ValueError on access for non-numeric or out-of-range ports

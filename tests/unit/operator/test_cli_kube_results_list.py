@@ -235,8 +235,10 @@ async def test_list_runs_404_raises_informative_error(
             output="text",
         )
 
-    out = capsys.readouterr().out
-    assert "No runs found" in out
+    captured = capsys.readouterr()
+    # cli_utils.exit_on_error routes the panel through a stderr-pinned
+    # rich Console; the user-facing "No runs found" copy lands on stderr.
+    assert "No runs found" in (captured.err + captured.out)
 
 
 @pytest.mark.asyncio

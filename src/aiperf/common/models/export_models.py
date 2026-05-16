@@ -61,7 +61,11 @@ class JsonMetricResult(AIPerfBaseModel):
     )
 
     @staticmethod
-    def project_summary_dict(payload: dict[str, Any]) -> dict[str, "JsonMetricResult"]:
+    def project_summary_dict(
+        payload: dict[str, Any] | None,
+    ) -> dict[str, "JsonMetricResult"]:
+        if not payload:
+            return {}
         return {
             key: JsonMetricResult.model_validate(value)
             for key, value in payload.items()

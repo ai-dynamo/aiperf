@@ -629,14 +629,16 @@ def _decorate_multirun_node(node: dict[str, Any]) -> None:
 def _decorate_artifacts_node(node: dict[str, Any]) -> None:
     """Attach CEL rules to ArtifactsConfig-shaped nodes.
 
-    Detected by shape: ``benchmarkId`` + ``cliCommand`` + ``dir``.
+    Detected by shape: ``benchmarkId`` + ``dir`` (``cliCommand`` is no
+    longer carried on ArtifactsConfig post-merge but the immutability rule
+    still applies).
     """
     if not isinstance(node, dict):
         return
     props = node.get("properties")
     if not isinstance(props, dict):
         return
-    if not ("benchmarkId" in props and "cliCommand" in props and "dir" in props):
+    if not ("benchmarkId" in props and "dir" in props):
         return
     _add_validation_rules(
         node,

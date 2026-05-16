@@ -43,8 +43,22 @@ def test_round_trip_preserves_per_worker_maps() -> None:
         worker_task_stats={"w-0": WorkerTaskStats(total=5)},
         worker_health={"w-0": _health()},
     )
-    encoded = msgspec.json.encode(msg)
-    decoded = msgspec.json.decode(encoded, type=WorkerGroupStatsMessage)
+    # Branch carries WorkerTaskStats and ProcessHealth as Pydantic models;
+    # msgspec.json.encode needs an enc_hook to dump them.
+    def _enc(obj):
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        raise TypeError(f"Cannot encode object of type {type(obj).__name__}")
+
+    def _dec(typ, obj):
+        if hasattr(typ, "model_validate") and isinstance(obj, dict):
+            return typ.model_validate(obj)
+        raise NotImplementedError
+
+    encoded = msgspec.json.encode(msg, enc_hook=_enc)
+    decoded = msgspec.json.decode(
+        encoded, type=WorkerGroupStatsMessage, dec_hook=_dec
+    )
     assert decoded.group_id == "wgm-0"
     assert decoded.worker_statuses == msg.worker_statuses
     assert decoded.worker_task_stats["w-0"].total == 5

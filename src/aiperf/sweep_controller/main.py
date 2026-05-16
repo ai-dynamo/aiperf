@@ -363,7 +363,8 @@ async def main() -> int:
 
     from kubernetes_asyncio.client import CustomObjectsApi
 
-    from aiperf._cli_runner_helpers import aggregate_and_export, build_strategy
+    from aiperf.cli_runner._aggregate import aggregate_and_export
+    from aiperf.cli_runner._strategy import build_strategy
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.kubernetes.client import k8s_client
     from aiperf.operator.models import AIPerfSweepSpec
@@ -424,7 +425,7 @@ async def main() -> int:
         )
 
         orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
-        from aiperf._cli_runner_helpers import _build_search_planner
+        from aiperf.cli_runner._strategy import _build_search_planner
 
         search_planner = _build_search_planner(plan)
         if search_planner is not None:

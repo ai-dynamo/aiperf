@@ -74,7 +74,13 @@ class TestBootstrapMacOSRedirect:
         mock_log_queue,
         mock_linux_child_process,
     ):
-        """_redirect_stdio_to_devnull is NOT called on Linux."""
+        """_redirect_stdio_to_devnull IS called on Linux child processes too.
+
+        Branch's bootstrap redirects unconditionally when ``is_child_process``
+        is True (not just on macOS) so the inherited stdout/stderr pipes
+        close promptly when the parent exits early — see comment in
+        ``src/aiperf/common/bootstrap.py``.
+        """
         run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
@@ -85,7 +91,7 @@ class TestBootstrapMacOSRedirect:
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
-            mock_redirect.assert_not_called()
+            mock_redirect.assert_called_once()
 
 
 class TestRedirectStdioToDevnull:

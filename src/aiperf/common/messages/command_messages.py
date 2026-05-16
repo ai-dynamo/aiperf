@@ -133,9 +133,13 @@ class CommandAcknowledgedResponse(
     ) -> Self:
         return cls(
             service_id=service_id,
-            target_service_id=command_message.service_id,
-            command=command_message.command,
-            command_id=command_message.command_id,
+            target_service_id=getattr(command_message, "service_id", None) or "",
+            command=getattr(
+                command_message, "command", getattr(command_message, "cmd", "")
+            ),
+            command_id=getattr(
+                command_message, "command_id", getattr(command_message, "cid", "")
+            ),
         )
 
 
