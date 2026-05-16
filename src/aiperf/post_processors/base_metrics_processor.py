@@ -14,18 +14,25 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
 class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
-    """Base class for all metrics processors. This class is responsible for filtering the metrics based on the run config."""
+    """Base class for all metrics processors. This class is responsible for filtering the metrics based on the config."""
 
     def __init__(self, run: BenchmarkRun, **kwargs):
         self.run = run
         super().__init__(run=run, **kwargs)
 
+    async def finalize(self) -> None:
+        """End-of-run hook; default no-op. Override to flush per-record files
+        before the records-manager publishes ProcessRecordsResultMessage —
+        see ResultsProcessorProtocol.finalize for the race this closes.
+        """
+        return None
+
     def get_filters(self) -> tuple[MetricFlags, MetricFlags]:
-        """Get the filters for the metrics based on the run config.
+        """Get the filters for the metrics based on the config.
         Returns:
             tuple[MetricFlags, MetricFlags]: The required and disallowed flags.
         """
@@ -64,13 +71,12 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         """
         If --goodput SLOs are provided, wire the SLOs into the GoodRequestCountMetric.
         """
-        slos = self.run.cfg.slos
-        if not slos:
+        if not self.run.cfg.slos:
             return
         if GOOD_REQUEST_COUNT_TAG not in applicable_tags:
             return
 
-        slo_tags = set(slos.keys())
+        slo_tags = set((self.run.cfg.slos or {}).keys())
         missing_tags = slo_tags - set(applicable_tags)
         if missing_tags:
             raise RuntimeError(
@@ -80,7 +86,7 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             )
 
         try:
-            MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG).set_slos(slos)
+            MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG).set_slos(self.run.cfg.slos)
         except ValueError as e:
             raise RuntimeError(f"Invalid --goodput: {e}") from e
 
@@ -90,7 +96,7 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         error_metrics_only: bool = False,
         exclude_error_metrics: bool = False,
     ) -> list[BaseMetric]:
-        """Get an ordered list of metrics that are applicable to the endpoint type and run config.
+        """Get an ordered list of metrics that are applicable to the endpoint type and user config.
         The metrics are ordered based on their dependencies, ensuring proper computation order.
 
         Be sure to compute the metrics sequentially versus in parallel, as some metrics may depend on the results of previous metrics.

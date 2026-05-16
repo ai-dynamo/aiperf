@@ -94,9 +94,7 @@ class RecordExportJSONLWriter(
                     if not isinstance(v.value, list)
                 }
 
-            # Convert trace data to export format (wall-clock timestamps) if enabled.
-            # trace_data is a native msgspec Struct (BaseTraceData / AioHttpTraceData)
-            # on the wire; call its to_export() directly.
+            # Convert trace data to export format (wall-clock timestamps) if enabled
             export_trace_data = None
             if self.export_http_trace and record_data.trace_data:
                 export_trace_data = record_data.trace_data.to_export()
