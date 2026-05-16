@@ -4,12 +4,28 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import asdict
 from typing import Any
 
 from pydantic import Field
 
 from aiperf.common.models import MetricResult
+
+
+def _to_dict(obj: Any) -> dict[str, Any]:
+    """Polymorphic dict-ifier: handles slotted dataclasses and Pydantic models.
+
+    ``to_json_result()`` returns the slotted ``MetricResult`` for fast-path
+    metrics but the Pydantic ``JsonMetricResult`` shape for sweep-injected
+    metrics. Both need to flatten through ``asdict`` semantics for the JSON
+    exporter.
+    """
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return dict(obj)
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MetricTagT
 
@@ -209,30 +225,30 @@ class SteadyStateSummary(AIPerfBaseModel):
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "results": [asdict(r.to_json_result()) for r in self.results.values()],
-            "effective_concurrency": asdict(
+            "results": [_to_dict(r.to_json_result()) for r in self.results.values()],
+            "effective_concurrency": _to_dict(
                 self.effective_concurrency.to_json_result()
             ),
-            "effective_throughput": asdict(self.effective_throughput.to_json_result()),
-            "effective_prefill_throughput": asdict(
+            "effective_throughput": _to_dict(self.effective_throughput.to_json_result()),
+            "effective_prefill_throughput": _to_dict(
                 self.effective_prefill_throughput.to_json_result()
             ),
-            "effective_generation_concurrency": asdict(
+            "effective_generation_concurrency": _to_dict(
                 self.effective_generation_concurrency.to_json_result()
             ),
-            "effective_prefill_concurrency": asdict(
+            "effective_prefill_concurrency": _to_dict(
                 self.effective_prefill_concurrency.to_json_result()
             ),
-            "effective_total_throughput": asdict(
+            "effective_total_throughput": _to_dict(
                 self.effective_total_throughput.to_json_result()
             ),
-            "effective_throughput_per_user": asdict(
+            "effective_throughput_per_user": _to_dict(
                 self.effective_throughput_per_user.to_json_result()
             ),
-            "effective_prefill_throughput_per_user": asdict(
+            "effective_prefill_throughput_per_user": _to_dict(
                 self.effective_prefill_throughput_per_user.to_json_result()
             ),
-            "tokens_in_flight": asdict(self.tokens_in_flight.to_json_result()),
+            "tokens_in_flight": _to_dict(self.tokens_in_flight.to_json_result()),
             "window_metadata": self.window_metadata.to_dict(),
         }
         return data
@@ -240,7 +256,7 @@ class SteadyStateSummary(AIPerfBaseModel):
     def to_csv(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for r in self.results.values():
-            row = asdict(r)
+            row = _to_dict(r)
             row.pop("current", None)
             rows.append(row)
         return rows

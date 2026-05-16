@@ -618,26 +618,9 @@ def sample_conversations() -> dict[str, Conversation]:
 @pytest.fixture
 def sample_request_info() -> RequestInfo:
     """Create a sample RequestInfo for testing."""
-    from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
-    from aiperf.common.models.model_endpoint_info import (
-        EndpointInfo,
-        ModelEndpointInfo,
-        ModelInfo,
-        ModelListInfo,
-    )
-    from aiperf.plugin.enums import EndpointType
+    from aiperf.common.enums import CreditPhase
 
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=[
             Turn(
                 texts=[Text(contents=["test prompt"])], role="user", model="test-model"

@@ -227,11 +227,20 @@ def _wire_to_error(error: WireErrorDetails | None) -> ErrorDetails | None:
 def metric_record_metadata_from_model(
     metadata: Any,
 ) -> MetricRecordMetadata:
-    """Coerce a metadata model, dict, or struct into a ``MetricRecordMetadata``."""
+    """Coerce a metadata model, dict, or struct into a ``MetricRecordMetadata``.
+
+    Routes through ``msgspec.convert`` for dict inputs so ``benchmark_phase``
+    (and any other enum-typed field) is materialized as the enum instance
+    rather than a raw string — important for callers that round-trip the
+    record through JSON and assert ``isinstance(metadata.benchmark_phase,
+    CreditPhase)``.
+    """
+    import msgspec
+
     if isinstance(metadata, MetricRecordMetadata):
         return metadata
     if isinstance(metadata, dict):
-        return MetricRecordMetadata(**metadata)
+        return msgspec.convert(metadata, MetricRecordMetadata)
     return MetricRecordMetadata(
         request_num=metadata.request_num,
         session_num=metadata.session_num,

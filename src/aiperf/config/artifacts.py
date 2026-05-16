@@ -23,6 +23,7 @@ from pydantic import (
 from aiperf.common.enums import ExportLevel
 from aiperf.config.base import BaseConfig
 from aiperf.config.phases import _normalize_duration
+from aiperf.config.steady_state import SteadyStateConfig
 from aiperf.config.user_files import UserFile
 
 __all__ = [
@@ -35,7 +36,7 @@ __all__ = [
 # summary JSON, RecordExportResultsProcessor writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
-RecordsExportFormat = Literal["jsonl"]
+RecordsExportFormat = Literal["jsonl", "csv"]
 
 
 @dataclass(frozen=True)
@@ -122,8 +123,8 @@ class ArtifactsConfig(BaseConfig):
         Field(
             default_factory=lambda: ["jsonl"],
             description="Per-request records export formats. "
-            "Only 'jsonl' is wired up today. Set to false to disable the "
-            "per-record JSONL file.",
+            "Supports 'jsonl' and 'csv' (branch wins; CSV exporter ported "
+            "from the K8s branch). Set to false to disable per-record export.",
         ),
     ]
 
@@ -180,6 +181,18 @@ class ArtifactsConfig(BaseConfig):
             default_factory=list,
             description="User-defined templated files materialized into the run directory "
             "before the benchmark begins.",
+        ),
+    ]
+
+    steady_state: Annotated[
+        SteadyStateConfig,
+        Field(
+            default_factory=SteadyStateConfig,
+            description=(
+                "Steady-state windowed-metrics configuration. When enabled, "
+                "AIPerf detects the steady-state region of the run and re-"
+                "computes metrics only over that window."
+            ),
         ),
     ]
 
@@ -295,6 +308,56 @@ class ArtifactsConfig(BaseConfig):
     def checkpoints_dir(self) -> Path:
         """Directory used for partial recovery checkpoints."""
         return self.dir / "checkpoints"
+
+    @property
+    def profile_export_partial_json_file(self) -> Path:
+        """Path for the latest partial-checkpoint JSON export."""
+        base = self._base()
+        name = f"{base}_partial.json" if base else "profile_export_aiperf_partial.json"
+        return self.checkpoints_dir / name
+
+    @property
+    def profile_export_steady_state_csv_file(self) -> Path:
+        """Path for the steady-state windowed metrics CSV file."""
+        base = self._base()
+        name = (
+            f"{base}_steady_state.csv"
+            if base
+            else "profile_export_aiperf_steady_state.csv"
+        )
+        return self.dir / name
+
+    @property
+    def profile_export_steady_state_json_file(self) -> Path:
+        """Path for the steady-state windowed metrics JSON file."""
+        base = self._base()
+        name = (
+            f"{base}_steady_state.json"
+            if base
+            else "profile_export_aiperf_steady_state.json"
+        )
+        return self.dir / name
+
+    @property
+    def profile_export_energy_efficiency_json_file(self) -> Path:
+        """Path for the energy efficiency metrics JSON file."""
+        base = self._base()
+        name = (
+            f"{base}_energy_efficiency.json"
+            if base
+            else "profile_export_aiperf_energy_efficiency.json"
+        )
+        return self.dir / name
+
+    @property
+    def profile_export_records_csv_file(self) -> Path:
+        """Path for the per-record CSV export file (branch's CSV records exporter)."""
+        return self.dir / "profile_export_records.csv"
+
+    @property
+    def profile_export_console_txt_file(self) -> Path:
+        """Path for the plain-text console export file."""
+        return self.dir / "profile_export_console.txt"
 
     @property
     def profile_export_timeslices_csv_file(self) -> Path:

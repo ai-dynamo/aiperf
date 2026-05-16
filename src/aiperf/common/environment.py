@@ -777,6 +777,31 @@ class _ServerMetricsSettings(BaseSettings):
     )
 
 
+class _SteadyStateSettings(BaseSettings):
+    """Steady-state detection configuration.
+
+    Controls the automatic ramp detection algorithm parameters. CLI flags
+    (``--steady-state``, ``--steady-state-start-pct``, etc.) take precedence
+    over these environment variables.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_STEADY_STATE_",
+    )
+
+    BOOTSTRAP_ITERATIONS: int | None = Field(
+        default=None,
+        gt=0,
+        description="Number of bootstrap iterations for boundary confidence intervals. None disables bootstrap.",
+    )
+    MIN_WINDOW_PCT: float = Field(
+        gt=0.0,
+        le=100.0,
+        default=10.0,
+        description="Minimum steady-state window size as percentage of total duration; below this, falls back to full range",
+    )
+
+
 class _TimingSettings(BaseSettings):
     """Timing manager configuration.
 
@@ -1360,6 +1385,10 @@ class _Environment(BaseSettings):
     SERVICE: _ServiceSettings = Field(
         default_factory=_ServiceSettings,
         description="Service lifecycle and communication settings",
+    )
+    STEADY_STATE: _SteadyStateSettings = Field(
+        default_factory=_SteadyStateSettings,
+        description="Steady-state detection settings",
     )
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,

@@ -72,8 +72,6 @@ from aiperf.common.models.record_models import (
     ImageResponseData,
     ImageRetrievalResponseData,
     InferenceServerResponse,
-    MetricRecordInfo,
-    MetricRecordMetadata,
     MetricResult,
     MetricValue,
     ParsedResponse,
@@ -82,7 +80,6 @@ from aiperf.common.models.record_models import (
     ProfileResults,
     RAGSources,
     RankingsResponseData,
-    RawRecordInfo,
     ReasoningResponseData,
     RecordContext,
     SSEField,
@@ -93,6 +90,8 @@ from aiperf.common.models.record_models import (
     ToolCallResponseData,
     VideoResponseData,
 )
+from aiperf.common.metric_records_wire import MetricRecordMetadata
+from aiperf.common.models.record_export_models import MetricRecordInfo, RawRecordInfo
 from aiperf.common.models.request_record_models import RequestInfo, RequestRecord
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,

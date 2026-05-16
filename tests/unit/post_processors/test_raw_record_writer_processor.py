@@ -6,7 +6,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import (
+from aiperf.common.models.record_export_models import (
     decode_raw_record_info_json,
 )
 from aiperf.config import AIPerfConfig
