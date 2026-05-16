@@ -675,11 +675,21 @@ class _DualBindServiceFixtures:
         cached comm config directly so tests don't depend on the IPC/TCP/DUAL
         resolver path.
         """
+        from aiperf.common.singleton import SingletonMeta
+
+        # Reset comm-related singletons so each test gets a fresh
+        # ZMQDualBindCommunication keyed off the injected config instead of
+        # reusing the IPC-resolved one cached during make_run_from_cli.
+        SingletonMeta._instances.clear()
+
         from tests.unit.conftest import make_run_from_cli
 
         run = make_run_from_cli(cli_config)
         if comm_config is not None:
             object.__setattr__(run.cfg, "_comm_config_cache", comm_config)
+            # Same reset post-injection so the next service constructed under
+            # this fixture picks up the dual-bind config.
+            SingletonMeta._instances.clear()
         return run
 
     @pytest.fixture
@@ -732,14 +742,14 @@ class TestStickyRouterDualBind(_DualBindServiceFixtures):
 
     def test_controller_mode_passes_tcp_bind_address(self, dual_bind_run) -> None:
         router = StickyCreditRouter(run=dual_bind_run, service_id="test-router")
-        assert router._router_client.additional_bind_address == "tcp://0.0.0.0:5564"
+        assert router._credit_router_client.additional_bind_address == "tcp://0.0.0.0:5564"
 
     def test_worker_mode_does_not_pass_tcp_bind_address(
         self, remote_dual_bind_run
     ) -> None:
         router = StickyCreditRouter(run=remote_dual_bind_run, service_id="test-router")
-        assert router._router_client.additional_bind_address is None
+        assert router._credit_router_client.additional_bind_address is None
 
     def test_ipc_mode_does_not_pass_tcp_bind_address(self, ipc_run) -> None:
         router = StickyCreditRouter(run=ipc_run, service_id="test-router")
-        assert router._router_client.additional_bind_address is None
+        assert router._credit_router_client.additional_bind_address is None
