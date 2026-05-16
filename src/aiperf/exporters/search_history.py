@@ -84,6 +84,7 @@ def write_search_history(
             "iteration_idx": h.iteration_idx,
             "variation_values": h.variation_values,
             "objective_value": h.objective_value,
+            "objective_values": h.objective_values,
             "feasible": h.feasible,
             "non_monotonic_warning": h.non_monotonic_warning,
         }
@@ -93,6 +94,7 @@ def write_search_history(
         "config": _build_config_block(cfg),
         "iterations": iterations_payload,
         "best": _compute_best_payload(history, cfg),
+        "best_trials": _compute_best_trials(history, cfg),
         "boundary_summary": _resolve_boundary_summary(history, cfg, planner),
         "recipe": cfg.recipe_name,
         "convergence_reason": convergence_reason,
@@ -131,6 +133,41 @@ def _compute_best_payload(
     }
 
 
+def _compute_best_trials(
+    history: list[SearchIteration], cfg: AdaptiveSearchSweep
+) -> list[dict] | None:
+    """Multi-objective best-trial list (Pareto-aware projection of ``best``).
+
+    For single-objective configs this is a one-element list mirroring ``best``
+    with ``objective_values`` (vector form). Returned as ``None`` only when
+    the entire history is unscored, so consumers can always rely on
+    ``best_trials[0]`` when ``len > 0``.
+    """
+    from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+
+    scored = [h for h in history if h.objective_value is not None]
+    feasible = [h for h in scored if h.feasible]
+    ranking_pool = feasible if feasible else scored
+    if not ranking_pool:
+        return None
+    if cfg.objectives and cfg.objectives[0].direction == OptimizationDirection.MAXIMIZE:
+        best = max(ranking_pool, key=lambda h: h.objective_value)
+    else:
+        best = min(ranking_pool, key=lambda h: h.objective_value)
+    return [
+        {
+            "iteration_idx": best.iteration_idx,
+            "objective_value": best.objective_value,
+            "objective_values": best.objective_values
+            if best.objective_values is not None
+            else [best.objective_value],
+            "variation_values": best.variation_values,
+            "feasible": best.feasible,
+            "feasible_count": len(feasible),
+        }
+    ]
+
+
 def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
     """Project an AdaptiveSearchSweep into the search_history.json `config` shape."""
     objectives = list(cfg.objectives or [])
@@ -140,12 +177,14 @@ def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
         "planner": str(cfg.planner),
         "objective_metric": primary.metric if primary else None,
         "objective_stat": primary.stat if primary else None,
-        "objective_direction": str(primary.direction) if primary else None,
+        "objective_direction": (
+            str(primary.direction).upper() if primary else None
+        ),
         "objectives": [
             {
                 "metric": o.metric,
                 "stat": o.stat,
-                "direction": str(o.direction),
+                "direction": str(o.direction).upper(),
                 "threshold": o.threshold,
             }
             for o in objectives
@@ -181,7 +220,12 @@ def _resolve_boundary_summary(
     if not history or len(cfg.search_space) != 1:
         return None
     if planner is not None and hasattr(planner, "boundary_summary"):
-        return planner.boundary_summary()
+        precomputed = planner.boundary_summary()
+        if precomputed is not None:
+            return precomputed
+        # Planner exposed the hook but didn't latch a boundary (e.g. BO before
+        # convergence); fall back to history-derivation so callers always
+        # see a populated block for 1-D feasibility runs.
     return _compute_boundary_summary(history, cfg)
 
 

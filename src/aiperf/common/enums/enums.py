@@ -224,6 +224,12 @@ class CreditPhase(CaseInsensitiveStrEnum):
     """The credit phase while profiling is active. This is the primary phase of the
     benchmark, and what is used to calculate the final results."""
 
+    COOLDOWN = "cooldown"
+    """The credit phase while cooldown is active. Exclude-from-results phase that
+    runs after profiling to let the server settle (e.g. drain queues, flush KV
+    cache) before the next variation. Records are still emitted for tracking
+    but never contribute to summary statistics."""
+
 
 class ExportLevel(CaseInsensitiveStrEnum):
     """Export level for benchmark data."""
