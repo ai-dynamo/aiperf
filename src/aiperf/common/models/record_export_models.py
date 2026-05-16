@@ -41,6 +41,36 @@ class MetricRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=
     def to_json_bytes(self) -> bytes:
         return _METRIC_RECORD_INFO_ENCODER.encode(self)
 
+    @classmethod
+    def model_validate_json(cls, data: bytes | str) -> "MetricRecordInfo":
+        """Pydantic-style JSON decoder for compat with ``model_validate_json`` callers.
+
+        msgspec.Struct does not ship this method natively; tests and exporters
+        that round-trip MetricRecordInfo through JSONL files reach for the
+        Pydantic name. msgspec also rejects multi-array unions like
+        ``list[float] | list[int]`` inside ``MetricValue``, so we decode to a
+        permissive dict first and rebuild the dataclass fields by hand.
+        """
+        import orjson
+
+        if isinstance(data, bytes):
+            payload = orjson.loads(data)
+        else:
+            payload = orjson.loads(data.encode("utf-8"))
+
+        from aiperf.common.metric_records_wire import MetricRecordMetadata
+
+        metadata = MetricRecordMetadata(**payload["metadata"])
+        metrics = {
+            key: MetricValue(**value) for key, value in payload.get("metrics", {}).items()
+        }
+        return cls(
+            metadata=metadata,
+            metrics=metrics,
+            trace_data=payload.get("trace_data"),
+            error=payload.get("error"),
+        )
+
 
 class RawRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
     """The full info of a raw record including the request record for export."""
