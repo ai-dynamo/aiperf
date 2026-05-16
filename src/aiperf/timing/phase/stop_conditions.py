@@ -28,7 +28,15 @@ class StopCondition(ABC):
     This is used to evaluate whether more credits can be sent. Concrete subclasses
     implement the should_use() and can_send_any_turn() methods for general checks,
     and may optionally implement the can_start_new_session() method for more restrictive cases.
+
+    ``applies_to_dag_children`` declares whether this condition gates DAG offspring
+    (``agent_depth > 0``) in addition to roots. ``RequestCount`` is a literal wire
+    cap so it applies; ``SessionCount`` targets root sessions so children bypass it.
+    Time/cancellation conditions apply by default.
     """
+
+    applies_to_dag_children: bool = True
+    """Whether this stop condition gates DAG child credits in addition to roots."""
 
     def __init__(
         self,
@@ -101,6 +109,10 @@ class RequestCountStopCondition(StopCondition):
 
 class SessionCountStopCondition(StopCondition):
     """Session count based stop condition."""
+
+    applies_to_dag_children: bool = False
+    """--num-conversations targets the sampler plan (full conversation trees); DAG
+    offspring belong to a tree they did not start, so they bypass this gate."""
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -201,6 +213,13 @@ class StopConditionChecker:
             stop_condition.can_start_new_session
             for stop_condition in self._stop_conditions
         ]
+        # Subset of can_send_any_turn that applies to DAG children
+        # (--num-conversations targets root sessions only).
+        self._can_send_dag_child_turn_funcs: list[Callable] = [
+            stop_condition.can_send_any_turn
+            for stop_condition in self._stop_conditions
+            if stop_condition.applies_to_dag_children
+        ]
 
     def can_send_any_turn(self) -> bool:
         """True if phase can send ANY turn (first or subsequent).
@@ -229,3 +248,13 @@ class StopConditionChecker:
             return False
 
         return all(func() for func in self._can_start_new_session_funcs)
+
+    def can_send_dag_child_turn(self) -> bool:
+        """True if phase can send a DAG child credit (``agent_depth > 0``).
+
+        Skips conditions whose ``applies_to_dag_children`` is False
+        (--num-conversations). Used by ``CreditIssuer._dispatch_dag_turn``
+        so children honor the wire-request cap but bypass the
+        sampler-plan session cap.
+        """
+        return all(func() for func in self._can_send_dag_child_turn_funcs)

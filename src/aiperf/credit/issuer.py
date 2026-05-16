@@ -23,6 +23,7 @@ from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.concurrency import ConcurrencyManager
+    from aiperf.timing.conversation_source import SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
@@ -228,6 +229,10 @@ class CreditIssuer:
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
             allow_worker_migration=turn.allow_worker_migration,
+            agent_depth=turn.agent_depth,
+            parent_correlation_id=turn.parent_correlation_id,
+            has_forks=turn.has_forks,
+            branch_mode=turn.branch_mode,
         )
 
         await self._credit_router.send_credit(credit=credit)
@@ -236,3 +241,57 @@ class CreditIssuer:
             self._progress.all_credits_sent_event.set()
 
         return not is_final_credit
+
+    # =========================================================================
+    # DAG dispatch helpers (used by BranchOrchestrator and RequestRateStrategy)
+    # =========================================================================
+
+    async def dispatch_first_turn(self, child_session: "SampledSession") -> bool:
+        """Dispatch turn-0 of a freshly-spawned DAG child session.
+
+        Children inherit the parent's session slot (no new session-slot
+        acquisition); they still need a prefill slot per request. The cap
+        gate applies — a refused dispatch returns False, which the
+        orchestrator counts as ``children_truncated``.
+
+        Returns:
+            True if the credit was sent on the wire, False otherwise.
+        """
+        turn = child_session.build_first_turn()
+        return await self._dispatch_dag_turn(turn)
+
+    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
+        """Dispatch a continuation turn of a DAG child session.
+
+        Used by ``RequestRateStrategy._issue_child_continuation_or_release``
+        for non-final child turns. Returns True iff the credit was actually
+        placed on the wire (so the strategy can distinguish "dispatched" from
+        "stop-blocked / refused at gate").
+        """
+        return await self._dispatch_dag_turn(turn)
+
+    async def _dispatch_dag_turn(self, turn: TurnToSend) -> bool:
+        """Send a DAG turn (child first/continuation, or parent join) on the wire.
+
+        Bypasses session-slot acquisition (children share the root's slot)
+        but still acquires a prefill slot and respects the
+        ``can_send_dag_child_turn`` stop gate (falls back to
+        ``can_send_any_turn`` when the checker doesn't expose it).
+
+        Returns:
+            True iff the credit was actually placed on the wire.
+        """
+        can_proceed = getattr(
+            self._stop_checker,
+            "can_send_dag_child_turn",
+            self._stop_checker.can_send_any_turn,
+        )
+        if not can_proceed():
+            return False
+        acquired = await self._concurrency_manager.acquire_prefill_slot(
+            self._phase, can_proceed
+        )
+        if not acquired:
+            return False
+        await self._issue_credit_internal(turn)
+        return True

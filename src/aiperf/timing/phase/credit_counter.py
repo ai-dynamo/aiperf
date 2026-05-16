@@ -173,15 +173,22 @@ class CreditCounter:
     def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, int, bool]:
         """Atomically increment sent count and return (credit_index, session_index, is_final_credit).
 
+        DAG children (``agent_depth > 0``) bump ``_requests_sent`` because they
+        are real wire traffic, but do NOT bump ``_sent_sessions`` /
+        ``_total_session_turns`` — they inherit their parent's session slot.
+        ``--request-count`` therefore applies to roots and children alike (a
+        wire-request cap), matching ``RequestCountStopCondition.applies_to_dag_children``.
+
         Lock-free: no async calls.
         """
         credit_index = self._requests_sent
+        is_dag_child = turn_to_send.agent_depth > 0
 
         new_sent_count = self._requests_sent + 1
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
 
-        if turn_to_send.turn_index == 0:
+        if turn_to_send.turn_index == 0 and not is_dag_child:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns
 

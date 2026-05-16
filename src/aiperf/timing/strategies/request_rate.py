@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -91,9 +91,20 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         stop_checker: StopConditionChecker,
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
+        branch_orchestrator: Any = None,
         **kwargs,
     ):
-        """Initialize rate timing strategy with all dependencies."""
+        """Initialize rate timing strategy with all dependencies.
+
+        ``branch_orchestrator`` is the DAG ``BranchOrchestrator`` when running
+        a DAG benchmark; ``None`` for non-DAG runs. When non-final DAG child
+        credits return, the strategy routes their continuation through
+        ``credit_issuer.dispatch_child_turn`` (bypassing the rate-loop
+        continuation queue, since children share their parent's session
+        slot); if the cap rejects the dispatch, the strategy notifies
+        ``branch_orchestrator.on_child_stopped`` so the orchestrator releases
+        the child's x_correlation_id.
+        """
         super().__init__(logger_name="RateTiming")
         self._config = config
         self._conversation_source: ConversationSource = conversation_source
@@ -101,6 +112,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._stop_checker = stop_checker
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
+        self._branch_orchestrator = branch_orchestrator
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.
@@ -242,12 +254,23 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         The delay_ms from turn metadata (if present) is honored before queuing,
         simulating user "think time" between turns in a conversation.
+
+        DAG children (``agent_depth > 0``) bypass the rate-loop continuation
+        queue: they already hold their parent's session slot, so their
+        continuations go through ``credit_issuer.dispatch_child_turn`` directly
+        (and notify the BranchOrchestrator when the cap blocks them).
         """
         if credit.is_final_turn:
             return
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit)
+        turn = TurnToSend.from_previous_credit(credit, meta)
+
+        if credit.agent_depth > 0:
+            # DAG child: route continuation directly through the issuer's DAG
+            # path (bypasses the rate-loop continuation queue).
+            await self._issue_child_continuation_or_release(turn, credit)
+            return
 
         # Honor think-time delay from dataset metadata before queuing
         if meta.delay_ms is not None:
@@ -257,6 +280,42 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             )
         else:
             self._continuation_turns.put_nowait(turn)
+
+    async def _issue_child_continuation_or_release(
+        self, turn: TurnToSend, credit: Credit
+    ) -> None:
+        """Dispatch a DAG-child continuation turn, releasing the child on cap refusal.
+
+        Children share their parent's session slot, so they don't go through
+        the rate-loop continuation queue. They use the issuer's
+        ``dispatch_child_turn`` path which respects the prefill cap and the
+        DAG-child stop gate.
+
+        Returns:
+            None. When the dispatch is refused (cap reached or stop), the
+            child's x_correlation_id is forwarded to
+            ``branch_orchestrator.on_child_stopped`` so the orchestrator can
+            release any join gates waiting on this child. If no orchestrator
+            is wired (defensive: shouldn't happen in DAG runs), the refusal
+            is logged and swallowed.
+        """
+        dispatched = await self._credit_issuer.dispatch_child_turn(turn)
+        if dispatched:
+            return
+        if self._branch_orchestrator is None:
+            self.debug(
+                f"DAG child continuation refused by issuer for "
+                f"x_correlation_id={credit.x_correlation_id} but no "
+                f"branch_orchestrator is wired (non-DAG path)"
+            )
+            return
+        try:
+            await self._branch_orchestrator.on_child_stopped(credit.x_correlation_id)
+        except Exception as exc:  # noqa: BLE001 - orchestrator error boundary; never propagate to the rate loop
+            self.error(
+                f"BranchOrchestrator.on_child_stopped raised for "
+                f"x_correlation_id={credit.x_correlation_id}: {exc!r}"
+            )
 
     async def handle_session_ended(self, credit: Credit) -> None:
         """No strategy-local cleanup is needed when a session ends."""

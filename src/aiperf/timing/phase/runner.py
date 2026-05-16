@@ -131,6 +131,36 @@ class PhaseRunner(TaskManagerMixin):
         self._was_cancelled = False
         self._rampers: list[Ramper] = []
 
+        # DAG orchestrator (None on non-DAG runs). When set, completion is
+        # gated on ``has_pending_branch_work`` so the runner doesn't freeze
+        # sent counts while children are still in flight.
+        self._branch_orchestrator: object | None = None
+
+    def _is_phase_complete(self) -> bool:
+        """Return True if ``--request-count`` is met AND no DAG children pend.
+
+        ``--request-count`` is a wire-request cap that applies to roots and
+        children alike; even after the cap fires, ``BranchOrchestrator`` may
+        still be holding children that have been dispatched but not yet
+        returned. Closing the phase before those children land would freeze
+        sent counts mid-DAG and drop the in-flight requests.
+
+        Returns False when:
+        - ``total_expected_requests`` is unset (this gate doesn't apply —
+          completion is driven by other stop conditions like duration).
+        - ``requests_sent`` has not yet reached the cap.
+        - The branch orchestrator reports pending DAG work.
+        """
+        cap = self._config.total_expected_requests
+        if cap is None:
+            return False
+        if self._progress.counter.requests_sent < cap:
+            return False
+        return not (
+            self._branch_orchestrator is not None
+            and self._branch_orchestrator.has_pending_branch_work()
+        )
+
     @property
     def phase(self) -> CreditPhase:
         """Phase enum (WARMUP or PROFILING)."""

@@ -51,10 +51,10 @@ class TestIsFinalCreditFlipForChildren:
     def test_child_below_cap_not_final(self) -> None:
         c = CreditCounter(cfg(reqs=10))
         # First send a root request — well below cap.
-        _, root_final = c.increment_sent(root_turn())
+        _, _, root_final = c.increment_sent(root_turn())
         assert root_final is False
         # Child increment also below cap — not final.
-        _, child_final = c.increment_sent(child_turn())
+        _, _, child_final = c.increment_sent(child_turn())
         assert child_final is False
         # Children DO bump _requests_sent (real wire traffic).
         assert c.requests_sent == 2
@@ -62,11 +62,11 @@ class TestIsFinalCreditFlipForChildren:
     def test_child_at_cap_marks_final(self) -> None:
         c = CreditCounter(cfg(reqs=2))
         # First send a root — requests_sent goes to 1.
-        _, root_final = c.increment_sent(root_turn())
+        _, _, root_final = c.increment_sent(root_turn())
         assert root_final is False
         # Child crosses cap — must flip is_final_credit so the
         # strategy loop and phase runner unblock.
-        _, child_final = c.increment_sent(child_turn())
+        _, _, child_final = c.increment_sent(child_turn())
         assert child_final is True
         assert c.requests_sent == 2
 
@@ -87,5 +87,5 @@ class TestIsFinalCreditFlipForChildren:
         # Verify is_final flips exactly when crossing the cap.
         c = CreditCounter(cfg(reqs=reqs))
         for i in range(1, reqs + 1):
-            _, is_final = c.increment_sent(child_turn())
+            _, _, is_final = c.increment_sent(child_turn())
             assert is_final is (i >= reqs)
