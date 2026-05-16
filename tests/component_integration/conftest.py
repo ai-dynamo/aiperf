@@ -26,10 +26,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 # Limit glibc malloc arenas to avoid heap-corruption SIGABRT and OOM-killed
-# xdist workers under heavy `-n auto` load. Each component_integration test
-# runs aiperf in-process with full Pydantic / msgspec / tokenizer imports,
-# so the default 8×NCPU arenas per worker × 24 workers blows out RAM. The
-# integration conftest carries the same setting (gotcha 2026-04-21).
+# xdist workers under heavy `-n auto` load. Component_integration runs aiperf
+# in-process with full Pydantic / msgspec / tokenizer / torch imports, so the
+# default 8×NCPU arenas blows out RAM in 2-CPU CI runners. glibc reads this
+# env var at *process startup*, so the authoritative export lives in the
+# Makefile (`MALLOC_ARENA_MAX=2 pytest ...`); the setdefault here only helps
+# if pytest was invoked some other way (e.g., from an IDE).
 os.environ.setdefault("MALLOC_ARENA_MAX", "2")
 
 import pytest
