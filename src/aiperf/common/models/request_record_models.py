@@ -55,6 +55,20 @@ class RequestInfo(
     credit_received_ns: int | None = None
     is_final_turn: bool = True
     url_index: int | None = None
+    agent_depth: int = 0
+    """DAG agent depth: 0 = root, >0 = nested branch (FORK/SPAWN) descendant."""
+    parent_correlation_id: str | None = None
+    """X-Correlation-ID of the parent request when this is a DAG branch child."""
+
+    def model_dump(self) -> dict[str, Any]:
+        """Pydantic-compat helper. Returns a shallow dict of all fields."""
+        return {f: getattr(self, f) for f in self.__struct_fields__}
+
+    def model_copy(self, *, update: dict[str, Any] | None = None) -> RequestInfo:
+        """Pydantic-compat shim around ``msgspec.structs.replace``."""
+        if not update:
+            return msgspec.structs.replace(self)
+        return msgspec.structs.replace(self, **update)
 
 
 class RequestRecord(
@@ -102,6 +116,20 @@ class RequestRecord(
         # msgspec tagged-union decoding (see BaseTraceData.from_json).
         if isinstance(self.trace_data, dict):
             self.trace_data = BaseTraceData.from_json(self.trace_data)
+
+    def model_dump(self) -> dict[str, Any]:
+        """Pydantic-compat helper. Recurses into nested ``request_info`` so
+        DAG-tagged tests can read ``dumped["request_info"]["agent_depth"]``.
+        """
+        out: dict[str, Any] = {}
+        for f in self.__struct_fields__:
+            value = getattr(self, f)
+            if isinstance(value, msgspec.Struct):
+                value = {
+                    sub_f: getattr(value, sub_f) for sub_f in value.__struct_fields__
+                }
+            out[f] = value
+        return out
 
     @property
     def was_cancelled(self) -> bool:

@@ -133,6 +133,24 @@ class MetricRecordMetadata(Struct, frozen=True, kw_only=True, omit_defaults=True
             "parent_correlation_id": self.parent_correlation_id,
         }
 
+    def model_dump_json(self) -> str:
+        """Pydantic-compat JSON serializer (msgspec ``json.encode`` under the hood)."""
+        import msgspec
+
+        return msgspec.json.encode(self).decode("utf-8")
+
+    @classmethod
+    def model_validate(cls, value: Any) -> MetricRecordMetadata:
+        """Pydantic-compat constructor from a dict / struct instance."""
+        return metric_record_metadata_from_model(value)
+
+    @classmethod
+    def model_validate_json(cls, value: str | bytes) -> MetricRecordMetadata:
+        """Pydantic-compat constructor from a JSON string / bytes."""
+        import msgspec
+
+        return msgspec.json.decode(value, type=cls)
+
 
 class MetricRecordsData(Struct, frozen=True, kw_only=True, omit_defaults=True):
     """Computed metric record for a single inference request."""
@@ -270,6 +288,8 @@ def metric_record_metadata_from_model(
         was_cancelled=metadata.was_cancelled,
         cancellation_time_ns=metadata.cancellation_time_ns,
         clock_offset_ns=metadata.clock_offset_ns,
+        agent_depth=getattr(metadata, "agent_depth", 0),
+        parent_correlation_id=getattr(metadata, "parent_correlation_id", None),
     )
 
 

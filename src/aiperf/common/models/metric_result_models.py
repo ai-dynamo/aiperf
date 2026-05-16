@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar, NamedTuple
+from typing import Any, ClassVar, NamedTuple
 
 from pydantic import ConfigDict
 
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import MetricValueTypeT
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.types import MetricTagT
@@ -151,6 +152,10 @@ class ProfileResults:
     total_expected: int | None = None
     was_cancelled: bool = False
     error_summary: list[ErrorDetailsCount] = field(default_factory=list)
+    branch_stats: BranchStats | None = None
+    """DAG branch-orchestrator counters (children spawned/completed/errored,
+    parents suspended/resumed, joins suppressed, children truncated). None on
+    non-DAG runs."""
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
@@ -158,6 +163,41 @@ class ProfileResults:
             if record.tag == tag:
                 return record
         return None
+
+    def model_dump_json(self) -> str:
+        """Pydantic-compat JSON serializer (msgspec ``json.encode`` under the hood).
+
+        Pydantic-model fields (``branch_stats: BranchStats``) are bridged via a
+        local ``enc_hook`` so msgspec can serialize them without a registered
+        Pydantic encoder.
+        """
+        import msgspec
+
+        from aiperf.common.models.branch_stats import BranchStats
+
+        def _enc(obj: Any) -> Any:
+            if isinstance(obj, BranchStats):
+                return obj.model_dump()
+            raise TypeError(f"Cannot encode object of type {type(obj).__name__}")
+
+        return msgspec.json.encode(self, enc_hook=_enc).decode("utf-8")
+
+    @classmethod
+    def model_validate_json(cls, value: str | bytes) -> ProfileResults:
+        """Pydantic-compat constructor from a JSON string / bytes.
+
+        Bridges nested Pydantic ``BranchStats`` via a ``dec_hook``.
+        """
+        import msgspec
+
+        from aiperf.common.models.branch_stats import BranchStats
+
+        def _dec(typ: type, obj: Any) -> Any:
+            if typ is BranchStats and isinstance(obj, dict):
+                return BranchStats(**obj)
+            raise NotImplementedError
+
+        return msgspec.json.decode(value, type=cls, dec_hook=_dec)
 
 
 @dataclass(slots=True, kw_only=True)

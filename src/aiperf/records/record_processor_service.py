@@ -335,6 +335,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
             clock_offset_ns=record.clock_offset_ns,
+            agent_depth=getattr(record.request_info, "agent_depth", 0),
+            parent_correlation_id=getattr(
+                record.request_info, "parent_correlation_id", None
+            ),
         )
 
     def _merge_metric_results(
