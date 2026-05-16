@@ -12,6 +12,7 @@ from aiperf.common.models.record_models import (
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    _wrap_model_endpoint,
     _wrap_run,
     create_config,
     create_endpoint_with_mock_transport,
@@ -221,7 +222,7 @@ class TestBaseEndpointAbstractMethods:
     def test_cannot_instantiate_base_endpoint(self, test_model_endpoint):
         """Test that BaseEndpoint cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            BaseEndpoint(run=_wrap_run(test_model_endpoint))
+            BaseEndpoint(model_endpoint=_wrap_model_endpoint(test_model_endpoint))
 
     def test_must_implement_format_payload(self, test_model_endpoint):
         """Test that subclasses must implement format_payload()."""
@@ -233,7 +234,7 @@ class TestBaseEndpointAbstractMethods:
                 return None
 
         with pytest.raises(TypeError):
-            IncompleteEndpoint(run=_wrap_run(test_model_endpoint))
+            IncompleteEndpoint(model_endpoint=_wrap_model_endpoint(test_model_endpoint))
 
     def test_must_implement_parse_response(self, test_model_endpoint):
         """Test that subclasses must implement parse_response()."""
@@ -244,4 +245,4 @@ class TestBaseEndpointAbstractMethods:
                 return {}
 
         with pytest.raises(TypeError):
-            IncompleteEndpoint(run=_wrap_run(test_model_endpoint))
+            IncompleteEndpoint(model_endpoint=_wrap_model_endpoint(test_model_endpoint))

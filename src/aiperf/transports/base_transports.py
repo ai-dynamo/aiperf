@@ -9,19 +9,22 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
+    ModelEndpointInfo,
     RequestInfo,
     RequestRecord,
     SSEMessage,
 )
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
-from aiperf.config import BenchmarkRun
 from aiperf.plugin.schema.schemas import TransportMetadata
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
 """
@@ -69,31 +72,17 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
     def __init__(
         self,
-        run: BenchmarkRun | None = None,
-        model_endpoint: Any = None,  # ModelEndpointInfo
+        model_endpoint: ModelEndpointInfo,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        # Dual-shape constructor for source-compat with branch (``run=``) and
-        # main-keeper / harness (``model_endpoint=``). When only the latter is
-        # given, synthesise a BenchmarkRun whose ``.cfg`` mirrors the endpoint
-        # so transports that read ``self.run.cfg.endpoint.*`` keep working.
-        if run is None and model_endpoint is not None:
-            from aiperf.endpoints.base_endpoint import _run_shim_from_model_endpoint
-            run = _run_shim_from_model_endpoint(model_endpoint)
-        if run is None:
-            raise TypeError(
-                "BaseTransport requires either run=BenchmarkRun(...) or "
-                "model_endpoint=ModelEndpointInfo(...)."
-            )
-        # Source-compat: synthesize the missing ``model_endpoint`` so test
-        # harnesses (and main-keeper code) reading ``self.model_endpoint``
-        # keep working when only ``run`` was passed in.
-        if model_endpoint is None:
-            from aiperf.endpoints.base_endpoint import _model_endpoint_from_run
-            model_endpoint = _model_endpoint_from_run(run)
-        self.run: BenchmarkRun = run
+        from aiperf.endpoints.base_endpoint import benchmark_run_from_model_endpoint
+
         self.model_endpoint = model_endpoint
+        # Synthesize a BenchmarkRun-shaped view so transport helpers that read
+        # ``self.run.cfg.endpoint.*`` (streaming, timeout, request_content_type,
+        # connection_reuse, download_video_content) keep working.
+        self.run: BenchmarkRun = benchmark_run_from_model_endpoint(model_endpoint)
         from aiperf import __version__
 
         self.user_agent: str = f"aiperf/{__version__}"

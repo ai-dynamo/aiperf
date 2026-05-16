@@ -105,9 +105,9 @@ def create_model_endpoint(
 def _wrap_run(config_or_endpoint: Any) -> BenchmarkRun:
     """Wrap a ``BenchmarkConfig`` (or main-style ``ModelEndpointInfo``) in a ``BenchmarkRun``.
 
-    Branch endpoints take ``run=BenchmarkRun``. Pre-branch tests that build a
-    ``ModelEndpointInfo`` first are auto-translated to a matching
-    ``BenchmarkConfig`` so they keep working without per-test rewrites.
+    Branch endpoints take ``model_endpoint=ModelEndpointInfo``. Pre-branch
+    tests that build a ``ModelEndpointInfo`` first are auto-translated to a
+    matching ``BenchmarkConfig`` so they keep working without per-test rewrites.
     """
     if isinstance(config_or_endpoint, BenchmarkConfig):
         cfg = config_or_endpoint
@@ -126,6 +126,19 @@ def _wrap_run(config_or_endpoint: Any) -> BenchmarkRun:
         cfg=cfg,
         artifact_dir=Path("/tmp/test"),
     )
+
+
+def _wrap_model_endpoint(config_or_endpoint: Any) -> ModelEndpointInfo:
+    """Helper used by tests that previously passed ``model_endpoint=_wrap_model_endpoint(...)``.
+
+    Branch endpoints take ``model_endpoint=ModelEndpointInfo`` as the sole
+    canonical ctor parameter. This shim accepts whatever the test happens
+    to have (``BenchmarkConfig`` / ``ModelEndpointInfo`` / ``BenchmarkRun``)
+    and returns the right ``ModelEndpointInfo`` to pass through.
+    """
+    if isinstance(config_or_endpoint, ModelEndpointInfo):
+        return config_or_endpoint
+    return ModelEndpointInfo.from_run(_wrap_run(config_or_endpoint))
 
 
 def _config_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> BenchmarkConfig:
@@ -162,9 +175,15 @@ def _config_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> BenchmarkC
 
 
 def create_endpoint_with_mock_transport(endpoint_class, config):
-    """Build an endpoint instance from a ``BenchmarkConfig`` or ``ModelEndpointInfo``."""
+    """Build an endpoint instance from a ``BenchmarkConfig``, ``BenchmarkRun``, or ``ModelEndpointInfo``.
+
+    Endpoints accept only ``model_endpoint=ModelEndpointInfo``; this helper
+    fans out the various shapes test files pass in.
+    """
+    if isinstance(config, ModelEndpointInfo):
+        return endpoint_class(model_endpoint=config)
     run = _wrap_run(config)
-    return endpoint_class(run=run)
+    return endpoint_class(model_endpoint=ModelEndpointInfo.from_run(run))
 
 
 def create_request_info(

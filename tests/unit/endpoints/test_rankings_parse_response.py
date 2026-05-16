@@ -14,7 +14,7 @@ from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
 from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_run, create_config
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config
 
 
 def mock_response_nim(rankings):
@@ -68,7 +68,7 @@ class TestRankingsEndpointParseResponse:
         )
         with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
-            endpoint_instance = endpoint_cls(run=_wrap_run(cfg))
+            endpoint_instance = endpoint_cls(model_endpoint=_wrap_model_endpoint(cfg))
             # Attach mock builder to endpoint for easy access in tests
             endpoint_instance._mock_builder = mock_fn
             return endpoint_instance

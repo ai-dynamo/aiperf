@@ -12,7 +12,7 @@ from aiperf.common.models.record_models import (
 )
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_run, create_config
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config
 
 
 class TestEmbeddingsEndpointParseResponse:
@@ -24,7 +24,7 @@ class TestEmbeddingsEndpointParseResponse:
         cfg = create_config(EndpointType.EMBEDDINGS, model_name="embeddings-model")
         with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
-            return EmbeddingsEndpoint(run=_wrap_run(cfg))
+            return EmbeddingsEndpoint(model_endpoint=_wrap_model_endpoint(cfg))
 
     def test_parse_response_single_embedding(self, endpoint):
         """Test parsing response with single embedding."""

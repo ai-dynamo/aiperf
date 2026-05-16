@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -56,22 +56,10 @@ class InferenceClient(AIPerfLifecycleMixin):
 
     def __init__(
         self,
-        run: BenchmarkRun | None = None,
+        run: BenchmarkRun,
         service_id: str = "inference_client",
-        model_endpoint: Any = None,
         **kwargs,
     ):
-        # Dual-shape ctor: branch passes ``run=``, harness / wire-safety tests
-        # pass ``model_endpoint=``. Synthesize ``run`` from ``model_endpoint``
-        # when the latter is given alone.
-        if run is None and model_endpoint is not None:
-            from aiperf.endpoints.base_endpoint import _run_shim_from_model_endpoint
-            run = _run_shim_from_model_endpoint(model_endpoint)
-        if run is None:
-            raise TypeError(
-                "InferenceClient requires either run=BenchmarkRun(...) or "
-                "model_endpoint=ModelEndpointInfo(...)."
-            )
         super().__init__(run=run, service_id=service_id, **kwargs)
         self.run = run
         self.service_id = service_id

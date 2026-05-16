@@ -6,6 +6,7 @@ from aiperf.common.models import Image, Text, Turn
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    _wrap_model_endpoint,
     _wrap_run,
     create_config,
     create_request_info,
@@ -25,7 +26,7 @@ class TestChatEndpoint:
         )
 
     def test_format_payload_basic(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         request_info = create_request_info(config=model_endpoint, turns=turns)
@@ -50,7 +51,7 @@ class TestChatEndpoint:
             api_key="test-api-key",
             path="/v1/chat/completions",
         )
-        endpoint = ChatEndpoint(run=_wrap_run(streaming_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(streaming_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         turns[0].max_tokens = 42
@@ -77,7 +78,7 @@ class TestChatEndpoint:
             path="/v1/chat/completions",
             extra={"ignore_eos": True, "temperature": 0.7},
         )
-        endpoint = ChatEndpoint(run=_wrap_run(cfg))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(cfg))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         request_info = create_request_info(config=cfg, turns=turns)
@@ -99,7 +100,7 @@ class TestChatEndpoint:
     def test_format_payload_multiple_turns_with_text_and_image(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         # Create a turn with both text and image
         turns = sample_conversations["session_1"].turns
         turns[0].images = type("ImageList", (), {})()
@@ -131,7 +132,7 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_format_payload_with_audio(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["mp3,ZmFrZV9hdWRpbw=="]})()]
         turns = [turn]
@@ -159,7 +160,7 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_create_messages_hotfix(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         messages = endpoint._create_messages(turns, None, None)
@@ -170,7 +171,7 @@ class TestChatEndpoint:
     def test_create_messages_with_empty_content(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
         turns = [turn]
@@ -182,7 +183,7 @@ class TestChatEndpoint:
     def test_create_messages_audio_format_error(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
         turns = [turn]
@@ -222,7 +223,7 @@ class TestChatEndpoint:
             use_server_token_count=use_server_token_count,
             extra=user_extra or {},
         )
-        endpoint = ChatEndpoint(run=_wrap_run(cfg))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(cfg))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         request_info = create_request_info(turns=turns, config=cfg)
@@ -238,7 +239,7 @@ class TestChatEndpoint:
     def test_create_messages_with_system_message(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -254,7 +255,7 @@ class TestChatEndpoint:
     def test_create_messages_with_user_context_message(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         user_context = "The user is working on a Python project."
@@ -270,7 +271,7 @@ class TestChatEndpoint:
     def test_create_messages_with_both_context_messages(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -290,7 +291,7 @@ class TestChatEndpoint:
     def test_create_messages_with_context_and_multiple_turns(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turns = sample_conversations["session_1"].turns
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
@@ -311,7 +312,7 @@ class TestChatEndpoint:
     def test_format_payload_with_context_messages(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -350,7 +351,7 @@ class TestChatEndpoint:
         Regression test for https://github.com/ai-dynamo/aiperf/issues/769:
         vLLM with Mistral tokenizer rejects the extra 'name' field.
         """
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = Turn(
             texts=[Text(name=text_name, contents=["Hello"])],
             role="user",
@@ -364,7 +365,7 @@ class TestChatEndpoint:
 
     def test_name_field_excluded_from_multimodal_payload(self, model_endpoint):
         """Multimodal content-array path also must not include name."""
-        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = Turn(
             texts=[Text(name="text", contents=["Hello"])],
             images=[Image(name="img", contents=["http://example.com/img.png"])],

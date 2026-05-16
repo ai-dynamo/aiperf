@@ -5,7 +5,7 @@ import pytest
 
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_run, create_config, create_request_info
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config, create_request_info
 
 
 class TestCompletionsEndpoint:
@@ -22,7 +22,7 @@ class TestCompletionsEndpoint:
         )
 
     def test_format_payload_basic(self, model_endpoint, sample_conversations):
-        endpoint = CompletionsEndpoint(run=_wrap_run(model_endpoint))
+        endpoint = CompletionsEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
@@ -44,7 +44,7 @@ class TestCompletionsEndpoint:
             streaming=True,
             extra={"ignore_eos": True},
         )
-        endpoint = CompletionsEndpoint(run=_wrap_run(cfg))
+        endpoint = CompletionsEndpoint(model_endpoint=_wrap_model_endpoint(cfg))
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
@@ -95,7 +95,7 @@ class TestCompletionsEndpoint:
             use_server_token_count=use_server_token_count,
             extra=user_extra or {},
         )
-        endpoint = CompletionsEndpoint(run=_wrap_run(cfg))
+        endpoint = CompletionsEndpoint(model_endpoint=_wrap_model_endpoint(cfg))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         request_info = create_request_info(turns=turns, config=cfg)

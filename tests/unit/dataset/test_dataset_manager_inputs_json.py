@@ -292,7 +292,7 @@ class TestDatasetManagerInputsJsonGeneration:
         tmp_path: Path,
     ):
         """Test generated inputs.json payloads replay without endpoint formatting."""
-        populated_dataset_manager.cfg.output.artifact_directory = tmp_path
+        populated_dataset_manager.run.cfg.artifacts.dir = tmp_path
         await populated_dataset_manager._generate_inputs_json_file()
         inputs_path = tmp_path / OutputDefaults.INPUTS_JSON_FILE
         exported = json.loads(inputs_path.read_text())
@@ -300,15 +300,13 @@ class TestDatasetManagerInputsJsonGeneration:
 
         loader = InputsJsonPayloadLoader(
             filename=inputs_path,
-            cfg=populated_dataset_manager.cfg,
+            cfg=populated_dataset_manager.run.cfg,
         )
         conversations = loader.convert_to_conversations(loader.load_dataset())
         replay_turn = conversations[0].turns[0]
         assert replay_turn.raw_payload == exported_payload
 
-        model_endpoint = ModelEndpointInfo.from_cfg(populated_dataset_manager.cfg)
         request_info = RequestInfo(
-            model_endpoint=model_endpoint,
             turns=[replay_turn],
             turn_index=0,
             credit_num=0,
@@ -318,7 +316,7 @@ class TestDatasetManagerInputsJsonGeneration:
             conversation_id=conversations[0].session_id,
         )
         client = InferenceClient(
-            model_endpoint=model_endpoint, service_id="test-service"
+            run=populated_dataset_manager.run, service_id="test-service"
         )
         client.endpoint.format_payload = Mock(return_value={"messages": []})
         client.transport.send_request = AsyncMock(

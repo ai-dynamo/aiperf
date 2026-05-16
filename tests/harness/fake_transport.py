@@ -104,28 +104,21 @@ class FakeTransport(BaseTransport):
 
     def __init__(
         self,
-        model_endpoint: ModelEndpointInfo | None = None,
+        model_endpoint: ModelEndpointInfo,
         config: MockServerConfig | None = None,
-        run: Any = None,
         mock_server_config: MockServerConfig | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize FakeTransport.
 
         Args:
-            model_endpoint: Model endpoint configuration (main-style).
-            run: BenchmarkRun (branch-style). One of ``model_endpoint`` /
-                ``run`` must be provided; BaseTransport's dual-shape ctor
-                fans them out.
+            model_endpoint: Model endpoint configuration.
             config / mock_server_config: Optional MockServerConfig for test
                 isolation. Defaults to zero-latency config for fast testing.
         """
-        # Branch-style tests pass ``mock_server_config=`` as the kwarg name.
+        # Branch-side tests pass ``mock_server_config=`` as the kwarg name.
         effective_config = config if config is not None else mock_server_config
-        if model_endpoint is not None:
-            super().__init__(model_endpoint=model_endpoint, **kwargs)
-        else:
-            super().__init__(run=run, **kwargs)
+        super().__init__(model_endpoint=model_endpoint, **kwargs)
         self.config = effective_config or self._DEFAULT_CONFIG
         # Alias retained for branch-side tests that access
         # ``transport.mock_server_config`` directly.

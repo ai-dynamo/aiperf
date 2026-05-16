@@ -9,7 +9,7 @@ import pytest
 from aiperf.common.models.record_models import InferenceServerResponse, TextResponseData
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_run, create_config
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config
 
 
 class TestCompletionsEndpointParseResponse:
@@ -21,7 +21,7 @@ class TestCompletionsEndpointParseResponse:
         cfg = create_config(EndpointType.COMPLETIONS, model_name="completion-model")
         with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
-            return CompletionsEndpoint(run=_wrap_run(cfg))
+            return CompletionsEndpoint(model_endpoint=_wrap_model_endpoint(cfg))
 
     def test_parse_response_completion_object(self, endpoint):
         """Test parsing text_completion object type."""

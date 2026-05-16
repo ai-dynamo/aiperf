@@ -3,22 +3,20 @@
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.enums import MediaType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     BaseResponseData,
     EmbeddingResponseData,
-    EndpointInfo,
     ExtractedPayload,
     InferenceServerResponse,
     Media,
     ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
     ParsedResponse,
     RankingsResponseData,
     ReasoningResponseData,
@@ -30,16 +28,25 @@ from aiperf.common.models import (
 )
 from aiperf.common.types import RequestOutputT
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
-def _run_shim_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Any:
-    """Build a minimal ``BenchmarkRun`` whose ``cfg`` mirrors the endpoint shape.
 
-    Symmetric to :func:`_model_endpoint_from_run`: when a test or caller
-    constructs an endpoint via ``model_endpoint=``, branch-port endpoint
-    code that reads ``self.run.cfg.endpoint.*`` needs a non-None ``run``.
+def benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> BenchmarkRun:
+    """Build a ``BenchmarkRun`` from a ``ModelEndpointInfo``.
+
+    ``InferenceClient`` is the production entry point and always has a real
+    ``BenchmarkRun`` (constructed by the orchestrator). It hands a derived
+    ``ModelEndpointInfo`` down to the endpoint and transport via
+    ``ModelEndpointInfo.from_run(self.run)``. Inside those leaf objects we
+    still want a ``BenchmarkRun``-shaped view of the same data so the many
+    helpers that read ``self.run.cfg.endpoint.*`` keep working.
+
+    Used internally by ``BaseEndpoint.__init__`` / ``BaseTransport.__init__``
+    after receiving a ``model_endpoint`` from the InferenceClient. Not part of
+    the public ctor surface — callers always pass ``model_endpoint=`` (the one
+    canonical constructor parameter).
     """
-    import uuid
-
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
     endpoint_cfg = model_endpoint.endpoint
@@ -52,13 +59,26 @@ def _run_shim_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Any:
         "models": [m.name for m in model_endpoint.models.models],
         "endpoint": {
             "type": endpoint_cfg.type,
-            "urls": [endpoint_cfg.base_url] if endpoint_cfg.base_url else [
-                "http://localhost:8000"
-            ],
+            "urls": list(endpoint_cfg.base_urls)
+            if endpoint_cfg.base_urls
+            else ["http://localhost:8000"],
             "streaming": getattr(endpoint_cfg, "streaming", False),
             "extra": extra_dict,
             "use_legacy_max_tokens": getattr(
                 endpoint_cfg, "use_legacy_max_tokens", False
+            ),
+            "use_server_token_count": getattr(
+                endpoint_cfg, "use_server_token_count", False
+            ),
+            "timeout": getattr(endpoint_cfg, "timeout", 600.0),
+            "connection_reuse": getattr(
+                endpoint_cfg, "connection_reuse_strategy", None
+            ),
+            "download_video_content": getattr(
+                endpoint_cfg, "download_video_content", False
+            ),
+            "request_content_type": getattr(
+                endpoint_cfg, "request_content_type", None
             ),
         },
         "datasets": [{"name": "default", "type": "synthetic"}],
@@ -71,18 +91,21 @@ def _run_shim_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Any:
             }
         ],
     }
-    # Carry-through optional auth/header fields when the input endpoint has them.
     api_key = getattr(endpoint_cfg, "api_key", None)
     if api_key is not None:
         payload["endpoint"]["api_key"] = api_key
     headers = getattr(endpoint_cfg, "headers", None)
     if headers:
-        # BenchmarkConfig stores headers as a dict; if EndpointInfo carries
-        # them as a list-of-pairs, normalize.
         if isinstance(headers, dict):
             payload["endpoint"]["headers"] = dict(headers)
         else:
             payload["endpoint"]["headers"] = {k: v for k, v in headers}
+    if (path := getattr(endpoint_cfg, "custom_endpoint", None)) is not None:
+        payload["endpoint"]["path"] = path
+    if (template := getattr(endpoint_cfg, "template", None)) is not None:
+        payload["endpoint"]["template"] = template.model_dump() if hasattr(
+            template, "model_dump"
+        ) else template
     cfg = BenchmarkConfig.model_validate(payload)
     return BenchmarkRun(
         benchmark_id=uuid.uuid4().hex,
@@ -93,62 +116,6 @@ def _run_shim_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Any:
     )
 
 
-def _model_endpoint_from_run(run: Any) -> ModelEndpointInfo:
-    """Build a ``ModelEndpointInfo`` from a ``BenchmarkRun.cfg``.
-
-    Branch-side call sites pass ``run`` rather than the prebuilt endpoint
-    info; main-side endpoint code reads ``self.model_endpoint.endpoint.*``.
-    The shim materializes the latter from the former so the endpoint layer
-    can remain unchanged.
-    """
-    from aiperf.common.enums import ModelSelectionStrategy
-
-    cfg = run.cfg
-    endpoint_cfg = cfg.endpoint
-    model_names = cfg.get_model_names()
-    extra = getattr(endpoint_cfg, "extra", None)
-    # Branch's config stores ``extra`` as a dict; main's ModelEndpointInfo
-    # carries it as a list of (key, value) pairs.
-    if isinstance(extra, dict):
-        extra_pairs = list(extra.items())
-    else:
-        extra_pairs = list(extra) if extra else []
-    return ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name=name) for name in model_names],
-            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-        ),
-        endpoint=EndpointInfo(
-            type=endpoint_cfg.type,
-            base_url=(endpoint_cfg.urls[0] if endpoint_cfg.urls else ""),
-            streaming=getattr(endpoint_cfg, "streaming", False),
-            extra=extra_pairs,
-            use_legacy_max_tokens=getattr(
-                endpoint_cfg, "use_legacy_max_tokens", False
-            ),
-            headers=_to_pair_list(getattr(endpoint_cfg, "headers", None)),
-            api_key=getattr(endpoint_cfg, "api_key", None),
-            url_params=_to_pair_list(getattr(endpoint_cfg, "url_params", None)),
-        ),
-    )
-
-
-def _to_pair_list(value: Any) -> Any:
-    """Normalize ``dict|list|None`` shapes to a list of ``(key, value)`` pairs.
-
-    ``BenchmarkConfig.endpoint.headers`` / ``.url_params`` are dicts; the
-    pre-existing ``EndpointInfo`` Pydantic model carries them as
-    ``list[tuple[str, str]]``. The mismatch surfaces when synthesizing a
-    ``ModelEndpointInfo`` from a ``BenchmarkRun`` (e.g. inputs_json
-    generation pre-flight). Pass-through for ``None`` / lists.
-    """
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return list(value.items())
-    return list(value)
-
-
 class BaseEndpoint(AIPerfLoggerMixin, ABC):
     """Base for all endpoints.
 
@@ -157,30 +124,17 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
     def __init__(
         self,
-        model_endpoint: ModelEndpointInfo | None = None,
-        run: Any = None,  # BenchmarkRun, typed as Any to avoid a circular import
+        model_endpoint: ModelEndpointInfo,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        # Support both calling conventions:
-        #   - main keeper style: BaseEndpoint(model_endpoint=...)
-        #   - branch-port style: BaseEndpoint(run=...)
-        # When only ``run`` is given, synthesize a ModelEndpointInfo from
-        # ``run.cfg`` so all existing main-side helpers (which read
-        # ``self.model_endpoint``) keep working unchanged. When only
-        # ``model_endpoint`` is given, synthesize a BenchmarkRun shim whose
-        # ``.cfg`` mirrors the model_endpoint shape so branch-style endpoint
-        # code (which reads ``self.run.cfg``) keeps working.
-        if model_endpoint is None and run is not None:
-            model_endpoint = _model_endpoint_from_run(run)
-        if run is None and model_endpoint is not None:
-            run = _run_shim_from_model_endpoint(model_endpoint)
-        if model_endpoint is None:
-            raise TypeError(
-                "BaseEndpoint.__init__ requires either model_endpoint=... or run=..."
-            )
         self.model_endpoint = model_endpoint
-        self.run = run
+        # Synthesize a BenchmarkRun-shaped view so endpoint subclass helpers
+        # that read ``self.run.cfg.endpoint.*`` keep working. The production
+        # entry point (InferenceClient) hands us a ModelEndpointInfo derived
+        # from the real BenchmarkRun, so this round-trip is lossless for the
+        # fields endpoints actually read.
+        self.run: BenchmarkRun = benchmark_run_from_model_endpoint(model_endpoint)
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get endpoint headers (auth + user custom). Override to customize."""
