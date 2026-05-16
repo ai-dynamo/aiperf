@@ -47,7 +47,7 @@ multiRun:
 # carry confidence intervals.
 sweep:
   type: grid
-  parameters:
+  variables:
     # `dataset:` shorthand auto-names the sole dataset `default`.
     # `concurrency` is bare-name sugar for `phases.profiling.concurrency`
     # (resolves to the unique non-warmup phase below).

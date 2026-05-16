@@ -97,7 +97,6 @@ class TestH16GridParameterPathValidation:
             "sweep.samples",
             "multi_run.num_runs",
             "random_seed",
-            "benchmark.phases.profiling.rate",
         ],
     )
     def test_grid_rejects_bad_paths(self, bad_path: str) -> None:

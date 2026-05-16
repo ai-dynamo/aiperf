@@ -142,7 +142,7 @@ class TestGridSweepPathValidation:
                 - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
             sweep:
               type: grid
-              parameters:
+              variables:
                 "phases.profiling.concurrency": [1, 2, 4]
         """).strip()
 
@@ -150,7 +150,7 @@ class TestGridSweepPathValidation:
         assert plan.is_sweep
         assert len(plan.configs) == 3
 
-    def test_redundant_benchmark_prefix_rejects(self):
+    def test_redundant_benchmark_prefix_accepted(self):
         yaml_str = textwrap.dedent("""
             benchmark:
               models: [test/model]
@@ -163,13 +163,15 @@ class TestGridSweepPathValidation:
                 - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
             sweep:
               type: grid
-              parameters:
+              variables:
                 "benchmark.phases.profiling.concurrency": [1, 2, 4]
         """).strip()
 
-        with pytest.raises((ValueError, ConfigurationError)) as excinfo:
-            _load_plan_from_string(yaml_str)
-        assert "benchmark." in str(excinfo.value)
+        # Branch convention: `benchmark.` prefix is the canonical AIPerfSweep
+        # CR shape and is stripped during validation.
+        plan = _load_plan_from_string(yaml_str)
+        assert plan.is_sweep
+        assert len(plan.configs) == 3
 
     def test_non_benchmark_top_level_rejected(self):
         yaml_str = textwrap.dedent("""
@@ -184,7 +186,7 @@ class TestGridSweepPathValidation:
                 - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
             sweep:
               type: grid
-              parameters:
+              variables:
                 "multi_run.num_runs": [1, 2]
         """).strip()
 

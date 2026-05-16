@@ -34,7 +34,7 @@ multiRun:
 # Result: 3 ISL values x 3 rates = 9 benchmark runs.
 sweep:
   type: grid
-  parameters:
+  variables:
     # Grid sweep parameters use dot-paths rooted under `benchmark`. For
     # list-shaped `phases:` the second segment is the phase's `name`
     # (e.g. ``profiling``), so ``phases.profiling.rate`` targets the phase

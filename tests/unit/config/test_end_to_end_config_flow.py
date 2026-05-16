@@ -102,7 +102,7 @@ class TestYamlToBenchmarkPlan:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency:
       - 8
       - 16
@@ -186,7 +186,7 @@ multi_run:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency:
       - 8
       - 16
@@ -245,7 +245,7 @@ benchmark:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency:
       - 4
       - 8
@@ -262,7 +262,7 @@ multi_run:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency:
       - 1
 """)

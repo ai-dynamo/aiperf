@@ -46,7 +46,7 @@ randomSeed: 42
 # intervals around each cell.
 sweep:
   type: grid
-  parameters:
+  variables:
     # Body-rooted dot-path. Second segment matches the dataset's `name` in the
     # `datasets:` list below; the leaf `dataset` is the public-dataset enum.
     datasets.main.dataset:

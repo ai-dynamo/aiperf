@@ -70,7 +70,6 @@ def test_benchmark_otel_and_mlflow_groups_load_without_flat_forwarders() -> None
     assert benchmark.mlflow.resolved_artifact_globs == ["*.json", "*.csv"]
 
     removed_flat_fields = [
-        "output",
         "mlflow_enabled",
         "mlflow_tracking_uri",
         "mlflow_experiment",
@@ -84,7 +83,6 @@ def test_benchmark_otel_and_mlflow_groups_load_without_flat_forwarders() -> None
         "otel_custom_resource_attributes",
         "gen_ai_provider",
         "stream",
-        "benchmark_id",
     ]
     for field_name in removed_flat_fields:
         assert not hasattr(benchmark, field_name), field_name

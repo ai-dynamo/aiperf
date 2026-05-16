@@ -58,7 +58,7 @@ def test_sweep_auto_fills_42():
         """
         sweep:
           type: grid
-          parameters:
+          variables:
             phases.profiling.concurrency: [1, 2, 4]
         """
     )
@@ -95,7 +95,7 @@ def test_plan_propagates_auto_filled_seed_into_variations():
         """
         sweep:
           type: grid
-          parameters:
+          variables:
             phases.profiling.concurrency: [1, 2, 4]
         """
     )
@@ -135,7 +135,7 @@ def test_zip_sweep_same_seed_true_reuses_envelope_seed_for_all_variations():
         sweep:
           type: zip
           same_seed: true
-          parameters:
+          variables:
             phases.profiling.concurrency: [1, 2, 4]
             datasets.main.entries: [10, 20, 40]
         """
@@ -151,7 +151,7 @@ def test_zip_sweep_same_seed_false_uses_indexed_derivation():
         """
         sweep:
           type: zip
-          parameters:
+          variables:
             phases.profiling.concurrency: [1, 2, 4]
             datasets.main.entries: [10, 20, 40]
         """
@@ -209,7 +209,7 @@ def test_grid_sweep_same_seed_true_reuses_envelope_seed():
         sweep:
           type: grid
           same_seed: true
-          parameters:
+          variables:
             phases.profiling.concurrency: [1, 2, 4]
         """
     )

@@ -120,7 +120,7 @@ variables:
   load: 100
 sweep:
   type: grid
-  parameters:
+  variables:
     variables.load: [10, 50, 100]
 benchmark:
   models: [llama]
@@ -157,7 +157,7 @@ variables:
   base_load: 200
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency: [1, 2]
 benchmark:
   models: [llama]

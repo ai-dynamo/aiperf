@@ -95,6 +95,15 @@ class BasePhaseConfig(BaseConfig):
     # UNIVERSAL FIELDS
     # =========================================================================
 
+    dataset: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Name of dataset to use (from datasets section). "
+            "If not specified, uses first defined dataset.",
+        ),
+    ]
+
     exclude_from_results: Annotated[
         bool,
         Field(

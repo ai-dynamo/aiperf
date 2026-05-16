@@ -74,7 +74,7 @@ class TestGridSweepExpandsAndValidates:
         yaml_str = (
             "sweep:\n"
             "  type: grid\n"
-            "  parameters:\n"
+            "  variables:\n"
             "    phases.profiling.concurrency: [1, 4, 16]\n" + _BASE_BODY
         )
         _, variations, configs = _expand(yaml_str)
@@ -93,7 +93,7 @@ class TestGridSweepExpandsAndValidates:
         yaml_str = (
             "sweep:\n"
             "  type: grid\n"
-            "  parameters:\n"
+            "  variables:\n"
             "    phases.profiling.concurrency: [1, 2]\n"
             "    phases.profiling.requests: [10, 20]\n" + _BASE_BODY
         )
@@ -115,7 +115,7 @@ class TestGridSweepExpandsAndValidates:
             "variables: {load: 100}\n"
             "sweep:\n"
             "  type: grid\n"
-            "  parameters:\n"
+            "  variables:\n"
             "    variables.load: [10, 50, 100]\n"
             "benchmark:\n"
             "  models: [llama]\n"
@@ -148,7 +148,7 @@ class TestZipSweepExpandsAndValidates:
         yaml_str = (
             "sweep:\n"
             "  type: zip\n"
-            "  parameters:\n"
+            "  variables:\n"
             "    datasets.default.prompts.isl: [128, 512, 2048]\n"
             "    datasets.default.prompts.osl: [128, 256, 512]\n" + _BASE_BODY
         )
@@ -169,7 +169,7 @@ class TestZipSweepExpandsAndValidates:
             "variables: {conc: 1, reqs: 10}\n"
             "sweep:\n"
             "  type: zip\n"
-            "  parameters:\n"
+            "  variables:\n"
             "    variables.conc: [4, 16]\n"
             "    variables.reqs: [40, 160]\n"
             "benchmark:\n"
@@ -196,7 +196,7 @@ class TestZipSweepExpandsAndValidates:
         yaml_str = (
             "sweep:\n"
             "  type: zip\n"
-            "  parameters:\n"
+            "  variables:\n"
             "    phases.profiling.concurrency: [1, 2]\n"
             "    phases.profiling.requests: [10, 20, 30]\n" + _BASE_BODY
         )

@@ -51,7 +51,7 @@ class TestCLIConversationTurnMeanGE1:
         cli = CLIConfig(model_names=["m"], conversation_turn_mean="1,3,8")
         cfg = convert_cli_to_aiperf(cli)
         assert cfg.sweep is not None
-        assert cfg.sweep.parameters == {"datasets.main.turns.mean": [1, 3, 8]}
+        assert cfg.sweep.variables == {"datasets.main.turns.mean": [1, 3, 8]}
 
 
 class TestSyntheticDatasetTurnsGE1:

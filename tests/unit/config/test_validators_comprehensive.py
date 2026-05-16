@@ -743,7 +743,7 @@ class TestValidateConfigFileWarnings:
         config_file = tmp_path / "warmup_only.yaml"
         config_file.write_text(yaml_content)
 
-        with pytest.raises(ConfigurationError, match="'profiling' phase is required"):
+        with pytest.raises(ConfigurationError, match="non-warmup phase is required"):
             validate_config_file(config_file)
 
     def test_no_warnings_clean_config(self, tmp_path) -> None:

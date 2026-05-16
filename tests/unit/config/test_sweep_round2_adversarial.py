@@ -193,8 +193,8 @@ class TestH9QmcBodyRooting:
 
 class TestH10NonSweepableTopLevels:
     """SamplingDimension and SearchSpaceDimension reject paths that target
-    envelope-level fields (multi_run, random_seed) or use the redundant
-    ``benchmark.`` prefix.
+    envelope-level fields (multi_run, random_seed). The ``benchmark.`` prefix
+    is accepted (branch's AIPerfSweep CR shape) and stripped during validation.
     """
 
     @pytest.mark.parametrize(
@@ -202,7 +202,6 @@ class TestH10NonSweepableTopLevels:
         [
             "multi_run.num_runs",
             "random_seed",
-            "benchmark.phases.profiling.concurrency",
         ],
     )
     def test_sampling_dimension_rejects(self, bad_path: str) -> None:
@@ -214,7 +213,6 @@ class TestH10NonSweepableTopLevels:
         [
             "multi_run.num_runs",
             "random_seed",
-            "benchmark.phases.profiling.concurrency",
             "sweep.samples",
             "",
             ".rate",
@@ -342,4 +340,4 @@ class TestH14GridEmptyValueList:
     def test_singleton_value_list_allowed(self) -> None:
         # One value is a degenerate-but-valid pin, not an error.
         gs = GridSweep(variables={"phases.profiling.rate": [42]})
-        assert gs.parameters == {"phases.profiling.rate": [42]}
+        assert gs.variables == {"phases.profiling.rate": [42]}

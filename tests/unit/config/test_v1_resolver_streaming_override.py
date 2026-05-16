@@ -93,7 +93,7 @@ def test_yaml_cli_magic_list_promotes_to_sweep(tmp_path: Path) -> None:
     config = resolve_config(user, cfg_file)
 
     assert config.sweep is not None
-    assert config.sweep.parameters["phases.profiling.concurrency"] == [1, 2]
+    assert config.sweep.variables["phases.profiling.concurrency"] == [1, 2]
     assert config.benchmark.phases[0].concurrency == 1
 
 
@@ -104,5 +104,5 @@ def test_yaml_cli_dataset_magic_list_targets_existing_dataset(tmp_path: Path) ->
     config = resolve_config(user, cfg_file)
 
     assert config.sweep is not None
-    assert config.sweep.parameters["datasets.default.prompts.isl.mean"] == [128, 256]
-    assert "datasets.main.prompts.isl.mean" not in config.sweep.parameters
+    assert config.sweep.variables["datasets.default.prompts.isl.mean"] == [128, 256]
+    assert "datasets.main.prompts.isl.mean" not in config.sweep.variables

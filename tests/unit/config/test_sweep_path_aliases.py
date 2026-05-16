@@ -56,10 +56,14 @@ class TestResolvePathAlias:
             _validate_dotted_path("phases.warmup.requests") == "phases.warmup.requests"
         )
 
-    def test_validate_dotted_path_still_rejects_benchmark_prefix(self):
-        # Alias resolution must not bypass existing rejection rules.
-        with pytest.raises(ValueError, match="redundant 'benchmark.' prefix"):
+    def test_validate_dotted_path_strips_benchmark_prefix(self):
+        # Branch convention: ``benchmark.<path>`` is the canonical AIPerfSweep
+        # CR shape. The validator strips the prefix so downstream consumers
+        # always see the body-rooted form.
+        assert (
             _validate_dotted_path("benchmark.phases.profiling.concurrency")
+            == "phases.profiling.concurrency"
+        )
 
 
 class TestGridSweepSugar:

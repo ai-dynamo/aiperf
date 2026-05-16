@@ -79,9 +79,11 @@ def test_grid_sweep_rejects_double_dot() -> None:
         GridSweep(variables={"phases..profiling.rate": [1.0, 2.0]})
 
 
-def test_grid_sweep_rejects_benchmark_prefix() -> None:
-    with pytest.raises(ValidationError, match=r"redundant"):
-        GridSweep(variables={"benchmark.phases.profiling.rate": [1.0, 2.0]})
+def test_grid_sweep_accepts_benchmark_prefix() -> None:
+    # Branch convention: ``benchmark.`` prefix is accepted (stripped by the
+    # path-validator); the underlying field still resolves under the body.
+    sweep = GridSweep(variables={"benchmark.phases.profiling.rate": [1.0, 2.0]})
+    assert "benchmark.phases.profiling.rate" in sweep.variables
 
 
 def test_grid_sweep_rejects_envelope_field() -> None:

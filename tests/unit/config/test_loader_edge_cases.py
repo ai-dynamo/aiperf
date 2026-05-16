@@ -382,7 +382,7 @@ class TestLoadBenchmarkPlan:
         yaml_with_sweep = _MINIMAL_YAML + textwrap.dedent("""\
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency:
       - 1
       - 2
