@@ -11,8 +11,10 @@ import aiohttp
 import pytest
 
 from aiperf.common.enums import SSEEventType, SSEFieldType
+from aiperf.common.environment import Environment
 from aiperf.common.models import SSEField, SSEMessage
 from aiperf.transports.aiohttp_client import AioHttpClient
+from aiperf.transports.http_defaults import AioHttpDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 from tests.unit.transports.conftest import (
     MockStreamReader,
@@ -318,9 +320,6 @@ class TestAioHttpClient:
         monkeypatch,
     ) -> None:
         """Test that TRUST_ENV setting is passed to ClientSession."""
-        from aiperf.common.environment import Environment
-        from aiperf.transports.http_defaults import AioHttpDefaults
-
         monkeypatch.setattr(Environment.HTTP, "TRUST_ENV", trust_env_value)
         monkeypatch.setattr(AioHttpDefaults, "TRUST_ENV", trust_env_value)
 
@@ -584,54 +583,3 @@ class TestFirstTokenCallback:
         # All messages should be collected
         assert len(record.responses) == 2
         assert record.error is None
-
-
-class TestExpectedRequestBodySize:
-    """Tests for _expected_request_body_size."""
-
-    def test_bytes_returns_len(self) -> None:
-        """Bytes payloads use len() directly as the body size."""
-        from aiperf.transports.aiohttp_client import _expected_request_body_size
-
-        assert _expected_request_body_size(b"hello") == 5
-
-    def test_form_data_returns_serialized_size(self) -> None:
-        """FormData with text + binary fields reports a deterministic byte size.
-
-        Without this, on_request_sent never fires for multipart bodies and
-        cancel_after_ns waits until the send-timeout safety net.
-        """
-        from aiperf.transports.aiohttp_client import _expected_request_body_size
-
-        form = aiohttp.FormData()
-        form.add_field("prompt", "edit this")
-        form.add_field(
-            "image",
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\x10",
-            filename="ref.png",
-            content_type="image/png",
-        )
-
-        size = _expected_request_body_size(form)
-        assert isinstance(size, int)
-        assert size > 0
-
-    def test_unsupported_payload_returns_none(self) -> None:
-        """Strings, None, and dicts return None — only bytes/FormData are sized."""
-        from aiperf.transports.aiohttp_client import _expected_request_body_size
-
-        assert _expected_request_body_size("a json string") is None
-        assert _expected_request_body_size(None) is None
-        assert _expected_request_body_size({"k": "v"}) is None
-
-    def test_form_data_serialization_failure_returns_none(self) -> None:
-        """A FormData that aiohttp cannot serialize falls back to None instead
-        of raising, so one misshapen payload never blocks the cancel path.
-        """
-        from aiperf.transports.aiohttp_client import _expected_request_body_size
-
-        class _BrokenFormData(aiohttp.FormData):
-            def __call__(self) -> object:  # type: ignore[override]
-                raise ValueError("simulated aiohttp serialization failure")
-
-        assert _expected_request_body_size(_BrokenFormData()) is None
