@@ -18,7 +18,7 @@ Terminology:
 import uuid
 from dataclasses import dataclass
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
@@ -41,8 +41,33 @@ class SampledSession:
     x_correlation_id: str
     """Unique session ID (UUID) for sticky routing all turns to the same worker."""
 
-    allow_worker_migration: bool
+    allow_worker_migration: bool = False
     """Whether later turns can safely continue on a different worker after worker loss."""
+
+    agent_depth: int = 0
+    """Static DAG nesting level (0 = root). Mirrors ConversationMetadata.agent_depth."""
+
+    parent_correlation_id: str | None = None
+    """Parent session's x_correlation_id when this is a DAG child. None for root sessions.
+
+    The router uses this for sticky pinning so FORK children land on the parent's worker.
+    """
+
+    branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    """How the child relates to its parent. FORK inherits the parent's accumulated message
+    history and pins to the same worker; SPAWN starts with a fresh context. Ignored when
+    parent_correlation_id is None.
+    """
+
+    @property
+    def routing_key(self) -> str:
+        """Sticky-routing key.
+
+        Returns the parent's correlation_id when set (so FORK children share
+        a worker with the parent), otherwise this session's own
+        x_correlation_id.
+        """
+        return self.parent_correlation_id or self.x_correlation_id
 
     def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
@@ -51,12 +76,18 @@ class SampledSession:
             max_turns: The maximum number of turns to send for this user. Simulates a user that is partially through a conversation.
                 If None, the number of turns is determined by the conversation metadata.
         """
+        first_meta = self.metadata.turns[0] if self.metadata.turns else None
+        has_forks = first_meta.has_forks if first_meta is not None else False
         return TurnToSend(
             conversation_id=self.conversation_id,
             x_correlation_id=self.x_correlation_id,
             turn_index=0,
             num_turns=max_turns or len(self.metadata.turns),
             allow_worker_migration=self.allow_worker_migration,
+            agent_depth=self.agent_depth,
+            parent_correlation_id=self.parent_correlation_id,
+            has_forks=has_forks,
+            branch_mode=self.branch_mode,
         )
 
 
@@ -105,6 +136,65 @@ class ConversationSource:
         if conversation_id not in self._metadata_lookup:
             raise KeyError(f"No metadata for conversation {conversation_id}")
         return self._metadata_lookup[conversation_id]
+
+    def start_branch_child(
+        self,
+        parent_correlation_id: str,
+        child_conversation_id: str,
+        agent_depth: int,
+        *,
+        branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
+    ) -> SampledSession:
+        """Build a SampledSession for a DAG child conversation (FORK or SPAWN-on-parent).
+
+        The returned session inherits sticky-routing from its parent via
+        ``parent_correlation_id``; the credit router pins the child to the
+        parent's worker. SPAWN-mode children start with a fresh context but
+        keep the sticky pin at this layer — routing freedom (when desired) is
+        enforced upstream by the orchestrator/router.
+        """
+        metadata = self._metadata_lookup[child_conversation_id]
+        return SampledSession(
+            conversation_id=child_conversation_id,
+            metadata=metadata,
+            x_correlation_id=str(uuid.uuid4()),
+            allow_worker_migration=self.get_context_mode(child_conversation_id)
+            in {
+                ConversationContextMode.DELTAS_WITH_RESPONSES,
+                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            },
+            agent_depth=agent_depth,
+            parent_correlation_id=parent_correlation_id,
+            branch_mode=branch_mode,
+        )
+
+    def start_pre_session_child(
+        self,
+        child_conversation_id: str,
+    ) -> SampledSession:
+        """Build a SampledSession for a pre-session (turn-0) background SPAWN child.
+
+        Used by ``BranchOrchestrator.dispatch_pre_session_branches`` to fire
+        a child before its parent's turn 0 is issued. The child gets a fresh
+        correlation id, ``agent_depth=1``, and ``parent_correlation_id=None``
+        (no real parent session exists yet). Because ``parent_correlation_id``
+        is None, the child's ``routing_key`` naturally equals its own
+        ``x_correlation_id`` — the child routes freely (no sticky pin).
+        """
+        metadata = self._metadata_lookup[child_conversation_id]
+        return SampledSession(
+            conversation_id=child_conversation_id,
+            metadata=metadata,
+            x_correlation_id=str(uuid.uuid4()),
+            allow_worker_migration=self.get_context_mode(child_conversation_id)
+            in {
+                ConversationContextMode.DELTAS_WITH_RESPONSES,
+                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            },
+            agent_depth=1,
+            parent_correlation_id=None,
+            branch_mode=ConversationBranchMode.SPAWN,
+        )
 
     def get_context_mode(self, conversation_id: str) -> ConversationContextMode:
         """Resolve context mode for a specific conversation.
