@@ -106,9 +106,9 @@ def resolve_config(
                 existing_sweep.setdefault(
                     "type", promoted_sweep.get("type", sweep_type)
                 )
-                existing_sweep.setdefault("parameters", {})
-                existing_sweep["parameters"].update(
-                    promoted_sweep.get("parameters", {})
+                existing_sweep.setdefault("variables", {})
+                existing_sweep["variables"].update(
+                    promoted_sweep.get("variables", {})
                 )
             else:
                 merged["sweep"] = promoted_sweep
@@ -205,7 +205,7 @@ def _apply_recipe_and_multirun(
     if recipe_output is not None:
         sweep_params = recipe_output.get("sweep_parameters")
         if sweep_params:
-            out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
+            out["sweep"] = {"type": "grid", "variables": dict(sweep_params)}
         # Recipe-emitted per-request SLOs (e.g. MaxGoodputUnderSLO) land on the
         # body's `slos` block. The envelope wrapper (`_wrap_under_envelope`) is
         # applied in `resolve_config` after this builder, so we write the body
@@ -274,7 +274,7 @@ def _retarget_dataset_magic_lists(benchmark: dict[str, Any]) -> None:
     sweep = benchmark.get("sweep")
     if not isinstance(sweep, dict):
         return
-    parameters = sweep.get("parameters")
+    parameters = sweep.get("variables")
     if not isinstance(parameters, dict):
         return
     dataset_name = _single_dataset_name(benchmark)

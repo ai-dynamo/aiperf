@@ -93,9 +93,9 @@ def _expand_explicit_sweep(
 
     sweep_type = sweep_config.get("type", "grid")
     if sweep_type == "grid":
-        return _expand_grid_sweep(data, sweep_config.get("parameters", {}))
+        return _expand_grid_sweep(data, sweep_config.get("variables", {}))
     if sweep_type == "zip":
-        return _expand_zip_sweep(data, sweep_config.get("parameters", {}))
+        return _expand_zip_sweep(data, sweep_config.get("variables", {}))
     if sweep_type == "scenarios":
         return _expand_scenario_sweep(data, sweep_config.get("runs", []))
     if sweep_type in ("sobol", "latin_hypercube"):

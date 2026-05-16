@@ -66,9 +66,10 @@ def _validate_dotted_path(p: str) -> str:
     that ``sweep`` is special-cased first with a dedicated "sweep config
     itself" message; the remaining members of
     ``_NON_SWEEPABLE_FIRST_SEGMENTS`` fall through to a generic
-    non-sweepable-top-level-field error. Also rejects the redundant
-    ``benchmark.`` prefix to match the grid-sweep convention -- dimension
-    paths are body-rooted under the benchmark block.
+    non-sweepable-top-level-field error. Accepts the optional
+    ``benchmark.`` prefix (matches branch's two-envelope schema where
+    ``benchmark.*`` and ``variables.*`` are both legal roots); the prefix
+    is stripped so downstream consumers see the body-rooted form.
     """
     p = _resolve_path_alias(p)
     if not p:
@@ -81,6 +82,14 @@ def _validate_dotted_path(p: str) -> str:
         raise ValueError(
             f"dimension path {p!r} must not contain consecutive dots ('..')."
         )
+    # Accept optional ``benchmark.`` prefix (branch convention) by stripping
+    # it before the non-sweepable-first-segment check, so the underlying
+    # field gets the structural validation it would have received without
+    # the prefix.
+    if p.startswith("benchmark."):
+        p = p[len("benchmark.") :]
+        if not p:
+            raise ValueError("dimension path must not be just 'benchmark.'.")
     first = p.split(".", 1)[0]
     if first == "sweep":
         raise ValueError(
@@ -90,13 +99,5 @@ def _validate_dotted_path(p: str) -> str:
     if first in _NON_SWEEPABLE_FIRST_SEGMENTS:
         raise ValueError(
             f"dimension path {p!r} targets non-sweepable top-level field {first!r}."
-        )
-    if first == "benchmark":
-        raise ValueError(
-            f"dimension path {p!r} must not include the redundant "
-            f"'benchmark.' prefix. Paths target fields under the "
-            f"benchmark block; drop the prefix (e.g. "
-            f"'phases.profiling.rate' instead of "
-            f"'benchmark.phases.profiling.rate')."
         )
     return p

@@ -651,7 +651,7 @@ class AIPerfConfig(BaseConfig):
                 suggestions.append(repr(key))
         known_sorted = sorted(known)
         raise ValueError(
-            "Unknown top-level envelope key(s): "
+            "Extra top-level envelope key(s) not permitted: "
             + ", ".join(suggestions)
             + f". Known keys: {known_sorted}"
         )

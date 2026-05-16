@@ -121,15 +121,15 @@ class GridSweep(_GridSweepBase):
     type: Literal["grid"] = Field(
         default="grid", description="Sweep type discriminator."
     )
-    parameters: dict[str, list[Any]] = Field(
+    variables: dict[str, list[Any]] = Field(
         ...,
-        description="Parameters to sweep: dot-notation path -> list of values.",
+        description="Variables to sweep: dot-notation path -> list of values.",
         min_length=1,
     )
 
     @model_validator(mode="after")
-    def _validate_parameters(self) -> Self:
-        _validate_grid_parameters(self.parameters, sweep_kind="grid")
+    def _validate_variables(self) -> Self:
+        _validate_grid_parameters(self.variables, sweep_kind="grid")
         return self
 
 
@@ -137,29 +137,29 @@ class ZipSweep(_GridSweepBase):
     """Zip sweep — parameters paired element-wise (lockstep).
 
     Like ``GridSweep`` but uses ``zip(strict=True)`` instead of Cartesian
-    product. All parameter lists must have identical length. Use when you
+    product. All variable lists must have identical length. Use when you
     want N runs each setting a coordinated tuple of fields, without the
     NxM blow-up of grid. Canonical use case: paired ISL/OSL.
     """
 
     type: Literal["zip"] = Field(default="zip", description="Sweep type discriminator.")
-    parameters: dict[str, list[Any]] = Field(
+    variables: dict[str, list[Any]] = Field(
         ...,
-        description="Parameters to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
+        description="Variables to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
         min_length=1,
     )
 
     @model_validator(mode="after")
-    def _validate_parameters(self) -> Self:
-        _validate_grid_parameters(self.parameters, sweep_kind="zip")
+    def _validate_variables(self) -> Self:
+        _validate_grid_parameters(self.variables, sweep_kind="zip")
         return self
 
     @model_validator(mode="after")
     def _check_equal_lengths(self) -> Self:
-        lengths = {k: len(v) for k, v in self.parameters.items()}
+        lengths = {k: len(v) for k, v in self.variables.items()}
         if len(set(lengths.values())) > 1:
             raise ValueError(
-                f"zip sweep parameters must all have equal length; got {lengths!r}."
+                f"zip sweep variables must all have equal length; got {lengths!r}."
             )
         return self
 

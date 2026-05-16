@@ -147,14 +147,14 @@ def _apply_recipe_sweep_parameters(
     existing = nested.get("sweep")
     if isinstance(existing, dict):
         existing.setdefault("type", "grid")
-        existing.setdefault("parameters", {})
-        existing["parameters"].update(sweep_parameters)
+        existing.setdefault("variables", {})
+        existing["variables"].update(sweep_parameters)
         if recipe_output.get("recipe_name"):
             existing.setdefault("recipe_name", recipe_output["recipe_name"])
     else:
         block: dict[str, Any] = {
             "type": "grid",
-            "parameters": dict(sweep_parameters),
+            "variables": dict(sweep_parameters),
         }
         if recipe_output.get("recipe_name"):
             block["recipe_name"] = recipe_output["recipe_name"]
@@ -329,10 +329,10 @@ def _merge_into_sweep_block(
     existing_sweep = nested.get("sweep")
     if isinstance(existing_sweep, dict):
         existing_sweep.setdefault("type", sweep_type)
-        existing_sweep.setdefault("parameters", {})
-        existing_sweep["parameters"].update(additions)
+        existing_sweep.setdefault("variables", {})
+        existing_sweep["variables"].update(additions)
     else:
-        nested["sweep"] = {"type": sweep_type, "parameters": additions}
+        nested["sweep"] = {"type": sweep_type, "variables": additions}
 
 
 # CLI-attribute -> canonical dataset sweep path. Used by

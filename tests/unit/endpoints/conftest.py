@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures and helpers for endpoint tests."""
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
@@ -16,7 +17,61 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import InferenceServerResponse
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import EndpointType
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000"],
+        "streaming": False,
+    },
+    "datasets": [
+        {
+            "name": "default",
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    ],
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
+}
+
+
+def create_config(
+    endpoint_type: EndpointType = EndpointType.CHAT,
+    model_name: str = "test-model",
+    streaming: bool = False,
+    base_url: str = "http://localhost:8000",
+    extra: dict[str, Any] | list[tuple[str, Any]] | None = None,
+    use_legacy_max_tokens: bool = False,
+    template: dict[str, Any] | None = None,
+    **endpoint_overrides: Any,
+) -> BenchmarkConfig:
+    """Branch-style helper: build a ``BenchmarkConfig`` for endpoint tests."""
+    extra_dict: dict[str, Any] = {}
+    if isinstance(extra, dict):
+        extra_dict = dict(extra)
+    elif isinstance(extra, list):
+        for pair in extra:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                extra_dict[str(pair[0])] = pair[1]
+    endpoint = {
+        "type": endpoint_type,
+        "urls": [base_url],
+        "streaming": streaming,
+        "extra": extra_dict,
+        "use_legacy_max_tokens": use_legacy_max_tokens,
+        **endpoint_overrides,
+    }
+    if template is not None:
+        endpoint["template"] = template
+    return BenchmarkConfig(
+        **{**_MINIMAL_CONFIG_KWARGS, "models": [model_name], "endpoint": endpoint}
+    )
 
 
 def create_model_endpoint(
@@ -27,7 +82,11 @@ def create_model_endpoint(
     extra: list[tuple[str, Any]] | None = None,
     use_legacy_max_tokens: bool = False,
 ) -> ModelEndpointInfo:
-    """Helper to create a ModelEndpointInfo with common defaults."""
+    """Main-keeper helper: build a ``ModelEndpointInfo``.
+
+    Kept for tests added against main's pre-branch endpoint API (e.g.
+    image_edit, openai_chat_attack). New tests should prefer ``create_config``.
+    """
     return ModelEndpointInfo(
         models=ModelListInfo(
             models=[ModelInfo(name=model_name)],
@@ -43,21 +102,34 @@ def create_model_endpoint(
     )
 
 
-# Alias retained for branch-side tests imported as ``create_config``.
-create_config = create_model_endpoint
+def _wrap_run(config_or_endpoint: Any) -> BenchmarkRun:
+    """Wrap a ``BenchmarkConfig`` (or main-style ``ModelEndpointInfo``) in a ``BenchmarkRun``.
 
-
-def _benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo):
-    """Build a minimal ``BenchmarkRun`` whose ``cfg`` matches the given endpoint shape.
-
-    Branch-side endpoints take ``run: BenchmarkRun`` rather than the
-    pre-branch ``model_endpoint: ModelEndpointInfo`` -- so we build a
-    benchmark run with mirroring config to drive the endpoint under test.
+    Branch endpoints take ``run=BenchmarkRun``. Pre-branch tests that build a
+    ``ModelEndpointInfo`` first are auto-translated to a matching
+    ``BenchmarkConfig`` so they keep working without per-test rewrites.
     """
-    import uuid
+    if isinstance(config_or_endpoint, BenchmarkConfig):
+        cfg = config_or_endpoint
+    elif isinstance(config_or_endpoint, ModelEndpointInfo):
+        cfg = _config_from_model_endpoint(config_or_endpoint)
+    else:
+        # Already a BenchmarkRun (idempotency) or unknown — return as-is.
+        if isinstance(config_or_endpoint, BenchmarkRun):
+            return config_or_endpoint
+        raise TypeError(
+            f"_wrap_run expected BenchmarkConfig or ModelEndpointInfo, "
+            f"got {type(config_or_endpoint).__name__}"
+        )
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=cfg,
+        artifact_dir=Path("/tmp/test"),
+    )
 
-    from aiperf.config import BenchmarkConfig, BenchmarkRun
 
+def _config_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> BenchmarkConfig:
+    """Translate a ``ModelEndpointInfo`` into a matching ``BenchmarkConfig``."""
     extra_pairs = list(model_endpoint.endpoint.extra or [])
     extra_dict: dict[str, Any] = {}
     for pair in extra_pairs:
@@ -65,7 +137,6 @@ def _benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo):
             extra_dict[str(pair[0])] = pair[1]
         elif isinstance(pair, dict):
             extra_dict.update(pair)
-
     payload: dict[str, Any] = {
         "models": [m.name for m in model_endpoint.models.models],
         "endpoint": {
@@ -87,30 +158,18 @@ def _benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo):
             }
         ],
     }
-    cfg = BenchmarkConfig.model_validate(payload)
-    return BenchmarkRun(
-        benchmark_id=uuid.uuid4().hex,
-        cfg=cfg,
-        artifact_dir=cfg.artifacts.dir,
-        random_seed=None,
-        variables={},
-    )
+    return BenchmarkConfig.model_validate(payload)
 
 
-def create_endpoint_with_mock_transport(endpoint_class, model_endpoint):
-    """Helper to create an endpoint instance with a mocked transport.
-
-    Endpoints now accept either ``model_endpoint=ModelEndpointInfo`` (main
-    keeper convention) or ``run=BenchmarkRun`` (branch port convention).
-    Pass through whichever the caller provided; the BaseEndpoint shim
-    auto-derives the other.
-    """
-    return endpoint_class(model_endpoint=model_endpoint)
+def create_endpoint_with_mock_transport(endpoint_class, config):
+    """Build an endpoint instance from a ``BenchmarkConfig`` or ``ModelEndpointInfo``."""
+    run = _wrap_run(config)
+    return endpoint_class(run=run)
 
 
 def create_request_info(
+    config: BenchmarkConfig | None = None,
     model_endpoint: ModelEndpointInfo | None = None,
-    config: ModelEndpointInfo | None = None,  # alias retained for branch tests
     texts: list[str] | None = None,
     turns: list[Turn] | None = None,
     model: str | None = None,
@@ -125,14 +184,15 @@ def create_request_info(
     user_context_message: str | None = None,
     **turn_kwargs,
 ) -> RequestInfo:
-    """Helper to create RequestInfo with all required fields.
+    """Build a ``RequestInfo`` for endpoint tests.
 
-    ``model_endpoint`` / ``config`` are accepted for source-compat with both
-    main's and the K8s branch's tests but no longer flow onto the
-    ``RequestInfo`` struct (msgspec shape). Endpoints read endpoint metadata
-    off ``self.model_endpoint`` (auto-derived from ``run`` when needed).
+    ``config`` / ``model_endpoint`` are accepted for source-compat with branch
+    and main-style tests respectively; neither flows onto the RequestInfo
+    struct directly because msgspec RequestInfo has no endpoint reference.
+    Endpoints read endpoint metadata off ``self.run.cfg.endpoint`` /
+    ``self.model_endpoint`` from their own state.
     """
-    _ = model_endpoint if model_endpoint is not None else config
+    _ = config if config is not None else model_endpoint
     if credit_phase is None:
         credit_phase = CreditPhase.PROFILING
 

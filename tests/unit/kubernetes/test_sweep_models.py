@@ -225,11 +225,13 @@ def test_aiperfsweep_accepts_adaptive_search_sweep_variant():
                         "kind": "int",
                     }
                 ],
-                "objective": {
-                    "metric": "output_token_throughput",
-                    "stat": "avg",
-                    "direction": "maximize",
-                },
+                "objectives": [
+                    {
+                        "metric": "output_token_throughput",
+                        "stat": "avg",
+                        "direction": "maximize",
+                    }
+                ],
                 "max_iterations": 10,
             },
             "image": "x:latest",
@@ -238,7 +240,7 @@ def test_aiperfsweep_accepts_adaptive_search_sweep_variant():
     )
     assert isinstance(spec.sweep, AdaptiveSearchSweep)
     assert spec.sweep.max_iterations == 10
-    assert spec.sweep.objective.metric == "output_token_throughput"
+    assert spec.sweep.objectives[0].metric == "output_token_throughput"
 
 
 def test_multi_run_no_longer_carries_adaptive_search():

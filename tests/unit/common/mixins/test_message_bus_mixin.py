@@ -28,6 +28,8 @@ def _bind_probe_methods(mock: MagicMock) -> None:
     """Bind the real probe methods from MessageBusClientMixin onto a mock."""
     for name in (
         "_wait_for_successful_probe",
+        "_run_connection_probes",
+        "_uses_global_message_bus_probe",
         "_probe_and_wait_for_response",
         "_process_connection_probe_message",
     ):
@@ -75,6 +77,12 @@ def mixin(mock_pub_client):
     mock.info = MagicMock()
     mock.warning = MagicMock()
     mock.publish = AsyncMock()
+    # Branch's warning log references ``self.pub_client.address`` /
+    # ``self.sub_client.address``; the mock needs both to format warnings.
+    mock.pub_client = MagicMock()
+    mock.pub_client.address = "ipc:///tmp/test-pub"
+    mock.sub_client = MagicMock()
+    mock.sub_client.address = "ipc:///tmp/test-sub"
     _bind_probe_methods(mock)
     return mock
 
@@ -119,7 +127,6 @@ class TestProbeLoopSuccess:
         msg = mock_pub_client.publish_calls[0]
         assert isinstance(msg, ConnectionProbeMessage)
         assert msg.service_id == SERVICE_ID
-        assert msg.target_service_id == SERVICE_ID
 
     @pytest.mark.asyncio
     @pytest.mark.looptime
@@ -269,9 +276,7 @@ class TestProcessConnectionProbeMessage:
         """Processing a probe message sets the connection probe event."""
         assert not mixin._connection_probe_event.is_set()
 
-        probe_msg = ConnectionProbeMessage(
-            service_id=SERVICE_ID, target_service_id=SERVICE_ID
-        )
+        probe_msg = ConnectionProbeMessage(service_id=SERVICE_ID)
         await mixin._process_connection_probe_message(probe_msg)
 
         assert mixin._connection_probe_event.is_set()
