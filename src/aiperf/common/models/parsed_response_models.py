@@ -64,20 +64,29 @@ class ReasoningResponseData(BaseResponseData):
 class ToolCallResponseData(BaseResponseData):
     """Parsed tool-call response data.
 
-    Used when a streaming chat-completions chunk contains only ``tool_calls``
-    deltas (no ``content``/``reasoning``). The text is the concatenation of
-    every tool call's ``function.name`` followed by ``function.arguments``,
-    in chunk order, with no separators — that string is what the tokenizer
-    consumes for client-side token-count metrics, and its arrival timestamp
-    counts as a non-reasoning first-token boundary for TTFT/TTFO.
+    Used when a streaming chat-completions chunk contains ``tool_calls``
+    deltas. ``tool_call_text`` is the concatenation of every tool call's
+    ``function.name`` followed by ``function.arguments``, in chunk order,
+    with no separators — that string is what the tokenizer consumes for
+    client-side token-count metrics, and its arrival timestamp counts as a
+    non-reasoning first-token boundary for TTFT/TTFO.
+
+    When the same chunk carries both prose and a tool call (mixed-content
+    chunks emitted by some servers), ``content`` carries the prose so
+    ``get_text`` can return both pieces in author order.
     """
 
-    text: str
+    tool_call_text: str
     """Concatenated function names + arguments across all tool calls in the chunk."""
 
+    content: str | None = None
+    """Optional prose content emitted alongside the tool call in the same chunk."""
+
     def get_text(self) -> str:
-        """Get the text of the response."""
-        return self.text
+        """Return prose followed by the tool-call text (concatenated, no separator)."""
+        if self.content:
+            return self.content + self.tool_call_text
+        return self.tool_call_text
 
 
 class RAGSources(RootModel[dict[str, Any] | list[Any]]):

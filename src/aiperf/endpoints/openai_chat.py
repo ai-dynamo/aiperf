@@ -71,6 +71,18 @@ class ChatEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
+        # Per-turn ``extra_body`` overrides endpoint-level extra and even the
+        # built-in keys (model, messages, tools, stream, etc.). This matches
+        # the OpenAI client contract where ``extra_body`` is the last writer.
+        # Circular references are handled by ``dict.update`` (no copy needed).
+        if turns[-1].extra_body:
+            try:
+                payload.update(turns[-1].extra_body)
+            except Exception as e:
+                self.warning(
+                    lambda exc=e: f"Failed to merge extra_body into payload: {exc}"
+                )
+
         if (
             model_endpoint.endpoint.streaming
             and model_endpoint.endpoint.use_server_token_count
@@ -291,7 +303,7 @@ class ChatEndpoint(BaseEndpoint):
         elif content:
             response_data = self.make_text_response_data(content)
         elif tool_call_text:
-            response_data = ToolCallResponseData(text=tool_call_text)
+            response_data = ToolCallResponseData(tool_call_text=tool_call_text)
         else:
             response_data = None
 
@@ -348,7 +360,7 @@ class ChatEndpoint(BaseEndpoint):
 
         tool_call_text = _extract_tool_call_text(data)
         if tool_call_text:
-            return ToolCallResponseData(text=tool_call_text)
+            return ToolCallResponseData(tool_call_text=tool_call_text)
 
         return None
 
