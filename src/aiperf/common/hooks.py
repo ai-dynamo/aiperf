@@ -45,6 +45,7 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_MESSAGE = "@on_message"
     ON_REALTIME_METRICS = "@on_realtime_metrics"
     ON_REALTIME_TELEMETRY_METRICS = "@on_realtime_telemetry_metrics"
+    ON_PHASE_PROGRESS = "@on_phase_progress"
     ON_PROFILING_PROGRESS = "@on_profiling_progress"
     ON_PULL_MESSAGE = "@on_pull_message"
     ON_RECORDS_PROGRESS = "@on_records_progress"
@@ -55,6 +56,7 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_WARMUP_PROGRESS = "@on_warmup_progress"
     ON_WORKER_STATUS_SUMMARY = "@on_worker_status_summary"
     ON_WORKER_UPDATE = "@on_worker_update"
+    ON_WORKER_GROUP_UPDATE = "@on_worker_group_update"
 
 
 HookType = AIPerfHook | str

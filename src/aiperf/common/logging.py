@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import logging
 import multiprocessing
+import os
 import queue
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -19,21 +23,18 @@ from rich.traceback import Traceback
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.environment import Environment
 from aiperf.common.utils import is_tty
-from aiperf.config.artifacts import OutputDefaults
-from aiperf.config.runtime import ServiceDefaults
+from aiperf.config import ServiceDefaults
+from aiperf.config.defaults import OutputDefaults
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
-
-_logger = AIPerfLogger(__name__)
+    from aiperf.config import BenchmarkConfig
 
 LogQueue: TypeAlias = multiprocessing.Queue
-"""Type alias for a multiprocessing log queue. Used to forward log records
-across process boundaries to a centralized listener in the controller pod."""
 
-_global_log_queue: "LogQueue | None" = None
+_logger = AIPerfLogger(__name__)
+_global_log_queue: LogQueue | None = None
 _log_queue_lock = threading.Lock()
 
 _LOG_LEVEL_STYLES = {
@@ -66,7 +67,7 @@ def _create_basic_handler(level: str | int) -> logging.StreamHandler:
     return handler
 
 
-def get_global_log_queue() -> multiprocessing.Queue:
+def get_global_log_queue() -> LogQueue:
     """Get the global log queue. Will create a new queue if it doesn't exist.
 
     Thread-safe singleton pattern using double-checked locking.
@@ -75,7 +76,9 @@ def get_global_log_queue() -> multiprocessing.Queue:
     if _global_log_queue is None:
         with _log_queue_lock:
             if _global_log_queue is None:
-                _global_log_queue = multiprocessing.Queue(
+                from aiperf.common.subprocess_manager import get_mp_context
+
+                _global_log_queue = get_mp_context().Queue(
                     maxsize=Environment.LOGGING.QUEUE_MAXSIZE
                 )
     return _global_log_queue
@@ -97,7 +100,7 @@ async def cleanup_global_log_queue() -> None:
                     asyncio.to_thread(_global_log_queue.join_thread), timeout=1.0
                 )
                 _logger.debug("Cleaned up global log queue")
-            except Exception as e:
+            except (OSError, asyncio.TimeoutError, ValueError) as e:
                 _logger.debug(f"Error cleaning up log queue: {e}")
             finally:
                 from aiperf.common.resource_tracker import unregister_queue_semaphores
@@ -126,10 +129,93 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
     return False
 
 
+def _is_running_in_kubernetes() -> bool:
+    """Check if we're running inside a Kubernetes pod."""
+    return os.environ.get("KUBERNETES_SERVICE_HOST") is not None
+
+
+def _should_use_structured_logging() -> bool:
+    """Check if structured (JSON) logging should be used.
+
+    Returns True when AIPERF_STRUCTURED_LOGS env var is set.
+    """
+    return os.environ.get("AIPERF_STRUCTURED_LOGS") is not None
+
+
+def _should_use_plain_logging() -> bool:
+    """Determine if we should use plain text logging instead of Rich.
+
+    Returns True when:
+    - Running in Kubernetes (no TTY, log aggregation friendly)
+    - No TTY attached (CI/CD, piped output)
+    - AIPERF_PLAIN_LOGS env var is set
+
+    Note: Structured logging takes precedence if enabled.
+    """
+    import sys
+
+    if _should_use_structured_logging():
+        return False  # Structured logging takes precedence
+    if os.environ.get("AIPERF_PLAIN_LOGS"):
+        return True
+    if _is_running_in_kubernetes():
+        return True
+    return not sys.stdout.isatty()
+
+
+class StructuredLogHandler(logging.Handler):
+    """JSON structured logging handler for log aggregation systems.
+
+    Produces newline-delimited JSON (NDJSON) output compatible with:
+    - CloudWatch Logs Insights
+    - Elasticsearch/OpenSearch
+    - Loki
+    - Datadog
+    - Splunk
+
+    Enable by setting AIPERF_STRUCTURED_LOGS=1 environment variable.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record as JSON."""
+        import orjson
+
+        try:
+            log_entry = {
+                "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+                "source": {
+                    "file": record.filename,
+                    "line": record.lineno,
+                    "function": record.funcName,
+                },
+            }
+
+            # Add exception info if present
+            if record.exc_info and record.exc_info[0] is not None:
+                import traceback
+
+                log_entry["exception"] = {
+                    "type": record.exc_info[0].__name__,
+                    "message": str(record.exc_info[1]),
+                    "traceback": traceback.format_exception(*record.exc_info),
+                }
+
+            # Add extra fields if present (for custom context)
+            if hasattr(record, "extra"):
+                log_entry["extra"] = record.extra
+
+            print(orjson.dumps(log_entry).decode(), flush=True)
+        except Exception:  # noqa: BLE001 - logging.Handler.emit contract: delegate any failure to handleError
+            self.handleError(record)
+
+
 def setup_child_process_logging(
-    log_queue: "multiprocessing.Queue | None" = None,
+    log_queue: LogQueue | None = None,
     service_id: str | None = None,
-    run: "BenchmarkRun | None" = None,
+    config: BenchmarkConfig | None = None,
 ) -> None:
     """Set up logging for a child process to send logs to the main process.
 
@@ -138,15 +224,12 @@ def setup_child_process_logging(
     Args:
         log_queue: The multiprocessing queue to send logs to. If None, tries to get the global queue.
         service_id: The ID of the service to log under. If None, logs will be under the process name.
-        run: BenchmarkRun whose ``cfg.logging.level``, ``cfg.runtime.ui``, and
-            ``cfg.artifacts.dir`` drive level/handler/log-folder choices.
+        config: The BenchmarkConfig used to determine log level and log folder.
     """
     root_logger = logging.getLogger()
     level = ServiceDefaults.LOG_LEVEL.upper()
-    ui_type = None
-    if run is not None:
-        level = run.cfg.logging.level.upper()
-        ui_type = run.cfg.runtime.ui
+    if config:
+        level = config.log_level.upper()
 
         if service_id:
             # If the service is in the trace or debug services, set the level to trace or debug
@@ -166,12 +249,18 @@ def setup_child_process_logging(
     for existing_handler in root_logger.handlers[:]:
         root_logger.removeHandler(existing_handler)
 
-    if log_queue is not None and ui_type == UIType.DASHBOARD:
+    if log_queue is not None and config and config.ui_type == UIType.DASHBOARD:
         # For dashboard UI, we want to log to the queue, so it can be displayed in the UI
         # log viewer, instead of the console directly.
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
+    elif _should_use_structured_logging():
+        # Structured JSON logging for log aggregation (CloudWatch, Loki, etc.)
+        # Enable with AIPERF_STRUCTURED_LOGS=1
+        structured_handler = StructuredLogHandler()
+        structured_handler.setLevel(level)
+        root_logger.addHandler(structured_handler)
     elif is_tty():
         # For TTY environments, set up custom rich logging to the console
         rich_handler = CustomRichHandler(
@@ -188,18 +277,23 @@ def setup_child_process_logging(
         # For non-TTY environments, use basic logging without rich formatting
         root_logger.addHandler(_create_basic_handler(level))
 
-    if run is not None:
+    if config and config.artifacts.dir:
         file_handler = create_file_handler(
-            run.cfg.artifacts.dir / OutputDefaults.LOG_FOLDER, level
+            config.artifacts.dir / OutputDefaults.LOG_FOLDER, level
         )
         root_logger.addHandler(file_handler)
 
 
+def setup_subprocess_logging(level: str | int) -> None:
+    """Lightweight logging setup for ephemeral subprocesses (e.g. ProcessPoolExecutor workers)."""
+    logging.basicConfig(level=level, force=True)
+
+
 # TODO: Integrate with the subprocess logging instead of being separate
-def setup_rich_logging(run: "BenchmarkRun") -> None:
+def setup_rich_logging(config: BenchmarkConfig) -> None:
     """Set up rich logging with appropriate configuration. Falls back to basic logging for non-TTY."""
     # Set logging level for the root logger (affects all loggers)
-    level = run.cfg.logging.level.upper()
+    level = config.log_level.upper()
     logging.root.setLevel(level)
 
     if is_tty():
@@ -216,7 +310,8 @@ def setup_rich_logging(run: "BenchmarkRun") -> None:
     logging.root.addHandler(console_handler)
 
     # Enable file logging for services
-    log_folder = run.cfg.artifacts.dir / OutputDefaults.LOG_FOLDER
+    # TODO: Use config to determine if file logging is enabled and the folder path.
+    log_folder = config.artifacts.dir / OutputDefaults.LOG_FOLDER
     log_folder.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(log_folder / OutputDefaults.LOG_FILE)
     file_handler.setLevel(level)
@@ -259,6 +354,39 @@ class CustomRichHandler(RichHandler):
         super().__init__(*args, **kwargs)
         self.highlighter = ReprHighlighter()
 
+    @staticmethod
+    def _wrap_lines(
+        full_content: str, first_width: int, continuation_width: int
+    ) -> list[str]:
+        """Character-level wrap ``full_content`` using distinct widths for first/continuation lines."""
+        lines: list[str] = []
+        remaining = full_content
+        is_first_line = True
+        while remaining:
+            line_width = first_width if is_first_line else continuation_width
+            if len(remaining) <= line_width:
+                lines.append(remaining)
+                break
+            lines.append(remaining[:line_width])
+            remaining = remaining[line_width:]
+            is_first_line = False
+        return lines
+
+    def _style_line_segments(
+        self, line: str, char_pos: int, suffix_start_pos: int
+    ) -> list[Text]:
+        """Apply highlighter to message chars and dim-italic to suffix chars within a wrapped line."""
+        line_end_pos = char_pos + len(line)
+        if char_pos >= suffix_start_pos:
+            return [Text(line, style="dim italic")]
+        if line_end_pos <= suffix_start_pos:
+            return [self.highlighter(Text(line))]
+        msg_chars = suffix_start_pos - char_pos
+        return [
+            self.highlighter(Text(line[:msg_chars])),
+            Text(line[msg_chars:], style="dim italic"),
+        ]
+
     def render(
         self,
         *,
@@ -272,41 +400,23 @@ class CustomRichHandler(RichHandler):
         message = record.getMessage()[: self.MAX_MESSAGE_LENGTH]
         log_suffix = f"({record.filename}:{record.lineno})"
 
-        # Calculate widths
         console_width = self.console.size.width if self.console else self.DEFAULT_WIDTH
         target_width = max(console_width - 2, 40)
 
-        prefix = f"{timestamp} {record.levelname:<8} "
-        prefix_len = len(prefix)
+        prefix_len = len(f"{timestamp} {record.levelname:<8} ")
         content_width = target_width - prefix_len
 
-        # Combine message and suffix into one string for character-level wrapping
         full_content = f"{message} {log_suffix}"
-        suffix_start_pos = (
-            len(message) + 1
-        )  # Position where suffix starts in full_content
+        suffix_start_pos = len(message) + 1
 
         # Only indent continuation lines on wide consoles (90+)
         indent_continuations = console_width >= 90
-        # Continuation lines get full width when not indented
         continuation_width = content_width if indent_continuations else target_width
 
-        # Manual character-level wrapping
-        lines = []
-        remaining = full_content
-        is_first_line = True
-        while remaining:
-            line_width = content_width if is_first_line else continuation_width
-            if len(remaining) <= line_width:
-                lines.append(remaining)
-                break
-            lines.append(remaining[:line_width])
-            remaining = remaining[line_width:]
-            is_first_line = False
+        lines = self._wrap_lines(full_content, content_width, continuation_width)
 
-        # Build output with proper styling
-        parts = []
-        char_pos = 0  # Track position in full_content
+        parts: list[Text] = []
+        char_pos = 0
         for i, line in enumerate(lines):
             if i > 0:
                 parts.append(Text("\n"))
@@ -316,22 +426,8 @@ class CustomRichHandler(RichHandler):
                 parts.append(Text(f"{timestamp} ", style="log.time"))
                 parts.append(Text(f"{record.levelname:<8} ", style=level_style))
 
-            line_end_pos = char_pos + len(line)
-
-            # Determine how much of this line is message vs suffix
-            if char_pos >= suffix_start_pos:
-                # Entire line is suffix
-                parts.append(Text(line, style="dim italic"))
-            elif line_end_pos <= suffix_start_pos:
-                # Entire line is message
-                parts.append(self.highlighter(Text(line)))
-            else:
-                # Line contains both message and suffix
-                msg_chars = suffix_start_pos - char_pos
-                parts.append(self.highlighter(Text(line[:msg_chars])))
-                parts.append(Text(line[msg_chars:], style="dim italic"))
-
-            char_pos = line_end_pos
+            parts.extend(self._style_line_segments(line, char_pos, suffix_start_pos))
+            char_pos += len(line)
 
         formatted_log = Text.assemble(*parts)
         formatted_log.no_wrap = True  # Prevent Rich from re-wrapping
@@ -361,9 +457,7 @@ class CustomRichHandler(RichHandler):
 class MultiProcessLogHandler(RichHandler):
     """Custom logging handler that forwards log records to a multiprocessing queue."""
 
-    def __init__(
-        self, log_queue: multiprocessing.Queue, service_id: str | None = None
-    ) -> None:
+    def __init__(self, log_queue: LogQueue, service_id: str | None = None) -> None:
         super().__init__()
         self.log_queue = log_queue
         self.service_id = service_id
@@ -390,6 +484,6 @@ class MultiProcessLogHandler(RichHandler):
         except queue.Full:
             # Drop logs if queue is full to prevent blocking. Do not log to prevent recursion.
             pass
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - log handler emit path must never re-raise or recurse
             # Do not log to prevent recursion
             pass

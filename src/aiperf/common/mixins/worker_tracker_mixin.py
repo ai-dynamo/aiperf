@@ -1,71 +1,212 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MessageType, WorkerStatus
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
-from aiperf.common.messages import WorkerHealthMessage, WorkerStatusSummaryMessage
+from aiperf.common.messages import (
+    WorkerGroupStatsMessage,
+    WorkerHealthMessage,
+    WorkerStatusSummaryMessage,
+)
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
-from aiperf.common.models import ProcessHealth, WorkerStats, WorkerTaskStats
+from aiperf.common.models import (
+    ProcessHealth,
+    WorkerGroupStats,
+    WorkerStats,
+    WorkerTaskStats,
+)
+from aiperf.workers.worker_group_state import worst_status
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
-class WorkerTracker:
-    """Standalone worker tracker for tracking worker health and stats."""
+LOCAL_GROUP_ID = "local"
+"""Public synthetic group id used in fake-in-process mode where no real WGM exists.
+
+Exposed (rather than module-private) so the API router and dashboard renderer
+can reference the same constant when distinguishing the synthetic local group
+from real WGM-keyed groups.
+"""
+
+
+class WorkerGroupTracker:
+    """Standalone per-group worker tracker.
+
+    Keyed by ``group_id`` (the WorkerGroupManager service_id). In fake-in-process
+    mode (no WGM), per-worker WORKER_HEALTH messages are folded into a single
+    synthetic group ``"local"`` so the dashboard still has a row to render.
+    """
 
     def __init__(self) -> None:
-        self._workers_stats: dict[str, WorkerStats] = {}
+        self._groups: dict[str, WorkerGroupStats] = {}
 
-    def update_worker_stats(
-        self, worker_id: str, health: ProcessHealth, task_stats: WorkerTaskStats
-    ) -> WorkerStats:
-        """Update worker health and task stats, returns the updated WorkerStats."""
-        if worker_id not in self._workers_stats:
-            self._workers_stats[worker_id] = WorkerStats(worker_id=worker_id)
-        self._workers_stats[worker_id].health = health
-        self._workers_stats[worker_id].task_stats = task_stats
-        return self._workers_stats[worker_id]
+    def _ensure_local_group(self) -> tuple[WorkerGroupStats, dict[str, WorkerStats]]:
+        """Return the synthetic local group (creating it if absent) and a mutable copy of its children."""
+        group = self._groups.get(LOCAL_GROUP_ID)
+        if group is None:
+            group = WorkerGroupStats(group_id=LOCAL_GROUP_ID)
+        return group, dict(group.workers)
+
+    def update_from_group_message(
+        self, message: WorkerGroupStatsMessage
+    ) -> WorkerGroupStats:
+        """Replace a group entry from a freshly-published WGM snapshot."""
+        children: dict[str, WorkerStats] = {}
+        for wid, status in message.worker_statuses.items():
+            children[wid] = WorkerStats(
+                worker_id=wid,
+                status=status,
+                startup_state=message.worker_startup_states.get(wid),
+                health=message.worker_health.get(wid),
+                task_stats=message.worker_task_stats.get(wid, WorkerTaskStats()),
+                last_update_ns=message.last_update_ns,
+            )
+        group = WorkerGroupStats(
+            group_id=message.group_id,
+            status=message.status,
+            startup_state=message.startup_state,
+            declared_workers=message.declared_workers,
+            ready_workers=message.ready_workers,
+            health=message.health,
+            task_stats=message.task_stats,
+            workers=children,
+            last_update_ns=message.last_update_ns,
+        )
+        self._groups[message.group_id] = group
+        return group
+
+    def update_from_worker_health(
+        self,
+        worker_id: str,
+        health: ProcessHealth,
+        task_stats: WorkerTaskStats,
+    ) -> WorkerGroupStats:
+        """Fold a per-worker health message into the synthetic ``local`` group.
+
+        Only used by fake-in-process tests where workers publish
+        WORKER_HEALTH directly (no WorkerGroupManager exists).
+        """
+        group, children = self._ensure_local_group()
+        children[worker_id] = WorkerStats(
+            worker_id=worker_id,
+            status=WorkerStatus.HEALTHY,
+            health=health,
+            task_stats=task_stats,
+        )
+        group.workers = children
+        group.task_stats = WorkerTaskStats(
+            total=sum(c.task_stats.total for c in children.values()),
+            failed=sum(c.task_stats.failed for c in children.values()),
+        )
+        if children:
+            healthy_children = [c for c in children.values() if c.health is not None]
+            if healthy_children:
+                first = healthy_children[0].health
+                # synthetic local-mode aggregate; pid/create_time copied from an arbitrary
+                # first child since fake-in-process doesn't model a single owning process.
+                group.health = ProcessHealth(
+                    pid=first.pid,
+                    create_time=first.create_time,
+                    uptime=max(c.health.uptime for c in healthy_children),
+                    cpu_usage=sum(c.health.cpu_usage for c in healthy_children)
+                    / len(healthy_children),
+                    memory_usage=sum(c.health.memory_usage for c in healthy_children),
+                )
+        group.declared_workers = max(group.declared_workers, len(children))
+        group.status = worst_status(c.status for c in children.values())
+        self._groups[LOCAL_GROUP_ID] = group
+        return group
 
     def update_worker_statuses(self, worker_statuses: dict[str, WorkerStatus]) -> None:
-        """Update worker statuses from a status summary."""
-        for worker_id, status in worker_statuses.items():
-            if worker_id not in self._workers_stats:
-                self._workers_stats[worker_id] = WorkerStats(worker_id=worker_id)
-            self._workers_stats[worker_id].status = status
+        """Update per-worker statuses (legacy WORKER_STATUS_SUMMARY path).
 
-    def get_worker_stats(self, worker_id: str) -> WorkerStats | None:
-        """Get stats for a specific worker."""
-        return self._workers_stats.get(worker_id)
+        Folded under the synthetic ``local`` group when there is no
+        matching WGM-keyed group yet.
+        """
+        group, children = self._ensure_local_group()
+        for worker_id, status in worker_statuses.items():
+            child = children.get(worker_id)
+            if child is None:
+                child = WorkerStats(worker_id=worker_id)
+            child.status = status
+            children[worker_id] = child
+        group.workers = children
+        group.status = worst_status(c.status for c in children.values())
+        self._groups[LOCAL_GROUP_ID] = group
+
+    def update_worker_startup_states(
+        self, worker_startup_states: dict[str, WorkerStartupState]
+    ) -> None:
+        group, children = self._ensure_local_group()
+        for worker_id, startup_state in worker_startup_states.items():
+            child = children.get(worker_id)
+            if child is None:
+                child = WorkerStats(worker_id=worker_id)
+            child.startup_state = startup_state
+            children[worker_id] = child
+        group.workers = children
+        self._groups[LOCAL_GROUP_ID] = group
+
+    def get_group(self, group_id: str) -> WorkerGroupStats | None:
+        return self._groups.get(group_id)
 
     @property
-    def workers(self) -> dict[str, WorkerStats]:
-        """All tracked workers."""
-        return self._workers_stats
+    def worker_groups(self) -> dict[str, WorkerGroupStats]:
+        return self._groups
 
 
-@provides_hooks(AIPerfHook.ON_WORKER_UPDATE, AIPerfHook.ON_WORKER_STATUS_SUMMARY)
+@provides_hooks(
+    AIPerfHook.ON_WORKER_GROUP_UPDATE,
+    AIPerfHook.ON_WORKER_UPDATE,
+    AIPerfHook.ON_WORKER_STATUS_SUMMARY,
+)
 class WorkerTrackerMixin(MessageBusClientMixin):
-    """A worker tracker mixin that tracks the health and tasks of workers via message bus."""
+    """Tracks worker-group health/stats via the message bus."""
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._worker_tracker = WorkerTracker()
+    def __init__(self, run: BenchmarkRun, **kwargs):
+        super().__init__(run=run, **kwargs)
+        self._worker_tracker = WorkerGroupTracker()
+
+    @on_message(MessageType.WORKER_GROUP_STATS)
+    async def _on_worker_group_stats(self, message: WorkerGroupStatsMessage) -> None:
+        group = self._worker_tracker.update_from_group_message(message)
+        await self.run_hooks(
+            AIPerfHook.ON_WORKER_GROUP_UPDATE,
+            group_id=group.group_id,
+            group_stats=group,
+        )
 
     @on_message(MessageType.WORKER_HEALTH)
-    async def _on_worker_health(self, message: WorkerHealthMessage):
-        """Update the worker stats from a worker health message."""
-        worker_stats = self._worker_tracker.update_worker_stats(
+    async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
+        """Fake-in-process fallback: worker publishes raw health, no WGM."""
+        group = self._worker_tracker.update_from_worker_health(
             message.service_id, message.health, message.task_stats
         )
         await self.run_hooks(
+            AIPerfHook.ON_WORKER_GROUP_UPDATE,
+            group_id=group.group_id,
+            group_stats=group,
+        )
+        # Keep legacy hook firing so any external listener still works.
+        await self.run_hooks(
             AIPerfHook.ON_WORKER_UPDATE,
             worker_id=message.service_id,
-            worker_stats=worker_stats,
+            worker_stats=group.workers[message.service_id],
         )
 
     @on_message(MessageType.WORKER_STATUS_SUMMARY)
-    async def _on_worker_status_summary(self, message: WorkerStatusSummaryMessage):
-        """Update the worker stats from a worker status summary message."""
+    async def _on_worker_status_summary(
+        self, message: WorkerStatusSummaryMessage
+    ) -> None:
         self._worker_tracker.update_worker_statuses(message.worker_statuses)
+        self._worker_tracker.update_worker_startup_states(message.worker_startup_states)
         await self.run_hooks(
             AIPerfHook.ON_WORKER_STATUS_SUMMARY,
             worker_status_summary=message.worker_statuses,
+            worker_startup_states=message.worker_startup_states,
         )

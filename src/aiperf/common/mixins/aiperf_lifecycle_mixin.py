@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     InvalidStateError,
     LifecycleOperationError,
@@ -123,13 +125,35 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self._set_state(transient_state)
         self.debug(lambda: f"{transient_state.title()} {self}")
+        # Startup transitions must fail-fast: continuing to run later on_start
+        # hooks after an earlier one aborted produces a half-started service
+        # (e.g. tokenizer prefetch + background tasks spawned after PUB/SUB
+        # probe failure) that survives as a silent zombie. Stop transitions
+        # stay best-effort so cleanup errors don't mask each other.
+        fail_fast = transient_state in (
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        )
         try:
-            await self.run_hooks(hook_type, reverse=reverse)
+            await self.run_hooks(hook_type, reverse=reverse, fail_fast=fail_fast)
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
-        except Exception as e:
+        except asyncio.CancelledError:
+            if transient_state == LifecycleState.STOPPING or self.stop_requested:
+                self.debug(
+                    f"Cancelled during {transient_state} for {self}, completing shutdown"
+                )
+                await self._set_state(LifecycleState.STOPPED)
+            else:
+                await self._fail(asyncio.CancelledError())
+        except Exception as e:  # noqa: BLE001 - lifecycle transition wrapper must catch any hook failure and enter FAILED
             await self._fail(e)
+        finally:
+            # Ensure the event is always set so waiters (e.g. bootstrap) unblock.
+            # During stop transitions, CancelledError from task cancellation can
+            # bypass both the happy path and _fail, leaving the event unset.
+            event.set()
 
     async def initialize(self) -> None:
         """Initialize the lifecycle and run the @on_init hooks.
@@ -242,6 +266,13 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
             return
 
+        if self.state == LifecycleState.CREATED:
+            self.debug(
+                lambda: f"Ignoring stop request for {self} in state {self.state} "
+                "(never initialized)"
+            )
+            return
+
         self.stop_requested = True
         await self._execute_state_transition(
             LifecycleState.STOPPING,
@@ -290,7 +321,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
         if self.state != LifecycleState.STOPPING:
             self.debug(f"Stopping {self} due to failure")
-            await self.stop()
+            # Bound the shutdown so a blocked on_stop hook (e.g. a cancelled
+            # ZMQ client stuck in a C-ext recv) cannot turn a failed service
+            # into a silent zombie. If cleanup exceeds the watchdog, hard-exit
+            # via os._exit — we're already in the failure path and would
+            # rather lose cleanup state than keep the container alive.
+            timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+            try:
+                await asyncio.wait_for(self.stop(), timeout=timeout)
+            except asyncio.TimeoutError:
+                self.error(
+                    f"Shutdown after failure did not complete in {timeout}s; "
+                    f"force-exiting"
+                )
+                os._exit(1)
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 
@@ -331,10 +375,13 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
     async def _stop_children(self) -> None:
         """Stop all children. This is done via the @on_stop hook to ensure that the children
         are stopped along with the parent hooks, and not after the parent hooks, which would cause
-        a race condition.
+        a race condition. Errors are caught per-child to ensure all children get stopped.
         """
         for child in reversed(self._children):
-            await child.stop()
+            try:
+                await child.stop()
+            except (Exception, asyncio.CancelledError):  # noqa: BLE001 - continue shutting down siblings regardless of per-child failure
+                self.debug(f"Error stopping child {child}, continuing shutdown")
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} (id={self.id})"

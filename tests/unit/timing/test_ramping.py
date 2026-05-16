@@ -6,23 +6,23 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.timing.ramping import Ramper, RamperConfig, RampType
+from aiperf.timing.ramping import Ramper, RampType, TimingRampConfig
 
 
-def lin(s: float, t: float, d: float, step: float | None = None) -> RamperConfig:
-    return RamperConfig(
+def lin(s: float, t: float, d: float, step: float | None = None) -> TimingRampConfig:
+    return TimingRampConfig(
         ramp_type=RampType.LINEAR, start=s, target=t, duration_sec=d, step_size=step
     )
 
 
-def exp(s: float, t: float, d: float, e: float = 2.0) -> RamperConfig:
-    return RamperConfig(
+def exp(s: float, t: float, d: float, e: float = 2.0) -> TimingRampConfig:
+    return TimingRampConfig(
         ramp_type=RampType.EXPONENTIAL, start=s, target=t, duration_sec=d, exponent=e
     )
 
 
-def cont(s: float, t: float, d: float, interval: float) -> RamperConfig:
-    return RamperConfig(
+def cont(s: float, t: float, d: float, interval: float) -> TimingRampConfig:
+    return TimingRampConfig(
         ramp_type=RampType.LINEAR,
         start=s,
         target=t,
