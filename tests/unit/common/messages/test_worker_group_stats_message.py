@@ -43,6 +43,7 @@ def test_round_trip_preserves_per_worker_maps() -> None:
         worker_task_stats={"w-0": WorkerTaskStats(total=5)},
         worker_health={"w-0": _health()},
     )
+
     # Branch carries WorkerTaskStats and ProcessHealth as Pydantic models;
     # msgspec.json.encode needs an enc_hook to dump them.
     def _enc(obj):
@@ -56,9 +57,7 @@ def test_round_trip_preserves_per_worker_maps() -> None:
         raise NotImplementedError
 
     encoded = msgspec.json.encode(msg, enc_hook=_enc)
-    decoded = msgspec.json.decode(
-        encoded, type=WorkerGroupStatsMessage, dec_hook=_dec
-    )
+    decoded = msgspec.json.decode(encoded, type=WorkerGroupStatsMessage, dec_hook=_dec)
     assert decoded.group_id == "wgm-0"
     assert decoded.worker_statuses == msg.worker_statuses
     assert decoded.worker_task_stats["w-0"].total == 5

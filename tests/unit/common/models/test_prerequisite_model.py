@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import msgspec
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.enums import PrerequisiteKind
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 from aiperf.common.models.prerequisites import TurnPrerequisite
 
 
@@ -32,21 +33,25 @@ class TestTurnPrerequisite:
 
     def test_serialization_round_trip(self):
         p = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0")
-        dumped = p.model_dump()
-        restored = TurnPrerequisite.model_validate(dumped)
+        dumped = msgspec.to_builtins(p, enc_hook=_msgspec_enc_hook)
+        restored = msgspec.convert(dumped, TurnPrerequisite, dec_hook=_msgspec_dec_hook)
         assert restored == p
 
     def test_extra_fields_forbidden(self):
-        with pytest.raises(ValidationError):
-            TurnPrerequisite(
-                kind=PrerequisiteKind.SPAWN_JOIN,
-                branch_id="root:0",
-                unknown_field="boom",
+        with pytest.raises(msgspec.ValidationError):
+            msgspec.convert(
+                {
+                    "kind": "spawn_join",
+                    "branch_id": "root:0",
+                    "unknown_field": "boom",
+                },
+                TurnPrerequisite,
+                dec_hook=_msgspec_dec_hook,
             )
 
     def test_frozen(self):
         p = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0")
-        with pytest.raises(ValidationError):
+        with pytest.raises(AttributeError):
             p.branch_id = "other:1"
 
     def test_construct_timer_reserved(self):

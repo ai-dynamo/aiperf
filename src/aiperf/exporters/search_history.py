@@ -178,9 +178,7 @@ def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
         "planner": str(cfg.planner),
         "objective_metric": primary.metric if primary else None,
         "objective_stat": primary.stat if primary else None,
-        "objective_direction": (
-            str(primary.direction).upper() if primary else None
-        ),
+        "objective_direction": (str(primary.direction).upper() if primary else None),
         "objectives": [
             {
                 "metric": o.metric,

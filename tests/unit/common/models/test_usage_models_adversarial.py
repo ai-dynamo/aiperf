@@ -1,4 +1,5 @@
 from aiperf.common.enums import CreditPhase
+
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial / edge-case tests for the Usage model.
@@ -35,7 +36,12 @@ from hypothesis import strategies as st
 from pytest import param
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import RequestInfo, ParsedResponse, ParsedResponseRecord, RequestRecord
+from aiperf.common.models import (
+    RequestInfo,
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestRecord,
+)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -831,8 +837,8 @@ def _record_with_response_usages(*usages) -> ParsedResponseRecord:
     in order. Pass a ParsedResponse-compatible dict or None per chunk."""
     request = RequestRecord(
         request_info=RequestInfo(
-        conversation_id="test",
-        turn_index=0,
+            conversation_id="test",
+            turn_index=0,
             credit_num=0,
             credit_phase=CreditPhase.PROFILING,
             x_request_id="",

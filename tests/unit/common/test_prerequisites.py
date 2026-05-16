@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import msgspec
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.enums import PrerequisiteKind
 from aiperf.common.models import TurnPrerequisite
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 
 
 def test_prerequisite_kind_values():
@@ -42,13 +43,17 @@ def test_turn_prerequisite_reserved_fields_accepted():
 
 def test_turn_prerequisite_round_trip_json():
     p = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0")
-    j = p.model_dump_json()
-    restored = TurnPrerequisite.model_validate_json(j)
+    encoded = msgspec.json.encode(p, enc_hook=_msgspec_enc_hook)
+    restored = msgspec.convert(
+        msgspec.json.decode(encoded), TurnPrerequisite, dec_hook=_msgspec_dec_hook
+    )
     assert restored == p
 
 
 def test_turn_prerequisite_forbids_unknown_fields():
-    with pytest.raises(ValidationError):
-        TurnPrerequisite.model_validate(
-            {"kind": "spawn_join", "branch_id": "x", "unknown_field": 1}
+    with pytest.raises(msgspec.ValidationError):
+        msgspec.convert(
+            {"kind": "spawn_join", "branch_id": "x", "unknown_field": 1},
+            TurnPrerequisite,
+            dec_hook=_msgspec_dec_hook,
         )

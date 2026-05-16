@@ -37,6 +37,6 @@ class AggregateDetailedJsonExporter(AggregateBaseExporter):
             "metrics": self._result.metrics,
         }
 
-        return orjson.dumps(scrub_non_finite(output), option=orjson.OPT_INDENT_2).decode(
-            "utf-8"
-        )
+        return orjson.dumps(
+            scrub_non_finite(output), option=orjson.OPT_INDENT_2
+        ).decode("utf-8")

@@ -444,7 +444,6 @@ TelemetryRecord.timestamp_ns: numeric field has no ge/gt/le/lt bound and is not 
 TemperatureMetricUnitInfo.celsius: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TemperatureMetricUnitInfo.offset: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TimeSlicePlotSpec.ci_level: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
-TimesliceData.timeslice_index: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TraceDataExport.error_timestamp_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TraceDataExport.request_chunks: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 TraceDataExport.request_headers_sent_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.

@@ -18,7 +18,7 @@ from aiperf.common.models.export_models import JsonExportData
 from aiperf.records.records_manager_processing import generate_realtime_metrics
 
 if TYPE_CHECKING:
-    from aiperf.config import BenchmarkConfig
+    from aiperf.config.benchmark import BenchmarkConfig
     from aiperf.post_processors.protocols import ResultsProcessorProtocol
     from aiperf.records.error_tracker import ErrorTracker
     from aiperf.records.records_tracker import RecordsTracker

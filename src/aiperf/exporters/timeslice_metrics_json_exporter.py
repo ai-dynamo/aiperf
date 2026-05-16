@@ -73,7 +73,6 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
             # shorter than results.
             window = windows[idx] if idx < len(windows) else None
             timeslice = TimesliceData(
-                timeslice_index=idx,
                 start_ns=window.start_ns if window else None,
                 end_ns=window.end_ns if window else None,
                 is_complete=window.is_complete if window else None,

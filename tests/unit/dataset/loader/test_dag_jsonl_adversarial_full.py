@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import msgspec
 import pytest
 from pydantic import ValidationError
 
@@ -30,6 +31,7 @@ from aiperf.common.models import (
     TurnPrerequisite,
 )
 from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.dataset.loader.dag_jsonl_models import DagSpawn
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -842,9 +844,9 @@ def test_dataset_metadata_round_trip_idempotent():
         ],
         sampling_strategy=DatasetSamplingStrategy.RANDOM,
     )
-    blob = md.model_dump(mode="json")
-    md2 = DatasetMetadata.model_validate(blob)
-    blob2 = md2.model_dump(mode="json")
+    blob = msgspec.to_builtins(md, enc_hook=_msgspec_enc_hook)
+    md2 = msgspec.convert(blob, DatasetMetadata, dec_hook=_msgspec_dec_hook)
+    blob2 = msgspec.to_builtins(md2, enc_hook=_msgspec_enc_hook)
     assert blob == blob2
     # Specifically assert that dispatch_timing="pre" survives the round-trip
     # (Phase 2b field).

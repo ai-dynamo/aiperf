@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial shape / JSON round-trip tests for DAG prereq and branch metadata."""
 
+import msgspec
+
 from aiperf.common.enums import (
     ConversationBranchMode,
     PrerequisiteKind,
@@ -14,7 +16,16 @@ from aiperf.common.models import (
     TurnMetadata,
     TurnPrerequisite,
 )
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+
+def _roundtrip_json(obj, cls):
+    """Encode through JSON bytes and back via msgspec, using the AIPerf hooks."""
+    encoded = msgspec.json.encode(obj, enc_hook=_msgspec_enc_hook)
+    return msgspec.convert(
+        msgspec.json.decode(encoded), cls, dec_hook=_msgspec_dec_hook
+    )
 
 
 def _kind_kwargs(kind: PrerequisiteKind) -> dict:
@@ -49,7 +60,7 @@ def test_dataset_metadata_json_roundtrip_preserves_prereqs_all_kinds():
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
 
-    restored = DatasetMetadata.model_validate_json(ds.model_dump_json())
+    restored = _roundtrip_json(ds, DatasetMetadata)
 
     restored_prereqs = restored.conversations[0].turns[0].prerequisites
     assert len(restored_prereqs) == len(list(PrerequisiteKind))
@@ -101,7 +112,7 @@ def test_conversation_branch_info_json_roundtrip_preserves_dispatch_timing_and_m
         dispatch_timing="pre",
     )
 
-    restored = ConversationBranchInfo.model_validate_json(info.model_dump_json())
+    restored = _roundtrip_json(info, ConversationBranchInfo)
 
     assert restored.branch_id == "b"
     assert restored.child_conversation_ids == ["c"]
@@ -123,7 +134,7 @@ def test_metadata_with_ten_thousand_prereqs_on_one_turn_roundtrips():
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
 
-    restored = DatasetMetadata.model_validate_json(ds.model_dump_json())
+    restored = _roundtrip_json(ds, DatasetMetadata)
     restored_prereqs = restored.conversations[0].turns[0].prerequisites
 
     assert len(restored_prereqs) == n
@@ -175,7 +186,7 @@ def test_deeply_nested_conversations_root_child_grandchild_serialize():
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
 
-    restored = DatasetMetadata.model_validate_json(ds.model_dump_json())
+    restored = _roundtrip_json(ds, DatasetMetadata)
 
     assert len(restored.conversations) == 3
     by_id = {c.conversation_id: c for c in restored.conversations}
@@ -197,7 +208,7 @@ def test_conversation_metadata_empty_branches_roundtrip():
         branches=[],
     )
 
-    restored = ConversationMetadata.model_validate_json(conv.model_dump_json())
+    restored = _roundtrip_json(conv, ConversationMetadata)
 
     assert restored.branches == []
     assert restored.conversation_id == "x"
@@ -248,6 +259,6 @@ def test_conversation_branch_info_duplicate_child_conversation_ids_preserved_ver
     )
     assert info.child_conversation_ids == ["c", "c"]
 
-    restored = ConversationBranchInfo.model_validate_json(info.model_dump_json())
+    restored = _roundtrip_json(info, ConversationBranchInfo)
 
     assert restored.child_conversation_ids == ["c", "c"]

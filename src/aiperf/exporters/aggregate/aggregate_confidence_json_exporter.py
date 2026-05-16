@@ -4,6 +4,11 @@
 
 from typing import ClassVar
 
+import msgspec
+import orjson
+
+from aiperf.common.finite import scrub_non_finite
+from aiperf.common.models.base_models import _msgspec_enc_hook
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
@@ -45,10 +50,14 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         # Convert to JsonExportData format (adapter pattern)
         export_data = self._aggregate_to_export_data()
 
-        # Serialize using Pydantic (same approach as MetricsJsonExporter._generate_content())
-        return export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
-        )
+        # Serialize via msgspec.to_builtins + orjson for fast indented JSON output.
+        # scrub_non_finite() drops NaN/Inf so the artifact is RFC-strict JSON.
+        return orjson.dumps(
+            scrub_non_finite(
+                msgspec.to_builtins(export_data, enc_hook=_msgspec_enc_hook)
+            ),
+            option=orjson.OPT_INDENT_2,
+        ).decode()
 
     def _aggregate_to_export_data(self):
         """Convert AggregateResult to JsonExportData format.

@@ -49,7 +49,7 @@ def standard_logger():
 def large_message():
     return RequestRecord(
         request_info=RequestInfo(
-        credit_phase=CreditPhase.PROFILING,
+            credit_phase=CreditPhase.PROFILING,
             credit_num=0,
             x_request_id="",
             x_correlation_id="",
@@ -77,7 +77,8 @@ def large_message():
             for i in range(1, 101)
         ],
         error=None,
-        delayed_ns=None,)
+        delayed_ns=None,
+    )
 
 
 def compare_logger_performance(

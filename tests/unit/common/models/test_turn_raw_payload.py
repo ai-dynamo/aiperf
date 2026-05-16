@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import msgspec
+
 from aiperf.common.models import Turn
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 
 
 class TestTurnRawPayload:
@@ -17,7 +20,11 @@ class TestTurnRawPayload:
         }
         t = Turn(role="user", raw_payload=payload)
         assert t.raw_payload == payload
-        restored = Turn.model_validate(t.model_dump())
+        restored = msgspec.convert(
+            msgspec.to_builtins(t, enc_hook=_msgspec_enc_hook),
+            Turn,
+            dec_hook=_msgspec_dec_hook,
+        )
         assert restored.raw_payload == payload
 
     def test_raw_payload_does_not_disturb_other_fields(self):

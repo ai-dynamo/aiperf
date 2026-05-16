@@ -48,7 +48,9 @@ def _make_run(**overrides: Any) -> BenchmarkRun:
     )
 
 
-def _make_pil_image(size: tuple[int, int] = (8, 8), color: str = "red") -> PILImage.Image:
+def _make_pil_image(
+    size: tuple[int, int] = (8, 8), color: str = "red"
+) -> PILImage.Image:
     """Build a tiny in-memory PIL image for image-column tests."""
     return PILImage.new("RGB", size, color=color)
 

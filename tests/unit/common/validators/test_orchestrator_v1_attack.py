@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 
+import msgspec
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
@@ -193,15 +194,18 @@ def test_pre_session_fork_dispatch_timing_rejects_at_validator():
 
 
 def test_pre_session_fork_bypass_via_model_construct_rejects():
-    """Bypass the field validator with ``model_construct`` so we can hit the
-    validator's FORK-pre defense-in-depth path."""
-    bad = ConversationBranchInfo.model_construct(
+    """Bypass the ``__post_init__`` validator by constructing a valid SPAWN+pre
+    branch and then mutating ``mode`` to FORK via ``msgspec.structs.force_setattr``
+    so we can hit the orchestrator validator's FORK-pre defense-in-depth path.
+    """
+    bad = ConversationBranchInfo(
         branch_id="x:pre",
         child_conversation_ids=["child"],
-        mode=ConversationBranchMode.FORK,
+        mode=ConversationBranchMode.SPAWN,
         dispatch_timing="pre",
         background=False,
     )
+    msgspec.structs.force_setattr(bad, "mode", ConversationBranchMode.FORK)
     parent = _conv(
         "px",
         [_turn(branch_ids=["x:pre"])],
@@ -270,15 +274,18 @@ def test_pre_session_branch_not_declared_on_any_turn_rejects():
 
 
 def test_branch_mode_outside_supported_set_rejects():
-    """Bypass enum on a ``ConversationBranchInfo`` via ``model_construct`` to
-    smuggle a 'future' mode value past the validator."""
-    bad = ConversationBranchInfo.model_construct(
+    """Smuggle a 'future' mode value past the ``__post_init__`` validator by
+    constructing a normal branch and then forcing ``mode`` to an unsupported
+    string via ``msgspec.structs.force_setattr``.
+    """
+    bad = ConversationBranchInfo(
         branch_id="b0",
         child_conversation_ids=["c"],
-        mode="loopback",  # not in _SUPPORTED_BRANCH_MODES
+        mode=ConversationBranchMode.SPAWN,
         dispatch_timing="post",
         background=False,
     )
+    msgspec.structs.force_setattr(bad, "mode", "loopback")
     parent = _conv("p", [_turn(branch_ids=["b0"])], branches=[bad])
     child = _conv(
         "c", [_turn()], is_root=False, agent_depth=1, parent_conversation_id="p"

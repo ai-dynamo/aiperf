@@ -66,38 +66,6 @@ def _serialize_dataset_client_metadata(value: Any) -> Any:
     return msgspec.to_builtins(value, enc_hook=_msgspec_enc_hook)
 
 
-class _PydanticCompatMixin:
-    """Mixin providing Pydantic-style ``model_validate`` / ``model_dump``
-    methods on msgspec.Struct subclasses. Used by hot-path dataset models
-    so callers (tests, loaders) that still speak Pydantic vocabulary keep
-    working after the perf restoration to msgspec.
-    """
-
-    @classmethod
-    def model_validate(cls, value: Any) -> Any:
-        if isinstance(value, cls):
-            return value
-        from aiperf.common.models.base_models import _msgspec_dec_hook
-
-        return msgspec.convert(value, cls, dec_hook=_msgspec_dec_hook)
-
-    @classmethod
-    def model_validate_json(cls, value: str | bytes) -> Any:
-        from aiperf.common.models.base_models import _msgspec_dec_hook
-
-        return msgspec.json.decode(value, type=cls, dec_hook=_msgspec_dec_hook)
-
-    def model_dump(self, **_: Any) -> dict[str, Any]:
-        from aiperf.common.models.base_models import _msgspec_enc_hook
-
-        return msgspec.to_builtins(self, enc_hook=_msgspec_enc_hook)
-
-    def model_dump_json(self, **_: Any) -> str:
-        from aiperf.common.models.base_models import _msgspec_enc_hook
-
-        return msgspec.json.encode(self, enc_hook=_msgspec_enc_hook).decode("utf-8")
-
-
 class DatasetClientMetadata(
     msgspec.Struct,
     tag_field="client_type",
@@ -214,7 +182,6 @@ class Video(Media):
 
 
 class TurnMetadata(
-    _PydanticCompatMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -236,7 +203,6 @@ class TurnMetadata(
 
 
 class Turn(
-    _PydanticCompatMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,
@@ -334,7 +300,6 @@ class Turn(
 
 
 class ConversationMetadata(
-    _PydanticCompatMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -362,7 +327,6 @@ class ConversationMetadata(
 
 
 class DatasetMetadata(
-    _PydanticCompatMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -408,7 +372,6 @@ class DatasetMetadata(
 
 
 class Conversation(
-    _PydanticCompatMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,
@@ -476,7 +439,6 @@ class Conversation(
 
 
 class SessionPayloads(
-    _PydanticCompatMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -488,7 +450,6 @@ class SessionPayloads(
 
 
 class InputsFile(
-    _PydanticCompatMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,

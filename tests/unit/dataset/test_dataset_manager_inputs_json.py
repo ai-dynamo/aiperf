@@ -9,10 +9,12 @@ import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+import msgspec
 import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import InputsFile, RequestInfo, RequestRecord, SessionPayloads
+from aiperf.common.models.base_models import _msgspec_dec_hook
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
@@ -145,11 +147,13 @@ class TestDatasetManagerInputsJsonGeneration:
         populated_dataset_manager,
         capture_file_writes,
     ):
-        """Test that generated content is compatible with InputsFile Pydantic model."""
+        """Test that generated content is compatible with InputsFile msgspec model."""
         await populated_dataset_manager._generate_inputs_json_file()
 
         written_json = json.loads(capture_file_writes.written_content)
-        inputs_file = InputsFile.model_validate(written_json)
+        inputs_file = msgspec.convert(
+            written_json, InputsFile, dec_hook=_msgspec_dec_hook
+        )
 
         assert isinstance(inputs_file, InputsFile)
         assert len(inputs_file.data) == 2

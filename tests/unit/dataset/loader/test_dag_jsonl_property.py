@@ -29,10 +29,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import msgspec
 from hypothesis import given, settings
 
 from aiperf.common.enums import PrerequisiteKind
 from aiperf.common.models import DatasetMetadata
+from aiperf.common.models.base_models import _msgspec_enc_hook
 from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
@@ -76,7 +78,9 @@ def test_loader_round_trips_through_jsonl_without_semantic_loss(
     by_id2 = {c.conversation_id: c for c in md2.conversations}
     assert set(by_id1) == set(by_id2)
     for cid in by_id1:
-        assert by_id1[cid].model_dump() == by_id2[cid].model_dump(), cid
+        assert msgspec.to_builtins(
+            by_id1[cid], enc_hook=_msgspec_enc_hook
+        ) == msgspec.to_builtins(by_id2[cid], enc_hook=_msgspec_enc_hook), cid
 
 
 # 2. Validator monotonicity under leaf removal -------------------------------
@@ -131,13 +135,13 @@ def test_validator_monotonicity_under_leaf_removal(tmp_path_factory, lines):
 @given(lines=dag_dataset())
 def test_loading_is_deterministic_across_repeated_calls(tmp_path_factory, lines):
     """Two independent loader instances over the same file produce
-    metadata equal under Pydantic ``model_dump`` (no insertion-order or
+    metadata equal under msgspec ``to_builtins`` (no insertion-order or
     RNG dependence).
     """
     tmp = tmp_path_factory.mktemp("dag_determ")
     path = _write(tmp, lines)
-    a = _load(path).model_dump()
-    b = _load(path).model_dump()
+    a = msgspec.to_builtins(_load(path), enc_hook=_msgspec_enc_hook)
+    b = msgspec.to_builtins(_load(path), enc_hook=_msgspec_enc_hook)
     assert a == b
 
 
