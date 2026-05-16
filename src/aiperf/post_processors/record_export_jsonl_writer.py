@@ -94,10 +94,15 @@ class RecordExportJSONLWriter(
                     if not isinstance(v.value, list)
                 }
 
-            # Convert trace data to export format (wall-clock timestamps) if enabled
+            # Convert trace data to export format (wall-clock timestamps) if enabled.
+            # The wire form carries trace_data as a plain dict (msgspec
+            # single-custom-type limit); reconstruct the Pydantic model first.
             export_trace_data = None
             if self.export_http_trace and record_data.trace_data:
-                export_trace_data = record_data.trace_data.to_export()
+                from aiperf.common.metric_records_wire import _wire_to_trace_data
+
+                trace_data = _wire_to_trace_data(record_data.trace_data)
+                export_trace_data = trace_data.to_export() if trace_data else None
 
             from aiperf.common.metric_records_wire import wire_error_to_domain_error
 

@@ -16,9 +16,12 @@ from msgspec import Struct
 
 from aiperf.common.enums import MessageType
 from aiperf.common.metric_records_wire import WireErrorDetails
-from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 
-TraceDataWireT = BaseTraceData | AioHttpTraceData
+# Trace data is carried on the wire as a plain dict (trace_type discriminator
+# + fields) because on main BaseTraceData / AioHttpTraceData are Pydantic
+# (not msgspec) models, and msgspec unions may contain at most one custom
+# type. The codec handles model_dump/reconstruct on either side.
+TraceDataWireT: TypeAlias = dict[str, Any]
 
 
 class WireText(Struct, frozen=True, kw_only=True, omit_defaults=True):
@@ -204,7 +207,7 @@ class InferenceWireRecord(Struct, frozen=True, kw_only=True, omit_defaults=True)
     """Estimated clock offset in nanoseconds for cross-process time alignment."""
 
     trace_data: TraceDataWireT | None = None
-    """Native trace data (msgspec Struct) for plugin-specific trace fields."""
+    """Trace data serialized as a dict for wire transit (msgspec union limit)."""
 
     request_headers: dict[str, str] | None = None
     """HTTP request headers sent to the inference server."""
@@ -238,13 +241,23 @@ class InferenceResultsWireMessage(
 
 # Re-export projection + codec helpers so existing
 # ``from aiperf.common.inference_wire import ...`` callsites keep working.
-from aiperf.common.inference_wire_codec import (  # noqa: E402
-    build_inference_results_wire_message,
-    decode_inference_results_wire_message,
-    encode_inference_results_wire_message,
-    wire_message_to_request_record,
-    wire_record_to_request_record,
-)
+# Use lazy ``__getattr__`` to avoid a circular import when callers reach for
+# the codec module before this one finishes initializing.
+_CODEC_REEXPORTS = {
+    "build_inference_results_wire_message",
+    "decode_inference_results_wire_message",
+    "encode_inference_results_wire_message",
+    "wire_message_to_request_record",
+    "wire_record_to_request_record",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _CODEC_REEXPORTS:
+        from aiperf.common import inference_wire_codec
+
+        return getattr(inference_wire_codec, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "InferenceResultsWireMessage",

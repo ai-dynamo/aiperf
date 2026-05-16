@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import orjson
 from msgspec import Struct
@@ -14,7 +14,42 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 from aiperf.common.types import MetricTagT
 
-TraceDataWireT = BaseTraceData | AioHttpTraceData
+# Trace data is carried on the wire as a plain dict (trace_type discriminator
+# + fields) because BaseTraceData / AioHttpTraceData are Pydantic models, and
+# msgspec unions may contain at most one custom type. Codec helpers do the
+# model_dump / model_validate round-trip on either side.
+TraceDataWireT: TypeAlias = dict[str, Any]
+
+
+def _trace_data_to_wire(trace_data: BaseTraceData | None) -> dict[str, Any] | None:
+    """Serialize a Pydantic trace-data model to a wire-safe dict.
+
+    Accepts an already-serialized dict for idempotency.
+    """
+    if trace_data is None:
+        return None
+    if isinstance(trace_data, dict):
+        return trace_data
+    return trace_data.model_dump(mode="json")
+
+
+def _wire_to_trace_data(
+    payload: "dict[str, Any] | BaseTraceData | None",
+) -> BaseTraceData | None:
+    """Reconstruct a Pydantic trace-data model from its wire dict.
+
+    Dispatches on the ``trace_type`` discriminator; unknown values fall
+    through to BaseTraceData. Accepts an already-reconstructed BaseTraceData
+    for idempotency on internal paths that bypass the wire encode step.
+    """
+    if payload is None:
+        return None
+    if isinstance(payload, BaseTraceData):
+        return payload
+    trace_type = payload.get("trace_type")
+    if trace_type == "aiohttp":
+        return AioHttpTraceData.model_validate(payload)
+    return BaseTraceData.model_validate(payload)
 
 
 def _json_safe(value: Any) -> Any:
@@ -264,7 +299,7 @@ def build_metric_records_data(
     return MetricRecordsData(
         metadata=metric_record_metadata_from_model(metadata),
         metrics=metrics,
-        trace_data=trace_data,
+        trace_data=_trace_data_to_wire(trace_data),
         error=_error_to_wire(error),
     )
 
@@ -283,7 +318,7 @@ def build_metric_records_wire_message(
         service_id=service_id,
         metadata=metadata_struct,
         metrics=metrics,
-        trace_data=trace_data,
+        trace_data=_trace_data_to_wire(trace_data),
         error=_error_to_wire(error),
     )
 

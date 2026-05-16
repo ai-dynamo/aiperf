@@ -8,6 +8,7 @@ from pydantic import Field, SerializeAsAny, field_validator
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import MessageType, MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
+from aiperf.common.metric_records_wire import _trace_data_to_wire
 from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
@@ -110,7 +111,7 @@ class MetricRecordsMessage(BaseServiceMessage):
         return MetricRecordsData(
             metadata=self.metadata,
             metrics=metrics,
-            trace_data=self.trace_data,
+            trace_data=_trace_data_to_wire(self.trace_data),
             error=self.error,
         )
 
