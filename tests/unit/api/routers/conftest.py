@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.common.models import MetricResult
-from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.config.resolution.plan import BenchmarkRun
-from tests.unit.conftest import make_run_from_cli
+from aiperf.config import AIPerfConfig, BenchmarkRun
 
 
 def make_latency_metric(
@@ -36,22 +36,32 @@ def make_latency_metric(
 
 
 @pytest.fixture
-def router_service_config() -> CLIConfig:
-    """CLIConfig for router testing."""
-    return CLIConfig(api_port=9999, api_host="127.0.0.1")
-
-
-@pytest.fixture
-def router_cfg() -> CLIConfig:
-    """CLIConfig for router testing."""
-    return CLIConfig(model_names=["test-model"])
-
-
-@pytest.fixture
-def router_benchmark_run(
-    router_cfg: CLIConfig, router_service_config: CLIConfig
-) -> BenchmarkRun:
+def router_config() -> BenchmarkRun:
     """BenchmarkRun for router testing."""
-    run = make_run_from_cli(router_cfg)
-    run.benchmark_id = "test-bench"
-    return run
+    config = AIPerfConfig(
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
+    )
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config.benchmark,
+        artifact_dir=Path("/tmp/test"),
+    )

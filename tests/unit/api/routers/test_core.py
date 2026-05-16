@@ -20,7 +20,7 @@ class TestConfigEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "endpoint" in data
-        assert "artifacts" in data
+        assert "models" in data
 
 
 class TestHealthzEndpoint:
