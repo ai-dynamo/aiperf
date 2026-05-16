@@ -4,7 +4,6 @@
 """Shared test fixtures for data exporters."""
 
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -24,54 +23,9 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsResults,
 )
 from aiperf.common.models.telemetry_models import (
-    TelemetryMetrics,
     TelemetryRecord,
 )
-from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
-from tests.unit.conftest import make_cfg_from_v1
-
-
-def make_exporter_config(
-    *,
-    results=None,
-    cli_config: CLIConfig | None = None,
-    telemetry_results=None,
-    server_metrics_results=None,
-    artifact_directory: Path | None = None,
-    cfg=None,
-    run=None,
-) -> ExporterConfig:
-    """Test-only ExporterConfig factory that accepts legacy v1 kwargs.
-
-    Bridges tests still passing v1 ``CLIConfig`` to the v2
-    ``ExporterConfig(cfg=BenchmarkConfig)`` constructor by resolving v1 -> v2
-    via ``make_cfg_from_v1``. If ``artifact_directory`` is not given but
-    ``cli_config.artifact_directory`` is set on the v1 config, that
-    value is used to override ``cfg.artifacts.dir`` (mirroring the legacy
-    behavior tests previously relied on).
-    """
-    if cfg is None:
-        if (
-            artifact_directory is None
-            and cli_config is not None
-            and "artifact_directory" in cli_config.model_fields_set
-        ):
-            artifact_directory = cli_config.artifact_directory
-        cfg = make_cfg_from_v1(
-            cli_config or CLIConfig(),
-            artifact_directory=artifact_directory,
-        )
-    elif artifact_directory is not None:
-        cfg.artifacts.dir = Path(artifact_directory)
-    return ExporterConfig(
-        results=results,
-        cfg=cfg,
-        telemetry_results=telemetry_results,
-        server_metrics_results=server_metrics_results,
-        run=run,
-    )
 
 
 @pytest.fixture
@@ -86,15 +40,15 @@ def sample_telemetry_record():
         pci_bus_id="00000000:01:00.0",
         device="nvidia0",
         hostname="test-node-01",
-        telemetry_data=TelemetryMetrics(
-            gpu_power_usage=300.0,
-            energy_consumption=1000.5,
-            gpu_utilization=85.0,
-            gpu_memory_used=72.5,
-            gpu_temperature=70.0,
-            xid_errors=0.0,
-            power_violation=0.0,
-        ),
+        telemetry_data={
+            "gpu_power_usage": 300.0,
+            "energy_consumption": 1000.5,
+            "gpu_utilization": 85.0,
+            "gpu_memory_used": 72.5,
+            "gpu_temperature": 70.0,
+            "xid_errors": 0.0,
+            "power_violation": 0.0,
+        },
     )
 
 
@@ -286,10 +240,14 @@ def empty_telemetry_results():
 
 @pytest.fixture
 def sample_timeslice_metric_results():
-    """Create sample timeslice metric results for testing."""
-    return {
-        0: [
-            MetricResult(
+    """Create sample timeslice metric results for testing.
+
+    Shape: list[dict[tag, MetricResult]] in chronological order. Position
+    in the list is the slice's chronological index.
+    """
+    return [
+        {
+            "time_to_first_token": MetricResult(
                 tag="time_to_first_token",
                 header="Time to First Token",
                 unit="ms",
@@ -301,7 +259,7 @@ def sample_timeslice_metric_results():
                 p99=88.0,
                 std=15.2,
             ),
-            MetricResult(
+            "inter_token_latency": MetricResult(
                 tag="inter_token_latency",
                 header="Inter Token Latency",
                 unit="ms",
@@ -313,9 +271,9 @@ def sample_timeslice_metric_results():
                 p99=11.8,
                 std=2.1,
             ),
-        ],
-        1: [
-            MetricResult(
+        },
+        {
+            "time_to_first_token": MetricResult(
                 tag="time_to_first_token",
                 header="Time to First Token",
                 unit="ms",
@@ -327,7 +285,7 @@ def sample_timeslice_metric_results():
                 p99=90.5,
                 std=16.1,
             ),
-            MetricResult(
+            "inter_token_latency": MetricResult(
                 tag="inter_token_latency",
                 header="Inter Token Latency",
                 unit="ms",
@@ -339,8 +297,8 @@ def sample_timeslice_metric_results():
                 p99=12.3,
                 std=2.3,
             ),
-        ],
-    }
+        },
+    ]
 
 
 @pytest.fixture
@@ -481,7 +439,6 @@ def sample_server_metrics_results():
         hierarchy.add_record(record)
 
     return ServerMetricsResults(
-        server_metrics_data=hierarchy,
         start_ns=1_000_000_000,
         end_ns=6_000_000_000,
         endpoints_configured=[
@@ -500,7 +457,6 @@ def sample_server_metrics_results():
 def empty_server_metrics_results():
     """Create ServerMetricsResults with no data (all endpoints failed)."""
     return ServerMetricsResults(
-        server_metrics_data=ServerMetricsHierarchy(),
         start_ns=1_000_000_000,
         end_ns=2_000_000_000,
         endpoints_configured=[

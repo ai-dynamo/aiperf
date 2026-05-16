@@ -6,8 +6,8 @@ from rich.console import Console
 
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
+from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -17,17 +17,6 @@ from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMet
 from aiperf.metrics.types.output_token_count import OutputTokenCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
-from aiperf.plugin.enums import EndpointType
-from tests.unit.exporters.conftest import make_exporter_config
-
-
-@pytest.fixture
-def mock_endpoint_config():
-    return CLIConfig(
-        endpoint_type=EndpointType.CHAT,
-        streaming=True,
-        model_names=["test-model"],
-    )
 
 
 @pytest.fixture
@@ -76,18 +65,15 @@ def sample_records():
 
 
 @pytest.fixture
-def mock_exporter_config(sample_records, mock_endpoint_config):
-    input_config = CLIConfig(
-        **mock_endpoint_config.model_dump(exclude_unset=True),
-    )
-    return make_exporter_config(
+def mock_exporter_config(sample_records, config):
+    return ExporterConfig(
         results=ProfileResults(
             records=sample_records,
             start_ns=0,
             end_ns=0,
             completed=0,
         ),
-        cli_config=input_config,
+        config=config.benchmark,
         telemetry_results=None,
     )
 
@@ -110,9 +96,9 @@ class TestConsoleExporter:
         [
             # ERROR_ONLY flags - always hidden
             (ErrorRequestCountMetric.tag, False),  # ERROR_ONLY flag
-            # console_group=NONE - hidden
-            (BenchmarkDurationMetric.tag, False),  # console_group=NONE
-            (OutputTokenCountMetric.tag, False),  # console_group=NONE
+            # NO_CONSOLE flags - hidden
+            (BenchmarkDurationMetric.tag, False),  # NO_CONSOLE flag
+            (OutputTokenCountMetric.tag, False),  # NO_CONSOLE flag
             (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
             # INTERNAL flags - hidden
             (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
@@ -124,22 +110,22 @@ class TestConsoleExporter:
     )  # fmt: skip
     def test_should_show_metrics_based_on_flags(
         self,
-        mock_endpoint_config: CLIConfig,
+        config,
         metric_tag,
         should_show,
     ):
         """Test that metrics are shown/hidden based on their flags"""
-        config = make_exporter_config(
+        exporter_config = ExporterConfig(
             results=ProfileResults(
                 records=[],
                 start_ns=0,
                 end_ns=0,
                 completed=0,
             ),
-            cli_config=mock_endpoint_config,
+            config=config.benchmark,
             telemetry_results=None,
         )
-        exporter = ConsoleMetricsExporter(config)
+        exporter = ConsoleMetricsExporter(exporter_config)
 
         record = MetricResult(
             tag=metric_tag,

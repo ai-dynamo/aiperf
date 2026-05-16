@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -40,12 +40,11 @@ class TestRealtimeMetricsTable:
         ],
     )  # fmt: skip
     def test_should_skip_logic_with_real_metrics(
-        self, metric_tag, show_internal, should_skip
+        self, metric_tag, show_internal, should_skip, config
     ):
         """Test that metrics are skipped based on flags and configuration using real metrics"""
         with patch.object(Environment.DEV, "SHOW_INTERNAL_METRICS", show_internal):
-            run = Mock()
-            table = RealtimeMetricsTable(run)
+            table = RealtimeMetricsTable(config)
 
             metric_result = MetricResult(
                 tag=metric_tag,

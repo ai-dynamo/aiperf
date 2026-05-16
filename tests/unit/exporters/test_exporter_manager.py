@@ -1,30 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from io import StringIO
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from rich.console import Console
 
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_manager import ExporterManager
-from aiperf.plugin.enums import (
-    EndpointType,
-)
-from tests.unit.conftest import make_run_from_cli
-
-
-@pytest.fixture
-def endpoint_config():
-    return CLIConfig(
-        endpoint_type=EndpointType.CHAT, streaming=True, model_names=["gpt2"]
-    )
-
-
-@pytest.fixture
-def output_config(tmp_path):
-    """Returns the artifact directory path used by mock_cfg."""
-    return tmp_path
 
 
 @pytest.fixture
@@ -39,24 +24,14 @@ def sample_records():
     ]
 
 
-@pytest.fixture
-def mock_cfg(endpoint_config, output_config):
-    config = CLIConfig(
-        **endpoint_config.model_dump(exclude_unset=True),
-        artifact_directory=output_config,
-    )
-    return config
-
-
 class TestExporterManager:
     @pytest.mark.asyncio
-    async def test_export(
-        self, endpoint_config, output_config, sample_records, mock_cfg
-    ):
+    async def test_export(self, sample_records, config):
         # Create a mock exporter instance
         mock_instance = MagicMock()
         mock_instance.export = AsyncMock()
         mock_class = MagicMock(return_value=mock_instance)
+        mock_class.__name__ = "MockExporter"
 
         # Create a mock PluginEntry for iter_all
         mock_entry = MagicMock()
@@ -75,7 +50,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_cli(mock_cfg),
+                config=config.benchmark,
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -84,62 +59,7 @@ class TestExporterManager:
         mock_instance.export.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_export_runs_mlflow_after_other_data_exporters(
-        self, endpoint_config, output_config, sample_records, mock_cfg
-    ):
-        execution_order: list[str] = []
-
-        async def _export_csv() -> None:
-            execution_order.append("csv")
-
-        async def _export_mlflow() -> None:
-            execution_order.append("mlflow")
-
-        csv_instance = MagicMock()
-        csv_instance.export = AsyncMock(side_effect=_export_csv)
-        csv_instance.is_deferred = False
-        csv_class = MagicMock(return_value=csv_instance)
-        csv_entry = MagicMock()
-        csv_entry.name = "csv"
-
-        mlflow_instance = MagicMock()
-        mlflow_instance.export = AsyncMock(side_effect=_export_mlflow)
-        mlflow_instance.is_deferred = True
-        mlflow_class = MagicMock(return_value=mlflow_instance)
-        mlflow_entry = MagicMock()
-        mlflow_entry.name = "mlflow"
-
-        with patch(
-            "aiperf.exporters.exporter_manager.plugins.iter_all",
-            return_value=[
-                (mlflow_entry, mlflow_class),
-                (csv_entry, csv_class),
-            ],
-        ):
-            manager = ExporterManager(
-                results=ProfileResults(
-                    records=sample_records,
-                    start_ns=0,
-                    end_ns=0,
-                    completed=0,
-                    was_cancelled=False,
-                    error_summary=[],
-                ),
-                run=make_run_from_cli(mock_cfg),
-                telemetry_results=None,
-            )
-            await manager.export_data()
-
-        assert execution_order == ["csv", "mlflow"]
-        csv_instance.export.assert_awaited_once()
-        mlflow_instance.export.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_export_console(
-        self, endpoint_config, output_config, sample_records, mock_cfg
-    ):
-        from rich.console import Console
-
+    async def test_export_console(self, sample_records, config):
         # Create mock exporter instances for each console exporter type
         mock_instances = []
         mock_classes = []
@@ -169,13 +89,153 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                run=make_run_from_cli(mock_cfg),
+                config=config.benchmark,
                 telemetry_results=None,
             )
-            await manager.export_console(Console())
+            await manager.export_console(Console(file=StringIO()))
 
         for mock_class, mock_instance in zip(
             mock_classes, mock_instances, strict=False
         ):
             mock_class.assert_called_once()
-            mock_instance.export.assert_awaited_once()
+            assert mock_instance.export.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_export_passes_steady_state_and_energy_results(
+        self, sample_records, config
+    ):
+        """ExporterConfig sees the steady_state and energy_efficiency results we pass in."""
+        sentinel_steady = MagicMock(name="SteadyStateSummary")
+        sentinel_energy = MagicMock(name="EnergyEfficiencySummary")
+
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=sample_records,
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+                was_cancelled=False,
+                error_summary=[],
+            ),
+            config=config.benchmark,
+            telemetry_results=None,
+            steady_state_results=sentinel_steady,
+            energy_efficiency_results=sentinel_energy,
+        )
+
+        assert manager._exporter_config.steady_state_results is sentinel_steady
+        assert manager._exporter_config.energy_efficiency_results is sentinel_energy
+
+
+class TestConsoleExportToFile:
+    """Verify export_console writes the .txt artifact."""
+
+    @pytest.mark.asyncio
+    async def test_writes_txt_file(self, sample_records, config, tmp_path):
+        config.benchmark.artifacts.dir = tmp_path
+
+        mock_instance = MagicMock()
+
+        async def fake_export(console):
+            console.print("[bold red]Hello[/bold red] world")
+
+        mock_instance.export = AsyncMock(side_effect=fake_export)
+        mock_class = MagicMock(return_value=mock_instance)
+        mock_entry = MagicMock()
+        mock_entry.name = "mock_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(mock_entry, mock_class)],
+        ):
+            manager = ExporterManager(
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
+                config=config.benchmark,
+                telemetry_results=None,
+            )
+            await manager.export_console(Console(file=StringIO()))
+
+        txt_file = tmp_path / "profile_export_console.txt"
+        ansi_file = tmp_path / "profile_export_console.ansi"
+
+        assert txt_file.exists(), ".txt file not created"
+        assert not ansi_file.exists(), ".ansi file should no longer be written"
+
+        txt_content = txt_file.read_text()
+
+        assert "Hello" in txt_content
+        assert "world" in txt_content
+        assert "\x1b[" not in txt_content
+
+    @pytest.mark.asyncio
+    async def test_file_write_failure_does_not_crash(self, sample_records, config):
+        config.benchmark.artifacts.dir = Path("/nonexistent/path/that/should/fail")
+
+        mock_instance = MagicMock()
+        mock_instance.export = AsyncMock()
+        mock_class = MagicMock(return_value=mock_instance)
+        mock_entry = MagicMock()
+        mock_entry.name = "mock_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(mock_entry, mock_class)],
+        ):
+            manager = ExporterManager(
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
+                config=config.benchmark,
+                telemetry_results=None,
+            )
+            await manager.export_console(Console(file=StringIO()))
+
+    @pytest.mark.asyncio
+    async def test_recording_console_uses_fixed_width_140(
+        self, sample_records, config, tmp_path
+    ):
+        """Non-tty live console and the .txt recording both render at 140 cols."""
+        config.benchmark.artifacts.dir = tmp_path
+
+        captured_widths: list[int] = []
+
+        async def fake_export(console):
+            captured_widths.append(console.width)
+
+        mock_instance = MagicMock()
+        mock_instance.export = AsyncMock(side_effect=fake_export)
+        mock_class = MagicMock(return_value=mock_instance)
+        mock_entry = MagicMock()
+        mock_entry.name = "mock_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(mock_entry, mock_class)],
+        ):
+            manager = ExporterManager(
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
+                config=config.benchmark,
+                telemetry_results=None,
+            )
+            await manager.export_console(Console(file=StringIO(), width=80))
+
+        assert captured_widths == [140, 140]

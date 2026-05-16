@@ -561,18 +561,18 @@ class TestRealtimeTelemetryDashboard:
     """Test RealtimeTelemetryDashboard widget."""
 
     @pytest.fixture
-    def run(self):
-        """Create a mock BenchmarkRun."""
+    def dashboard_config(self):
+        """Create a mock AIPerfConfig."""
         return Mock()
 
     @pytest.fixture
-    def dashboard(self, run):
+    def dashboard(self, dashboard_config):
         """Create a RealtimeTelemetryDashboard instance for testing."""
-        return RealtimeTelemetryDashboard(run=run)
+        return RealtimeTelemetryDashboard(run=dashboard_config)
 
-    def test_init(self, dashboard, run):
+    def test_init(self, dashboard, dashboard_config):
         """Test dashboard initialization."""
-        assert dashboard.run == run
+        assert dashboard.run == dashboard_config
         assert dashboard.all_nodes_view is None
         assert dashboard.metrics == []
         assert dashboard.border_title == "Real-Time GPU Telemetry"

@@ -12,7 +12,7 @@ class TestAIPerfDashboardUIInitialization:
     """Test AIPerfDashboardUI initialization."""
 
     @pytest.fixture
-    def mock_dependencies(self, benchmark_run):
+    def mock_dependencies(self, run):
         """Create mocked dependencies for AIPerfDashboardUI."""
         mock_log_queue = Mock()
         mock_controller = MagicMock()
@@ -20,7 +20,7 @@ class TestAIPerfDashboardUIInitialization:
 
         return {
             "log_queue": mock_log_queue,
-            "run": benchmark_run,
+            "run": run,
             "controller": mock_controller,
         }
 
@@ -75,15 +75,14 @@ class TestAIPerfDashboardUIInitialization:
     def test_init_attaches_all_hooks(self, dashboard_ui):
         """Test that all required hooks are attached correctly to the app."""
         assert hasattr(dashboard_ui.app, "on_records_progress")
-        assert hasattr(dashboard_ui.app, "on_profiling_progress")
-        assert hasattr(dashboard_ui.app, "on_warmup_progress")
+        assert hasattr(dashboard_ui.app, "on_phase_progress")
         assert hasattr(dashboard_ui.app, "on_worker_update")
         assert hasattr(dashboard_ui.app, "on_worker_status_summary")
         assert hasattr(dashboard_ui.app, "on_realtime_metrics")
         assert hasattr(dashboard_ui.app, "on_realtime_telemetry_metrics")
 
     def test_init_stores_references(self, dashboard_ui, mock_dependencies):
-        """Test that controller and run are stored."""
+        """Test that controller and config are stored."""
         assert dashboard_ui.controller == mock_dependencies["controller"]
         assert dashboard_ui.run == mock_dependencies["run"]
 
@@ -107,7 +106,7 @@ class TestAIPerfDashboardUILifecycle:
     """Test lifecycle hooks."""
 
     @pytest.fixture
-    def dashboard_ui(self, benchmark_run):
+    def dashboard_ui(self, run):
         """Create AIPerfDashboardUI instance with mocked dependencies."""
         mock_log_queue = Mock()
         mock_controller = MagicMock()
@@ -123,7 +122,7 @@ class TestAIPerfDashboardUILifecycle:
 
             dashboard = AIPerfDashboardUI(
                 log_queue=mock_log_queue,
-                run=benchmark_run,
+                run=run,
                 controller=mock_controller,
             )
 

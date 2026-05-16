@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 
 import pytest
+from pytest import param
 
 from aiperf.ui.utils import format_bytes, format_elapsed_time, format_eta
 
-logging.basicConfig(level=logging.DEBUG)
 
 
 @pytest.mark.parametrize(
@@ -83,3 +82,9 @@ def test_format_eta(seconds, expected) -> None:
 )
 def test_format_elapsed_time(seconds, expected) -> None:
     assert format_elapsed_time(seconds) == expected
+
+
+# ---------------------------------------------------------------------------
+# extractNamespaceField (lib/yaml-namespace.js)
+# ---------------------------------------------------------------------------
+
