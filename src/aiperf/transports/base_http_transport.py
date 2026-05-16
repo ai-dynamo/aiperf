@@ -9,6 +9,7 @@ import asyncio
 import time
 from abc import abstractmethod
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 import orjson
@@ -49,15 +50,26 @@ class HTTPClientProtocol(Protocol):
 def _append_path_deduped(base_url: str, path: str) -> str:
     """Append *path* to *base_url*, deduplicating when the URL already contains the path.
 
+    Preserves any ``?query`` or ``#fragment`` segments on ``base_url`` —
+    they re-attach after the path is appended so a base like
+    ``http://h/v1?key=abc`` plus path ``v1/chat`` yields
+    ``http://h/v1/chat?key=abc`` rather than the broken
+    ``http://h/v1?key=abc/v1/chat``.
+
     Handles common user mistakes like providing ``http://server:8000/v1/chat/completions``
     as the base URL when the endpoint path is ``v1/chat/completions``.
     """
-    if base_url.endswith(f"/{path}"):
-        return base_url
-    # Handle /v1 base URL with v1/ path prefix to avoid /v1/v1/...
-    if base_url.endswith("/v1") and path.startswith("v1/"):
-        path = path.removeprefix("v1/")
-    return f"{base_url}/{path}"
+    parsed = urlparse(base_url)
+    base_path = parsed.path.rstrip("/")
+    query = parsed.query
+    fragment = parsed.fragment
+    if base_path.endswith(f"/{path}"):
+        new_path = base_path
+    elif base_path.endswith("/v1") and path.startswith("v1/"):
+        new_path = f"{base_path}/{path.removeprefix('v1/')}"
+    else:
+        new_path = f"{base_path}/{path}" if base_path else f"/{path}"
+    return urlunparse(parsed._replace(path=new_path, query=query, fragment=fragment))
 
 
 class BaseHTTPTransport(BaseTransport):
@@ -94,14 +106,45 @@ class BaseHTTPTransport(BaseTransport):
 
     @staticmethod
     def _build_form_data(payload: dict[str, Any]) -> aiohttp.FormData:
-        """Build multipart form data from a payload dict."""
-        form_data = aiohttp.FormData()
+        """Build multipart form data from a payload dict.
+
+        File fields are encoded as ``{"b64_data": <str>, "filename": <str>,
+        "content_type": <str>}``. Keeping bytes base64-encoded in the payload
+        lets it stay JSON-serialisable upstream; decoding happens here.
+
+        ``default_to_multipart=True`` forces multipart/form-data even when the
+        payload happens to be text-only (e.g., image_edit with a ``url`` field
+        instead of an inline image), so the wire format always matches the
+        endpoint's declared ``requires_form_data`` contract.
+
+        Raises:
+            ValueError: when a ``b64_data`` field is present but not valid
+                base64; the offending key name is included in the message.
+        """
+        import base64
+        import binascii
+
+        form_data = aiohttp.FormData(default_to_multipart=True)
         for key, value in payload.items():
-            if value is not None:
-                str_value = (
-                    str(value).lower() if isinstance(value, bool) else str(value)
+            if value is None:
+                continue
+            if isinstance(value, dict) and isinstance(value.get("b64_data"), str):
+                try:
+                    file_bytes = base64.b64decode(value["b64_data"], validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    raise ValueError(
+                        f"Field {key!r}: 'b64_data' is not valid base64."
+                    ) from exc
+                form_data.add_field(
+                    key,
+                    file_bytes,
+                    filename=value.get("filename") or key,
+                    content_type=value.get("content_type")
+                    or "application/octet-stream",
                 )
-                form_data.add_field(key, str_value)
+                continue
+            str_value = str(value).lower() if isinstance(value, bool) else str(value)
+            form_data.add_field(key, str_value)
         return form_data
 
     def get_url(self, request_info: RequestInfo) -> str:
@@ -125,8 +168,12 @@ class BaseHTTPTransport(BaseTransport):
         url_index = request_info.url_index if request_info.url_index is not None else 0
         base_url = endpoint_info.urls[url_index % len(endpoint_info.urls)].rstrip("/")
 
-        # Determine the endpoint path
-        if endpoint_info.path:
+        # Determine the endpoint path. An explicitly empty ``path``
+        # (``endpoint.path = ""``) means "use base URL as-is" — distinct from
+        # ``None`` which falls through to endpoint-metadata-derived path.
+        if endpoint_info.path == "":
+            path = ""
+        elif endpoint_info.path:
             # Use custom endpoint path if provided
             path = endpoint_info.path.lstrip("/")
         else:
@@ -144,8 +191,9 @@ class BaseHTTPTransport(BaseTransport):
         else:
             path = path.lstrip("/")
             url = _append_path_deduped(base_url, path)
-        # Add scheme if missing for proper parsing
-        return url if url.startswith("http") else f"http://{url}"
+        # Normalize scheme prefix: case-insensitive match so callers can
+        # write ``HTTP://`` or ``HTTPS://`` without us doubly-prefixing.
+        return url if url.lower().startswith(("http://", "https://")) else f"http://{url}"
 
     # -- Video polling methods (shared by aiohttp and httpcore transports) --
 

@@ -71,7 +71,14 @@ def create_config(
         or ConnectionReuseStrategy.POOLED,
     }
     if custom_endpoint is not None:
-        endpoint["path"] = custom_endpoint
+        # Adversarial URL tests pass paths like "v1/chat" (no leading slash)
+        # and "" (empty). Normalize non-empty paths to have a leading slash;
+        # the empty-string case is preserved verbatim so the test can assert
+        # "explicit empty = no path append" semantics.
+        if custom_endpoint == "" or custom_endpoint.startswith("/"):
+            endpoint["path"] = custom_endpoint
+        else:
+            endpoint["path"] = f"/{custom_endpoint}"
     if api_key is not None:
         endpoint["api_key"] = api_key
     if headers:

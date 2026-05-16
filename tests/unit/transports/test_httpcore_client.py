@@ -15,6 +15,7 @@ from aiperf.plugin.enums import EndpointType
 from aiperf.transports.httpcore_client import HttpCoreClient
 from aiperf.transports.httpcore_transport import HttpCoreTransport
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1024,7 +1025,7 @@ def _make_transport_run(
 def _make_transport(run: BenchmarkRun) -> HttpCoreTransport:
     """Instantiate HttpCoreTransport with a mocked httpcore_client."""
     with patch("httpcore.AsyncConnectionPool"):
-        transport = HttpCoreTransport(run=run)
+        transport = HttpCoreTransport(model_endpoint=ModelEndpointInfo.from_run(run))
         transport.httpcore_client = HttpCoreClient(timeout=30.0)
     return transport
 

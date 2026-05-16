@@ -14,6 +14,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
 
@@ -108,7 +109,7 @@ class TestBaseTransport:
     @pytest.fixture
     def transport(self, model_endpoint):
         """Create a FakeTransport instance."""
-        return FakeTransport(run=model_endpoint)
+        return FakeTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
 
     @pytest.fixture
     def request_info(self, model_endpoint):
@@ -189,7 +190,7 @@ class TestBaseTransport:
                     "Accept": "text/event-stream",
                 }
 
-        transport = CustomTransport(run=model_endpoint)
+        transport = CustomTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
         request_info.endpoint_headers = {"Content-Type": "text/plain"}
 
         headers = transport.build_headers(request_info)
@@ -206,7 +207,7 @@ class TestBaseTransport:
             ) -> dict[str, str]:
                 return {"X-Priority": "transport", "Content-Type": "application/json"}
 
-        transport = CustomTransport(run=model_endpoint)
+        transport = CustomTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
         request_info.endpoint_headers = {
             "X-Priority": "endpoint",
             "Authorization": "Bearer token",
@@ -240,7 +241,7 @@ class TestBaseTransport:
                 "urls": ["http://localhost:8000/v1/chat/completions?existing=param"],
             }
         )
-        transport = FakeTransport(run=run)
+        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
         request_info = _make_request_info(run.cfg, endpoint_params={"new": "value"})
 
         url = transport.build_url(request_info)
@@ -255,7 +256,7 @@ class TestBaseTransport:
                 "urls": ["http://localhost:8000/v1/chat/completions?key=original"],
             }
         )
-        transport = FakeTransport(run=run)
+        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
         request_info = _make_request_info(
             run.cfg, endpoint_params={"key": "overridden"}
         )
@@ -293,7 +294,7 @@ class TestBaseTransport:
                 "urls": ["http://localhost:8000/api?a=1&b=2&c=3"],
             }
         )
-        transport = FakeTransport(run=run)
+        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
         request_info = _make_request_info(
             run.cfg, endpoint_params={"d": "4", "b": "overridden"}
         )

@@ -19,6 +19,7 @@ from aiperf.common.models import (
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.transports.aiohttp_transport import AioHttpTransport
 from tests.unit.transports.test_aiohttp_transport import create_request_info
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["sora-2"],
@@ -89,7 +90,7 @@ def video_request_info(video_model_endpoint):
 @pytest.fixture
 def transport(video_model_endpoint):
     """Create an AioHttpTransport instance."""
-    transport = AioHttpTransport(run=video_model_endpoint)
+    transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(video_model_endpoint))
     transport.aiohttp_client = AsyncMock()
     return transport
 
@@ -187,7 +188,7 @@ class TestVideoJobSubmission:
     @pytest.mark.asyncio
     async def test_submit_video_job_not_initialized(self, video_model_endpoint):
         """Test video job submission when client not initialized."""
-        transport = AioHttpTransport(run=video_model_endpoint)
+        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(video_model_endpoint))
         # Don't initialize aiohttp_client
 
         with pytest.raises(Exception, match="not initialized"):

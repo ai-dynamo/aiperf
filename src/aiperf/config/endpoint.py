@@ -456,7 +456,7 @@ class EndpointConfig(BaseConfig):
                 raise ValueError(
                     f"URL {url!r} has port {port} outside the valid range 1..65535."
                 )
-        if self.path is not None and not self.path.startswith("/"):
+        if self.path is not None and self.path != "" and not self.path.startswith("/"):
             raise ValueError("endpoint.path must start with a leading slash")
         return self
 
