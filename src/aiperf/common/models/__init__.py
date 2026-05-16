@@ -132,6 +132,7 @@ from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.common.models.metric_result_models import TimesliceWindow
 from aiperf.common.models.trace_models import (
     AioHttpTraceData,
     AioHttpTraceDataExport,
@@ -248,6 +249,7 @@ __all__ = [
     "TimeRangeFilter",
     "TimesliceCollectionExportData",
     "TimesliceData",
+    "TimesliceWindow",
     "TokenCounts",
     "ToolCallResponseData",
     "TraceDataExport",

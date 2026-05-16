@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 from rich.console import Console, ConsoleRenderable, Group
 from rich.highlighter import ReprHighlighter
@@ -28,7 +28,12 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
-_global_log_queue: "multiprocessing.Queue | None" = None
+
+LogQueue: TypeAlias = multiprocessing.Queue
+"""Type alias for a multiprocessing log queue. Used to forward log records
+across process boundaries to a centralized listener in the controller pod."""
+
+_global_log_queue: "LogQueue | None" = None
 _log_queue_lock = threading.Lock()
 
 _LOG_LEVEL_STYLES = {
