@@ -100,6 +100,15 @@ class MetricRecordMetadata(Struct, frozen=True, kw_only=True, omit_defaults=True
     clock_offset_ns: int | None = None
     """Estimated clock offset in nanoseconds for cross-process time alignment."""
 
+    agent_depth: int = 0
+    """DAG agent depth: 0 = root request, >0 = nested branch (FORK/SPAWN)
+    descendant. Tagged so per-record exports can filter / pivot by depth."""
+
+    parent_correlation_id: str | None = None
+    """X-Correlation-ID of the parent request when this record is a DAG
+    branch child (None for root requests). Lets exporters reconstruct the
+    full branch tree without re-walking dataset state."""
+
     def model_dump(self) -> dict[str, Any]:
         """Compatibility helper for code that flattens metadata into dicts."""
         return {
@@ -120,6 +129,8 @@ class MetricRecordMetadata(Struct, frozen=True, kw_only=True, omit_defaults=True
             "was_cancelled": self.was_cancelled,
             "cancellation_time_ns": self.cancellation_time_ns,
             "clock_offset_ns": self.clock_offset_ns,
+            "agent_depth": self.agent_depth,
+            "parent_correlation_id": self.parent_correlation_id,
         }
 
 
