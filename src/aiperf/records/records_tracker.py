@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordsData
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     CreditPhaseStats,
@@ -37,6 +37,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         # Must be set by the caller
         self._phase: CreditPhase = phase
+        self._exclude_from_results: bool = False
         self._total_expected_requests: int | None = None
 
         # Timestamp fields
@@ -87,6 +88,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         """Create a new immutable RecordsPhaseStats object for the phase (for use in messages)."""
         return PhaseRecordsStats(
             phase=self._phase,
+            exclude_from_results=self._exclude_from_results,
             start_ns=self._start_ns,
             sent_end_ns=self._sent_end_ns,
             requests_end_ns=self._requests_end_ns,
@@ -104,6 +106,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
 
     def update_from_credit_phase_stats(self, credit_stats: CreditPhaseStats) -> None:
         """Update the phase info."""
+        self._exclude_from_results = credit_stats.exclude_from_results
         self._start_ns = credit_stats.start_ns
         self._sent_end_ns = credit_stats.sent_end_ns
         self._requests_end_ns = credit_stats.requests_end_ns
@@ -180,6 +183,10 @@ class RecordsTracker:
                 all_worker_stats[worker_id].error_records += worker_stats.error_records
         return dict(all_worker_stats)
 
+    def is_phase_excluded(self, phase: CreditPhase) -> bool:
+        """Check whether a phase is excluded from final results."""
+        return self._get_phase_tracker(phase)._exclude_from_results
+
     def create_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
         """Create a new immutable RecordsPhaseStats object for the phase (for use in messages)."""
         phase_tracker = self._get_phase_tracker(phase)
@@ -227,3 +234,42 @@ class RecordsTracker:
         return [
             pt.create_stats() for pt in self._phase_trackers.values() if pt.is_active
         ]
+
+    def get_results_phases(self) -> list[CreditPhase]:
+        """Get phase names where exclude_from_results=False."""
+        return [
+            phase
+            for phase, pt in self._phase_trackers.items()
+            if not pt._exclude_from_results
+        ]
+
+    def get_results_time_window(self) -> tuple[int | None, int | None]:
+        """Get min start_ns / max end_ns across non-excluded phases."""
+        start_ns: int | None = None
+        end_ns: int | None = None
+        for pt in self._phase_trackers.values():
+            if pt._exclude_from_results:
+                continue
+            if pt._start_ns is not None:
+                start_ns = (
+                    min(start_ns, pt._start_ns)
+                    if start_ns is not None
+                    else pt._start_ns
+                )
+            if pt._requests_end_ns is not None:
+                end_ns = (
+                    max(end_ns, pt._requests_end_ns)
+                    if end_ns is not None
+                    else pt._requests_end_ns
+                )
+        return start_ns, end_ns
+
+    def are_all_results_phases_complete(self) -> bool:
+        """Check if all non-excluded phases have received all records."""
+        results_phases = self.get_results_phases()
+        if not results_phases:
+            return False
+        return all(
+            self._get_phase_tracker(phase)._sent_all_records_received
+            for phase in results_phases
+        )

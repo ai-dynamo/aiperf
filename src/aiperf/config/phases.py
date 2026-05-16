@@ -69,11 +69,12 @@ class BasePhaseConfig(BaseConfig):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[
-        Literal["warmup", "profiling"],
+        str,
         Field(
-            description="Phase identifier — must be 'warmup' or 'profiling'. "
-            "The credit pipeline only distinguishes these two phase kinds. "
-            "Used in logs, status, sweep targeting, and result file naming.",
+            min_length=1,
+            description="Phase identifier — unique within the benchmark's phases list. "
+            "Used in logs, status, sweep targeting, and result file naming. "
+            "Common names: 'warmup', 'profiling'. Must be 1+ chars.",
         ),
     ]
 

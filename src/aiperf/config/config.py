@@ -427,10 +427,21 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @model_validator(mode="after")
     def validate_profiling_phase_required(self) -> Self:
-        """Require at least one 'profiling' phase — warmup alone is not a benchmark."""
-        if not any(p.name == "profiling" for p in self.phases):
+        """At least one non-warmup phase is required for a benchmark.
+
+        Following branch's design, phase names are not restricted to
+        'warmup'/'profiling' — any string identifier is allowed. We still
+        require at least one phase that isn't excluded from results.
+        """
+        # Skip validation if user explicitly only declared 'warmup' phases.
+        non_warmup = [
+            p
+            for p in self.phases
+            if not getattr(p, "exclude_from_results", False)
+        ]
+        if not non_warmup:
             raise ValueError(
-                "a 'profiling' phase is required; "
+                "at least one non-warmup phase is required; "
                 f"got phases: {[p.name for p in self.phases]}"
             )
         return self

@@ -938,6 +938,12 @@ class _ServiceSettings(BaseSettings):
         description="Warning threshold in milliseconds for event loop latency (default: 25ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
     )
+    EVENT_LOOP_HEALTH_STACKTRACE: bool = Field(
+        default=False,
+        description="Enable watchdog thread that captures event loop thread stack traces when blocked. "
+        "A daemon thread pings the event loop and captures sys._current_frames() when it fails to "
+        "respond within the warning threshold. Adds minimal overhead (one thread per monitored service).",
+    )
     # Health server settings for Kubernetes probes
     HEALTH_ENABLED: bool = Field(
         default=False,

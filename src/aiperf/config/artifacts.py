@@ -164,6 +164,16 @@ class ArtifactsConfig(BaseConfig):
         ),
     ]
 
+    benchmark_id: Annotated[
+        str,
+        Field(
+            default_factory=lambda: __import__("uuid").uuid4().hex,
+            description="Unique identifier for this benchmark run, used to correlate "
+            "artifacts across export formats. [auto-generated; do not set in a CR spec "
+            "unless you have a specific reason to override the UUID.]",
+        ),
+    ]
+
     user_files: Annotated[
         list[UserFile],
         Field(
