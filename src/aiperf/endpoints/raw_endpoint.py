@@ -23,13 +23,14 @@ class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
     endpoint type, and regular endpoints provide structured response parsing.
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize and compile the optional JMESPath ``response_field`` from ``endpoint.extra``.
 
-        Forwards args/kwargs to ``BaseEndpoint``; the ``_init_response_parser``
-        call is what distinguishes ``RawEndpoint`` from a plain ``BaseEndpoint``.
+        Forwards args/kwargs to ``BaseEndpoint`` (which accepts either
+        ``model_endpoint=`` or ``run=``); the ``_init_response_parser`` call
+        is what distinguishes ``RawEndpoint`` from a plain ``BaseEndpoint``.
         """
-        super().__init__(run, **kwargs)
+        super().__init__(*args, **kwargs)
         self._init_response_parser()
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:

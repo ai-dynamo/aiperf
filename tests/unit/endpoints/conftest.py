@@ -43,6 +43,10 @@ def create_model_endpoint(
     )
 
 
+# Alias retained for branch-side tests imported as ``create_config``.
+create_config = create_model_endpoint
+
+
 def _benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo):
     """Build a minimal ``BenchmarkRun`` whose ``cfg`` matches the given endpoint shape.
 
@@ -94,13 +98,19 @@ def _benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo):
 
 
 def create_endpoint_with_mock_transport(endpoint_class, model_endpoint):
-    """Helper to create an endpoint instance with a mocked transport."""
-    run = _benchmark_run_from_model_endpoint(model_endpoint)
-    return endpoint_class(run=run)
+    """Helper to create an endpoint instance with a mocked transport.
+
+    Endpoints now accept either ``model_endpoint=ModelEndpointInfo`` (main
+    keeper convention) or ``run=BenchmarkRun`` (branch port convention).
+    Pass through whichever the caller provided; the BaseEndpoint shim
+    auto-derives the other.
+    """
+    return endpoint_class(model_endpoint=model_endpoint)
 
 
 def create_request_info(
-    model_endpoint: ModelEndpointInfo,  # noqa: ARG001 -- kept for source-compat with main's signature
+    model_endpoint: ModelEndpointInfo | None = None,
+    config: ModelEndpointInfo | None = None,  # alias retained for branch tests
     texts: list[str] | None = None,
     turns: list[Turn] | None = None,
     model: str | None = None,
@@ -117,11 +127,12 @@ def create_request_info(
 ) -> RequestInfo:
     """Helper to create RequestInfo with all required fields.
 
-    Can either provide texts (to create a simple turn) or provide turns directly.
-    The ``model_endpoint`` argument is accepted for source-compat with main's
-    signature but is no longer carried on RequestInfo (branch's msgspec
-    Struct shape) -- endpoints read it from ``self.run.cfg`` instead.
+    ``model_endpoint`` / ``config`` are accepted for source-compat with both
+    main's and the K8s branch's tests but no longer flow onto the
+    ``RequestInfo`` struct (msgspec shape). Endpoints read endpoint metadata
+    off ``self.model_endpoint`` (auto-derived from ``run`` when needed).
     """
+    _ = model_endpoint if model_endpoint is not None else config
     if credit_phase is None:
         credit_phase = CreditPhase.PROFILING
 

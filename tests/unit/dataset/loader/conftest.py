@@ -97,6 +97,12 @@ def default_user_config() -> AIPerfConfig:
     )
 
 
+@pytest.fixture
+def user_config(default_user_config: AIPerfConfig) -> AIPerfConfig:
+    """Branch-side fixture alias retained for tests ported from the K8s branch."""
+    return default_user_config
+
+
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
     """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
     return BenchmarkRun(

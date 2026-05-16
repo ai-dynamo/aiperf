@@ -226,3 +226,12 @@ class ModelEndpointInfo(AIPerfBaseModel):
     def primary_model_name(self) -> str:
         """Get the primary model name."""
         return self.primary_model.name
+
+    def get_model_names(self) -> list[str]:
+        """Return the configured model names in registration order.
+
+        Source-compat helper for endpoints (and tests) that mirror
+        ``BenchmarkConfig.get_model_names`` against a ``ModelEndpointInfo``
+        instance.
+        """
+        return [m.name for m in self.models.models]
