@@ -68,12 +68,9 @@ class InferenceClient(AIPerfLifecycleMixin):
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self.run.cfg.endpoint.type
         )
-        from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-
-        self._model_endpoint = ModelEndpointInfo.from_run(self.run)
-        self.endpoint = EndpointClass(model_endpoint=self._model_endpoint)
+        self.endpoint = EndpointClass(run=self.run)
         TransportClass = plugins.get_class(PluginType.TRANSPORT, str(transport))
-        self.transport = TransportClass(model_endpoint=self._model_endpoint)
+        self.transport = TransportClass(run=self.run)
         self.attach_child_lifecycle(self.transport)
 
     async def _send_request_to_transport(

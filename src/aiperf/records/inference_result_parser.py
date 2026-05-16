@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 from contextlib import suppress
@@ -8,25 +10,20 @@ from typing import TYPE_CHECKING
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.models.record_models import (
-    ReasoningResponseData,
-    TokenCounts,
-    ToolCallResponseData,
-    find_last_non_empty_usage,
-)
+from aiperf.common.models.record_models import ReasoningResponseData, TokenCounts
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
-
-if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.records import _tokenizer_preload
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -35,26 +32,36 @@ class InferenceResultParser(CommunicationMixin):
 
     def __init__(
         self,
-        run: "BenchmarkRun",
+        run: BenchmarkRun,
+        tokenizer_bundles: dict[str, str] | None = None,
+        tokenizer_ready: asyncio.Event | None = None,
     ) -> None:
-        super().__init__(
-            run=run,
-        )
+        super().__init__(run=run)
         self.tokenizers: dict[str, Tokenizer] = {}
+        config: BenchmarkConfig = run.cfg
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(run)
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, self.model_endpoint.endpoint.type
+        # In K8s the owning RecordProcessor passes a shared bundles dict +
+        # readiness event so this parser blocks on WGM-published paths
+        # before loading. In local mode the caller leaves both unset; we
+        # default to empty bundles + a pre-set event so the existing
+        # name-based load path runs unchanged.
+        self._tokenizer_bundles: dict[str, str] = (
+            tokenizer_bundles if tokenizer_bundles is not None else {}
         )
-        self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
-        endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
+        if tokenizer_ready is None:
+            tokenizer_ready = asyncio.Event()
+            tokenizer_ready.set()
+        self._tokenizer_ready = tokenizer_ready
+        EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
+        self.endpoint = EndpointClass(run=run)
+        endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
-        # if the user config is set to use server token counts.
-        self.disable_tokenization: bool = run.cfg.endpoint.use_server_token_count or (
+        # if the config is set to use server token counts.
+        self.disable_tokenization: bool = config.endpoint.use_server_token_count or (
             not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
         )
         self.debug(
-            lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
+            lambda: f"Created endpoint for {config.endpoint.type}, "
             f"class: {self.endpoint.__class__.__name__}",
         )
 
@@ -62,6 +69,21 @@ class InferenceResultParser(CommunicationMixin):
     async def _initialize(self) -> None:
         """Initialize inference result parser-specific components."""
         self.debug("Initializing inference result parser")
+
+    def _select_load_target(
+        self, tokenizer_name: str, resolve_alias: bool
+    ) -> tuple[str, bool]:
+        """Pick the argument to pass to ``Tokenizer.from_pretrained``.
+
+        K8s: WGM published a bundle path; use it and skip alias resolution
+        (the path is a local dir; HF aliasing doesn't apply).
+        Local: return the name unchanged with the caller's resolve_alias flag.
+        """
+        if self._tokenizer_bundles:
+            local_path = self._tokenizer_bundles.get(tokenizer_name)
+            if local_path is not None:
+                return local_path, False
+        return tokenizer_name, resolve_alias
 
     async def configure(self) -> None:
         """Configure the tokenizers."""
@@ -71,20 +93,40 @@ class InferenceResultParser(CommunicationMixin):
             )
             return
 
-        tokenizer_config = self.run.cfg.tokenizer
-        self.info(
-            f"Configuring tokenizers for inference result parser (resolve_alias: {tokenizer_config.should_resolve_alias})"
-        )
+        self.info("Configuring tokenizers for inference result parser")
         begin = time.perf_counter()
+
+        await self._tokenizer_ready.wait()
         async with self.tokenizer_lock:
             self.tokenizers = {}
-            for model in self.model_endpoint.models.models:
+            resolved_names = self.run.resolved.tokenizer_names
+            for model in self.run.cfg.models.items:
+                if resolved_names and model.name in resolved_names:
+                    tokenizer_name = resolved_names[model.name]
+                    resolve_alias = False
+                else:
+                    tokenizer_name = (
+                        self.run.cfg.tokenizer.name or model.name
+                        if self.run.cfg.tokenizer
+                        else model.name
+                    )
+                    resolve_alias = True
+                load_target, alias_flag = self._select_load_target(
+                    tokenizer_name, resolve_alias
+                )
+                self.info(
+                    f"Configuring tokenizer for {model.name} (resolve_alias: {alias_flag})"
+                )
                 self.tokenizers[model.name] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model.name),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    _tokenizer_preload.get_or_load,
+                    load_target,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
+                    resolve_alias=alias_flag,
                 )
 
         duration = time.perf_counter() - begin
@@ -101,13 +143,25 @@ class InferenceResultParser(CommunicationMixin):
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                tokenizer_config = self.run.cfg.tokenizer
+                await self._tokenizer_ready.wait()
+                tokenizer_name = (
+                    self.run.cfg.tokenizer.name or model
+                    if self.run.cfg.tokenizer
+                    else model
+                )
+                load_target, alias_flag = self._select_load_target(
+                    tokenizer_name, resolve_alias=True
+                )
                 self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    _tokenizer_preload.get_or_load,
+                    load_target,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
+                    resolve_alias=alias_flag,
                 )
             return self.tokenizers[model]
 
@@ -127,71 +181,55 @@ class InferenceResultParser(CommunicationMixin):
         request_record.create_error_from_invalid()
 
         if request_record.has_error:
-            # Even for error records, compute input token count if possible
-            input_token_count = None
-            if not self.disable_tokenization:
-                # Suppress exceptions during token counting for error records to avoid masking the original error.
-                # If token counting fails, we still return the error record with token_counts.input=None.
-                with suppress(Exception):
-                    input_token_count = await self.compute_input_token_count(
-                        request_record
-                    )
+            return await self._build_error_record(request_record)
 
-            return ParsedResponseRecord(
-                request=request_record,
-                responses=[],
-                token_counts=TokenCounts(
-                    input=input_token_count,
-                ),
-            )
+        try:
+            raw_response_count = len(request_record.responses)
+            record = await self.process_valid_record(request_record)
 
-        else:
-            try:
-                raw_response_count = len(request_record.responses)
-                record = await self.process_valid_record(request_record)
+            # Check if the parsed record is actually valid (e.g., has content responses)
+            record.create_error_from_invalid()
 
-                # Check if the parsed record is actually valid (e.g., has content responses)
-                record.create_error_from_invalid()
-
-                if record.has_error:
-                    # Parsed record was invalid, return as error record
-                    return ParsedResponseRecord(
-                        request=record.request,
-                        responses=[],
-                        token_counts=TokenCounts(
-                            input=record.token_counts.input
-                            if record.token_counts
-                            else None
-                        ),
-                    )
-                else:
-                    # Success path: valid record with no errors
-                    self.debug(
-                        lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
-                    )
-                    return record
-
-            except Exception as e:
-                # TODO: We should add an ErrorDetails to the response record and not the request record.
-                self.exception(f"Error processing valid record: {e}")
-                request_record.error = ErrorDetails.from_exception(e)
-                input_token_count = None
-
-                if not self.disable_tokenization:
-                    # Suppress exceptions during token counting for error records to avoid masking the original error.
-                    # If token counting fails, we still return the error record with token_counts.input=None.
-                    with suppress(Exception):
-                        input_token_count = await self.compute_input_token_count(
-                            request_record
-                        )
-
+            if record.has_error:
+                # Parsed record was invalid, return as error record
                 return ParsedResponseRecord(
-                    request=request_record,
+                    request=record.request,
                     responses=[],
                     token_counts=TokenCounts(
-                        input=input_token_count,
+                        input=record.token_counts.input if record.token_counts else None
                     ),
                 )
+
+            # Success path: valid record with no errors
+            self.debug(
+                lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
+            )
+            return record
+
+        except Exception as e:  # noqa: BLE001 - per-request parser errors are attached as ErrorDetails on the record, not raised
+            # TODO: We should add an ErrorDetails to the response record and not the request record.
+            self.exception(f"Error processing valid record: {e}")
+            request_record.error = ErrorDetails.from_exception(e)
+            return await self._build_error_record(request_record)
+
+    async def _build_error_record(
+        self, request_record: RequestRecord
+    ) -> ParsedResponseRecord:
+        """Build an error ParsedResponseRecord, computing input tokens when possible."""
+        input_token_count = None
+        if not self.disable_tokenization:
+            # Suppress exceptions during token counting for error records to avoid masking the original error.
+            # If token counting fails, we still return the error record with token_counts.input=None.
+            with suppress(Exception):
+                input_token_count = await self.compute_input_token_count(request_record)
+
+        return ParsedResponseRecord(
+            request=request_record,
+            responses=[],
+            token_counts=TokenCounts(
+                input=input_token_count,
+            ),
+        )
 
     async def process_valid_record(
         self, request_record: RequestRecord
@@ -210,7 +248,7 @@ class InferenceResultParser(CommunicationMixin):
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.
-        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             request_record.responses = None
 
         # Compute token counts based on configuration
@@ -278,29 +316,17 @@ class InferenceResultParser(CommunicationMixin):
     ) -> TokenCounts:
         """Compute token counts using server-provided usage fields.
 
-        Walks `responses` ONCE to find the last chunk with usage and reads
-        all token counts from that single Usage. This guarantees the input,
-        reasoning, and output counts are mutually consistent (all from the
-        same chunk), and it avoids three redundant walks of the same list.
-
         Args:
             responses: List of parsed responses from the server
 
         Returns:
-            TokenCounts populated with server-reported values. All fields
-            are None if no chunk had usage at all.
+            TokenCounts populated with server-reported values
         """
-        usage = find_last_non_empty_usage(responses)
-        if usage is None:
-            input_token_count = None
-            reasoning_token_count = None
-            output_token_count = None
-        else:
-            input_token_count = usage.prompt_tokens
-            reasoning_token_count = usage.reasoning_tokens
-            output_token_count = self._server_output_minus_reasoning(
-                usage.completion_tokens, reasoning_token_count
-            )
+        input_token_count = self._extract_server_input_token_count(responses)
+        reasoning_token_count = self._extract_server_reasoning_token_count(responses)
+        output_token_count = self._extract_server_output_token_count(
+            responses, reasoning_token_count
+        )
 
         token_counts = TokenCounts(
             input=input_token_count,
@@ -320,30 +346,6 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         return token_counts
-
-    def _server_output_minus_reasoning(
-        self,
-        completion_tokens: int | None,
-        reasoning_token_count: int | None,
-    ) -> int | None:
-        """Return server-reported output tokens with reasoning subtracted out.
-
-        The server's `completion_tokens` includes both reasoning and output;
-        we subtract reasoning_tokens to match the client-side semantic of
-        "output tokens" (text the user sees). Clamps to 0 if the subtraction
-        would go negative (server reported inconsistent counts).
-        """
-        if completion_tokens is None:
-            return None
-        reasoning = reasoning_token_count or 0
-        result = completion_tokens - reasoning
-        if result < 0:
-            self.warning(
-                f"Server reported inconsistent token counts: completion_tokens={completion_tokens}, "
-                f"reasoning_tokens={reasoning}. Clamping output tokens to 0."
-            )
-            return 0
-        return result
 
     def _parse_output_and_reasoning_texts(
         self, responses: list[ParsedResponse]
@@ -366,8 +368,6 @@ class InferenceResultParser(CommunicationMixin):
                     reasoning_texts.append(response.data.reasoning)
                 if response.data.content:
                     output_texts.append(response.data.content)
-            elif isinstance(response.data, ToolCallResponseData):
-                output_texts.append(response.data.tool_call_text)
             else:
                 output_texts.append(response.data.get_text())
 
@@ -420,3 +420,72 @@ class InferenceResultParser(CommunicationMixin):
             reasoning=reasoning_token_count,
             output=output_token_count,
         )
+
+    def _extract_server_input_token_count(
+        self, responses: list[ParsedResponse]
+    ) -> int | None:
+        """Extract input token count from server usage field.
+
+        Searches backwards through responses for the last non-None value.
+        This handles streaming where usage appears in the final chunk.
+
+        Args:
+            responses: List of parsed responses from the server
+
+        Returns:
+            Server-reported prompt token count, or None if unavailable
+        """
+        for response in reversed(responses):
+            if response.usage and response.usage.prompt_tokens is not None:
+                return response.usage.prompt_tokens
+        return None
+
+    def _extract_server_reasoning_token_count(
+        self, responses: list[ParsedResponse]
+    ) -> int | None:
+        """Extract reasoning token count from server usage field.
+
+        Reasoning tokens are nested in completion_tokens_details.reasoning_tokens
+        per the OpenAI API specification.
+
+        Args:
+            responses: List of parsed responses from the server
+
+        Returns:
+            Server-reported reasoning tokens, or None if unavailable
+        """
+        for response in reversed(responses):
+            if response.usage and response.usage.reasoning_tokens is not None:
+                return response.usage.reasoning_tokens
+        return None
+
+    def _extract_server_output_token_count(
+        self, responses: list[ParsedResponse], reasoning_token_count: int | None
+    ) -> int | None:
+        """Extract output token count from server usage field.
+
+        Returns ONLY non-reasoning completion tokens. The server's completion_tokens
+        includes both reasoning and output, so we subtract reasoning_tokens to get
+        the pure output count (matching our client-side semantics).
+
+        Args:
+            responses: List of parsed responses from the server
+            reasoning_token_count: The reasoning token count to subtract from completion tokens
+
+        Returns:
+            Server-reported output tokens (excluding reasoning), or None if unavailable
+        """
+        for response in reversed(responses):
+            if response.usage:
+                completion_tokens = response.usage.completion_tokens
+                if completion_tokens is not None:
+                    reasoning_tokens = reasoning_token_count or 0
+                    result = completion_tokens - reasoning_tokens
+                    if result < 0:
+                        self.warning(
+                            f"Server reported inconsistent token counts: completion_tokens={completion_tokens}, "
+                            f"reasoning_tokens={reasoning_tokens}. Clamping output tokens to 0."
+                        )
+                        return 0
+                    return result
+        return None

@@ -27,6 +27,7 @@ class TimingStrategyProtocol(Protocol):
     2. setup_phase(): Async initialization (no parameters)
     3. execute_phase(): Send first turns (main timing loop)
     4. handle_credit_return(): Handle credit return, dispatch next turn if needed
+    5. handle_session_ended(): Cleanup strategy state when a session ends
 
     Fresh strategy instances are created per-phase by PhaseRunner.
     All dependencies are injected via __init__ for clean, testable design.
@@ -77,6 +78,14 @@ class TimingStrategyProtocol(Protocol):
 
         Args:
             credit: Completed credit with conversation/turn info
+        """
+        ...
+
+    async def handle_session_ended(self, credit: Credit) -> None:
+        """Cleanup strategy state when a session ends.
+
+        Called for final turns and for non-final turns that become terminal
+        because continuation is no longer possible.
         """
         ...
 

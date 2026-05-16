@@ -3,7 +3,7 @@
 """Generic value ramper with pluggable strategies.
 
 Provides a Ramper class that manages the polling loop and applies values
-via a setter function. The strategy is selected via RamperConfig.ramp_type
+via a setter function. The strategy is selected via TimingRampConfig.ramp_type
 and created by the factory.
 
 Supports two modes:
@@ -12,11 +12,11 @@ Supports two modes:
 
 Example:
     ```python
-    from aiperf.timing.ramp import Ramper, RamperConfig
+    from aiperf.timing.ramp import Ramper, TimingRampConfig
     from aiperf.plugin.enums import RampType
 
     # Discrete mode: +1 steps with timing derived from value count
-    config = RamperConfig(
+    config = TimingRampConfig(
         ramp_type=RampType.LINEAR,
         start=1,
         target=100,
@@ -25,7 +25,7 @@ Example:
     ramper = Ramper(setter=concurrency_manager.set_limit, config=config)
 
     # Continuous mode: update every 2 seconds with interpolated values
-    config = RamperConfig(
+    config = TimingRampConfig(
         ramp_type=RampType.LINEAR,
         start=1.0,
         target=100.0,
@@ -58,11 +58,11 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, RampType
 
 # =============================================================================
-# RamperConfig - Configuration for ramp strategies
+# TimingRampConfig - Configuration for ramp strategies
 # =============================================================================
 
 
-class RamperConfig(AIPerfBaseModel):
+class TimingRampConfig(AIPerfBaseModel):
     """Configuration for ramp strategies.
 
     Values are floats throughout the ramp system. Callers needing integer values
@@ -103,7 +103,7 @@ class RamperConfig(AIPerfBaseModel):
 class RampStrategyProtocol(Protocol):
     """Protocol for ramp algorithms."""
 
-    def __init__(self, config: RamperConfig) -> None: ...
+    def __init__(self, config: TimingRampConfig) -> None: ...
 
     start: float
     """Starting value for the ramp."""
@@ -143,7 +143,7 @@ class Ramper:
     def __init__(
         self,
         setter: Callable[[float], None],
-        config: RamperConfig,
+        config: TimingRampConfig,
     ) -> None:
         """Initialize the ramper.
 
@@ -259,7 +259,7 @@ class BaseRampStrategy(ABC):
     - _time_to_value_progress: inverse of _apply_curve for continuous sampling
     """
 
-    def __init__(self, config: RamperConfig) -> None:
+    def __init__(self, config: TimingRampConfig) -> None:
         self._start = config.start
         self._target = config.target
         self._duration = config.duration_sec
@@ -357,7 +357,7 @@ class BaseRampStrategy(ABC):
 class LinearStrategy(BaseRampStrategy):
     """Linear ramp: steps by step_size (default 1) at evenly spaced intervals."""
 
-    def __init__(self, config: RamperConfig) -> None:
+    def __init__(self, config: TimingRampConfig) -> None:
         super().__init__(config)
         self._step_size = config.step_size if config.step_size is not None else 1.0
 
@@ -376,7 +376,7 @@ class LinearStrategy(BaseRampStrategy):
 class ExponentialStrategy(BaseRampStrategy):
     """Exponential ease-in: slow start accelerating to target."""
 
-    def __init__(self, config: RamperConfig) -> None:
+    def __init__(self, config: TimingRampConfig) -> None:
         super().__init__(config)
         exponent = config.exponent if config.exponent is not None else 2.0
         if exponent <= 1.0:
@@ -416,7 +416,7 @@ class PoissonStrategy(BaseRampStrategy):
     between them, matching how Poisson processes actually behave.
     """
 
-    def __init__(self, config: RamperConfig) -> None:
+    def __init__(self, config: TimingRampConfig) -> None:
         super().__init__(config)
         self._rng = rng.derive("timing.ramp.poisson")
         self._step_index = 0
@@ -485,9 +485,3 @@ class PoissonStrategy(BaseRampStrategy):
         # Binary search: find first event AFTER elapsed_sec
         idx = bisect.bisect_right(self._event_times, elapsed_sec)
         return self._values[idx]
-
-
-# Branch-only alias for the ramp configuration model. Existing branch-side
-# code (ramper_builder.py) referenced TimingRampConfig; main consolidated on
-# RamperConfig. Keep the alias to unblock orphan-module importability.
-TimingRampConfig = RamperConfig

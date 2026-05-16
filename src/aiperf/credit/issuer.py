@@ -14,7 +14,6 @@ Key responsibilities:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
@@ -23,9 +22,7 @@ from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
-    from aiperf.timing._branch_orchestrator_state import PendingBranchJoin
     from aiperf.timing.concurrency import ConcurrencyManager
-    from aiperf.timing.conversation_source import SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
@@ -55,6 +52,7 @@ class CreditIssuer:
         self,
         *,
         phase: CreditPhase,
+        exclude_from_results: bool,
         stop_checker: StopConditionChecker,
         progress: PhaseProgressTracker,
         concurrency_manager: ConcurrencyManager,
@@ -66,7 +64,8 @@ class CreditIssuer:
         """Initialize credit issuer.
 
         Args:
-            phase: Phase enum (WARMUP or PROFILING).
+            phase: Phase name (e.g. 'warmup', 'main').
+            exclude_from_results: Whether this phase is excluded from results.
             stop_checker: Evaluates stop conditions (can_send_any_turn, can_start_new_session).
             progress: Tracks credit progress (increment_sent, freeze_sent_counts).
             concurrency_manager: Manages concurrency slots (session + prefill).
@@ -77,6 +76,7 @@ class CreditIssuer:
                 balancing. If None, url_index will be None in credits.
         """
         self._phase = phase
+        self._exclude_from_results = exclude_from_results
         self._stop_checker = stop_checker
         self._progress = progress
         self._concurrency_manager = concurrency_manager
@@ -200,27 +200,25 @@ class CreditIssuer:
         Returns:
             True if more credits can be sent, False if this was the final credit.
         """
-        credit_index, is_final_credit = self._progress.increment_sent(turn)
+        credit_index, session_index, is_final_credit = self._progress.increment_sent(
+            turn
+        )
 
         cancel_after_ns = self._cancellation_policy.next_cancellation_delay_ns(
-            turn, self._phase
+            turn, self._phase, exclude_from_results=self._exclude_from_results
         )
-        issued_at_ns = self._lifecycle.started_at_ns + (
-            time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
-        )
+        issued_at_ns = self._lifecycle.clock.now_ns()
 
-        # Get URL index from strategy (for multi-URL load balancing)
-        # Only advance the round-robin on the first turn of a conversation.
-        # Subsequent turns will use the url_index stored in the worker's UserSession.
+        # Preserve URL affinity on continuation turns so migration keeps the
+        # session on the same backend in multi-URL runs.
         is_first_turn = turn.turn_index == 0
-        url_index = (
-            self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_first_turn
-            else None
-        )
+        url_index = turn.url_index
+        if url_index is None and self._url_selection_strategy and is_first_turn:
+            url_index = self._url_selection_strategy.next_url_index()
 
         credit = Credit(
             id=credit_index,
+            session_num=session_index,
             phase=self._phase,
             conversation_id=turn.conversation_id,
             x_correlation_id=turn.x_correlation_id,
@@ -229,10 +227,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
-            agent_depth=turn.agent_depth,
-            parent_correlation_id=turn.parent_correlation_id,
-            has_forks=turn.has_forks,
-            branch_mode=turn.branch_mode,
+            allow_worker_migration=turn.allow_worker_migration,
         )
 
         await self._credit_router.send_credit(credit=credit)
@@ -241,114 +236,3 @@ class CreditIssuer:
             self._progress.all_credits_sent_event.set()
 
         return not is_final_credit
-
-    # =========================================================================
-    # DAG dispatch helpers (used by BranchOrchestrator)
-    # =========================================================================
-
-    async def dispatch_first_turn(self, child_session: SampledSession) -> bool:
-        """Dispatch turn-0 of a freshly-spawned DAG child session.
-
-        Children inherit the parent's session slot (no new session-slot
-        acquisition); they still need a prefill slot per request. The cap
-        gate applies — a refused dispatch returns False, which the
-        orchestrator counts as ``children_truncated``.
-
-        Args:
-            child_session: A ``SampledSession`` produced by
-                ``ConversationSource.start_branch_child`` /
-                ``start_pre_session_child``.
-
-        Returns:
-            True if the credit was sent on the wire, False otherwise.
-        """
-        turn = child_session.build_first_turn()
-        return await self._dispatch_dag_turn(turn)
-
-    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
-        """Dispatch a continuation turn of a DAG child session.
-
-        Used by ``RequestRateStrategy._issue_child_continuation_or_release``
-        for non-final child turns. Returns True iff the credit was actually
-        placed on the wire (so the strategy can distinguish "dispatched" from
-        "stop-blocked / refused at gate").
-
-        Args:
-            turn: The continuation turn to dispatch.
-
-        Returns:
-            True if the credit was sent on the wire, False otherwise.
-        """
-        return await self._dispatch_dag_turn(turn)
-
-    async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
-        """Dispatch a parent's gated turn after all children drained.
-
-        Builds a ``TurnToSend`` from the ``PendingBranchJoin`` and sends it
-        via the standard DAG dispatch path. Used by
-        ``BranchOrchestrator._release_blocked_join``.
-
-        Args:
-            pending: The ``PendingBranchJoin`` whose gate is satisfied.
-
-        Returns:
-            True if the credit was sent on the wire, False if the cap
-            blocked it (orchestrator tallies as ``joins_suppressed``).
-        """
-        if pending.gated_turn_index is None:
-            return False
-        turn = TurnToSend(
-            conversation_id=pending.parent_conversation_id,
-            x_correlation_id=pending.parent_x_correlation_id,
-            turn_index=pending.gated_turn_index,
-            num_turns=pending.parent_num_turns,
-            agent_depth=pending.parent_agent_depth,
-            parent_correlation_id=pending.parent_parent_correlation_id,
-            has_forks=pending.parent_has_forks_on_gated_turn,
-            branch_mode=pending.parent_branch_mode,
-        )
-        return await self._dispatch_dag_turn(turn)
-
-    async def abort_session(self, x_correlation_id: str) -> None:
-        """Abort an in-flight session (FORK/SPAWN parent or orphan).
-
-        Currently a no-op: the credit-return slot-release path covers every
-        reachable case under the v1 orchestrator. This method exists so the
-        orchestrator's ``hasattr(self._issuer, "abort_session")`` guard
-        resolves; under ``AIPERF_DAG_FAIL_FAST=true`` the orchestrator calls
-        this when a child errors and the parent / orphan siblings must be
-        torn down.
-
-        If implemented in the future, the contract is:
-
-        - Cancel any in-flight credit for ``x_correlation_id`` (via the router).
-        - Release the session slot (do NOT release sibling sessions' slots).
-        - Be idempotent -- orchestrator calls it once per session, but errors
-          mid-tear-down may re-enter.
-        - Be exception-safe -- orchestrator does not retry.
-        """
-        return None
-
-    async def _dispatch_dag_turn(self, turn: TurnToSend) -> bool:
-        """Send a DAG turn (child first/continuation, or parent join) on the
-        wire. Bypasses session-slot acquisition (children share the root's
-        slot) but still acquires a prefill slot and respects the
-        ``can_send_dag_child_turn`` stop gate (``--request-count`` /
-        duration / cancellation honored; ``--num-conversations`` bypassed
-        for the dispatch since DAG offspring belong to their parent's
-        session).
-
-        Returns True iff the credit was actually placed on the wire.
-        """
-        if not self._stop_checker.can_send_dag_child_turn():
-            return False
-        acquired = await self._concurrency_manager.acquire_prefill_slot(
-            self._phase, self._stop_checker.can_send_dag_child_turn
-        )
-        if not acquired:
-            return False
-        # _issue_credit_internal returns True when more credits can be sent
-        # and False on the final credit. Either way the credit went out, so
-        # we report True.
-        await self._issue_credit_internal(turn)
-        return True

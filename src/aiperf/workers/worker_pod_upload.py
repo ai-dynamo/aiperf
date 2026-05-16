@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import aiohttp
 
+from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.config.defaults import OutputDefaults
 from aiperf.transports.aiohttp_client import create_tcp_connector
@@ -39,10 +40,10 @@ async def wait_for_raw_record_files(
 ) -> None:
     """Wait for sibling record-processor containers to flush raw files locally."""
     cfg = run.cfg
-    if not cfg.artifacts.raw:
+    if cfg.output.export_level != ExportLevel.RAW:
         return
 
-    raw_records_dir = cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
+    raw_records_dir = cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
     expected_files = max(1, record_processors_per_pod)
     deadline = (
         asyncio.get_running_loop().time()
@@ -77,10 +78,10 @@ async def wait_for_raw_record_files(
 async def upload_raw_records(run: BenchmarkRun, logger: _UploadLogger) -> None:
     """Upload raw record files to the controller API for aggregation."""
     cfg = run.cfg
-    if not cfg.artifacts.raw:
+    if cfg.output.export_level != ExportLevel.RAW:
         return
 
-    raw_records_dir = cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
+    raw_records_dir = cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
     if not raw_records_dir.exists():
         logger.debug("No raw_records directory found, skipping upload")
         return

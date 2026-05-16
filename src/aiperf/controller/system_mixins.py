@@ -11,8 +11,10 @@ class SignalHandlerMixin(AIPerfLoggerMixin):
     """Mixin for services that need to handle system signals."""
 
     def __init__(self, **kwargs) -> None:
-        # Set to store signal handler tasks to prevent them from being garbage collected
-        self._signal_tasks = set()
+        # Signal tasks are kept separate from the lifecycle task set
+        # (self.tasks) because they initiate shutdown — cancel_all_tasks()
+        # must not cancel the task that is driving stop().
+        self._signal_tasks: set[asyncio.Task] = set()
         super().__init__(**kwargs)
 
     def setup_signal_handlers(self, callback: Callable[[int], Coroutine]) -> None:

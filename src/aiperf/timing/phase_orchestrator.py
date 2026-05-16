@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.hooks import on_init, on_start, on_stop
+from aiperf.common.hooks import on_init, on_start
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.plugin import plugins
@@ -107,21 +107,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             PluginType.DATASET_SAMPLER,
             self._dataset_metadata.sampling_strategy,
         )
-        # Only root conversations are sampled by the strategy. DAG
-        # children belong to their root's session and are dispatched by
-        # the BranchOrchestrator on credit return — sampling them as
-        # roots would create duplicate root sessions. Filter on
-        # ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode
-        # children (which keep ``agent_depth == 0`` for fresh-context
-        # semantics but carry ``is_root=False``) are also excluded.
-        root_conv_ids = [
-            c.conversation_id
-            for c in self._dataset_metadata.conversations
-            if getattr(c, "is_root", True)
-        ]
         self._dataset_sampler = SamplerClass(
-            conversation_ids=root_conv_ids
-            or [c.conversation_id for c in self._dataset_metadata.conversations]
+            conversation_ids=[
+                c.conversation_id for c in self._dataset_metadata.conversations
+            ],
         )
 
         # Long-lived components (shared across phases)
@@ -255,31 +244,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # Cancel all in-flight credits first
         await self._credit_router.cancel_all_credits()
 
-        self._cancel_active_runners()
-
-    @on_stop
-    async def _stop_orchestrator(self) -> None:
-        """Clean up orchestrator state on normal stop.
-
-        Cancels any still-active phase runners. Without this hook, runners
-        tracked in ``_active_runners`` are leaked on the non-cancellation
-        shutdown path (only ``cancel()`` cleaned them up before, and it is
-        only called for Ctrl+C).
-
-        Callback registrations on the credit router are not explicitly
-        unregistered: the router is a child lifecycle of ``TimingManager``
-        and is torn down alongside the orchestrator, so its callback table
-        does not outlive us.
-        """
-        if self._active_runners:
-            self.debug(
-                lambda: f"Stopping orchestrator with {len(self._active_runners)} active runner(s)"
-            )
-            self._cancel_active_runners()
-
-    def _cancel_active_runners(self) -> None:
-        """Cancel every tracked phase runner and clear the active list."""
+        # Cancel all active phase runners (multiple possible with seamless mode)
         for runner in self._active_runners:
             runner.cancel()
             self.debug(f"Cancelled active phase runner for phase {runner.phase}")
-        self._active_runners.clear()

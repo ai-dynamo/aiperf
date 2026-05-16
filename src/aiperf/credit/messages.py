@@ -10,7 +10,6 @@ from msgspec import Struct
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import BaseServiceMessage
 from aiperf.common.models import CreditPhaseStats
-from aiperf.common.models.branch_stats import BranchStats
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
 
@@ -56,12 +55,6 @@ class CreditPhaseCompleteMessage(
     """Credit phase is fully complete."""
 
     stats: CreditPhaseStats
-    # DAG branch orchestration counters at phase completion. None for non-DAG
-    # runs (no BranchOrchestrator); a populated BranchStats snapshot for
-    # DAG-shaped runs (FORK or SPAWN). RecordsManager forwards this to
-    # ProfileResults so the JSON exporter can splice it into
-    # profile_export_aiperf.json.
-    branch_stats: "BranchStats | None" = None
 
 
 class CreditsCompleteMessage(
@@ -262,9 +255,3 @@ WorkerToRouterMessage: TypeAlias = (
 )
 
 RouterToWorkerMessage: TypeAlias = Credit | CancelCredits | TimePong
-
-# Back-compat alias: pre-rename ``WorkerReady`` collapsed connect+dispatch into
-# one struct. Branch ajc/k8s-new split it into ``WorkerConnected`` and
-# ``WorkerDispatchable``; existing call-sites that announce "ready to receive
-# credits" semantically match ``WorkerDispatchable``.
-WorkerReady = WorkerDispatchable

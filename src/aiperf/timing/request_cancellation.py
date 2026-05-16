@@ -108,7 +108,10 @@ class RequestCancellationSimulator:
         self._cancellation_delay_ns = int(config.delay * NANOS_PER_SECOND)
 
     def next_cancellation_delay_ns(
-        self, _turn_to_send: TurnToSend | None = None, phase: CreditPhase | None = None
+        self,
+        _turn_to_send: TurnToSend | None = None,
+        phase: CreditPhase | None = None,
+        exclude_from_results: bool = False,
     ) -> int | None:
         """Probabilistically determine cancellation delay for the next credit.
 
@@ -116,7 +119,8 @@ class RequestCancellationSimulator:
 
         Args:
             _turn_to_send: The turn being issued (unused, reserved for future use).
-            phase: The current credit phase (WARMUP or PROFILING).
+            phase: The current credit phase name.
+            exclude_from_results: Whether this phase is excluded from results.
 
         Returns:
             Cancellation delay in nanoseconds to store in Credit.cancel_after_ns,
@@ -125,8 +129,8 @@ class RequestCancellationSimulator:
         if not self._is_cancellation_enabled:
             return None
 
-        # Don't cancel during warmup
-        if phase == CreditPhase.WARMUP:
+        # Don't cancel during excluded phases (e.g. warmup)
+        if exclude_from_results:
             return None
 
         if self._rng.random() < self._cancellation_rate:

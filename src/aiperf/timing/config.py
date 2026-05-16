@@ -3,13 +3,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import ConfigDict, Field
 
 from aiperf.common.enums import CreditPhase
+from aiperf.config import InputDefaults
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig
+    from aiperf.config.phases import BasePhaseConfig
+
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.config.dataset.defaults import InputDefaults
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
@@ -17,33 +23,6 @@ from aiperf.plugin.enums import (
     URLSelectionStrategy,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
-
-if TYPE_CHECKING:
-    from aiperf.config.phases import PhaseConfig
-    from aiperf.config.resolution.plan import BenchmarkRun
-
-
-# Map ``PhaseType`` values onto the ``ArrivalPattern`` values consumed by the
-# timing strategies. Concurrency / fixed_schedule phases don't use an arrival
-# pattern; we still set a sensible default so downstream code paths remain
-# uniform when they consult this field.
-_PHASE_TYPE_TO_ARRIVAL_PATTERN: dict[PhaseType, ArrivalPattern] = {
-    PhaseType.POISSON: ArrivalPattern.POISSON,
-    PhaseType.GAMMA: ArrivalPattern.GAMMA,
-    PhaseType.CONSTANT: ArrivalPattern.CONSTANT,
-    PhaseType.USER_CENTRIC: ArrivalPattern.POISSON,
-    PhaseType.CONCURRENCY: ArrivalPattern.CONCURRENCY_BURST,
-    PhaseType.FIXED_SCHEDULE: ArrivalPattern.CONCURRENCY_BURST,
-}
-
-
-def _phase_timing_mode(phase_type: PhaseType) -> TimingMode:
-    """Map a phase type to the timing strategy used for credit issuance."""
-    if phase_type == PhaseType.FIXED_SCHEDULE:
-        return TimingMode.FIXED_SCHEDULE
-    if phase_type == PhaseType.USER_CENTRIC:
-        return TimingMode.USER_CENTRIC_RATE
-    return TimingMode.REQUEST_RATE
 
 
 class TimingConfig(AIPerfBaseModel):
@@ -75,42 +54,55 @@ class TimingConfig(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_run(cls, run: BenchmarkRun) -> TimingConfig:
-        """Build ordered list of credit-phase configs from a ``BenchmarkRun``.
+    def from_user_config(cls, config: BenchmarkConfig) -> TimingConfig:
+        """Alias for from_config (backward compatibility)."""
+        return cls.from_config(config)
 
-        Iterates ``run.cfg.get_warmup_phases()`` first (each becomes a WARMUP
-        CreditPhaseConfig) followed by ``run.cfg.get_profiling_phases()``
-        (each becomes a PROFILING CreditPhaseConfig). The cancellation policy
-        is sourced from the first profiling phase that declares one; URLs and
-        url-selection strategy come from the endpoint section.
+    @classmethod
+    def from_config(cls, config: BenchmarkConfig) -> TimingConfig:
+        """Build TimingConfig from AIPerfConfig phases in config order.
+
+        Each phase uses its `name` field as the phase name and preserves
+        exclude_from_results from the config.
         """
-        cfg = run.cfg
+        phase_configs: list[CreditPhaseConfig] = []
+        cancellation = RequestCancellationConfig()
 
-        configs: list[CreditPhaseConfig] = []
-        for phase in cfg.get_warmup_phases():
-            configs.append(_build_warmup_config(phase))
-        for phase in cfg.get_profiling_phases():
-            configs.append(_build_profiling_config(phase))
+        for phase in config.phases:
+            phase_config = _build_credit_phase_config(
+                phase,
+                phase_name=phase.name,
+                exclude_from_results=phase.exclude_from_results,
+            )
+            phase_configs.append(phase_config)
 
-        cancellation_config: RequestCancellationConfig = RequestCancellationConfig()
-        for phase in cfg.get_profiling_phases():
-            if getattr(phase, "cancellation", None) is not None:
-                cancellation_config = RequestCancellationConfig(
+            # Use first non-excluded phase's cancellation as global cancellation
+            if (
+                not phase.exclude_from_results
+                and phase.cancellation
+                and cancellation.rate is None
+            ):
+                cancellation = RequestCancellationConfig(
                     rate=phase.cancellation.rate,
                     delay=phase.cancellation.delay,
                 )
-                break
 
         return cls(
-            phase_configs=configs,
-            request_cancellation=cancellation_config,
-            urls=list(cfg.endpoint.urls),
-            url_selection_strategy=cfg.endpoint.url_strategy,
+            phase_configs=phase_configs,
+            request_cancellation=cancellation,
+            urls=config.endpoint.urls,
+            url_selection_strategy=config.endpoint.url_strategy,
         )
 
 
-class CreditPhaseConfig(AIPerfBaseModel):
-    """Model for credit phase config. This is used to configure a credit phase.
+@dataclass(slots=True, kw_only=True, frozen=True)
+class CreditPhaseConfig:
+    """Config for a single credit phase.
+
+    Slotted dataclass — shared type for both msgspec envelopes (e.g.
+    ``CreditPhaseStartMessage.config``) and the Pydantic ``TimingConfig``
+    parent that hosts ``list[CreditPhaseConfig]``. Self-contained (all
+    fields are primitives or enums), so no cascade is needed.
 
     Stop conditions (first one reached wins):
     - total_expected_requests: Stop after sending this many total requests
@@ -118,194 +110,86 @@ class CreditPhaseConfig(AIPerfBaseModel):
     - expected_duration_sec: Stop after this time
     """
 
-    model_config = ConfigDict(frozen=True)
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    phase: CreditPhase = Field(..., description="The phase of the credit phase.")
-    timing_mode: TimingMode = Field(
-        ...,
-        description="The timing mode of the credit phase. Used to determine "
-        "how to send requests to the workers.",
-    )
-    total_expected_requests: int | None = Field(
-        default=None, gt=0, description="The total number of expected requests to send."
-    )
-    expected_num_sessions: int | None = Field(
-        default=None, gt=0, description="The total number of expected sessions to send."
-    )
-    expected_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="The expected duration of the credit phase in seconds.",
-    )
-    seamless: bool = Field(
-        default=False,
-        description="Whether the credit phase should be seamless. "
-        "Seamless phases start immediately after the previous phase sends all credits, "
-        "without waiting for all credits to return. This can be used to maintain concurrency "
-        "during phase transitions.",
-    )
-    concurrency: int | None = Field(
-        default=None,
-        gt=0,
-        description="The max concurrency of the credit phase. "
-        "This is the max number of requests that can be in flight at once. "
-        "If None, the concurrency is unlimited.",
-    )
-    prefill_concurrency: int | None = Field(
-        default=None,
-        gt=0,
-        description="The max concurrency of the prefill phase. "
-        "This is the max number of requests that can be waiting for the first token at once. "
-        "If None, the prefill concurrency is unlimited.",
-    )
-    request_rate: float | None = Field(
-        default=None, gt=0, description="The request rate of the credit phase."
-    )
-    arrival_pattern: ArrivalPattern = Field(
-        default=ArrivalPattern.POISSON,
-        description="The arrival pattern of the credit phase.",
-    )
-    arrival_smoothness: float | None = Field(
-        default=None,
-        gt=0,
-        description="The smoothness parameter for gamma distribution arrivals. "
-        "Only used when arrival_pattern is GAMMA. Controls the shape of the distribution: "
-        "1.0 = Poisson-like (exponential), <1.0 = bursty, >1.0 = smooth/regular. "
-        "If None, defaults to 1.0 when using GAMMA arrival pattern.",
-    )
-    grace_period_sec: float | None = Field(
-        default=None,
-        ge=0,
-        description="The grace period of the credit phase in seconds. "
-        "This is the time to wait after the expected duration of the phase has elapsed "
-        "before the phase is considered complete. This can be used to ensure that all requests "
-        "have returned before the phase is considered complete. "
-        "If None, the grace period is disabled.",
-    )
-    num_users: int | None = Field(
-        default=None,
-        ge=1,
-        description="The number of concurrent users to use for the credit phase. "
-        "This is only applicable when using user-centric rate limiting mode. ",
-    )
-    concurrency_ramp_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to ramp session concurrency from 1 to target. "
-        "If None, concurrency starts at target immediately.",
-    )
-    prefill_concurrency_ramp_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to ramp prefill concurrency from 1 to target. "
-        "If None, prefill concurrency starts at target immediately.",
-    )
-    request_rate_ramp_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to ramp request rate from 1 QPS to target. "
-        "If None, request rate starts at target immediately.",
-    )
-    auto_offset_timestamps: bool = Field(
-        default=InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET,
-        description="The auto offset timestamps of the timing manager.",
-    )
-    fixed_schedule_start_offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="The fixed schedule start offset of the timing manager.",
-    )
-    fixed_schedule_end_offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="The fixed schedule end offset of the timing manager.",
-    )
+    phase: CreditPhase
+    timing_mode: TimingMode
+    exclude_from_results: bool = False
+    total_expected_requests: int | None = None
+    expected_num_sessions: int | None = None
+    expected_duration_sec: float | None = None
+    seamless: bool = False
+    concurrency: int | None = None
+    prefill_concurrency: int | None = None
+    request_rate: float | None = None
+    arrival_pattern: ArrivalPattern = ArrivalPattern.POISSON
+    # Only used when arrival_pattern is GAMMA. Controls the shape of the
+    # distribution: 1.0 = Poisson-like (exponential), <1.0 = bursty,
+    # >1.0 = smooth/regular. If None, defaults to 1.0 when using GAMMA.
+    arrival_smoothness: float | None = None
+    grace_period_sec: float | None = None
+    # Only applicable for user-centric rate-limiting mode.
+    num_users: int | None = None
+    concurrency_ramp_duration_sec: float | None = None
+    prefill_concurrency_ramp_duration_sec: float | None = None
+    request_rate_ramp_duration_sec: float | None = None
+    auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
+    fixed_schedule_start_offset: int | None = None
+    fixed_schedule_end_offset: int | None = None
 
 
-def _ramp_duration(ramp: object | None) -> float | None:
-    """Extract the ramp duration in seconds from a ``RamperConfig`` (or None)."""
-    if ramp is None:
-        return None
-    return getattr(ramp, "duration", None)
+def _phase_type_to_timing(phase_type: PhaseType) -> tuple[TimingMode, ArrivalPattern]:
+    """Map PhaseType to (TimingMode, ArrivalPattern).
 
-
-def _phase_request_rate(phase: PhaseConfig) -> float | None:
-    """Return the configured request rate for a phase, if any."""
-    return getattr(phase, "rate", None)
-
-
-def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:
-    """Map a phase type to its arrival pattern."""
-    return _PHASE_TYPE_TO_ARRIVAL_PATTERN.get(phase.type, ArrivalPattern.POISSON)
-
-
-def _build_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig:
-    """Build a warmup CreditPhaseConfig from a warmup PhaseConfig.
-
-    Warmup triggers JIT compilation, memory allocation, and connection pool
-    initialization so profiling measurements aren't polluted by cold-start effects.
-
-    When the phase doesn't set ``grace_period``, default to infinity (wait
-    forever for in-flight requests). This differs from the CreditPhaseConfig
-    field default of None (disabled) because warmup should always complete all
-    in-flight requests before transitioning to profiling.
+    Delegates to the shared resolution function in config.resolved.
     """
+    from aiperf.config.resolved import get_phase_timing
+
+    return get_phase_timing(phase_type)
+
+
+def _build_credit_phase_config(
+    phase: BasePhaseConfig,
+    *,
+    phase_name: str,
+    exclude_from_results: bool,
+) -> CreditPhaseConfig:
+    """Build a CreditPhaseConfig from a phase config.
+
+    Maps the AIPerfConfig phase structure to the internal
+    CreditPhaseConfig used by the timing system. Uses getattr for
+    fields that only exist on specific phase types.
+
+    For excluded phases (exclude_from_results=True), grace_period defaults to infinity
+    to ensure all in-flight requests complete before the next phase begins.
+    """
+    timing_mode, arrival_pattern = _phase_type_to_timing(phase.type)
+
     grace_period = phase.grace_period
-    if grace_period is None:
+    if exclude_from_results and grace_period is None:
         grace_period = float("inf")
 
+    rate_ramp = getattr(phase, "rate_ramp", None)
+
     return CreditPhaseConfig(
-        phase=CreditPhase.WARMUP,
-        # Warmup phase is always request rate timing mode
-        timing_mode=TimingMode.REQUEST_RATE,
+        phase=phase_name,
+        exclude_from_results=exclude_from_results,
+        timing_mode=timing_mode,
+        arrival_pattern=arrival_pattern,
         total_expected_requests=phase.requests,
         expected_duration_sec=phase.duration,
         expected_num_sessions=phase.sessions,
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
-        request_rate=_phase_request_rate(phase),
-        arrival_pattern=_phase_arrival_pattern(phase),
+        request_rate=getattr(phase, "rate", None),
         arrival_smoothness=getattr(phase, "smoothness", None),
-        seamless=False,
-        grace_period_sec=grace_period,
-        concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
-        prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),
-        request_rate_ramp_duration_sec=_ramp_duration(
-            getattr(phase, "rate_ramp", None)
-        ),
-    )
-
-
-def _build_profiling_config(phase: PhaseConfig) -> CreditPhaseConfig:
-    """Build a profiling CreditPhaseConfig from a profiling PhaseConfig.
-
-    Main benchmark phase where all performance metrics are collected.
-    Grace period allows in-flight requests to complete after the stop condition
-    is met, ensuring metrics include requests that were sent before the deadline.
-    """
-    return CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
-        timing_mode=_phase_timing_mode(phase.type),
-        expected_duration_sec=phase.duration,
-        total_expected_requests=phase.requests,
-        expected_num_sessions=phase.sessions,
-        concurrency=phase.concurrency,
-        prefill_concurrency=phase.prefill_concurrency,
-        request_rate=_phase_request_rate(phase),
-        arrival_pattern=_phase_arrival_pattern(phase),
-        arrival_smoothness=getattr(phase, "smoothness", None),
-        seamless=phase.seamless,
-        grace_period_sec=phase.grace_period,
         num_users=getattr(phase, "users", None),
-        concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
-        prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),
-        request_rate_ramp_duration_sec=_ramp_duration(
-            getattr(phase, "rate_ramp", None)
-        ),
-        # Fixed schedule config
-        auto_offset_timestamps=getattr(
-            phase, "auto_offset", InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
-        ),
+        grace_period_sec=grace_period,
+        seamless=phase.seamless,
+        auto_offset_timestamps=getattr(phase, "auto_offset", True),
         fixed_schedule_start_offset=getattr(phase, "start_offset", None),
         fixed_schedule_end_offset=getattr(phase, "end_offset", None),
-    )
+        concurrency_ramp_duration_sec=phase.concurrency_ramp.duration if phase.concurrency_ramp else None,
+        prefill_concurrency_ramp_duration_sec=phase.prefill_ramp.duration if phase.prefill_ramp else None,
+        request_rate_ramp_duration_sec=rate_ramp.duration if rate_ramp else None,
+    )  # fmt: skip

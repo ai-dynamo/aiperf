@@ -795,6 +795,12 @@ class _TimingSettings(BaseSettings):
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
     )
+    RECONCILIATION_INTERVAL: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=1.0,
+        description="Interval in seconds between reconciliation ticks in the sticky credit router",
+    )
 
 
 class _ServiceSettings(BaseSettings):
