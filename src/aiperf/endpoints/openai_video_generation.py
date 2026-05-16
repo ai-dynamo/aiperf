@@ -31,7 +31,7 @@ class VideoGenerationEndpoint(BaseEndpoint):
 
         Supports all common video generation API parameters:
         - prompt (required): Text description from turn.texts[0]
-        - model (optional): From turn.model or model_endpoint.primary_model_name
+        - model (optional): From turn.model or model_endpoint.get_model_names()[0]
 
         Additional parameters via --extra-inputs:
         - size: Video resolution (e.g., "1280x720", "720x1280")
@@ -52,24 +52,23 @@ class VideoGenerationEndpoint(BaseEndpoint):
         if not request_info.turns:
             raise ValueError("Video generation endpoint requires at least one turn.")
 
-        turn = request_info.turns[-1]
-        model_endpoint = request_info.model_endpoint
+        turn = request_info.turns[0]
+        model_endpoint = self.run.cfg
 
         if not turn.texts or not turn.texts[0].contents:
-            raise ValueError("Video generation endpoint requires a text prompt.")
+            raise ValueError(
+                "Video generation endpoint requires text prompt in first turn."
+            )
 
         prompt = turn.texts[0].contents[0]
 
         payload = {
             "prompt": prompt,
-            "model": turn.model or model_endpoint.primary_model_name,
+            "model": turn.model or model_endpoint.get_model_names()[0],
         }
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload

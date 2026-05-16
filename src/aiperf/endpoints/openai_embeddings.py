@@ -8,12 +8,12 @@ from typing import Any
 from aiperf.common.models import (
     EmbeddingResponseData,
     InferenceServerResponse,
-    ModelEndpointInfo,
     ParsedResponse,
     RequestInfo,
     Turn,
 )
 from aiperf.common.types import RequestOutputT
+from aiperf.config import BenchmarkConfig
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
@@ -39,7 +39,7 @@ class EmbeddingsEndpoint(BaseEndpoint):
             content for text in turn.texts for content in text.contents if content
         ]
 
-        return self._build_payload(turn, request_info.model_endpoint, inputs)
+        return self._build_payload(turn, self.run.cfg, inputs)
 
     def _validate_and_get_turn(self, request_info: RequestInfo):
         """Validate request and return the single turn.
@@ -64,28 +64,25 @@ class EmbeddingsEndpoint(BaseEndpoint):
         return turn
 
     def _build_payload(
-        self, turn: Turn, model_endpoint: ModelEndpointInfo, inputs: list[str]
+        self, turn: Turn, config: BenchmarkConfig, inputs: list[str]
     ) -> dict[str, Any]:
         """Build the final payload dictionary.
 
         Args:
             turn: The validated turn containing model override
-            model_endpoint: Model endpoint info with primary model name and extra config
+            config: Benchmark config with model names and endpoint config
             inputs: List of input strings to embed
 
         Returns:
             OpenAI Embeddings API payload
         """
         payload: dict[str, Any] = {
-            "model": turn.model or model_endpoint.primary_model_name,
+            "model": turn.model or config.get_model_names()[0],
             "input": inputs,
         }
 
-        if model_endpoint.endpoint.extra:
-            payload.update(model_endpoint.endpoint.extra)
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
+        if config.endpoint.extra:
+            payload.update(config.endpoint.extra)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload

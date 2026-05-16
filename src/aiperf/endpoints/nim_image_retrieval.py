@@ -22,7 +22,7 @@ class ImageRetrievalEndpoint(BaseEndpoint):
             raise ValueError("Image Retrieval endpoint only supports one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.run.cfg
 
         if turn.max_tokens:
             self.warning(
@@ -50,9 +50,6 @@ class ImageRetrievalEndpoint(BaseEndpoint):
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
 
         self.trace(lambda: f"Formatted Image Retrieval payload: {payload}")
         return payload

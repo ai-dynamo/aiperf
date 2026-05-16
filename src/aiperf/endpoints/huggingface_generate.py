@@ -22,7 +22,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             raise ValueError("TGI endpoint supports a single turn per request.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
 
         inputs = " ".join(
             [content for text in turn.texts for content in text.contents if content]
@@ -32,16 +31,13 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         if turn.max_tokens is not None:
             parameters["max_new_tokens"] = turn.max_tokens
 
-        if model_endpoint.endpoint.extra:
-            parameters.update(model_endpoint.endpoint.extra)
+        if self.run.cfg.endpoint.extra:
+            parameters.update(self.run.cfg.endpoint.extra)
 
         payload: dict[str, Any] = {
             "inputs": inputs,
             "parameters": parameters,
         }
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
 
         self.trace(lambda: f"Formatted TGI payload: {payload}")
         return payload
@@ -53,7 +49,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
 
         Handles both streaming and non-streaming modes.
         """
-        if self.model_endpoint.endpoint.streaming:
+        if self.run.cfg.endpoint.streaming:
             return self._parse_streaming(response)
         return self._parse_non_streaming(response)
 
@@ -103,6 +99,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             data = self.make_text_response_data(text)
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - TGI event parsing must never crash the stream; malformed events are logged and skipped
             self.debug(lambda e=e: f"Error parsing TGI stream: {e!r}")
             return None

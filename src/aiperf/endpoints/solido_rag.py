@@ -37,7 +37,7 @@ class SolidoEndpoint(BaseEndpoint):
             raise ValueError("SOLIDO endpoint requires at least one turn.")
 
         turn = request_info.turns[-1]
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.run.cfg
 
         # Extract query text from turn
         query = [content for text in turn.texts for content in text.contents if content]
@@ -46,7 +46,7 @@ class SolidoEndpoint(BaseEndpoint):
         filters = {"family": "Solido", "tool": "SDE"}
 
         # Use the model name from the turn or model endpoint
-        inference_model = turn.model or model_endpoint.primary_model_name
+        inference_model = turn.model or model_endpoint.get_model_names()[0]
 
         payload: dict[str, Any] = {
             "query": query,
@@ -56,9 +56,6 @@ class SolidoEndpoint(BaseEndpoint):
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
 
         self.trace(lambda: f"Formatted SOLIDO payload: {payload}")
         return payload

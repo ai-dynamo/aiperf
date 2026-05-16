@@ -32,17 +32,17 @@ class CompletionsEndpoint(BaseEndpoint):
             raise ValueError("Completions endpoint only supports one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.run.cfg
 
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
 
-        extra = model_endpoint.endpoint.extra or []
+        extra = model_endpoint.endpoint.extra
 
         payload = {
             "prompt": prompts,
-            "model": turn.model or model_endpoint.primary_model_name,
+            "model": turn.model or model_endpoint.get_model_names()[0],
             "stream": model_endpoint.endpoint.streaming,
         }
 
@@ -51,9 +51,6 @@ class CompletionsEndpoint(BaseEndpoint):
 
         if extra:
             payload.update(extra)
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
 
         if (
             model_endpoint.endpoint.streaming

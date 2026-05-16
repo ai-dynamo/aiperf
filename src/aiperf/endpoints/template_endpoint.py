@@ -33,23 +33,13 @@ class TemplateEndpoint(BaseEndpoint):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        ep = self.model_endpoint.endpoint
-        template_config = ep.template
 
-        if template_config and template_config.body:
-            template_source = template_config.body
-            response_field = template_config.response_field
-        else:
-            extra = ep.extra
-            extra_dict = dict(extra) if extra else {}
-            template_source = extra_dict.get("payload_template")
-            response_field = extra_dict.get("response_field")
-
-        if not template_source:
+        template_config = self.run.cfg.endpoint.template
+        if not template_config:
             raise InvalidStateError(
-                "Template endpoint requires 'endpoint.template.body' configuration "
-                "(or 'payload_template' in endpoint.extra)"
+                "Template endpoint requires 'template' configuration in endpoint"
             )
+        template_source = template_config.body
 
         if template_source in NAMED_TEMPLATES:
             self.info(f"Using named template: '{template_source}'")
@@ -68,6 +58,7 @@ class TemplateEndpoint(BaseEndpoint):
         )
         self.info(f"Compiled template ({len(template_source)} chars)")
 
+        response_field = template_config.response_field
         self._compiled_jmespath = None
         if response_field and response_field != "text":
             try:
@@ -78,14 +69,9 @@ class TemplateEndpoint(BaseEndpoint):
                     f"Failed to compile JMESPath query: '{response_field}' - {e!r}"
                 )
 
-        if template_config and template_config.body:
-            self._extra_fields = dict(ep.extra) if ep.extra else {}
-        else:
-            self._extra_fields = {
-                k: v
-                for k, v in (dict(ep.extra) if ep.extra else {}).items()
-                if k not in ("payload_template", "response_field")
-            }
+        self._extra_fields = (
+            dict(self.run.cfg.endpoint.extra) if self.run.cfg.endpoint.extra else {}
+        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format custom template request payload from RequestInfo.
@@ -99,7 +85,7 @@ class TemplateEndpoint(BaseEndpoint):
         if not request_info.turns:
             raise ValueError("Template endpoint requires at least one turn.")
 
-        turn = request_info.turns[-1]
+        turn = request_info.turns[0]
 
         texts, texts_by_name = self.extract_named_contents(turn.texts)
         images, images_by_name = self.extract_named_contents(turn.images)
@@ -126,13 +112,13 @@ class TemplateEndpoint(BaseEndpoint):
             "images_by_name": images_by_name or {},
             "audios_by_name": audios_by_name or {},
             "videos_by_name": videos_by_name or {},
-            "model": turn.model or self.model_endpoint.primary_model_name,
+            "model": turn.model or self.run.cfg.get_model_names()[0],
             "max_tokens": turn.max_tokens,
             "role": turn.role,
             "turn": turn,
             "turns": request_info.turns,
             "request_info": request_info,
-            "stream": self.model_endpoint.endpoint.streaming,
+            "stream": self.run.cfg.endpoint.streaming,
         }
 
         rendered = self._template.render(**template_vars)
@@ -147,9 +133,6 @@ class TemplateEndpoint(BaseEndpoint):
 
         if self._extra_fields:
             payload.update(self._extra_fields)
-
-        if turn.extra_body:
-            payload.update(turn.extra_body)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
@@ -175,17 +158,32 @@ class TemplateEndpoint(BaseEndpoint):
 
         response_data = None
         if self._compiled_jmespath:
+            # User explicitly set `template.responseField`. Honor it strictly:
+            # auto-detect fallback would silently extract a different field, so a
+            # typo in `responseField` would yield "successful" requests that
+            # measure the wrong content. Strict mode = miss is None, the record
+            # downgrades to an error record, and the controller surfaces
+            # NO_SUCCESSFUL_REQUESTS at end-of-run.
             try:
                 if value := self._compiled_jmespath.search(json_obj):
                     response_data = self.convert_to_response_data(value)
             except (jmespath.exceptions.JMESPathError, TypeError) as e:
-                self.warning(f"JMESPath search failed: {e!r}.")
-            # When the user provided an explicit response_field, treat a
-            # non-matching path as a hard parse failure rather than silently
-            # falling back to auto-detection — otherwise a typo in
-            # response_field is invisible and the run reports zero-length
-            # successful responses.
+                self.error(
+                    f"JMESPath search failed for response_field "
+                    f"'{self.run.cfg.endpoint.template.response_field}': {e!r}. "
+                    f"Fix `endpoint.template.responseField` or unset it for auto-detection."
+                )
+                return None
             if response_data is None:
+                self.error(
+                    f"response_field "
+                    f"'{self.run.cfg.endpoint.template.response_field}' "
+                    f"did not match any value in a 200 OK response "
+                    f"(top-level keys: "
+                    f"{sorted(json_obj.keys()) if isinstance(json_obj, dict) else '<non-dict>'}"
+                    f"). Fix `endpoint.template.responseField` or unset it for "
+                    f"auto-detection."
+                )
                 return None
         else:
             response_data = self.auto_detect_and_extract(json_obj)

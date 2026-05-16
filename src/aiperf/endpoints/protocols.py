@@ -9,19 +9,19 @@ if TYPE_CHECKING:
     from aiperf.common.models import (
         EndpointMetadata,
         InferenceServerResponse,
-        ModelEndpointInfo,
         ParsedResponse,
         RequestInfo,
         RequestRecord,
     )
     from aiperf.common.types import RequestOutputT
+    from aiperf.config import BenchmarkRun
 
 
 @runtime_checkable
 class EndpointProtocol(Protocol):
     """Protocol for an endpoint."""
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
 
     @classmethod
     def metadata(cls) -> EndpointMetadata: ...
