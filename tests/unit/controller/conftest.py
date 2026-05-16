@@ -9,9 +9,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.models import ErrorDetails
+from aiperf.common.service_registry import ServiceRegistry
 from aiperf.config import BenchmarkRun
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceRunType
+
+
+@pytest.fixture(autouse=True)
+def _reset_service_registry():
+    """Reset the process-global ServiceRegistry around every test.
+
+    ``ServiceRegistry`` is a per-process singleton; without an explicit
+    reset, ``expected_by_type`` and the wait-state accumulators leak
+    between tests, so ``test_X_already_registered`` etc. fail when run
+    under ``-n auto`` whenever a sibling test ran first.
+    """
+    ServiceRegistry.reset()
+    yield
+    ServiceRegistry.reset()
 
 
 class MockTestException(Exception):
