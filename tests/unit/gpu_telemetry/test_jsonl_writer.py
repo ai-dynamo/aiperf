@@ -5,37 +5,61 @@ import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+import msgspec
 import orjson
 import pytest
 
 from aiperf.common.environment import Environment
 from aiperf.common.models.telemetry_models import (
-    TelemetryMetrics,
     TelemetryRecord,
 )
-from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.gpu_telemetry.jsonl_writer import (
     GPUTelemetryJSONLWriter,
 )
 from aiperf.plugin.enums import EndpointType
-from tests.unit.conftest import make_run_from_cli
 from tests.unit.post_processors.conftest import aiperf_lifecycle, make_telemetry_record
 
 
-@pytest.fixture
-def cfg_telemetry_export(tmp_artifact_dir: Path) -> CLIConfig:
-    """Create a CLIConfig for telemetry export testing."""
-    return CLIConfig(
-        model_names=["test-model"],
-        endpoint_type=EndpointType.CHAT,
-        artifact_directory=tmp_artifact_dir,
+def _make_run(config: AIPerfConfig, artifact_dir: Path | None = None) -> BenchmarkRun:
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config.benchmark,
+        artifact_dir=artifact_dir or Path("/tmp/test"),
     )
 
 
 @pytest.fixture
-def run_telemetry_export(cfg_telemetry_export, cli_config):
-    """Build a v2 BenchmarkRun from the telemetry-export cli_config fixture."""
-    return make_run_from_cli(cfg_telemetry_export)
+def telemetry_export_config(tmp_artifact_dir: Path) -> AIPerfConfig:
+    """Create an AIPerfConfig for telemetry export testing."""
+    return AIPerfConfig(
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+            "artifacts": {
+                "dir": str(tmp_artifact_dir),
+            },
+        }
+    )
 
 
 @pytest.fixture
@@ -87,12 +111,12 @@ class TestGPUTelemetryJSONLWriterInitialization:
 
     def test_initialization(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
     ):
         """Test that processor initializes with correct output file path."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         assert processor.lines_written == 0
@@ -101,12 +125,12 @@ class TestGPUTelemetryJSONLWriterInitialization:
 
     def test_creates_output_directory(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
     ):
         """Test that initialization creates the output directory."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         assert processor.output_file.parent.exists()
@@ -115,19 +139,17 @@ class TestGPUTelemetryJSONLWriterInitialization:
     @pytest.mark.asyncio
     async def test_clears_existing_file(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
     ):
         """Test that initialization clears existing output file."""
         # Create a file with existing content
-        output_file = (
-            run_telemetry_export.cfg.artifacts.dir / "gpu_telemetry_export.jsonl"
-        )
+        output_file = telemetry_export_config.benchmark.artifacts.profile_export_gpu_telemetry_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("existing content\n")
 
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
         await processor.initialize()
 
@@ -143,36 +165,33 @@ class TestGPUTelemetryJSONLWriterInitialization:
 
     def test_sets_batch_size_from_environment(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
     ):
         """Test that batch_size is set from Environment.RECORD.EXPORT_BATCH_SIZE."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
-        assert processor._batch_size == Environment.RECORD.EXPORT_BATCH_SIZE
+        assert processor._batch_size == Environment.GPU.EXPORT_BATCH_SIZE
 
     def test_logs_initialization_message(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         caplog,
     ):
         """Test that initialization logs info message about telemetry export."""
         with caplog.at_level(logging.INFO):
             GPUTelemetryJSONLWriter(
                 service_id="records-manager",
-                run=run_telemetry_export,
+                run=_make_run(telemetry_export_config),
             )
 
             assert any(
                 "GPU telemetry export enabled" in record.message
                 for record in caplog.records
             )
-            assert any(
-                "gpu_telemetry_export.jsonl" in record.message
-                for record in caplog.records
-            )
+            assert any("gpu_telemetry" in record.message for record in caplog.records)
 
 
 class TestGPUTelemetryJSONLWriterProcessing:
@@ -181,14 +200,14 @@ class TestGPUTelemetryJSONLWriterProcessing:
     @pytest.mark.asyncio
     async def test_process_telemetry_record_writes_to_buffer(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that process_telemetry_record buffers the record correctly."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -201,14 +220,14 @@ class TestGPUTelemetryJSONLWriterProcessing:
     @pytest.mark.asyncio
     async def test_process_telemetry_record_with_complete_data(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test processing a telemetry record with all fields populated."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -223,20 +242,20 @@ class TestGPUTelemetryJSONLWriterProcessing:
         assert record.gpu_index == 0
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
-        assert record.telemetry_data.gpu_power_usage == 75.5
-        assert record.telemetry_data.gpu_utilization == 85.0
+        assert getattr(record.telemetry_data, "gpu_power_usage", None) == 75.5
+        assert getattr(record.telemetry_data, "gpu_utilization", None) == 85.0
 
     @pytest.mark.asyncio
     async def test_process_telemetry_record_with_partial_data(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record_partial: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test processing a telemetry record with some fields None."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -249,19 +268,19 @@ class TestGPUTelemetryJSONLWriterProcessing:
         assert record.timestamp_ns == 2_000_000_000
         assert record.pci_bus_id is None
         assert record.device is None
-        assert record.telemetry_data.energy_consumption is None
-        assert record.telemetry_data.power_violation is None
+        assert getattr(record.telemetry_data, "energy_consumption", None) is None
+        assert getattr(record.telemetry_data, "power_violation", None) is None
 
     @pytest.mark.asyncio
     async def test_process_multiple_telemetry_records(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test processing multiple telemetry records sequentially."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         records = [
@@ -285,14 +304,14 @@ class TestGPUTelemetryJSONLWriterProcessing:
     @pytest.mark.asyncio
     async def test_process_telemetry_record_handles_exceptions(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that exceptions during processing are caught and logged."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         with (
@@ -312,13 +331,13 @@ class TestGPUTelemetryJSONLWriterProcessing:
     @pytest.mark.asyncio
     async def test_buffer_auto_flush_at_batch_size(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test that buffer auto-flushes when batch_size is reached."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         batch_size = processor._batch_size
@@ -331,20 +350,18 @@ class TestGPUTelemetryJSONLWriterProcessing:
                 )
                 await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-
         assert processor.lines_written == batch_size * 2
 
     @pytest.mark.asyncio
     async def test_multiple_gpus_same_endpoint(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test processing records from multiple GPUs on same endpoint."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         records = [
@@ -371,13 +388,13 @@ class TestGPUTelemetryJSONLWriterProcessing:
     @pytest.mark.asyncio
     async def test_multiple_endpoints(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test processing records from different DCGM endpoints."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         records = [
@@ -403,13 +420,13 @@ class TestGPUTelemetryJSONLWriterProcessing:
     @pytest.mark.asyncio
     async def test_records_written_count(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test that lines_written counter increments correctly."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         assert processor.lines_written == 0
@@ -422,8 +439,6 @@ class TestGPUTelemetryJSONLWriterProcessing:
                 )
                 await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-
         assert processor.lines_written == 10
 
 
@@ -433,14 +448,14 @@ class TestGPUTelemetryJSONLWriterFileFormat:
     @pytest.mark.asyncio
     async def test_output_is_valid_jsonl(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that output file is valid JSONL format."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -458,14 +473,14 @@ class TestGPUTelemetryJSONLWriterFileFormat:
     @pytest.mark.asyncio
     async def test_record_structure_is_complete(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that each record has the expected structure."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -482,19 +497,19 @@ class TestGPUTelemetryJSONLWriterFileFormat:
             assert isinstance(record.gpu_index, int)
             assert isinstance(record.gpu_uuid, str)
             assert isinstance(record.gpu_model_name, str)
-            assert isinstance(record.telemetry_data, TelemetryMetrics)
+            assert hasattr(record.telemetry_data, "gpu_power_usage")
 
     @pytest.mark.asyncio
     async def test_preserves_all_telemetry_fields(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that all telemetry fields are serialized correctly."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -515,30 +530,27 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         assert record.hostname == sample_telemetry_record.hostname
 
         # Check telemetry data fields
-        assert (
-            record.telemetry_data.gpu_power_usage
-            == sample_telemetry_record.telemetry_data.gpu_power_usage
+        assert getattr(record.telemetry_data, "gpu_power_usage", None) == getattr(
+            sample_telemetry_record.telemetry_data, "gpu_power_usage", None
         )
-        assert (
-            record.telemetry_data.gpu_utilization
-            == sample_telemetry_record.telemetry_data.gpu_utilization
+        assert getattr(record.telemetry_data, "gpu_utilization", None) == getattr(
+            sample_telemetry_record.telemetry_data, "gpu_utilization", None
         )
-        assert (
-            record.telemetry_data.gpu_memory_used
-            == sample_telemetry_record.telemetry_data.gpu_memory_used
+        assert getattr(record.telemetry_data, "gpu_memory_used", None) == getattr(
+            sample_telemetry_record.telemetry_data, "gpu_memory_used", None
         )
 
     @pytest.mark.asyncio
     async def test_handles_none_values(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record_partial: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that None values are handled correctly in serialization."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -556,13 +568,13 @@ class TestGPUTelemetryJSONLWriterFileFormat:
     @pytest.mark.asyncio
     async def test_timestamp_precision(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test that nanosecond timestamps are preserved with full precision."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         precise_timestamp = 1_234_567_890_123_456_789
@@ -579,14 +591,14 @@ class TestGPUTelemetryJSONLWriterFileFormat:
     @pytest.mark.asyncio
     async def test_metadata_fields_present(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that all required metadata fields are present in output."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -607,14 +619,14 @@ class TestGPUTelemetryJSONLWriterFileFormat:
     @pytest.mark.asyncio
     async def test_hierarchical_identifiers(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that records contain proper identifiers for hierarchical access."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -635,12 +647,12 @@ class TestGPUTelemetryJSONLWriterSummarize:
     @pytest.mark.asyncio
     async def test_summarize_returns_empty_list(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
     ):
         """Test that summarize returns an empty list (no aggregation needed)."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         result = await processor.summarize()
@@ -651,14 +663,14 @@ class TestGPUTelemetryJSONLWriterSummarize:
     @pytest.mark.asyncio
     async def test_summarize_after_processing_records(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that summarize returns empty list even after processing records."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -676,19 +688,20 @@ class TestGPUTelemetryJSONLWriterLifecycle:
     @pytest.mark.asyncio
     async def test_lifecycle_with_mock_aiofiles(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
         mock_aiofiles_stringio,
     ):
         """Test full lifecycle using mock_aiofiles_stringio."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         assert processor._file_handle is None
         await processor.initialize()
-        assert processor._file_handle is not None
+        # File handle is opened lazily on first flush, not at initialize().
+        assert processor._file_handle is None
         await processor.start()
 
         try:
@@ -699,8 +712,6 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                     gpu_utilization=80.0,
                 )
                 await processor.process_telemetry_record(record)
-
-            await processor.wait_for_tasks()
         finally:
             await processor.stop()
 
@@ -712,46 +723,47 @@ class TestGPUTelemetryJSONLWriterLifecycle:
         assert len(lines) == Environment.RECORD.EXPORT_BATCH_SIZE * 2
 
         for i, line in enumerate(lines):
-            record = TelemetryRecord.model_validate_json(line)
+            record = TelemetryRecord.model_validate(orjson.loads(line))
             assert record.timestamp_ns == 1_000_000_000 + i
             assert record.gpu_uuid == "GPU-test"
-            assert record.telemetry_data.gpu_power_usage == 100.0 + i
+            assert getattr(record.telemetry_data, "gpu_power_usage", None) == 100.0 + i
 
     @pytest.mark.asyncio
     async def test_file_handle_lifecycle(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
     ):
         """Test that _file_handle is managed correctly through lifecycle."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         # Initially None
         assert processor._file_handle is None
 
-        # After initialize, should be open
+        # After initialize, still None — file is opened lazily on first flush.
         await processor.initialize()
-        assert processor._file_handle is not None
+        assert processor._file_handle is None
 
         await processor.start()
-        assert processor._file_handle is not None
+        assert processor._file_handle is None
 
-        # After stop, should be closed (None)
+        # After stop with no writes, file_handle stays None and no file is created.
         await processor.stop()
-        # Note: _file_handle may still be set but closed
+        assert processor._file_handle is None
+        assert not processor.output_file.exists()
 
     @pytest.mark.asyncio
     async def test_flush_on_shutdown(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test that remaining buffer is flushed on shutdown."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         # Process fewer records than batch size
@@ -772,13 +784,13 @@ class TestGPUTelemetryJSONLWriterLifecycle:
     @pytest.mark.asyncio
     async def test_wait_for_async_tasks(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test that wait_for_tasks waits for async flush operations."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -789,27 +801,22 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                 )
                 await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-
         assert processor.lines_written == processor._batch_size * 3
 
     @pytest.mark.asyncio
     async def test_statistics_logged_on_shutdown(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that lines_written is correct on shutdown."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
-        await processor.initialize()
-        await processor.start()
-
-        try:
+        async with aiperf_lifecycle(processor):
             for i in range(5):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
@@ -817,13 +824,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                 )
                 await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-            await processor.stop()
-
-            assert processor.lines_written == 5
-        except Exception:
-            await processor.stop()
-            raise
+        assert processor.lines_written == 5
 
 
 class TestGPUTelemetryJSONLWriterIntegration:
@@ -832,14 +833,14 @@ class TestGPUTelemetryJSONLWriterIntegration:
     @pytest.mark.asyncio
     async def test_integration_with_real_files(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test end-to-end with actual file I/O."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         async with aiperf_lifecycle(processor):
@@ -863,13 +864,13 @@ class TestGPUTelemetryJSONLWriterIntegration:
     @pytest.mark.asyncio
     async def test_concurrent_writes(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test processing many records concurrently."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         num_records = 100
@@ -887,8 +888,6 @@ class TestGPUTelemetryJSONLWriterIntegration:
                 )
                 await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-
         assert processor.lines_written == num_records
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == num_records
@@ -896,13 +895,13 @@ class TestGPUTelemetryJSONLWriterIntegration:
     @pytest.mark.asyncio
     async def test_large_batch_processing(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test processing multiple batches worth of records."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         num_batches = 5
@@ -916,20 +915,18 @@ class TestGPUTelemetryJSONLWriterIntegration:
                 )
                 await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-
         assert processor.lines_written == total_records
 
     @pytest.mark.asyncio
     async def test_interleaved_gpu_records(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test processing records from multiple GPUs in interleaved fashion."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         num_gpus = 4
@@ -948,8 +945,6 @@ class TestGPUTelemetryJSONLWriterIntegration:
                     )
                     await processor.process_telemetry_record(record)
 
-            await processor.wait_for_tasks()
-
         assert processor.lines_written == num_gpus * records_per_gpu
 
         # Verify records are in order
@@ -964,14 +959,14 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
     @pytest.mark.asyncio
     async def test_logs_error_on_write_failure(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
         """Test that errors are logged when write fails."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         with (
@@ -984,13 +979,13 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
     @pytest.mark.asyncio
     async def test_continues_after_write_error(
         self,
-        run_telemetry_export,
+        telemetry_export_config: AIPerfConfig,
         mock_metric_registry: Mock,
     ):
         """Test that processor continues after encountering an error."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
-            run=run_telemetry_export,
+            run=_make_run(telemetry_export_config),
         )
 
         call_count = 0
