@@ -17,7 +17,7 @@ from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.mixins.realtime_metrics_mixin import RealtimeMetricsMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.models.base_models import AIPerfBaseModel, _msgspec_enc_hook
-from aiperf.config.parsing import coerce_value
+from aiperf.config.loader.parsing import coerce_value
 from aiperf.metrics.prometheus_formatter import InfoLabels, format_as_prometheus
 
 if TYPE_CHECKING:
