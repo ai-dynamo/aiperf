@@ -18,6 +18,12 @@ class BasePhaseStats(AIPerfBaseModel):
         ..., description="The type of credit phase, such as warmup or profiling."
     )
 
+    exclude_from_results: bool = Field(
+        default=False,
+        description="Whether records from this phase should be excluded from the "
+        "summary results (warmup phases have this set to True).",
+    )
+
     # Timestamp fields
     start_ns: int | None = Field(
         default=None,
