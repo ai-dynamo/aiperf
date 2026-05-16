@@ -313,6 +313,21 @@ class ParsedResponseRecord:
         """
         return [response for response in self.responses if response.data]
 
+    @cached_property
+    def final_usage(self) -> "Usage | None":
+        """API-reported usage from the last streaming response chunk that had any.
+
+        Returns the most recent non-empty ``Usage`` block across the
+        record's responses, scanning from the last chunk backwards.
+        Cached -- consulted by many usage-* metrics, but the walk happens
+        at most once per record. Returns ``None`` when no response chunk
+        carried usage info.
+        """
+        for response in reversed(self.responses):
+            if response.usage:
+                return response.usage
+        return None
+
     @property
     def has_error(self) -> bool:
         """Check if the response record has an error."""
