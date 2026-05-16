@@ -167,8 +167,8 @@ def fake_tokenizer():
 
 @pytest.fixture
 def skip_service_registration():
-    """Patch BaseComponentService._register_service_on_start to do nothing."""
-    with patch.object(BaseComponentService, "_register_service_on_start", AsyncMock()):
+    """Patch BaseComponentService._register_until_ack to do nothing."""
+    with patch.object(BaseComponentService, "_register_until_ack", AsyncMock()):
         yield
 
 

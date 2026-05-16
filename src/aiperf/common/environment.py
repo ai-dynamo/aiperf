@@ -868,6 +868,15 @@ class _ServiceSettings(BaseSettings):
         "For example, 50 means abort when 50%+ of worker pods have failed. "
         "Set to 100 to abort only when all workers are gone. Set to 0 to disable pod failure abort.",
     )
+    FAILURE_SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=30.0,
+        description="Wall-clock cap on the shutdown path inside AIPerfLifecycleMixin._fail. "
+        "If cleanup (on_stop hooks, task cancellation) does not complete within this window "
+        "after a failed on_init/on_start transition, the process hard-exits via os._exit(1). "
+        "Prevents silent zombie containers when cleanup blocks on a cancelled C-ext call.",
+    )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,

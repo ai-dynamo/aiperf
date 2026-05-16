@@ -143,7 +143,7 @@ def _phase_type_to_timing(phase_type: PhaseType) -> tuple[TimingMode, ArrivalPat
 
     Delegates to the shared resolution function in config.resolved.
     """
-    from aiperf.config.resolved import get_phase_timing
+    from aiperf.config.resolution.predicates import get_phase_timing
 
     return get_phase_timing(phase_type)
 
