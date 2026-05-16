@@ -123,6 +123,14 @@ def default_user_run(default_user_config: AIPerfConfig) -> BenchmarkRun:
 
 
 @pytest.fixture
+def default_cfg(default_user_config: AIPerfConfig):
+    """Backwards-compat alias: dataset loaders that previously took a
+    ``UserConfig`` now take a ``BenchmarkConfig`` (the body inside
+    ``AIPerfConfig.benchmark``). Return that body directly."""
+    return default_user_config.benchmark
+
+
+@pytest.fixture
 def test_images(tmp_path):
     """Create temporary test images copied from source assets.
 

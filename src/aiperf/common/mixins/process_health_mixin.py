@@ -8,6 +8,27 @@ from aiperf.common.mixins.base_mixin import BaseMixin
 from aiperf.common.models import CPUTimes, CtxSwitches, ProcessHealth
 
 
+def read_pss_self() -> int | None:
+    """Read the proportional set size (PSS) for the current process.
+
+    PSS reflects shared-memory contributions proportionally so a worker that
+    inherits a large copy-on-write parent doesn't get blamed for the full
+    parent RSS. Returns None when the kernel doesn't expose ``smaps_rollup``
+    (non-Linux, sandboxed kernels, container restrictions).
+    """
+    try:
+        with open(f"/proc/{psutil.Process().pid}/smaps_rollup") as fh:
+            for line in fh:
+                if line.startswith("Pss:"):
+                    # ``Pss:  12345 kB``
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1]) * 1024
+        return None
+    except (OSError, ValueError):
+        return None
+
+
 class ProcessHealthMixin(BaseMixin):
     """Mixin to provide process health information."""
 
@@ -20,6 +41,15 @@ class ProcessHealthMixin(BaseMixin):
 
         self._process_health: ProcessHealth | None = None
         self._previous: ProcessHealth | None = None
+
+    def get_pss_memory(self) -> int | None:
+        """Read the per-process PSS memory (Linux-only).
+
+        Thin wrapper around the module-level :func:`read_pss_self` so tests can
+        monkey-patch the read site (rather than calling /proc directly in tests).
+        Returns None on platforms where the kernel doesn't expose PSS.
+        """
+        return read_pss_self()
 
     def get_process_health(self) -> ProcessHealth:
         """Get the process health information for the current process."""

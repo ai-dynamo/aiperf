@@ -108,10 +108,14 @@ class TestGetEndpointHeadersNotRedacted:
         headers = endpoint.get_endpoint_headers(request_info)
         assert REDACTED_VALUE not in headers.get("Authorization", "")
 
-    def test_custom_headers_combined_with_auth(self, request_info):
+    def test_custom_headers_combined_with_auth(
+        self, model_endpoint_with_key, request_info
+    ):
         """User-supplied --header values must also pass through unredacted."""
-        request_info.model_endpoint.endpoint.headers = [("X-Custom", "my-value")]
-        endpoint = _StubEndpoint(model_endpoint=request_info.model_endpoint)
+        # Branch's RequestInfo has no model_endpoint field (msgspec, decoupled
+        # from the endpoint construction). Mutate the endpoint directly.
+        model_endpoint_with_key.endpoint.headers = [("X-Custom", "my-value")]
+        endpoint = _StubEndpoint(model_endpoint=model_endpoint_with_key)
         headers = endpoint.get_endpoint_headers(request_info)
         assert headers["Authorization"] == BEARER
         assert headers["X-Custom"] == "my-value"
@@ -208,9 +212,13 @@ class TestInferenceClientWireHeaders:
     async def test_transport_receives_real_headers(
         self, model_endpoint_with_key, request_info
     ):
-        client = InferenceClient(
-            model_endpoint=model_endpoint_with_key, service_id="test"
-        )
+        from aiperf.endpoints.base_endpoint import benchmark_run_from_model_endpoint
+
+        run = benchmark_run_from_model_endpoint(model_endpoint_with_key)
+        # Re-stamp the API key on the synthesized run's endpoint (the helper
+        # carries it through but make this explicit for the wire-safety test).
+        run.cfg.endpoint.api_key = model_endpoint_with_key.endpoint.api_key
+        client = InferenceClient(run=run, service_id="test")
         await client.initialize()
 
         captured_headers = None
@@ -233,9 +241,11 @@ class TestInferenceClientWireHeaders:
     async def test_record_headers_redacted_after_enrichment(
         self, model_endpoint_with_key, request_info
     ):
-        client = InferenceClient(
-            model_endpoint=model_endpoint_with_key, service_id="test"
-        )
+        from aiperf.endpoints.base_endpoint import benchmark_run_from_model_endpoint
+
+        run = benchmark_run_from_model_endpoint(model_endpoint_with_key)
+        run.cfg.endpoint.api_key = model_endpoint_with_key.endpoint.api_key
+        client = InferenceClient(run=run, service_id="test")
         await client.initialize()
 
         async def fake_send(ri, payload, **kw):

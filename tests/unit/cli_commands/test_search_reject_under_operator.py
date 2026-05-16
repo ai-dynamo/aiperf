@@ -23,11 +23,13 @@ from aiperf.config.sweep import (
 
 def _bo_plan() -> BenchmarkPlan:
     sweep = AdaptiveSearchSweep(
-        algorithm="bayes",
+        planner="bayesian",
         search_space=[SearchSpaceDimension(path="x", lo=1, hi=10, kind="int")],
-        objective=AdaptiveObjective(
-            metric="m", stat="avg", direction=OptimizationDirection.MAXIMIZE
-        ),
+        objectives=[
+            AdaptiveObjective(
+                metric="m", stat="avg", direction=OptimizationDirection.MAXIMIZE
+            )
+        ],
         max_iterations=10,
     )
     return BenchmarkPlan(

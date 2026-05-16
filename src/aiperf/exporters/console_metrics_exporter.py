@@ -80,7 +80,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         # legacy NO_CONSOLE flag set so the filter still excludes it from
         # the console table.
         if getattr(metric_class, "console_group", None) == MetricConsoleGroup.NONE:
-            return True
+            return False
         return metric_class.missing_flags(
             MetricFlags.ERROR_ONLY | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
         )

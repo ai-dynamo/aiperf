@@ -200,7 +200,7 @@ class TestMetricsJsonExporter:
 
         # Schema bump landed
         assert raw["schema_version"] == JsonExportData.SCHEMA_VERSION
-        assert JsonExportData.SCHEMA_VERSION == "1.1"
+        assert JsonExportData.SCHEMA_VERSION == "1.3"
 
         # Record metric: count and sum are present
         assert raw["request_latency"]["count"] == 100
