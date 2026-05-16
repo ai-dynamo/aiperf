@@ -10,6 +10,7 @@ from msgspec import Struct
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import BaseServiceMessage
 from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
 
@@ -55,6 +56,11 @@ class CreditPhaseCompleteMessage(
     """Credit phase is fully complete."""
 
     stats: CreditPhaseStats
+
+    branch_stats: BranchStats | None = None
+    """Optional DAG branch statistics aggregated across the phase. None for
+    non-DAG runs; populated by the branch orchestrator when one or more
+    requests in this phase produced fork/spawn children."""
 
 
 class CreditsCompleteMessage(

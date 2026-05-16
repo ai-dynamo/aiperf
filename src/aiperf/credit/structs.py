@@ -6,10 +6,15 @@ All over-the-wire structs use tag_field="t" for efficient polymorphic decoding v
 Tag values are short strings for minimal wire overhead.
 """
 
+from typing import TYPE_CHECKING
+
 from msgspec import Struct
 from typing_extensions import Self
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import ConversationBranchMode, CreditPhase
+
+if TYPE_CHECKING:
+    from aiperf.common.models.dataset_models import TurnMetadata
 
 # =============================================================================
 # Credit Struct (sent from router to worker)
@@ -56,6 +61,24 @@ class Credit(
 
     session_num: int | None = None
     """Sequential number of the session/conversation (0-based), shared across all turns."""
+
+    agent_depth: int = 0
+    """DAG agent depth: 0 = root request, >0 = nested branch (FORK/SPAWN)
+    descendant. Propagates through ``TurnToSend.from_previous_credit`` so the
+    full branch tree shows up in per-record exports."""
+
+    parent_correlation_id: str | None = None
+    """X-Correlation-ID of the parent request when this credit is a DAG
+    branch child (None for root requests)."""
+
+    has_forks: bool = False
+    """True when this credit's turn metadata declares fork children.
+    Propagated forward by the worker so the DAG orchestrator can decide
+    whether to spawn child credits without re-walking the dataset."""
+
+    branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    """How DAG children inherit conversation state: FORK reuses the parent's
+    history; SPAWN starts fresh. Defaults to FORK (the common case)."""
 
     @property
     def is_final_turn(self) -> bool:
@@ -115,13 +138,35 @@ class TurnToSend(Struct, frozen=True):
     allow_worker_migration: bool = False
     """Whether a later worker may continue this session after the original worker is lost."""
 
+    agent_depth: int = 0
+    """DAG agent depth carried forward into the issued Credit (0 = root)."""
+
+    parent_correlation_id: str | None = None
+    """X-Correlation-ID of the parent request when this is a DAG branch child."""
+
+    has_forks: bool = False
+    """True when this turn declares fork children in its TurnMetadata."""
+
+    branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    """How DAG children inherit conversation state (FORK vs SPAWN)."""
+
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
 
     @classmethod
-    def from_previous_credit(cls, credit: Credit) -> Self:
-        """Create the next turn to send from the previous turn's credit."""
+    def from_previous_credit(
+        cls, credit: Credit, next_meta: "TurnMetadata | None" = None
+    ) -> Self:
+        """Create the next turn to send from the previous turn's credit.
+
+        ``next_meta`` is the upcoming turn's ``TurnMetadata`` (carries the
+        per-turn ``has_forks`` flag). When provided, ``has_forks`` reflects
+        the next turn's intent rather than the previous credit's.
+        """
+        has_forks = (
+            next_meta.has_forks if next_meta is not None else credit.has_forks
+        )
         return cls(
             conversation_id=credit.conversation_id,
             x_correlation_id=credit.x_correlation_id,
@@ -129,4 +174,8 @@ class TurnToSend(Struct, frozen=True):
             num_turns=credit.num_turns,
             url_index=credit.url_index,
             allow_worker_migration=credit.allow_worker_migration,
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
+            has_forks=has_forks,
+            branch_mode=credit.branch_mode,
         )
