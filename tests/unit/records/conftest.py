@@ -75,7 +75,6 @@ def create_test_request_info(
         ),
     )
     return RequestInfo(
-        model_endpoint=model_endpoint,
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
