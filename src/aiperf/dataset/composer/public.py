@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.config.dataset import PublicDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, PublicDatasetType
+from aiperf.plugin.enums import PluginType
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
 class PublicDatasetComposer(BaseDatasetComposer):
@@ -22,13 +21,9 @@ class PublicDatasetComposer(BaseDatasetComposer):
     loads the dataset, and finalizes all turns with model name and max_tokens.
     """
 
-    def __init__(self, *, run: BenchmarkRun, tokenizer: Tokenizer | None, **kwargs):
-        super().__init__(run=run, tokenizer=tokenizer, **kwargs)
-
-        dataset = run.cfg.get_default_dataset()
-        if not isinstance(dataset, PublicDataset):
-            raise ValueError("PublicDatasetComposer requires a public dataset.")
-        self._public_dataset = dataset
+    def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer | None):
+        self.tokenizer = tokenizer
+        super().__init__(run, tokenizer)
 
     def create_dataset(self) -> list[Conversation]:
         raise NotImplementedError("Use create_dataset_async() for public datasets")
@@ -39,7 +34,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         Returns:
             list[Conversation]: Finalized conversations ready for benchmarking.
         """
-        dataset_type: PublicDatasetType = self._public_dataset.dataset
+        dataset_type = self.dataset_config.dataset
 
         LoaderClass = plugins.get_class(PluginType.PUBLIC_DATASET_LOADER, dataset_type)
 
@@ -60,7 +55,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         self._finalize_conversations(conversations)
         return conversations
 
-    def _build_loader_kwargs(self, dataset_type: PublicDatasetType) -> dict[str, Any]:
+    def _build_loader_kwargs(self, dataset_type: str) -> dict[str, Any]:
         """Build loader constructor kwargs from plugin metadata.
 
         Reads HF-specific fields from the plugin metadata and returns only the
@@ -79,7 +74,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.hf_dataset_name is not None:
             kwargs["hf_dataset_name"] = loader_metadata.hf_dataset_name
             kwargs["hf_split"] = loader_metadata.hf_split
-            cli_subset = self._public_dataset.hf_subset
+            cli_subset = getattr(self.dataset_config, "hf_subset", None)
             subset = cli_subset if cli_subset is not None else loader_metadata.hf_subset
             if subset is not None:
                 kwargs["hf_subset"] = subset
