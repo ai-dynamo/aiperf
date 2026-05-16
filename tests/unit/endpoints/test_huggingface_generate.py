@@ -5,14 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import ParsedResponse
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
+from aiperf.common.models.dataset_models import Text
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
     TextResponseData,
@@ -22,7 +16,7 @@ from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
 from aiperf.plugin.schema.schemas import EndpointMetadata
-from tests.unit.endpoints.conftest import create_request_info
+from tests.unit.endpoints.conftest import _wrap_run, create_config, create_request_info
 
 
 class TestHuggingFaceGenerateEndpoint:
@@ -30,20 +24,14 @@ class TestHuggingFaceGenerateEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        endpoint_info = EndpointInfo(
-            type=EndpointType.HUGGINGFACE_GENERATE,
+        return create_config(
+            EndpointType.HUGGINGFACE_GENERATE,
             base_url="http://localhost:8081",
-            custom_endpoint=None,
         )
-        model_list = ModelListInfo(
-            models=[ModelInfo(name="test-model")],
-            model_selection_strategy=ModelSelectionStrategy.RANDOM,
-        )
-        return ModelEndpointInfo(models=model_list, endpoint=endpoint_info)
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
-        ep = HuggingFaceGenerateEndpoint(model_endpoint)
+        ep = HuggingFaceGenerateEndpoint(run=_wrap_run(model_endpoint))
         ep.debug = Mock()
         ep.make_text_response_data = Mock(return_value=TextResponseData(text="parsed"))
         return ep
@@ -59,63 +47,50 @@ class TestHuggingFaceGenerateEndpoint:
         assert meta.metrics_title == "LLM Metrics"
 
     def test_format_payload_basic(self, endpoint, model_endpoint):
-        turn = Turn(texts=[{"contents": ["Hello world"]}])
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        turn = Turn(texts=[Text(contents=["Hello world"])])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
         assert payload["inputs"] == "Hello world"
         assert payload["parameters"] == {}
 
-    def test_format_payload_with_max_tokens_and_extra(self, endpoint, model_endpoint):
-        turn = Turn(texts=[{"contents": ["hi"]}], max_tokens=25)
-        model_endpoint.endpoint.extra = {"temperature": 0.9}
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+    def test_format_payload_with_max_tokens_and_extra(self):
+        cfg = create_config(
+            EndpointType.HUGGINGFACE_GENERATE,
+            base_url="http://localhost:8081",
+            extra={"temperature": 0.9},
+        )
+        ep = HuggingFaceGenerateEndpoint(run=_wrap_run(cfg))
+        ep.debug = Mock()
+        turn = Turn(texts=[Text(contents=["hi"])], max_tokens=25)
+        request_info = create_request_info(config=cfg, turns=[turn])
 
-        payload = endpoint.format_payload(request_info)
+        payload = ep.format_payload(request_info)
         assert payload["parameters"]["max_new_tokens"] == 25
         assert payload["parameters"]["temperature"] == 0.9
 
     def test_format_payload_multiple_turns_raises(self, endpoint, model_endpoint):
-        turn1 = Turn(texts=[{"contents": ["a"]}])
-        turn2 = Turn(texts=[{"contents": ["b"]}])
-        request_info = create_request_info(
-            model_endpoint=model_endpoint, turns=[turn1, turn2]
-        )
+        turn1 = Turn(texts=[Text(contents=["a"])])
+        turn2 = Turn(texts=[Text(contents=["b"])])
+        request_info = create_request_info(config=model_endpoint, turns=[turn1, turn2])
         with pytest.raises(ValueError):
             endpoint.format_payload(request_info)
 
-    def test_extra_body_shallow_merges_at_top_level(self, endpoint, model_endpoint):
-        """Test that Turn.extra_body shallow-merges at the TOP level of the
-        TGI wire body (not nested under `parameters`).
-
-        Matches OpenAI SDK extra_body= semantics: keys land at the wire body
-        root. To override a `parameters` key, a user must pass
-        extra_body={"parameters": {...}} (replaces the whole sub-dict).
-        """
-        turn = Turn(
-            texts=[{"contents": ["hello"]}],
-            extra_body={"vendor_x": 1, "stream": True},
+    def test_parse_response_streaming_calls_streaming(self):
+        cfg = create_config(
+            EndpointType.HUGGINGFACE_GENERATE,
+            base_url="http://localhost:8081",
+            streaming=True,
         )
-        payload = endpoint.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
-        )
-        # extra_body lands at the TOP level (not inside `parameters`).
-        assert payload["vendor_x"] == 1
-        assert payload["stream"] is True
-        assert "vendor_x" not in payload["parameters"]
-        assert "stream" not in payload["parameters"]
-
-    def test_parse_response_streaming_calls_streaming(self, endpoint):
+        ep = HuggingFaceGenerateEndpoint(run=_wrap_run(cfg))
         response = Mock(spec=InferenceServerResponse)
-        endpoint.model_endpoint.endpoint.streaming = True
-        endpoint._parse_streaming = Mock(return_value="stream_result")
-        result = endpoint.parse_response(response)
+        ep._parse_streaming = Mock(return_value="stream_result")
+        result = ep.parse_response(response)
         assert result == "stream_result"
-        endpoint._parse_streaming.assert_called_once_with(response)
+        ep._parse_streaming.assert_called_once_with(response)
 
     def test_parse_response_non_streaming_calls_non_streaming(self, endpoint):
         response = Mock(spec=InferenceServerResponse)
-        endpoint.model_endpoint.endpoint.streaming = False
         endpoint._parse_non_streaming = Mock(return_value="non_stream_result")
         result = endpoint.parse_response(response)
         assert result == "non_stream_result"

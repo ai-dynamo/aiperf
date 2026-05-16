@@ -117,6 +117,14 @@ def write_config_schema(path: Path = DEFAULT_SCHEMA_PATH) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``agentic-code-gen`` config-schema tool.
+
+    Generates or validates the ``spec.json`` schema dump for the Agentic Code
+    session-distribution config. With ``--check``, verifies the on-disk schema
+    matches the current codegen output and exits 1 on drift; otherwise writes
+    the schema to ``--output`` (default: ``DEFAULT_SCHEMA_PATH``). Returns the
+    shell exit code.
+    """
     parser = argparse.ArgumentParser(
         description="Generate agentic-code-gen config spec.json"
     )

@@ -9,8 +9,8 @@ from aiperf.common.models import Text, Turn
 from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -20,8 +20,8 @@ class TestHFTeiRankingsEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for HF TEI rankings."""
-        return create_model_endpoint(EndpointType.HF_TEI_RANKINGS)
+        """Create a test BenchmarkConfig for HF TEI rankings."""
+        return create_config(EndpointType.HF_TEI_RANKINGS)
 
     @pytest.fixture
     def converter(self, model_endpoint):
@@ -51,7 +51,7 @@ class TestHFTeiRankingsEndpoint:
     def test_format_payload_basic(self, converter, model_endpoint, basic_turn):
         """Test basic payload formatting with query and passages."""
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[basic_turn])
+            create_request_info(config=model_endpoint, turns=[basic_turn])
         )
 
         assert payload["query"] == "What is artificial intelligence?"
@@ -71,7 +71,7 @@ class TestHFTeiRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(config=model_endpoint, turns=[turn])
         )
 
         assert payload["query"] == "What is Python?"
@@ -91,7 +91,7 @@ class TestHFTeiRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
         assert "Multiple query texts found" in caplog.text
@@ -105,7 +105,7 @@ class TestHFTeiRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
         assert "no passages to rank" in caplog.text
@@ -120,7 +120,7 @@ class TestHFTeiRankingsEndpoint:
 
         with pytest.raises(ValueError, match="requires a text with name 'query'"):
             converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
     def test_format_payload_empty_query_contents(self, converter, model_endpoint):
@@ -135,7 +135,7 @@ class TestHFTeiRankingsEndpoint:
 
         with pytest.raises(ValueError, match="requires a text with name 'query'"):
             converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
     def test_format_payload_ignored_texts(self, converter, model_endpoint, caplog):
@@ -152,7 +152,7 @@ class TestHFTeiRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
         assert "context" in caplog.text
@@ -172,7 +172,7 @@ class TestHFTeiRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(config=model_endpoint, turns=[turn])
         )
 
         assert payload["query"] == "What is AI?"
@@ -180,10 +180,8 @@ class TestHFTeiRankingsEndpoint:
 
     def test_format_payload_extra_parameters(self):
         """Test that extra parameters from endpoint config are included."""
-        extra_params = [("top_k", 5), ("return_scores", True)]
-        test_endpoint = create_model_endpoint(
-            EndpointType.HF_TEI_RANKINGS, extra=extra_params
-        )
+        extra_params = {"top_k": 5, "return_scores": True}
+        test_endpoint = create_config(EndpointType.HF_TEI_RANKINGS, extra=extra_params)
         converter = create_endpoint_with_mock_transport(
             HFTeiRankingsEndpoint, test_endpoint
         )
@@ -197,7 +195,7 @@ class TestHFTeiRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            create_request_info(model_endpoint=test_endpoint, turns=[turn])
+            create_request_info(config=test_endpoint, turns=[turn])
         )
 
         assert payload["top_k"] == 5

@@ -9,8 +9,8 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
 from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 from tests.unit.endpoints.test_embeddings_endpoint import TestEmbeddingsEndpoint
@@ -25,8 +25,8 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for NIM embeddings."""
-        return create_model_endpoint(
+        """Create a test BenchmarkConfig for NIM embeddings."""
+        return create_config(
             EndpointType.NIM_EMBEDDINGS, model_name="nim-embeddings-model"
         )
 
@@ -48,7 +48,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=[image_data_url])],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -63,7 +63,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=[image1, image2])],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -78,7 +78,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=[image_data_url])],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -94,7 +94,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=images)],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -110,7 +110,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=["data:image/png;base64,img1"])],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="must have the same length"):
             endpoint.format_payload(request_info)
@@ -129,7 +129,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             ],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -161,7 +161,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             ],
             model="nim-embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 

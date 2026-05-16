@@ -12,9 +12,9 @@ from aiperf.common.models.record_models import (
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
 )
 
 
@@ -24,8 +24,8 @@ class TestChatEndpointParseResponse:
     @pytest.fixture
     def endpoint(self):
         """Create a ChatEndpoint instance for parsing tests."""
-        model_endpoint = create_model_endpoint(EndpointType.CHAT)
-        return create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        cfg = create_config(EndpointType.CHAT)
+        return create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
     def test_parse_response_chat_completion(self, endpoint):
         """Test parsing non-streaming chat completion response."""
@@ -160,6 +160,33 @@ class TestChatEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
         assert parsed is None
 
+    def test_fast_parse_response_handles_standard_chunk_with_usage(self, endpoint):
+        """Fast-path parser should handle the common streaming chunk shape."""
+        parsed = endpoint._fast_parse_response(
+            {
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": "Hello"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            },
+            123456789,
+        )
+
+        assert parsed is not endpoint._FAST_PARSE_FALLBACK
+        assert parsed is not None
+        assert isinstance(parsed.data, TextResponseData)
+        assert parsed.data.text == "Hello"
+        assert parsed.usage.prompt_tokens == 10
+        assert parsed.usage.completion_tokens == 20
+
+    def test_fast_parse_response_falls_back_for_unexpected_shape(self, endpoint):
+        """Fast-path parser should defer to the generic path for unusual responses."""
+        parsed = endpoint._fast_parse_response(
+            {"object": "unexpected", "choices": [{"message": {"content": "Hello"}}]},
+            123456789,
+        )
+
+        assert parsed is endpoint._FAST_PARSE_FALLBACK
+
     def test_parse_response_streaming_multiple_chunks(self, endpoint):
         """Test parsing multiple streaming chunks."""
         chunks = [
@@ -211,7 +238,7 @@ class TestChatEndpointParseResponse:
         assert parsed.data.text == content_text
 
     def test_parse_response_streaming_tool_calls_only(self, endpoint):
-        """Test parsing streaming chunk with only tool_calls returns ToolCallResponseData."""
+        """Streaming chunk with only tool_calls should yield ToolCallResponseData."""
         mock_response = create_mock_response(
             123456789,
             {
@@ -232,10 +259,10 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.tool_call_text == '{"location": "Paris"}'
+        assert parsed.data.text == '{"location": "Paris"}'
 
     def test_parse_response_non_streaming_tool_calls_only(self, endpoint):
-        """Test parsing non-streaming response with only tool_calls."""
+        """Non-streaming response with only tool_calls."""
         mock_response = create_mock_response(
             123456789,
             {
@@ -256,15 +283,10 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.tool_call_text == '{"query": "test"}'
+        assert parsed.data.text == '{"query": "test"}'
 
-    def test_parse_response_tool_calls_with_content_returns_mixed_data(self, endpoint):
-        """Mixed content+tool_calls chunks return ToolCallResponseData with both fields populated.
-
-        Roughly ~18% of agentic turns emit prose content alongside a
-        tool-call delta; preserving both portions makes client-side OSL
-        match the server's ``usage.completion_tokens``.
-        """
+    def test_parse_response_tool_calls_with_content_prioritizes_content(self, endpoint):
+        """content takes priority over tool_calls when both present."""
         mock_response = create_mock_response(
             123456789,
             {
@@ -285,13 +307,11 @@ class TestChatEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
-        assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.content == "Some text"
-        assert parsed.data.tool_call_text == '{"key": "val"}'
-        assert parsed.data.get_text() == 'Some text{"key": "val"}'
+        assert isinstance(parsed.data, TextResponseData)
+        assert parsed.data.text == "Some text"
 
     def test_parse_response_multiple_tool_calls_concatenated(self, endpoint):
-        """Test that name and arguments from multiple tool calls are concatenated."""
+        """name+arguments from multiple tool calls are concatenated, no separator."""
         mock_response = create_mock_response(
             123456789,
             {
@@ -318,10 +338,10 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.tool_call_text == 'get_weather{"a":"b"}'
+        assert parsed.data.text == 'get_weather{"a":"b"}'
 
     def test_parse_response_tool_call_name_only(self, endpoint):
-        """Test parsing tool call chunk with only function name (first streaming chunk)."""
+        """Tool-call chunk with only function.name (first streaming chunk)."""
         mock_response = create_mock_response(
             123456789,
             {
@@ -336,10 +356,10 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert isinstance(parsed.data, ToolCallResponseData)
-        assert parsed.data.tool_call_text == "search"
+        assert parsed.data.text == "search"
 
     def test_parse_response_tool_calls_empty_arguments_returns_none(self, endpoint):
-        """Test that tool_calls with empty arguments returns None."""
+        """tool_calls with empty arguments and no name yields None (no boundary)."""
         mock_response = create_mock_response(
             123456789,
             {
@@ -354,7 +374,7 @@ class TestChatEndpointParseResponse:
         assert parsed is None
 
     def test_parse_response_reasoning_takes_priority_over_tool_calls(self, endpoint):
-        """Test that reasoning takes priority over tool_calls."""
+        """reasoning takes priority over tool_calls."""
         mock_response = create_mock_response(
             123456789,
             {

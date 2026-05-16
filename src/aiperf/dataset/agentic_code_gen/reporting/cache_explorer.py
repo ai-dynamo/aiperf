@@ -22,6 +22,7 @@ def _classify_turn_blocks(
     hash_ids: list[int],
     prev_hash_id_set: set[int] | None,
     l1_blocks: int,
+    *,
     l15_blocks: int = 0,
     turn_index: int = 0,
 ) -> list[dict]:
@@ -77,8 +78,8 @@ def write_cache_structure(
                 turn.hash_ids,
                 prev_hash_id_set,
                 l1_blocks,
-                l15_blocks_count,
-                turn_index,
+                l15_blocks=l15_blocks_count,
+                turn_index=turn_index,
             )
             segments = _run_length_encode_segments(classified)
             turn_data.append(
