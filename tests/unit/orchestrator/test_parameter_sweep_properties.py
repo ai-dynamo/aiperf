@@ -95,7 +95,7 @@ def _make_config(
     if isinstance(concurrency, list):
         payload["sweep"] = {
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": concurrency},
+            "variables": {"phases.profiling.concurrency": concurrency},
             "same_seed": parameter_sweep_same_seed,
             "cooldown_seconds": parameter_sweep_cooldown_seconds,
             "iteration_order": mode,
@@ -256,7 +256,7 @@ class TestProperty3DuplicateValuesPBT:
             },
             "sweep": {
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": concurrency},
+                "variables": {"phases.profiling.concurrency": concurrency},
             },
         }
         expanded = expand_sweep(data)

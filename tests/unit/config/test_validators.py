@@ -54,7 +54,7 @@ def test_sweep_with_dashboard_ui_rejected() -> None:
         _make(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [10, 20]},
+                "variables": {"phases.profiling.concurrency": [10, 20]},
             },
             runtime={"ui": "dashboard"},
         )
@@ -64,7 +64,7 @@ def test_sweep_with_simple_ui_accepted() -> None:
     cfg = _make(
         sweep={
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"phases.profiling.concurrency": [10, 20]},
         },
         runtime={"ui": "simple"},
     )
@@ -84,7 +84,7 @@ def test_grid_sweep_negative_cooldown_rejected_by_field_constraint() -> None:
         _make(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [10, 20]},
+                "variables": {"phases.profiling.concurrency": [10, 20]},
                 "cooldown_seconds": -1.0,
             },
             runtime={"ui": "simple"},
@@ -95,7 +95,7 @@ def test_grid_sweep_zero_cooldown_accepted() -> None:
     cfg = _make(
         sweep={
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"phases.profiling.concurrency": [10, 20]},
             "cooldown_seconds": 0.0,
         },
         runtime={"ui": "simple"},
@@ -108,7 +108,7 @@ def test_grid_sweep_positive_cooldown_accepted() -> None:
     cfg = _make(
         sweep={
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"phases.profiling.concurrency": [10, 20]},
             "cooldown_seconds": 5.0,
         },
         runtime={"ui": "simple"},
@@ -122,7 +122,7 @@ def test_grid_sweep_same_seed_field_round_trips() -> None:
         random_seed=42,
         sweep={
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"phases.profiling.concurrency": [10, 20]},
             "same_seed": True,
         },
         runtime={"ui": "simple"},

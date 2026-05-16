@@ -64,7 +64,7 @@ class TestPrefillConcurrencyMagicList:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "phases.profiling.prefill_concurrency": [1, 2, 4]
         }
 
@@ -91,7 +91,7 @@ class TestPrefillConcurrencyMagicList:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "phases.profiling.concurrency": [4, 8],
             "phases.profiling.prefill_concurrency": [1, 2],
         }
@@ -109,12 +109,12 @@ class TestRequestRateMagicList:
         cli = CLIConfig(model_names=["m"], request_rate="10,20,30")
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {"phases.profiling.rate": [10.0, 20.0, 30.0]}
+        assert cfg.sweep.variables == {"phases.profiling.rate": [10.0, 20.0, 30.0]}
 
     def test_fractional_rates_in_list(self):
         cli = CLIConfig(model_names=["m"], request_rate="0.5,1.5,2.25")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {"phases.profiling.rate": [0.5, 1.5, 2.25]}
+        assert cfg.sweep.variables == {"phases.profiling.rate": [0.5, 1.5, 2.25]}
 
     def test_scalar_value_does_not_create_sweep(self):
         cli = CLIConfig(model_names=["m"], request_rate=15.5)
@@ -142,7 +142,7 @@ class TestRequestRateMagicList:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "phases.profiling.concurrency": [4, 8],
             "phases.profiling.rate": [10.0, 20.0],
         }

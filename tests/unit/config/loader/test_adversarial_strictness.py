@@ -66,32 +66,32 @@ def test_well_formed_env_var_default_passes() -> None:
 
 def test_grid_sweep_rejects_empty_path() -> None:
     with pytest.raises(ValidationError, match=r"non-empty"):
-        GridSweep(parameters={"": [1, 2, 3]})
+        GridSweep(variables={"": [1, 2, 3]})
 
 
 def test_grid_sweep_rejects_leading_dot() -> None:
     with pytest.raises(ValidationError, match=r"must not start with '\.'"):
-        GridSweep(parameters={".phases.profiling.rate": [1.0, 2.0]})
+        GridSweep(variables={".phases.profiling.rate": [1.0, 2.0]})
 
 
 def test_grid_sweep_rejects_double_dot() -> None:
     with pytest.raises(ValidationError, match=r"consecutive dots"):
-        GridSweep(parameters={"phases..profiling.rate": [1.0, 2.0]})
+        GridSweep(variables={"phases..profiling.rate": [1.0, 2.0]})
 
 
 def test_grid_sweep_rejects_benchmark_prefix() -> None:
     with pytest.raises(ValidationError, match=r"redundant"):
-        GridSweep(parameters={"benchmark.phases.profiling.rate": [1.0, 2.0]})
+        GridSweep(variables={"benchmark.phases.profiling.rate": [1.0, 2.0]})
 
 
 def test_grid_sweep_rejects_envelope_field() -> None:
     with pytest.raises(ValidationError, match=r"non-sweepable"):
-        GridSweep(parameters={"random_seed": [1, 2, 3]})
+        GridSweep(variables={"random_seed": [1, 2, 3]})
 
 
 def test_zip_sweep_rejects_double_dot() -> None:
     with pytest.raises(ValidationError, match=r"consecutive dots"):
-        ZipSweep(parameters={"phases..profiling.rate": [1.0, 2.0]})
+        ZipSweep(variables={"phases..profiling.rate": [1.0, 2.0]})
 
 
 # ---------- sweep: value-list strictness ----------
@@ -99,23 +99,22 @@ def test_zip_sweep_rejects_double_dot() -> None:
 
 def test_grid_sweep_rejects_empty_values() -> None:
     with pytest.raises(ValidationError, match=r"non-empty"):
-        GridSweep(parameters={"phases.profiling.rate": []})
+        GridSweep(variables={"phases.profiling.rate": []})
 
 
 def test_grid_sweep_rejects_nan_value() -> None:
     with pytest.raises(ValidationError, match=r"not\s+finite|NaN"):
-        GridSweep(parameters={"phases.profiling.rate": [1.0, math.nan, 3.0]})
+        GridSweep(variables={"phases.profiling.rate": [1.0, math.nan, 3.0]})
 
 
 def test_grid_sweep_rejects_inf_value() -> None:
     with pytest.raises(ValidationError, match=r"not\s+finite|inf"):
-        GridSweep(parameters={"phases.profiling.rate": [1.0, math.inf]})
+        GridSweep(variables={"phases.profiling.rate": [1.0, math.inf]})
 
 
 def test_zip_sweep_rejects_nan_value() -> None:
     with pytest.raises(ValidationError, match=r"not\s+finite|NaN"):
-        ZipSweep(
-            parameters={
+        ZipSweep(variables={
                 "phases.profiling.rate": [1.0, math.nan],
                 "phases.profiling.concurrency": [1, 2],
             }
@@ -124,10 +123,9 @@ def test_zip_sweep_rejects_nan_value() -> None:
 
 def test_grid_sweep_accepts_well_formed_paths() -> None:
     """Sanity: the validator does not reject legitimate sweep paths."""
-    sweep = GridSweep(
-        parameters={
+    sweep = GridSweep(variables={
             "phases.profiling.concurrency": [1, 2, 4],
             "variables.isl": [128, 256],
         }
     )
-    assert len(sweep.parameters) == 2
+    assert len(sweep.variables) == 2

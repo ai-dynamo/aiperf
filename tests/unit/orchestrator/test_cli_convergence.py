@@ -75,7 +75,7 @@ def _make_plan(
         trials=trials,
         multi_run=multi_run,
         sweep=GridSweep(
-            parameters={"phases.profiling.concurrency": [1]},
+            variables={"phases.profiling.concurrency": [1]},
             iteration_order=SweepMode.INDEPENDENT,
         ),
         export_level=export_level,

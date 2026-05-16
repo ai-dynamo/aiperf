@@ -37,7 +37,7 @@ class TestGridSweepEdgeCases:
     )
 
     def test_single_element_list_produces_one_variation(self) -> None:
-        data = {"sweep": {"type": "grid", "parameters": {"x": [5]}}}
+        data = {"sweep": {"type": "grid", "variables": {"x": [5]}}}
         result = expand_sweep(data)
 
         assert len(result) == 1
@@ -48,7 +48,7 @@ class TestGridSweepEdgeCases:
 
     def test_falsy_values_all_preserved(self) -> None:
         """0, False, and 0.0 are all valid sweep values."""
-        data = {"sweep": {"type": "grid", "parameters": {"x": [0, False, 0.0]}}}
+        data = {"sweep": {"type": "grid", "variables": {"x": [0, False, 0.0]}}}
         result = expand_sweep(data)
 
         assert len(result) == 3
@@ -56,7 +56,7 @@ class TestGridSweepEdgeCases:
         assert values == [0, False, 0.0]
 
     def test_none_value_preserved_in_list(self) -> None:
-        data = {"sweep": {"type": "grid", "parameters": {"x": [1, None, 3]}}}
+        data = {"sweep": {"type": "grid", "variables": {"x": [1, None, 3]}}}
         result = expand_sweep(data)
 
         assert len(result) == 3
@@ -64,7 +64,7 @@ class TestGridSweepEdgeCases:
         assert values == [1, None, 3]
 
     def test_deeply_nested_path(self) -> None:
-        data = {"sweep": {"type": "grid", "parameters": {"a.b.c.d.e": [1, 2]}}}
+        data = {"sweep": {"type": "grid", "variables": {"a.b.c.d.e": [1, 2]}}}
         result = expand_sweep(data)
 
         assert len(result) == 2
@@ -77,7 +77,7 @@ class TestGridSweepEdgeCases:
             "parent": {"x": 0, "y": 0},
             "sweep": {
                 "type": "grid",
-                "parameters": {"parent.x": [1, 2], "parent.y": [3, 4]},
+                "variables": {"parent.x": [1, 2], "parent.y": [3, 4]},
             },
         }
         result = expand_sweep(data)
@@ -90,7 +90,7 @@ class TestGridSweepEdgeCases:
         data = {
             "sweep": {
                 "type": "grid",
-                "parameters": {
+                "variables": {
                     "a": list(range(5)),
                     "b": list(range(5)),
                     "c": list(range(5)),
@@ -108,7 +108,7 @@ class TestGridSweepEdgeCases:
         data = {
             "sweep": {
                 "type": "grid",
-                "parameters": {"alpha": [1], "beta": [2]},
+                "variables": {"alpha": [1], "beta": [2]},
             },
         }
         result = expand_sweep(data)
@@ -119,7 +119,7 @@ class TestGridSweepEdgeCases:
     def test_sweep_key_stripped_from_all_variations(self) -> None:
         data = {
             "keep": "this",
-            "sweep": {"type": "grid", "parameters": {"x": [1, 2, 3]}},
+            "sweep": {"type": "grid", "variables": {"x": [1, 2, 3]}},
         }
         result = expand_sweep(data)
 

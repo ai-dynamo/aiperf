@@ -166,7 +166,7 @@ class TestSamplingDesignDefensiveGuards:
         from aiperf.config.sweep import GridSweep
 
         plan = MagicMock(spec=BenchmarkPlan)
-        plan.sweep = GridSweep(parameters={"x": [1, 2]})
+        plan.sweep = GridSweep(variables={"x": [1, 2]})
         plan.variations = []
         plan.configs = []
 

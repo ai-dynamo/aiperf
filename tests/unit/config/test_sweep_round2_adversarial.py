@@ -333,7 +333,7 @@ class TestH14GridEmptyValueList:
             "benchmark": {},
             "sweep": {
                 "type": "grid",
-                "parameters": {"phases.profiling.rate": []},
+                "variables": {"phases.profiling.rate": []},
             },
         }
         with pytest.raises(ValueError, match="non-empty"):
@@ -341,5 +341,5 @@ class TestH14GridEmptyValueList:
 
     def test_singleton_value_list_allowed(self) -> None:
         # One value is a degenerate-but-valid pin, not an error.
-        gs = GridSweep(parameters={"phases.profiling.rate": [42]})
+        gs = GridSweep(variables={"phases.profiling.rate": [42]})
         assert gs.parameters == {"phases.profiling.rate": [42]}

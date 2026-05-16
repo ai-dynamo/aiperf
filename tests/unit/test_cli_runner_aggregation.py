@@ -55,7 +55,7 @@ def _make_plan(*, iteration_order: SweepMode = SweepMode.INDEPENDENT) -> Benchma
         confidence_level=0.95,
         cooldown_seconds=10,
         sweep=GridSweep(
-            parameters={"phases.profiling.concurrency": [10, 20]},
+            variables={"phases.profiling.concurrency": [10, 20]},
             iteration_order=iteration_order,
         ),
     )

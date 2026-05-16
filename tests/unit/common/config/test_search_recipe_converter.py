@@ -73,7 +73,7 @@ def test_v1_converter_expands_grid_recipes_with_sweep_metadata(
     config = _convert_recipe(recipe_name, streaming=streaming, **loadgen_overrides)
 
     assert isinstance(config.sweep, GridSweep)
-    assert config.sweep.parameters
+    assert config.sweep.variables
     assert config.sweep.post_process is not None
     assert config.multi_run is not None
 
@@ -96,14 +96,14 @@ def test_v1_converter_promotes_magic_list_concurrency_without_recipe() -> None:
     config = convert_cli_to_aiperf(user)
 
     assert isinstance(config.sweep, GridSweep)
-    assert config.sweep.parameters
+    assert config.sweep.variables
     # The list value must land under the dotted phase path the sweep
     # expander consumes, not on the phase scalar.
-    matched = [key for key in config.sweep.parameters if key.endswith(".concurrency")]
+    matched = [key for key in config.sweep.variables if key.endswith(".concurrency")]
     assert matched, (
-        f"expected a phases.<name>.concurrency variable, got {config.sweep.parameters!r}"
+        f"expected a phases.<name>.concurrency variable, got {config.sweep.variables!r}"
     )
-    assert config.sweep.parameters[matched[0]] == [1, 2, 4]
+    assert config.sweep.variables[matched[0]] == [1, 2, 4]
 
 
 def test_v1_converter_parameter_sweep_mode_with_adaptive_recipe_does_not_crash() -> (
@@ -355,9 +355,9 @@ def test_v1_converter_concurrency_max_overrides_decode_itl_curve_grid() -> None:
         concurrency_max=512,
     )
     assert isinstance(config.sweep, GridSweep)
-    matched = [k for k in config.sweep.parameters if k.endswith(".concurrency")]
-    assert matched, f"expected concurrency variable, got {config.sweep.parameters!r}"
-    values = config.sweep.parameters[matched[0]]
+    matched = [k for k in config.sweep.variables if k.endswith(".concurrency")]
+    assert matched, f"expected concurrency variable, got {config.sweep.variables!r}"
+    values = config.sweep.variables[matched[0]]
     # Default lo=1, default steps=6, override hi=512: last value must be 512.
     assert values[-1] == 512
     assert values[0] == 1
@@ -373,9 +373,9 @@ def test_v1_converter_osl_overrides_decode_itl_curve_grid() -> None:
         osl_steps=8,
     )
     assert isinstance(config.sweep, GridSweep)
-    osl_keys = [k for k in config.sweep.parameters if k.endswith(".osl")]
-    assert osl_keys, f"expected osl variable, got {config.sweep.parameters!r}"
-    values = config.sweep.parameters[osl_keys[0]]
+    osl_keys = [k for k in config.sweep.variables if k.endswith(".osl")]
+    assert osl_keys, f"expected osl variable, got {config.sweep.variables!r}"
+    values = config.sweep.variables[osl_keys[0]]
     assert values[0] == 128
     assert values[-1] == 2048
     assert len(values) == 8
@@ -389,9 +389,9 @@ def test_v1_converter_isl_steps_overrides_prefill_ttft_curve() -> None:
         isl_steps=12,
     )
     assert isinstance(config.sweep, GridSweep)
-    isl_keys = [k for k in config.sweep.parameters if k.endswith(".isl")]
-    assert isl_keys, f"expected isl variable, got {config.sweep.parameters!r}"
-    assert len(config.sweep.parameters[isl_keys[0]]) == 12
+    isl_keys = [k for k in config.sweep.variables if k.endswith(".isl")]
+    assert isl_keys, f"expected isl variable, got {config.sweep.variables!r}"
+    assert len(config.sweep.variables[isl_keys[0]]) == 12
 
 
 def test_v1_converter_concurrency_steps_overrides_concurrency_ramp() -> None:
@@ -404,9 +404,9 @@ def test_v1_converter_concurrency_steps_overrides_concurrency_ramp() -> None:
         concurrency_steps=5,
     )
     assert isinstance(config.sweep, GridSweep)
-    matched = [k for k in config.sweep.parameters if k.endswith(".concurrency")]
-    assert matched, f"expected concurrency variable, got {config.sweep.parameters!r}"
-    values = config.sweep.parameters[matched[0]]
+    matched = [k for k in config.sweep.variables if k.endswith(".concurrency")]
+    assert matched, f"expected concurrency variable, got {config.sweep.variables!r}"
+    values = config.sweep.variables[matched[0]]
     assert len(values) == 5
     assert values[0] == 2
     assert values[-1] == 128
@@ -525,9 +525,9 @@ def test_v1_converter_max_concurrency_under_sla_grid_honors_bounds() -> None:
         concurrency_steps=8,  # currently unused by this branch but harmless
     )
     assert isinstance(config.sweep, GridSweep)
-    matched = [k for k in config.sweep.parameters if k.endswith(".concurrency")]
-    assert matched, f"expected concurrency variable, got {config.sweep.parameters!r}"
-    values = config.sweep.parameters[matched[0]]
+    matched = [k for k in config.sweep.variables if k.endswith(".concurrency")]
+    assert matched, f"expected concurrency variable, got {config.sweep.variables!r}"
+    values = config.sweep.variables[matched[0]]
     assert values[0] == 4
     assert values[-1] == 256
 

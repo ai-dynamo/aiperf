@@ -26,14 +26,14 @@ class TestDatasetMagicLists:
         cli = CLIConfig(model_names=["m"], prompt_input_tokens_mean="128,512,2048")
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.isl.mean": [128, 512, 2048]
         }
 
     def test_osl_comma_list_promotes_to_dataset_sweep(self):
         cli = CLIConfig(model_names=["m"], prompt_output_tokens_mean="64,128,256")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.osl.mean": [64, 128, 256]
         }
 
@@ -45,7 +45,7 @@ class TestDatasetMagicLists:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.isl.mean": [128, 512],
             "datasets.main.prompts.osl.mean": [64, 256],
         }
@@ -70,12 +70,12 @@ class TestPhaseMagicLists:
     def test_request_count_list_sweeps_phases_profiling_requests(self):
         cli = CLIConfig(model_names=["m"], request_count="100,500,1000")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {"phases.profiling.requests": [100, 500, 1000]}
+        assert cfg.sweep.variables == {"phases.profiling.requests": [100, 500, 1000]}
 
     def test_benchmark_duration_list_sweeps_phases_profiling_duration(self):
         cli = CLIConfig(model_names=["m"], benchmark_duration="30,60,120")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "phases.profiling.duration": [30.0, 60.0, 120.0]
         }
 
@@ -88,12 +88,12 @@ class TestPhaseMagicLists:
             num_users="4,8,16",
         )
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {"phases.profiling.users": [4, 8, 16]}
+        assert cfg.sweep.variables == {"phases.profiling.users": [4, 8, 16]}
 
     def test_conversation_num_list_sweeps_phase_sessions(self):
         cli = CLIConfig(model_names=["m"], conversation_num="50,100,200")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {"phases.profiling.sessions": [50, 100, 200]}
+        assert cfg.sweep.variables == {"phases.profiling.sessions": [50, 100, 200]}
 
     def test_conversation_num_list_sizes_dataset_to_max(self):
         # Phase.sessions varies per variation, but the dataset entries pool
@@ -111,7 +111,7 @@ class TestPhaseMagicLists:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, GridSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "phases.profiling.requests": [100, 500],
             "datasets.main.prompts.isl.mean": [128, 512],
         }
@@ -130,7 +130,7 @@ class TestSweepTypeZip:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, ZipSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.isl.mean": [128, 512, 2048],
             "datasets.main.prompts.osl.mean": [128, 256, 512],
             "phases.profiling.concurrency": [4, 16, 64],
@@ -165,7 +165,7 @@ class TestSweepTypeZip:
         cli = CLIConfig(model_names=["m"], sweep_type="zip", concurrency="4,8,16")
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, ZipSweep)
-        assert cfg.sweep.parameters == {"phases.profiling.concurrency": [4, 8, 16]}
+        assert cfg.sweep.variables == {"phases.profiling.concurrency": [4, 8, 16]}
 
 
 class TestRealisticTrafficShapesViaZip:
@@ -174,7 +174,7 @@ class TestRealisticTrafficShapesViaZip:
     def test_isl_stddev_list_promotes(self):
         cli = CLIConfig(model_names=["m"], prompt_input_tokens_stddev="10,50,200")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.isl.stddev": [10.0, 50.0, 200.0]
         }
 
@@ -185,14 +185,14 @@ class TestRealisticTrafficShapesViaZip:
             prompt_output_tokens_stddev="5,25,100",
         )
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.osl.stddev": [5.0, 25.0, 100.0]
         }
 
     def test_conversation_turn_mean_list_promotes(self):
         cli = CLIConfig(model_names=["m"], conversation_turn_mean="1,3,8")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {"datasets.main.turns.mean": [1, 3, 8]}
+        assert cfg.sweep.variables == {"datasets.main.turns.mean": [1, 3, 8]}
 
     def test_zip_paired_isl_osl_with_stddevs(self):
         # The reason this whole feature exists: realistic small/medium/large
@@ -207,7 +207,7 @@ class TestRealisticTrafficShapesViaZip:
         )
         cfg = convert_cli_to_aiperf(cli)
         assert isinstance(cfg.sweep, ZipSweep)
-        assert cfg.sweep.parameters == {
+        assert cfg.sweep.variables == {
             "datasets.main.prompts.isl.mean": [128, 512, 2048],
             "datasets.main.prompts.isl.stddev": [10.0, 50.0, 200.0],
             "datasets.main.prompts.osl.mean": [64, 256, 1024],
@@ -248,7 +248,7 @@ class TestConversationTurnMeanUserCentricValidation:
             conversation_turn_mean="2,3,8",
         )
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.parameters == {"datasets.main.turns.mean": [2, 3, 8]}
+        assert cfg.sweep.variables == {"datasets.main.turns.mean": [2, 3, 8]}
 
     """Regression: placeholder must land on the base config so AIPerfConfig
     validates even when the magic-list strips required fields.

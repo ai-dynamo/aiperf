@@ -22,7 +22,7 @@ def test_grid_sweep_with_base_fields():
     sweep = _adapter().validate_python(
         {
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": [1, 4, 16]},
+            "variables": {"phases.profiling.concurrency": [1, 4, 16]},
             "cooldown_seconds": 30.0,
             "same_seed": True,
             "iteration_order": "independent",

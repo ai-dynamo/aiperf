@@ -274,7 +274,7 @@ def test_endpoint_config_never_unhandled(data: dict) -> None:
             GridSweep,
             {
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [1, 2, 4]},
+                "variables": {"phases.profiling.concurrency": [1, 2, 4]},
             },
         ),
         (

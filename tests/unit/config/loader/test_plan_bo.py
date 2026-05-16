@@ -88,7 +88,7 @@ def test_build_plan_rejects_grid_dict_with_adaptive_type():
                 # `objective` / `max_iterations`.
                 "sweep": {
                     "type": "grid",
-                    "parameters": {"phases.profiling.concurrency": [1, 2]},
+                    "variables": {"phases.profiling.concurrency": [1, 2]},
                     "objectives": [
                         {
                             "metric": "x",

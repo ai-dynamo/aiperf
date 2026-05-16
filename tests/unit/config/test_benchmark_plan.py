@@ -141,8 +141,7 @@ class TestBenchmarkPlan:
         config = _make_benchmark_config()
         plan = BenchmarkPlan(
             configs=[config, config],
-            sweep=GridSweep(
-                parameters={"phases.profiling.concurrency": [1, 2]},
+            sweep=GridSweep(variables={"phases.profiling.concurrency": [1, 2]},
                 cooldown_seconds=2.5,
                 same_seed=True,
             ),
@@ -154,8 +153,7 @@ class TestBenchmarkPlan:
     def test_grid_sweep_negative_cooldown_rejected(self) -> None:
         """GridSweep.cooldown_seconds enforces ge=0 at the sub-object."""
         with pytest.raises(ValidationError):
-            GridSweep(
-                parameters={"phases.profiling.concurrency": [1, 2]},
+            GridSweep(variables={"phases.profiling.concurrency": [1, 2]},
                 cooldown_seconds=-1.0,
             )
 
@@ -252,7 +250,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [8, 16, 32]},
+                "variables": {"phases.profiling.concurrency": [8, 16, 32]},
             }
         )
         plan = build_benchmark_plan(config)
@@ -304,7 +302,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [8, 16]},
+                "variables": {"phases.profiling.concurrency": [8, 16]},
             },
             multi_run={"num_runs": 3},
         )
@@ -319,7 +317,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [8]},
+                "variables": {"phases.profiling.concurrency": [8]},
             }
         )
         plan = build_benchmark_plan(config)
@@ -633,8 +631,7 @@ class TestBenchmarkPlanAdaptiveSearch:
                     num_runs=3,
                     convergence=ConvergenceConfig(metric="request_throughput"),
                 ),
-                sweep=GridSweep(
-                    parameters={"phases.profiling.concurrency": [1, 2]},
+                sweep=GridSweep(variables={"phases.profiling.concurrency": [1, 2]},
                     iteration_order=SweepMode.REPEATED,
                 ),
             )

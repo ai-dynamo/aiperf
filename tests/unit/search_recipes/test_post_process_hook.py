@@ -73,7 +73,7 @@ def _make_plan(
 ) -> BenchmarkPlan:
     sweep = (
         GridSweep(
-            parameters={_SWEEP_PATH: [c.phases[0].concurrency for c in configs]},
+            variables={_SWEEP_PATH: [c.phases[0].concurrency for c in configs]},
             post_process=post_process,
         )
         if post_process is not None

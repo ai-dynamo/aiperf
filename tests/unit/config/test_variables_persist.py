@@ -92,7 +92,7 @@ def test_variables_block_persists_through_sweep_variations():
         variables={"isl": 1024, "osl": 512},
         sweep={
             "type": "grid",
-            "parameters": {"phases.profiling.concurrency": [8, 16, 32]},
+            "variables": {"phases.profiling.concurrency": [8, 16, 32]},
         },
         benchmark=_BASE_DICT,
     )

@@ -91,7 +91,7 @@ class TestGridSweepSugar:
 
     def test_bare_concurrency_alias_expands_in_grid(self):
         data = self._base()
-        data["sweep"] = {"type": "grid", "parameters": {"concurrency": [4, 8, 16]}}
+        data["sweep"] = {"type": "grid", "variables": {"concurrency": [4, 8, 16]}}
         result = expand_sweep(data)
         assert len(result) == 3
         concurrencies = [v[0]["benchmark"]["phases"][0]["concurrency"] for v in result]
@@ -112,7 +112,7 @@ class TestGridSweepSugar:
         data["benchmark"]["phases"] = [
             {"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}
         ]
-        data["sweep"] = {"type": "grid", "parameters": {"concurrency": [4, 8]}}
+        data["sweep"] = {"type": "grid", "variables": {"concurrency": [4, 8]}}
         result = expand_sweep(data)
         assert len(result) == 2
         concurrencies = [v[0]["benchmark"]["phases"][0]["concurrency"] for v in result]
@@ -127,7 +127,7 @@ class TestGridSweepSugar:
         )
         data["sweep"] = {
             "type": "grid",
-            "parameters": {
+            "variables": {
                 "concurrency": [2, 4],
                 "phases.warmup.requests": [50, 100],
             },
@@ -148,7 +148,7 @@ class TestGridSweepSugar:
         data = self._base()
         data["sweep"] = {
             "type": "grid",
-            "parameters": {
+            "variables": {
                 "concurrency": [4, 8],
                 "phases.profiling.concurrency": [16, 32],
             },
@@ -188,7 +188,7 @@ class TestZipSweepSugar:
         data = self._base()
         data["sweep"] = {
             "type": "zip",
-            "parameters": {
+            "variables": {
                 "concurrency": [4, 8, 16],
                 "requests": [100, 200, 400],
             },

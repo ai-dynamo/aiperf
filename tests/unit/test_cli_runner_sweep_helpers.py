@@ -161,8 +161,7 @@ def _make_plan_mode(mode: SweepMode) -> BenchmarkPlan:
     cfg = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)
     return BenchmarkPlan(
         configs=[cfg],
-        sweep=GridSweep(
-            parameters={"phases.profiling.concurrency": [1]},
+        sweep=GridSweep(variables={"phases.profiling.concurrency": [1]},
             iteration_order=mode,
         ),
     )

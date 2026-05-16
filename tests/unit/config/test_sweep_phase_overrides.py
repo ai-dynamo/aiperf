@@ -121,7 +121,7 @@ class TestGridSweepWithPhaseNamePath:
             },
             "sweep": {
                 "type": "grid",
-                "parameters": {
+                "variables": {
                     "phases.profiling.rate": [10.0, 30.0, 50.0],
                 },
             },

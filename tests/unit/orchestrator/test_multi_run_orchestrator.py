@@ -72,7 +72,7 @@ def _make_plan(num_variations: int, trials: int) -> BenchmarkPlan:
         variations=variations,
         trials=trials,
         sweep=GridSweep(
-            parameters={"phases.profiling.concurrency": [1]},
+            variables={"phases.profiling.concurrency": [1]},
             iteration_order=SweepMode.INDEPENDENT,
         ),
     )
@@ -174,7 +174,7 @@ async def test_orchestrator_inter_variation_cooldown_sleeps_between_variations(
     plan = plan.model_copy(
         update={
             "sweep": GridSweep(
-                parameters={"phases.profiling.concurrency": [1]},
+                variables={"phases.profiling.concurrency": [1]},
                 iteration_order=SweepMode.INDEPENDENT,
                 cooldown_seconds=4.0,
             )
@@ -331,7 +331,7 @@ def _make_two_variation_plan(mode: SweepMode, trials: int = 3) -> BenchmarkPlan:
                 ),
             ],
             "sweep": GridSweep(
-                parameters={"phases.profiling.concurrency": [10, 20]},
+                variables={"phases.profiling.concurrency": [10, 20]},
                 iteration_order=mode,
             ),
         }
@@ -572,7 +572,7 @@ def _make_sweep_plan(mode: SweepMode, trials: int) -> BenchmarkPlan:
         variations=variations,
         trials=trials,
         sweep=GridSweep(
-            parameters={"phases.profiling.concurrency": [10, 20]},
+            variables={"phases.profiling.concurrency": [10, 20]},
             iteration_order=mode,
         ),
     )

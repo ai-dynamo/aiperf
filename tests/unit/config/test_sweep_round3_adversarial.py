@@ -103,7 +103,7 @@ class TestH16GridParameterPathValidation:
     def test_grid_rejects_bad_paths(self, bad_path: str) -> None:
         data = {
             "benchmark": {},
-            "sweep": {"type": "grid", "parameters": {bad_path: [1, 2]}},
+            "sweep": {"type": "grid", "variables": {bad_path: [1, 2]}},
         }
         with pytest.raises(ValueError, match=r"grid sweep parameter"):
             expand_sweep(data)
@@ -113,7 +113,7 @@ class TestH16GridParameterPathValidation:
         data = {
             "benchmark": {},
             "variables": {"foo": 1},
-            "sweep": {"type": "grid", "parameters": {"variables.foo": [1, 2]}},
+            "sweep": {"type": "grid", "variables": {"variables.foo": [1, 2]}},
         }
         out = expand_sweep(data)
         assert len(out) == 2

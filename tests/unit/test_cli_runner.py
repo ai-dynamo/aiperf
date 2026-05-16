@@ -155,7 +155,7 @@ class TestRunBenchmark:
                     index=1, label="concurrency=2", values={"concurrency": 2}
                 ),
             ],
-            sweep=GridSweep(parameters={"phases.profiling.concurrency": [1, 2]}),
+            sweep=GridSweep(variables={"phases.profiling.concurrency": [1, 2]}),
         )
 
         run_benchmark(plan)

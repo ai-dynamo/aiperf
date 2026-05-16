@@ -24,22 +24,21 @@ class TestSweepModels:
     """Tests for sweep Pydantic models."""
 
     def test_grid_sweep_basic(self):
-        sweep = GridSweep(parameters={"phases.concurrency": [8, 16, 32]})
+        sweep = GridSweep(variables={"phases.concurrency": [8, 16, 32]})
         assert sweep.type == "grid"
-        assert sweep.parameters == {"phases.concurrency": [8, 16, 32]}
+        assert sweep.variables == {"phases.concurrency": [8, 16, 32]}
 
     def test_grid_sweep_multiple_variables(self):
-        sweep = GridSweep(
-            parameters={
+        sweep = GridSweep(variables={
                 "phases.concurrency": [8, 16],
                 "phases.rate": [10.0, 20.0],
             }
         )
-        assert len(sweep.parameters) == 2
+        assert len(sweep.variables) == 2
 
     def test_grid_sweep_requires_variables(self):
         with pytest.raises(ValidationError):
-            GridSweep(parameters={})
+            GridSweep(variables={})
 
     def test_scenario_sweep_basic(self):
         sweep = ScenarioSweep(runs=[{"phases": {"concurrency": 8}}])
@@ -60,7 +59,7 @@ class TestSweepModels:
 
     def test_grid_sweep_forbids_extra(self):
         with pytest.raises(ValidationError):
-            GridSweep(parameters={"x": [1]}, unknown="bad")
+            GridSweep(variables={"x": [1]}, unknown="bad")
 
     def test_scenario_sweep_forbids_extra(self):
         with pytest.raises(ValidationError):
@@ -117,7 +116,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {
+                "variables": {
                     "phases.profiling.concurrency": [8, 16],
                     "phases.profiling.requests": [100, 200, 300],
                 },
@@ -145,7 +144,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [1, 2, 4, 8]},
+                "variables": {"phases.profiling.concurrency": [1, 2, 4, 8]},
             }
         )
         result = expand_sweep(data)
@@ -218,7 +217,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [1, 2]},
+                "variables": {"phases.profiling.concurrency": [1, 2]},
             }
         )
         # Also add magic list (should be ignored since explicit sweep exists)
@@ -231,7 +230,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [1]},
+                "variables": {"phases.profiling.concurrency": [1]},
             }
         )
         result = expand_sweep(data)
@@ -242,7 +241,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {
+                "variables": {
                     "phases.profiling.concurrency": [8, 16],
                 },
             }
@@ -274,7 +273,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {
+                "variables": {
                     "phases.profiling.concurrency": [4, 8],
                     "phases.profiling.requests": [10, 20],
                 },
@@ -287,7 +286,7 @@ class TestExpandSweep:
         data_reversed = self._base_config(
             sweep={
                 "type": "grid",
-                "parameters": {
+                "variables": {
                     "phases.profiling.requests": [10, 20],
                     "phases.profiling.concurrency": [4, 8],
                 },
@@ -536,7 +535,7 @@ class TestSetNestedValueStrictNamedList:
             },
             "sweep": {
                 "type": "grid",
-                "parameters": {"phases.profilling.concurrency": [1, 2]},
+                "variables": {"phases.profilling.concurrency": [1, 2]},
             },
         }
         with pytest.raises(ValueError, match=r"no entry named 'profilling'"):
@@ -854,35 +853,33 @@ class TestZipSweepModel:
     """Pydantic-level checks on the ``ZipSweep`` model."""
 
     def test_zip_sweep_basic(self):
-        sweep = ZipSweep(
-            parameters={
+        sweep = ZipSweep(variables={
                 "datasets.default.prompts.isl": [128, 512, 2048],
                 "datasets.default.prompts.osl": [128, 256, 512],
             }
         )
         assert sweep.type == "zip"
-        assert len(sweep.parameters) == 2
+        assert len(sweep.variables) == 2
 
     def test_zip_sweep_requires_parameters(self):
         with pytest.raises(ValidationError):
-            ZipSweep(parameters={})
+            ZipSweep(variables={})
 
     def test_zip_sweep_forbids_extra(self):
         with pytest.raises(ValidationError):
-            ZipSweep(parameters={"x": [1]}, unknown="bad")
+            ZipSweep(variables={"x": [1]}, unknown="bad")
 
     def test_zip_sweep_rejects_mismatched_lengths(self):
         with pytest.raises(ValidationError, match=r"equal length"):
-            ZipSweep(
-                parameters={
+            ZipSweep(variables={
                     "phases.profiling.a": [1, 2, 3],
                     "phases.profiling.b": [10, 20],
                 }
             )
 
     def test_zip_sweep_single_parameter_ok(self):
-        sweep = ZipSweep(parameters={"phases.profiling.concurrency": [1, 2, 4]})
-        assert len(sweep.parameters) == 1
+        sweep = ZipSweep(variables={"phases.profiling.concurrency": [1, 2, 4]})
+        assert len(sweep.variables) == 1
 
 
 class TestExpandZipSweep:
@@ -926,7 +923,7 @@ class TestExpandZipSweep:
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "phases.profiling.concurrency": [8, 16, 32],
                     "phases.profiling.requests": [100, 200, 300],
                 },
@@ -947,7 +944,7 @@ class TestExpandZipSweep:
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {"phases.profiling.concurrency": [1, 2, 4, 8]},
+                "variables": {"phases.profiling.concurrency": [1, 2, 4, 8]},
             }
         )
         result = expand_sweep(data)
@@ -988,7 +985,7 @@ class TestExpandZipSweep:
             },
             "sweep": {
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "dataset.prompts.isl": [128, 512, 2048],
                     "dataset.prompts.osl": [128, 256, 512],
                 },
@@ -1014,7 +1011,7 @@ class TestExpandZipSweep:
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "datasets.default.prompts.isl": [128, 512, 2048],
                     "datasets.default.prompts.osl": [128, 256, 512],
                 },
@@ -1037,7 +1034,7 @@ class TestExpandZipSweep:
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "variables.label": ["small", "large"],
                     "phases.profiling.concurrency": [8, 64],
                 },
@@ -1060,7 +1057,7 @@ class TestExpandZipSweep:
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "phases.profiling.requests": [10, 20],
                     "phases.profiling.concurrency": [4, 8],
                 },
@@ -1071,7 +1068,7 @@ class TestExpandZipSweep:
         data_reversed = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "phases.profiling.concurrency": [4, 8],
                     "phases.profiling.requests": [10, 20],
                 },
@@ -1088,7 +1085,7 @@ class TestExpandZipSweep:
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {"phases.profiling.concurrency": [1, 2]},
+                "variables": {"phases.profiling.concurrency": [1, 2]},
             }
         )
         result = expand_sweep(data)
@@ -1098,8 +1095,7 @@ class TestExpandZipSweep:
     def test_zip_sweep_mismatched_lengths_raise_at_pydantic_time(self):
         """Mismatched lengths must error at model-construction time."""
         with pytest.raises(ValidationError, match=r"equal length"):
-            ZipSweep(
-                parameters={
+            ZipSweep(variables={
                     "phases.profiling.concurrency": [1, 2, 3],
                     "phases.profiling.requests": [10, 20],
                 }
@@ -1137,22 +1133,23 @@ class TestExpandZipSweep:
                 {"phases.profiling.concurrency": bad_value},
             )
 
-    def test_zip_sweep_rejects_redundant_benchmark_prefix(self):
-        """Bare paths route to body; ``benchmark.<x>`` must error (mirrors
+    def test_zip_sweep_accepts_benchmark_prefix(self):
+        """``benchmark.<x>`` is the canonical AIPerfSweep CR shape; the
+        prefix is stripped so the underlying field is body-rooted (matches
         grid sweep semantics)."""
         from aiperf.config.sweep.expand import _expand_zip_sweep
 
-        with pytest.raises(ValueError, match=r"zip sweep parameter"):
-            _expand_zip_sweep(
-                {"benchmark": {}},
-                {"benchmark.phases.profiling.concurrency": [1, 2]},
-            )
+        result = _expand_zip_sweep(
+            {"benchmark": {}},
+            {"benchmark.phases.profiling.concurrency": [1, 2]},
+        )
+        assert len(result) == 2
 
     def test_zip_sweep_variation_metadata_correct(self):
         data = self._base_config(
             sweep={
                 "type": "zip",
-                "parameters": {
+                "variables": {
                     "phases.profiling.concurrency": [8, 16],
                     "phases.profiling.requests": [100, 200],
                 },

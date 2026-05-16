@@ -503,7 +503,7 @@ class TestSamplingDesignArtifact:
         from aiperf.config.sweep import GridSweep
         from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 
-        sweep = GridSweep(parameters={"x": [1, 2, 3]})
+        sweep = GridSweep(variables={"x": [1, 2, 3]})
         plan = MagicMock(spec=BenchmarkPlan)
         plan.sweep = sweep
         plan.variations = []
