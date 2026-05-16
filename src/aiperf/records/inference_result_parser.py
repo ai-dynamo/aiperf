@@ -53,7 +53,9 @@ class InferenceResultParser(CommunicationMixin):
             tokenizer_ready.set()
         self._tokenizer_ready = tokenizer_ready
         EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
-        self.endpoint = EndpointClass(run=run)
+        from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+
+        self.endpoint = EndpointClass(model_endpoint=ModelEndpointInfo.from_run(run))
         endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
         # if the config is set to use server token counts.

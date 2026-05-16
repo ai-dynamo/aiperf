@@ -27,7 +27,11 @@ def build_inputs_file(
     inputs = InputsFile()
 
     EndpointClass = plugins.get_class(PluginType.ENDPOINT, run.cfg.endpoint.type)
-    endpoint: EndpointProtocol = EndpointClass(run=run)
+    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+
+    endpoint: EndpointProtocol = EndpointClass(
+        model_endpoint=ModelEndpointInfo.from_run(run)
+    )
 
     session_payloads_map: dict[str, list] = {}
     for conversation in dataset.values():

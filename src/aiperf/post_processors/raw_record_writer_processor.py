@@ -59,7 +59,9 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         output_file = output_dir / f"raw_records_{safe_id}.jsonl"
 
         EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
-        self._endpoint = EndpointClass(run=run)
+        from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+
+        self._endpoint = EndpointClass(model_endpoint=ModelEndpointInfo.from_run(run))
 
         # Initialize the buffered writer mixin
         super().__init__(
