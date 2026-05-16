@@ -123,6 +123,17 @@ service:
       required: true
       auto_start: true
 
+  worker_group_manager:
+    class: aiperf.workers.worker_group_manager:WorkerGroupManager
+    description: |
+      Kubernetes WorkerGroupManager service. Runs as the main process in worker pods,
+      downloads the dataset once, runs the pod-local raw-inference proxy, and
+      coordinates sibling worker and record-processor containers that share the pod.
+    metadata:
+      required: false
+      auto_start: false
+      replicable: true
+
 # =============================================================================
 # API Routers
 # =============================================================================
@@ -455,6 +466,16 @@ transport:
       SSE streaming support, automatic error handling, and custom TCP connector configuration.
     metadata:
       transport_type: http
+      url_schemes: [http, https]
+
+  http2:
+    class: aiperf.transports.httpcore_transport:HttpCoreTransport
+    description: |
+      HTTP/2 transport implementation using httpcore.
+      Provides HTTP/2 multiplexing with ~100 concurrent streams per connection,
+      automatic HTTP/1.1 fallback, and connection pooling.
+    metadata:
+      transport_type: http2
       url_schemes: [http, https]
 
 # =============================================================================

@@ -289,6 +289,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/StreamExporterPlugin"
       }
+    },
+    "analyzer": {
+      "title": "Analyzer Plugins",
+      "type": "object",
+      "description": "Single-input analyzers that derive results from one accumulator at\nsummarization time, running in records-manager. Cross-input analysis\n(correlating data from multiple accumulators that live in separate\nprocesses \u2014 GPU telemetry, server metrics, inference) runs\ncontroller-side as plain functions, not analyzer plugins.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AnalyzerPlugin"
+      }
     }
   },
   "title": "PluginsManifest",
@@ -2088,6 +2096,47 @@
       ],
       "title": "Stream Exporter Plugin",
       "description": "Stream exporters write each record to an external sink (e.g. JSONL files) as it\narrives. No summarization dependencies. Finalized after all records are processed.\nOne-to-many mapping: multiple exporters loaded simultaneously."
+    },
+    "AnalyzerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Analyzer Plugin",
+      "description": "Single-input analyzers that derive results from one accumulator at\nsummarization time, running in records-manager. Cross-input analysis\n(correlating data from multiple accumulators that live in separate\nprocesses \u2014 GPU telemetry, server metrics, inference) runs\ncontroller-side as plain functions, not analyzer plugins."
     }
   }
 }
