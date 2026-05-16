@@ -44,6 +44,8 @@ class TDigestListMetricAggregator:
     Conforms to :class:`aiperf.metrics.metric_dicts.MetricAggregator`.
     """
 
+    SUPPORTS_PER_RECORD_REPLAY = False
+
     def __init__(self) -> None:
         self._td = TDigest(compression=Environment.METRICS.TDIGEST_COMPRESSION)
         self._count: int = 0
@@ -62,6 +64,10 @@ class TDigestListMetricAggregator:
         protocol so derived-sum metrics can compute uniformly across this
         and :class:`MetricArray`."""
         return self._sum
+
+    def __len__(self) -> int:
+        """Return the number of observed samples."""
+        return self._count
 
     def append(self, value: int | float) -> None:
         """Add a single sample."""
@@ -107,6 +113,15 @@ class TDigestListMetricAggregator:
         batch_max = float(arr.max())
         self._min = batch_min if self._min is None else min(self._min, batch_min)
         self._max = batch_max if self._max is None else max(self._max, batch_max)
+
+    def add_for_record(self, idx: int, values: list[float]) -> None:  # noqa: ARG002 - idx unused
+        """Record-keyed ingest entry point shared with :class:`RaggedSeries`.
+
+        ``idx`` is ignored: the t-digest is a global sketch with no per-record
+        structure. The accumulator routes every list-valued metric through this
+        method regardless of backend, which is why the signature has to match.
+        """
+        self.extend(values)
 
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
         """Return a :class:`MetricResult` with the same field set as

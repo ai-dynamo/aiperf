@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Generic
+from typing import ClassVar, Generic
 
-from aiperf.common.enums import MetricType, MetricValueTypeVarT
+from aiperf.common.enums import AggregationKind, MetricType, MetricValueTypeVarT
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -40,6 +40,10 @@ class BaseAggregateMetric(
     """
 
     type = MetricType.AGGREGATE
+    # Subclasses declare aggregation_kind (SUM/MAX/MIN) so that vectorized
+    # accumulators (MetricsAccumulator) can fold per-record values into a
+    # single scalar without replaying _aggregate_value. The default is SUM.
+    aggregation_kind: ClassVar[AggregationKind] = AggregationKind.SUM
 
     def __init__(self, default_value: MetricValueTypeVarT | None = None) -> None:
         """Initialize the metric with optionally with a default value. If no default value is provided,

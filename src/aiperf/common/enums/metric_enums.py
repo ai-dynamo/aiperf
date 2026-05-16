@@ -755,6 +755,12 @@ class MetricFlags(Flag):
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
 
+    PERCENTILE_INCLUDES_FAILED_REQUESTS = 1 << 17
+    """Record metrics for which percentile rollups should also produce
+    ``adj_*`` percentiles that treat each failed request as ``+inf`` latency.
+    Used for latency-style metrics (issue #688) so the failure-inflated tail
+    is visible alongside the success-only distribution."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.
