@@ -249,6 +249,23 @@ class _DeveloperSettings(BaseSettings):
         description="Enable yappi profiling (Yet Another Python Profiler) for performance analysis. "
         "Requires 'pip install yappi snakeviz'",
     )
+    MEMORY_PROFILE: bool = Field(
+        default=False,
+        description="Enable memory profiling using tracemalloc. "
+        "Logs memory usage and top allocators periodically.",
+    )
+    MEMORY_PROFILE_INTERVAL: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=10.0,
+        description="Interval in seconds between memory profile snapshots when profiling is enabled.",
+    )
+    MEMORY_PROFILE_TOP_N: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Number of top memory allocators to log in each snapshot.",
+    )
     MODE: bool = Field(
         default=False,
         description="Enable AIPerf Developer mode for internal metrics and debugging",
@@ -862,6 +879,13 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=10.0,
         description="Timeout in seconds for profile cancel command",
+    )
+    RAW_RECORD_UPLOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Timeout in seconds to wait for worker pods to upload raw record files "
+        "to the controller API after benchmark completion.",
     )
     REGISTRATION_INTERVAL: float = Field(
         ge=1.0,
