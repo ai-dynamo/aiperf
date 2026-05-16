@@ -8,7 +8,6 @@ file stays under the 500-line ergonomics ceiling. Existing imports of the
 form ``from aiperf.common.models.record_models import X`` keep working.
 """
 
-from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.inference_response_models import (
     BinaryResponse,
@@ -85,3 +84,11 @@ __all__ = [
     "decode_metric_record_info_json",
     "decode_raw_record_info_json",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == "MetricRecordMetadata":
+        from aiperf.common.metric_records_wire import MetricRecordMetadata
+
+        return MetricRecordMetadata
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

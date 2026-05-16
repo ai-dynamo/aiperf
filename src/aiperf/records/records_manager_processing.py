@@ -49,6 +49,13 @@ class _LoaderHost(Protocol):
     def error(self, msg: Any) -> None: ...
 
 
+def _has_results_processor_methods(processor: Any) -> bool:
+    return all(
+        callable(getattr(processor, method, None))
+        for method in ("process_result", "summarize", "finalize")
+    )
+
+
 def load_results_processors(host: _LoaderHost) -> list[ResultsProcessorProtocol]:
     """Instantiate all enabled ``RESULTS_PROCESSOR`` plugins for ``host``.
 
@@ -64,6 +71,11 @@ def load_results_processors(host: _LoaderHost) -> list[ResultsProcessorProtocol]
                 run=host.run,
                 pub_client=host.pub_client,
             )
+            if not _has_results_processor_methods(results_processor):
+                host.debug(
+                    f"Results processor {entry.name} does not implement the results protocol; skipping"
+                )
+                continue
             host.attach_child_lifecycle(results_processor)
             processors.append(results_processor)
             host.debug(

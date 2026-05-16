@@ -15,6 +15,32 @@ from aiperf.common.environment import (
 )
 
 
+class TestServiceSettingsConstants:
+    def test_service_settings_expose_process_monitor_interval(self):
+        settings = _ServiceSettings()
+
+        assert settings.PROCESS_MONITOR_INTERVAL == 0.5
+
+    def test_service_settings_expose_shutdown_propagation_delay(self):
+        settings = _ServiceSettings()
+
+        assert settings.SHUTDOWN_PROPAGATION_DELAY == 0.5
+
+    def test_dev_settings_expose_memory_profile_enabled(self):
+        from aiperf.common.environment import _DeveloperSettings
+
+        settings = _DeveloperSettings()
+
+        assert settings.MEMORY_PROFILE_ENABLED is False
+
+    def test_ui_settings_expose_status_log_interval(self):
+        from aiperf.common.environment import _UISettings
+
+        settings = _UISettings()
+
+        assert settings.STATUS_LOG_INTERVAL == 30.0
+
+
 class TestServiceSettingsUvloopWindows:
     """Test suite for automatic uvloop disabling on Windows."""
 

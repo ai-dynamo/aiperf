@@ -86,10 +86,10 @@ class _FakeHost(SystemControllerOutputMixin):
 
     def __post_init__(self) -> None:
         self.run = SimpleNamespace(
+            cli_command=self.cli_command,
             cfg=SimpleNamespace(
                 artifacts=SimpleNamespace(
                     dir=self.artifacts_dir,
-                    cli_command=self.cli_command,
                 ),
             ),
         )

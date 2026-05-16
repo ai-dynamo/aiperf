@@ -257,7 +257,7 @@ class _DeveloperSettings(BaseSettings):
         description="Enable yappi profiling (Yet Another Python Profiler) for performance analysis. "
         "Requires 'pip install yappi snakeviz'",
     )
-    MEMORY_PROFILE: bool = Field(
+    MEMORY_PROFILE_ENABLED: bool = Field(
         default=False,
         description="Enable memory profiling using tracemalloc. "
         "Logs memory usage and top allocators periodically.",
@@ -905,6 +905,18 @@ class _ServiceSettings(BaseSettings):
         "For example, 50 means abort when 50%+ of worker pods have failed. "
         "Set to 100 to abort only when all workers are gone. Set to 0 to disable pod failure abort.",
     )
+    PROCESS_MONITOR_INTERVAL: float = Field(
+        ge=0.1,
+        le=30.0,
+        default=0.5,
+        description="Interval in seconds between process liveness checks in MultiProcessServiceManager",
+    )
+    SHUTDOWN_PROPAGATION_DELAY: float = Field(
+        ge=0.0,
+        le=10.0,
+        default=0.5,
+        description="Delay in seconds after broadcasting shutdown command to allow message propagation before stopping services",
+    )
     FAILURE_SHUTDOWN_TIMEOUT: float = Field(
         ge=1.0,
         le=300.0,
@@ -1101,6 +1113,12 @@ class _UISettings(BaseSettings):
         le=100.0,
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
+    )
+    STATUS_LOG_INTERVAL: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Interval in seconds between periodic status log messages when using --ui none",
     )
 
 

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC
+from typing import Any
 
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import (
@@ -29,6 +30,7 @@ class PullClientMixin(CommunicationMixin, ABC):
         pull_client_bind: bool = False,
         max_pull_concurrency: int | None = None,
         pull_client_additional_bind_address: str | None = None,
+        pull_client_codec: Any | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -38,6 +40,7 @@ class PullClientMixin(CommunicationMixin, ABC):
             bind=pull_client_bind,
             max_pull_concurrency=max_pull_concurrency,
             additional_bind_address=pull_client_additional_bind_address,
+            codec=pull_client_codec,
         )
 
     @on_init

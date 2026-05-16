@@ -142,7 +142,7 @@ class SystemControllerOutputMixin:
 
     def _print_cli_command(self, console: Console) -> None:
         """Print the CLI command that was used to run the benchmark."""
-        cli_command = self.run.cfg.artifacts.cli_command or "N/A"
+        cli_command = self.run.cli_command or "N/A"
         console.print(
             f"[bold green]CLI Command:[/bold green] [italic]{cli_command}[/italic]"
         )

@@ -25,7 +25,7 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
     ) -> None:
         super().__init__(run=run, **kwargs)
         self.run = run
-        comm_config = run.cfg.comm_config
+        comm_config = run.resolved.comm_config or run.cfg.comm_config
         CommClass = plugins.get_class(
             PluginType.COMMUNICATION, comm_config.comm_backend
         )

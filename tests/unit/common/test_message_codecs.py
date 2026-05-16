@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.channel_codecs import RECORDS_CODEC
+from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.message_codecs import (
     MsgspecStructCodec,
     codec_cache_key,
@@ -93,6 +94,18 @@ class TestMessageCodecs:
         assert len(decoded.records) == 2
         assert decoded.records[0].metrics == {"request_latency": 12.5}
         assert decoded.records[1].metrics == {"request_latency": 9.5}
+
+    def test_records_codec_decodes_message_codec_records_channel_sideband(self) -> None:
+        message = ServerMetricsRecordMessage(
+            service_id="server-metrics-manager",
+            collector_id="http://127.0.0.1:18080/metrics",
+        )
+        encoded = get_message_codec().encode(message)
+
+        decoded = RECORDS_CODEC.decode(encoded)
+
+        assert isinstance(decoded, ServerMetricsRecordMessage)
+        assert decoded.collector_id == "http://127.0.0.1:18080/metrics"
 
     def test_codec_cache_key_uses_msgspec_default_and_custom_cache_keys(self) -> None:
         """Codec cache keys should stay stable for client cache partitioning."""

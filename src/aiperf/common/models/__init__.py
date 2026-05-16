@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.metric_records_wire import MetricRecordMetadata
+# MetricRecordMetadata is defined in aiperf.common.metric_records_wire, which
+# itself imports from aiperf.common.models.error_models. A direct top-level
+# re-export here forms a circular import when metric_records_wire is the
+# first-entry module in an import chain. Lazy-export via PEP 562 __getattr__
+# keeps `from aiperf.common.models import MetricRecordMetadata` working without
+# forcing metric_records_wire to finish loading before this package init.
 from aiperf.common.models.auto_routed_model import AutoRoutedModel
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch import ConversationBranchInfo
@@ -270,3 +275,11 @@ __all__ = [
     "WorkerStats",
     "WorkerTaskStats",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == "MetricRecordMetadata":
+        from aiperf.common.metric_records_wire import MetricRecordMetadata
+
+        return MetricRecordMetadata
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
