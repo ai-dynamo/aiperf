@@ -9,7 +9,6 @@ from pydantic import Field, field_validator
 
 from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.config.base import BaseConfig
 from aiperf.plugin.enums import PlotType
 
 
@@ -30,29 +29,23 @@ class Style(AIPerfBaseModel):
     )
     line_width: int = Field(
         default=2,
-        ge=0,
         description="Width of the line in pixels",
     )
     marker_size: int = Field(
         default=8,
-        ge=0,
         description="Size of markers in pixels",
     )
     marker_opacity: float = Field(
         default=1.0,
-        ge=0.0,
-        le=1.0,
         description="Opacity of markers (0.0 to 1.0)",
     )
     fill_opacity: float = Field(
         default=0.3,
-        ge=0.0,
-        le=1.0,
         description="Opacity of fill area (0.0 to 1.0)",
     )
 
 
-class ExperimentClassificationConfig(BaseConfig):
+class ExperimentClassificationConfig(AIPerfBaseModel):
     """Configuration for classifying runs as baseline or treatment."""
 
     baselines: list[str] = Field(

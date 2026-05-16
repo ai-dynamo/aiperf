@@ -37,9 +37,9 @@ class PlotController:
 
     def __init__(
         self,
-        *,
         paths: list[Path],
         output_dir: Path,
+        *,
         mode: PlotMode = PlotMode.PNG,
         theme: PlotTheme = PlotTheme.LIGHT,
         config_path: Path | None = None,
@@ -66,11 +66,7 @@ class PlotController:
             )
 
         self.mode_detector = ModeDetector()
-        self.plot_config = PlotConfig(
-            config_path,
-            verbose=verbose,
-            artifact_dirs=list(paths),
-        )
+        self.plot_config = PlotConfig(config_path, verbose=verbose)
 
         classification_config = self.plot_config.get_experiment_classification_config()
         if classification_config:
@@ -169,7 +165,7 @@ class PlotController:
             try:
                 run_data = self.loader.load_run(run_dir, load_per_request_data=False)
                 runs.append(run_data)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - loader wraps disk/JSON errors in DataLoadError but can surface pandas/pyarrow errors too; skip the bad run, keep going
                 logger.warning(f"Failed to load run from {run_dir}: {e}")
 
         if not runs:
@@ -222,7 +218,7 @@ class PlotController:
                         run_dir, load_per_request_data=False
                     )
                     runs.append(run_data)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - loader wraps disk/JSON errors in DataLoadError but can surface pandas/pyarrow errors too; skip the bad run, keep going
                     logger.warning(f"Failed to load run from {run_dir}: {e}")
 
             if not runs:

@@ -24,8 +24,8 @@ visualization:
   # MULTI-RUN COMPARISON: Default plots when comparing multiple runs
   # =============================================================================
   multi_run_defaults:
-    - pareto_curve_throughput_per_gpu_vs_latency
-    - pareto_curve_throughput_per_gpu_vs_interactivity
+    - throughput_vs_latency
+    - ttft_p99_vs_throughput
     - ttft_vs_throughput
     - latency_throughput_uncertainty
 
@@ -35,15 +35,15 @@ visualization:
   single_run_defaults:
     # AIPerf client-side metrics
     - ttft_over_time
-    # - itl_over_time
+    # - itl_over_time              # requires inter_token_latency (per-request) — present on real LLM runs only
     # - latency_over_time
     # - dispersed_throughput_over_time
     - ttft_timeline
     - timeslices_ttft
-    - timeslices_itl
+    # - timeslices_itl              # ITL timeslices — only present on real LLM runs
     # - timeslices_throughput
     # - timeslices_latency
-    - gpu_utilization_and_throughput_over_time
+    # - gpu_utilization_and_throughput_over_time   # requires GPU telemetry sidecar
 
   # =============================================================================
   # MULTI-RUN COMPARISON PRESETS
@@ -61,7 +61,7 @@ visualization:
   #   description: Human-readable description of what this plot shows
     pareto_curve_throughput_per_gpu_vs_latency:
       type: pareto
-      description: "Trade-off frontier showing optimal throughput vs latency configurations"
+      description: "Trade-off frontier showing optimal throughput vs latency configurations (requires GPU telemetry)"
       x:
         metric: request_latency
         stat: avg
@@ -74,7 +74,7 @@ visualization:
 
     pareto_curve_throughput_per_gpu_vs_interactivity:
       type: pareto
-      description: "Trade-off frontier balancing system efficiency vs user experience"
+      description: "Trade-off frontier balancing system efficiency vs user experience (requires GPU telemetry)"
       x:
         metric: output_token_throughput_per_user
         stat: avg
@@ -85,9 +85,35 @@ visualization:
       groups: [model]
       title: "Pareto Curve: Token Throughput per GPU vs Interactivity"
 
+    throughput_vs_latency:
+      type: pareto
+      description: "Classic throughput vs latency trade-off frontier; works on every run that records request metrics"
+      x:
+        metric: request_latency
+        stat: avg
+      y:
+        metric: request_throughput
+        stat: avg
+      labels: [concurrency]
+      groups: [model]
+      title: "Request Throughput vs Request Latency"
+
+    ttft_p99_vs_throughput:
+      type: scatter_line
+      description: "p99 time-to-first-token across throughput levels - exposes tail-latency degradation under load"
+      x:
+        metric: time_to_first_token
+        stat: p99
+      y:
+        metric: request_throughput
+        stat: avg
+      labels: [concurrency]
+      groups: [model]
+      title: "TTFT (p99) vs Throughput"
+
     ttft_vs_throughput:
       type: scatter_line
-      description: "How time-to-first-token changes as throughput increases across configs"
+      description: "How time-to-first-token (avg) changes as throughput increases across configs"
       x:
         metric: time_to_first_token
         stat: avg

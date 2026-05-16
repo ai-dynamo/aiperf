@@ -50,6 +50,57 @@ def prepare_request_timeseries(run: RunData) -> pd.DataFrame:
     return df
 
 
+def _request_throughput_events(row: pd.Series) -> list[dict[str, float | int]]:
+    """Build the two (start/end) throughput events for a single request row.
+
+    Returns an empty list when the row lacks valid timestamps, has zero output
+    tokens, or the generation window collapses to zero duration.
+    """
+    request_start_ns = row.get("request_start_ns")
+    request_end_ns = row.get("request_end_ns")
+
+    if pd.isna(request_start_ns) or pd.isna(request_end_ns):
+        return []
+
+    if isinstance(request_start_ns, pd.Timestamp):
+        request_start_ns = request_start_ns.value
+    if isinstance(request_end_ns, pd.Timestamp):
+        request_end_ns = request_end_ns.value
+
+    request_start_ns = int(request_start_ns)
+    request_end_ns = int(request_end_ns)
+
+    ttft_ms = row.get("time_to_first_token", 0)
+    if pd.isna(ttft_ms):
+        ttft_ms = 0
+
+    generation_start_ns = (
+        request_start_ns + int(ttft_ms * 1e6) if ttft_ms > 0 else request_start_ns
+    )
+
+    output_tokens = row.get("output_sequence_length", 0)
+    if pd.isna(output_tokens):
+        output_tokens = 0
+
+    generation_duration_ns = request_end_ns - generation_start_ns
+    if generation_duration_ns <= 0 or output_tokens <= 0:
+        return []
+
+    token_rate = output_tokens / (generation_duration_ns / 1e9)
+    return [
+        {
+            "timestamp_ns": generation_start_ns,
+            "delta_rate": token_rate,
+            "active_delta": 1,
+        },
+        {
+            "timestamp_ns": request_end_ns,
+            "delta_rate": -token_rate,
+            "active_delta": -1,
+        },
+    ]
+
+
 def calculate_throughput_events(requests_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate throughput using event-based approach with evenly dispersed tokens.
@@ -84,54 +135,9 @@ def calculate_throughput_events(requests_df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with columns: timestamp_s, throughput_tokens_per_sec, active_requests
     """
-    events = []
-
+    events: list[dict[str, float | int]] = []
     for _, row in requests_df.iterrows():
-        request_start_ns = row.get("request_start_ns")
-        request_end_ns = row.get("request_end_ns")
-
-        if pd.isna(request_start_ns) or pd.isna(request_end_ns):
-            continue
-
-        if isinstance(request_start_ns, pd.Timestamp):
-            request_start_ns = request_start_ns.value
-        if isinstance(request_end_ns, pd.Timestamp):
-            request_end_ns = request_end_ns.value
-
-        request_start_ns = int(request_start_ns)
-        request_end_ns = int(request_end_ns)
-
-        ttft_ms = row.get("time_to_first_token", 0)
-        if pd.isna(ttft_ms):
-            ttft_ms = 0
-
-        generation_start_ns = (
-            request_start_ns + int(ttft_ms * 1e6) if ttft_ms > 0 else request_start_ns
-        )
-
-        output_tokens = row.get("output_sequence_length", 0)
-        if pd.isna(output_tokens):
-            output_tokens = 0
-
-        generation_duration_ns = request_end_ns - generation_start_ns
-
-        if generation_duration_ns > 0 and output_tokens > 0:
-            token_rate = output_tokens / (generation_duration_ns / 1e9)
-
-            events.append(
-                {
-                    "timestamp_ns": generation_start_ns,
-                    "delta_rate": token_rate,
-                    "active_delta": 1,
-                }
-            )
-            events.append(
-                {
-                    "timestamp_ns": request_end_ns,
-                    "delta_rate": -token_rate,
-                    "active_delta": -1,
-                }
-            )
+        events.extend(_request_throughput_events(row))
 
     if not events:
         return pd.DataFrame(
@@ -149,6 +155,40 @@ def calculate_throughput_events(requests_df: pd.DataFrame) -> pd.DataFrame:
     return events_df[
         ["timestamp_s", "throughput_tokens_per_sec", "active_requests"]
     ].reset_index(drop=True)
+
+
+def _load_isl_osl_from_jsonl(
+    profile_path: Any,
+) -> tuple[pd.Series, pd.Series, bool]:
+    """Parse ISL/OSL arrays from a profile_export.jsonl file.
+
+    Returns (isl_series, osl_series, failed) — failed=True on OSError/ValueError.
+    Individual corrupted lines are skipped.
+    """
+    isl_values: list[float] = []
+    osl_values: list[float] = []
+    try:
+        with open(profile_path) as f:
+            for line in f:
+                try:
+                    record = orjson.loads(line.encode("utf-8"))
+                except (orjson.JSONDecodeError, ValueError):
+                    continue
+                metrics = record.get("metrics", {})
+                isl = metrics.get("input_sequence_length", {})
+                if isinstance(isl, dict) and "value" in isl:
+                    isl_values.append(isl["value"])
+                osl = metrics.get("output_sequence_length", {})
+                if isinstance(osl, dict) and "value" in osl:
+                    osl_values.append(osl["value"])
+    except (OSError, ValueError):
+        return pd.Series(), pd.Series(), True
+
+    return (
+        pd.Series(isl_values) if isl_values else pd.Series(),
+        pd.Series(osl_values) if osl_values else pd.Series(),
+        False,
+    )
 
 
 def validate_request_uniformity(
@@ -184,35 +224,12 @@ def validate_request_uniformity(
         if not profile_path.exists():
             return True, None
 
-        try:
-            isl_values = []
-            osl_values = []
-
-            with open(profile_path) as f:
-                for line in f:
-                    try:
-                        record = orjson.loads(line.encode("utf-8"))
-                        metrics = record.get("metrics", {})
-
-                        isl = metrics.get("input_sequence_length", {})
-                        if isinstance(isl, dict) and "value" in isl:
-                            isl_values.append(isl["value"])
-
-                        osl = metrics.get("output_sequence_length", {})
-                        if isinstance(osl, dict) and "value" in osl:
-                            osl_values.append(osl["value"])
-                    except (orjson.JSONDecodeError, ValueError):
-                        continue
-
-            if not isl_values and not osl_values:
-                return True, None
-
-            isl_values = pd.Series(isl_values) if isl_values else pd.Series()
-            osl_values = pd.Series(osl_values) if osl_values else pd.Series()
-
-        except (OSError, ValueError) as e:
+        isl_values, osl_values, failed = _load_isl_osl_from_jsonl(profile_path)
+        if failed:
             if logger:
-                logger.warning(f"Could not load ISL/OSL data for uniformity check: {e}")
+                logger.warning("Could not load ISL/OSL data for uniformity check")
+            return True, None
+        if not len(isl_values) and not len(osl_values):
             return True, None
 
     is_uniform = True

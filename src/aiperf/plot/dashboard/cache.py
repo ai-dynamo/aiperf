@@ -220,7 +220,7 @@ def compute_config_hash(plot_config: dict) -> str:
     ]
 
     cache_dict = {k: plot_config.get(k) for k in relevant_keys}
-    json_bytes = orjson.dumps(cache_dict, default=str, option=orjson.OPT_SORT_KEYS)
+    json_bytes = orjson.dumps(cache_dict, option=orjson.OPT_SORT_KEYS, default=str)
     return hashlib.md5(json_bytes, usedforsecurity=False).hexdigest()[:12]
 
 

@@ -96,10 +96,12 @@ _logger = logging.getLogger(__name__)
 _PLOT_GENERATOR_CACHE: dict[PlotTheme, PlotGenerator] = {}
 
 # Module-level caches for drill-down single-run data
-# These are populated by handle_url_routing and used by update_grid_children
-_drill_down_run_cache: dict[str, RunData] = {}
-_drill_down_specs_cache: dict[str, list[PlotSpec]] = {}
-_drill_down_plot_config_cache: dict[str, PlotConfig] = {}
+# These are populated by handle_url_routing and used by update_grid_children.
+# Upper-case per ergonomics rule: treated as singleton constants (mutable content,
+# but name stable) — Dash has no request-local storage to thread these through.
+_DRILL_DOWN_RUN_CACHE: dict[str, RunData] = {}
+_DRILL_DOWN_SPECS_CACHE: dict[str, list[PlotSpec]] = {}
+_DRILL_DOWN_PLOT_CONFIG_CACHE: dict[str, PlotConfig] = {}
 
 
 def _get_plot_generator(theme: PlotTheme) -> PlotGenerator:
@@ -216,7 +218,13 @@ def _prepare_multirun_context(
     y_metric = plot_config_dict.get("y_metric")
     y_stat = plot_config_dict.get("y_stat", "avg")
 
-    result = runs_to_dataframe(filtered_runs, x_metric, x_stat, y_metric, y_stat)
+    result = runs_to_dataframe(
+        filtered_runs,
+        x_metric=x_metric,
+        x_stat=x_stat,
+        y_metric=y_metric,
+        y_stat=y_stat,
+    )
     df = result["df"]
     if df.empty:
         return None
@@ -385,7 +393,11 @@ def generate_plot_from_spec(
 
     # Create DataFrame
     result = runs_to_dataframe(
-        runs, x_metric_spec.name, x_stat, y_metric_spec.name, y_stat
+        runs,
+        x_metric=x_metric_spec.name,
+        x_stat=x_stat,
+        y_metric=y_metric_spec.name,
+        y_stat=y_stat,
     )
     df = result["df"]
 
@@ -496,9 +508,33 @@ def _safe_register_callback(callback_name: str, registration_func):
     try:
         registration_func()
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - this is the top-level guard around third-party Dash callback registration; any error must log + skip, not abort dashboard boot
         _logger.error(f"Failed to register {callback_name}: {e!r}")
         return False
+
+
+def _pick_stat_value(
+    options: list[dict],
+    available_stats: list[str],
+    current: str | None,
+    *,
+    preferred: tuple[str, ...],
+) -> str | None:
+    """Pick a sensible default stat value given filtered options + a priority list.
+
+    Priority: current selection → each `preferred` stat in order → first available → None.
+    Auto-selects the sole option when only one remains.
+    """
+    if len(options) == 1:
+        return options[0]["value"]
+    if not available_stats:
+        return None
+    if current and current in available_stats:
+        return current
+    for candidate in preferred:
+        if candidate in available_stats:
+            return candidate
+    return available_stats[0]
 
 
 def _register_single_run_only_callbacks(
@@ -515,6 +551,7 @@ def _register_single_run_only_callbacks(
 def _register_multi_run_only_callbacks(
     app: dash.Dash,
     runs: list[RunData],
+    *,
     run_dirs: list[Path],
     loader: DataLoader,
     plot_config: PlotConfig,
@@ -523,7 +560,9 @@ def _register_multi_run_only_callbacks(
     register_custom_plot_callbacks(app, runs, plot_config)
     register_multi_run_plot_edit_callbacks(app, runs)
     register_run_count_badge_callback(app)
-    register_drill_down_callbacks(app, runs, run_dirs, loader, plot_config)
+    register_drill_down_callbacks(
+        app, runs=runs, run_dirs=run_dirs, loader=loader, plot_config=plot_config
+    )
 
     # Also register single-run callbacks for drill-down support
     register_single_run_custom_plot_callbacks(app, runs, VisualizationMode.SINGLE_RUN)
@@ -532,13 +571,14 @@ def _register_multi_run_only_callbacks(
 
 def register_all_callbacks(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     run_dirs: list[Path],
     mode: VisualizationMode,
     theme: PlotTheme,
     plot_config: PlotConfig,
     loader: DataLoader,
-):
+) -> None:
     """
     Register all dashboard callbacks.
 
@@ -561,7 +601,9 @@ def register_all_callbacks(
     register_sidebar_components_theme_callback(app)
     register_config_modal_callback(app, runs, plot_config, mode)
     register_hide_show_plot_callbacks(app)
-    register_export_png_callback(app, runs, mode, theme, plot_config)
+    register_export_png_callback(
+        app, runs=runs, mode=mode, theme=theme, plot_config=plot_config
+    )
     register_layout_control_callbacks(app, mode, plot_config, theme)
     register_context_menu_callbacks(app)
     register_toast_notifications_callbacks(app)
@@ -575,15 +617,23 @@ def register_all_callbacks(
     if mode == VisualizationMode.SINGLE_RUN:
         _register_single_run_only_callbacks(app, runs, theme)
     else:
-        _register_multi_run_only_callbacks(app, runs, run_dirs, loader, plot_config)
+        _register_multi_run_only_callbacks(
+            app,
+            runs,
+            run_dirs=run_dirs,
+            loader=loader,
+            plot_config=plot_config,
+        )
 
     # Register dynamic grid callback (unified but mode-aware)
-    register_dynamic_grid_callback(app, runs, mode, theme, plot_config)
+    register_dynamic_grid_callback(
+        app, runs=runs, mode=mode, theme=theme, plot_config=plot_config
+    )
 
 
 def register_single_run_callbacks(
     app: dash.Dash, runs: list[RunData], theme: PlotTheme
-):
+) -> None:
     """
     Register callbacks for single-run analysis mode.
 
@@ -596,7 +646,7 @@ def register_single_run_callbacks(
     pass
 
 
-def register_theme_callback(app: dash.Dash):
+def register_theme_callback(app: dash.Dash) -> None:
     """Register callback for theme toggle."""
 
     @app.callback(
@@ -621,7 +671,7 @@ def register_theme_callback(app: dash.Dash):
 
 def register_version_check_callback(
     app: dash.Dash, plot_config: PlotConfig, mode: VisualizationMode
-):
+) -> None:
     """
     Check localStorage version and auto-migrate if config changed.
 
@@ -732,7 +782,7 @@ def register_version_check_callback(
         }
 
 
-def register_size_migration_callback(app: dash.Dash):
+def register_size_migration_callback(app: dash.Dash) -> None:
     """
     Migrate old size values (small/medium/large) to new size values (half/full).
 
@@ -802,7 +852,7 @@ def register_config_modal_callback(
     runs: list[RunData],
     plot_config: PlotConfig,
     mode: VisualizationMode,
-):
+) -> None:
     """
     Register callback for config viewer modal.
 
@@ -1022,13 +1072,13 @@ def register_config_modal_callback(
             yaml.dump(config_dict, stream)
             yaml_str = stream.getvalue()
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - ruamel.yaml can raise many formatting errors on arbitrary config shapes; fall back to repr so the modal still renders
             yaml_str = f"Error formatting config: {e}\n\nRaw data:\n{config_dict}"
 
         return True, header, summary_section, yaml_str, run_idx
 
 
-def register_hide_show_plot_callbacks(app: dash.Dash):
+def register_hide_show_plot_callbacks(app: dash.Dash) -> None:
     """
     Register callbacks for hiding and showing plots.
 
@@ -1276,11 +1326,12 @@ def register_hide_show_plot_callbacks(app: dash.Dash):
 
 def register_export_png_callback(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     mode: VisualizationMode,
     theme: PlotTheme,
     plot_config: PlotConfig,
-):
+) -> None:
     """
     Register callback for exporting visible plots as PNG bundle with size selection.
 
@@ -1336,7 +1387,12 @@ def register_export_png_callback(
         return fig
 
     def _convert_figure_to_png(
-        fig: go.Figure, filename: str, width: int, height: int, font_scale: float = 1.0
+        fig: go.Figure,
+        filename: str,
+        *,
+        width: int,
+        height: int,
+        font_scale: float = 1.0,
     ) -> tuple[str, bytes | str, str]:
         """
         Convert Plotly figure to PNG or HTML fallback.
@@ -1360,7 +1416,7 @@ def register_export_png_callback(
             _scale_figure_fonts(fig, font_scale)
             img_bytes = fig.to_image(format="png", width=width, height=height)
             return (filename, img_bytes, "png")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - kaleido/Chrome can raise many vendor-specific errors; fallback to HTML so export never fails outright
             # Fallback to HTML if kaleido/Chrome unavailable
             _logger.warning(
                 f"PNG conversion failed for {filename}, falling back to HTML: {e}"
@@ -1370,6 +1426,7 @@ def register_export_png_callback(
 
     def _export_single_run_default_plot(
         plot_id: str,
+        *,
         plot_specs: list,
         run: RunData,
         plot_gen,
@@ -1399,7 +1456,7 @@ def register_export_png_callback(
             HandlerClass = plugins.get_class(PluginType.PLOT, spec.plot_type)
             handler = HandlerClass(plot_generator=plot_gen, logger=None)
             return handler.create_plot(spec, run, available_metrics)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - handler plugins may raise any exception type; log + fall back to None so a single bad plot doesn't break the whole export
             _logger.error(f"Error creating plot '{plot_id}': {e}")
             return None
 
@@ -1529,8 +1586,8 @@ def register_export_png_callback(
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             if mode == VisualizationMode.SINGLE_RUN:
                 # Single-run export - use drill-down cache if available
-                if "current" in _drill_down_run_cache:
-                    run = _drill_down_run_cache["current"]
+                if "current" in _DRILL_DOWN_RUN_CACHE:
+                    run = _DRILL_DOWN_RUN_CACHE["current"]
                 else:
                     run = runs[0]
 
@@ -1545,7 +1602,11 @@ def register_export_png_callback(
                         if is_default:
                             # Export default plot from PlotSpec
                             fig = _export_single_run_default_plot(
-                                plot_id, plot_specs, run, plot_gen, available_metrics
+                                plot_id,
+                                plot_specs=plot_specs,
+                                run=run,
+                                plot_gen=plot_gen,
+                                available_metrics=available_metrics,
                             )
                         else:
                             # Export custom plot from config
@@ -1569,7 +1630,7 @@ def register_export_png_callback(
                                     format="png", width=width, height=height
                                 )
                                 zip_file.writestr(f"{safe_filename}.png", img_bytes)
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 - kaleido/Chrome can raise vendor-specific errors on PNG render; fallback to HTML so export still succeeds
                                 print(
                                     f"⚠️ PNG conversion failed for {safe_filename}, falling back to HTML: {e}"
                                 )
@@ -1588,7 +1649,7 @@ def register_export_png_callback(
                                 f"{safe_filename}.html", html_str.encode()
                             )
 
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - plot-bundle export iterates many heterogeneous plots; skip the failing one so the rest still download
                         _logger.warning(f"Failed to export plot {plot_id}: {e}")
                         continue
 
@@ -1616,7 +1677,11 @@ def register_export_png_callback(
 
                         # Generate DataFrame
                         result = runs_to_dataframe(
-                            filtered_runs, x_metric, x_stat, y_metric, y_stat
+                            filtered_runs,
+                            x_metric=x_metric,
+                            x_stat=x_stat,
+                            y_metric=y_metric,
+                            y_stat=y_stat,
                         )
                         df = result["df"]
 
@@ -1708,7 +1773,7 @@ def register_export_png_callback(
                                     format="png", width=width, height=height
                                 )
                                 zip_file.writestr(f"{safe_filename}.png", img_bytes)
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 - kaleido/Chrome can raise vendor-specific errors on PNG render; fallback to HTML so export still succeeds
                                 print(
                                     f"⚠️ PNG conversion failed for {safe_filename}, falling back to HTML: {e}"
                                 )
@@ -1728,7 +1793,7 @@ def register_export_png_callback(
                                 f"{safe_filename}.html", html_str.encode()
                             )
 
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - plot-bundle export iterates many heterogeneous plots; skip the failing one so the rest still download
                         # Log error but continue with other plots
                         _logger.warning(f"Failed to export plot {plot_id}: {e}")
                         continue
@@ -1811,8 +1876,8 @@ HTML files can be opened in any web browser and are fully interactive.
 
         if mode == VisualizationMode.SINGLE_RUN:
             # Single-run export - use drill-down cache if available
-            if "current" in _drill_down_run_cache:
-                run = _drill_down_run_cache["current"]
+            if "current" in _DRILL_DOWN_RUN_CACHE:
+                run = _DRILL_DOWN_RUN_CACHE["current"]
             else:
                 run = runs[0]
 
@@ -1840,7 +1905,11 @@ HTML files can be opened in any web browser and are fully interactive.
                         cache_misses += 1
                         _logger.debug("CACHE MISS (export): {plot_id}")
                         fig = _generate_singlerun_figure(
-                            plot_id, config, run, plot_specs, current_theme
+                            plot_id,
+                            config=config,
+                            run=run,
+                            plot_specs=plot_specs,
+                            theme=current_theme,
                         )
                         if fig is not None:
                             cache.set(cache_key, fig)
@@ -1851,7 +1920,7 @@ HTML files can be opened in any web browser and are fully interactive.
                     safe_filename = generate_export_filename_single_run(plot_id, config)
                     figure_tasks.append((fig, safe_filename))
 
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - generate-plot errors are plot-specific; skip the failing one so the rest of the bundle still exports
                     _logger.warning(f"Failed to generate plot {plot_id}: {e}")
                     continue
 
@@ -1892,7 +1961,7 @@ HTML files can be opened in any web browser and are fully interactive.
                     safe_filename = generate_export_filename(plot_id, config)
                     figure_tasks.append((fig, safe_filename))
 
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - generate-plot errors are plot-specific; skip the failing one so the rest of the bundle still exports
                     _logger.warning(f"Failed to generate plot {plot_id}: {e}")
                     continue
 
@@ -1910,7 +1979,12 @@ HTML files can be opened in any web browser and are fully interactive.
                 # Submit all conversion tasks
                 future_to_task = {
                     executor.submit(
-                        _convert_figure_to_png, fig, filename, width, height, font_scale
+                        _convert_figure_to_png,
+                        fig,
+                        filename,
+                        width=width,
+                        height=height,
+                        font_scale=font_scale,
                     ): (
                         fig,
                         filename,
@@ -1933,7 +2007,7 @@ HTML files can be opened in any web browser and are fully interactive.
                             f"  ✓ Converted {completed}/{len(figure_tasks)}: {filename}"
                         )
 
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - ThreadPoolExecutor futures re-raise any worker exception; log and drop the failed file so the zip still ships
                         _, filename = future_to_task[future]
                         _logger.warning(f"Failed to convert {filename}: {e}")
                         continue
@@ -2001,7 +2075,7 @@ HTML files can be opened in any web browser and are fully interactive.
 
 def register_layout_control_callbacks(
     app: dash.Dash, mode: VisualizationMode, plot_config: PlotConfig, theme: PlotTheme
-):
+) -> None:
     """
     Register callbacks for layout control buttons.
 
@@ -2107,7 +2181,7 @@ def register_layout_control_callbacks(
         return new_state
 
 
-def register_sidebar_widgets_theme_callback(app: dash.Dash):
+def register_sidebar_widgets_theme_callback(app: dash.Dash) -> None:
     """
     Register callback to update sidebar widget styles when theme changes.
 
@@ -2148,7 +2222,7 @@ def register_sidebar_widgets_theme_callback(app: dash.Dash):
         return dropdown_classes, label_style
 
 
-def register_sidebar_components_theme_callback(app: dash.Dash):
+def register_sidebar_components_theme_callback(app: dash.Dash) -> None:
     """
     Register callback to update sidebar card backgrounds and button styles when theme changes.
 
@@ -2208,7 +2282,7 @@ def register_sidebar_components_theme_callback(app: dash.Dash):
         )
 
 
-def register_modal_theme_callbacks(app: dash.Dash, mode: VisualizationMode):
+def register_modal_theme_callbacks(app: dash.Dash, mode: VisualizationMode) -> None:
     """
     Register callbacks to update modal styles when theme changes.
 
@@ -2508,7 +2582,9 @@ def register_modal_theme_callbacks(app: dash.Dash, mode: VisualizationMode):
             )
 
 
-def register_custom_plot_callbacks(app: dash.Dash, runs: list, plot_config: PlotConfig):
+def register_custom_plot_callbacks(
+    app: dash.Dash, runs: list, plot_config: PlotConfig
+) -> None:
     """
     Register callbacks for custom plot creation.
 
@@ -2618,37 +2694,12 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list, plot_config: Plot
             else all_stat_options
         )
 
-        # Smart fallback logic for X stat value
-        x_value = None
-        # Auto-select if only one option
-        if len(x_options) == 1:
-            x_value = x_options[0]["value"]
-        elif x_available_stats:
-            # Priority: current → p50 → avg → first available
-            if current_x_stat and current_x_stat in x_available_stats:
-                x_value = current_x_stat
-            elif "p50" in x_available_stats:
-                x_value = "p50"
-            elif "avg" in x_available_stats:
-                x_value = "avg"
-            elif x_available_stats:
-                x_value = x_available_stats[0]
-
-        # Smart fallback logic for Y stat value
-        y_value = None
-        # Auto-select if only one option
-        if len(y_options) == 1:
-            y_value = y_options[0]["value"]
-        elif y_available_stats:
-            # Priority: current → avg → p50 → first available
-            if current_y_stat and current_y_stat in y_available_stats:
-                y_value = current_y_stat
-            elif "avg" in y_available_stats:
-                y_value = "avg"
-            elif "p50" in y_available_stats:
-                y_value = "p50"
-            elif y_available_stats:
-                y_value = y_available_stats[0]
+        x_value = _pick_stat_value(
+            x_options, x_available_stats, current_x_stat, preferred=("p50", "avg")
+        )
+        y_value = _pick_stat_value(
+            y_options, y_available_stats, current_y_stat, preferred=("avg", "p50")
+        )
 
         return x_options, x_value, y_options, y_value
 
@@ -2778,7 +2829,7 @@ def register_single_run_custom_plot_callbacks(
     app: dash.Dash,
     runs: list[RunData],
     mode: VisualizationMode,
-):
+) -> None:
     """
     Register callbacks for single-run custom plot creation.
 
@@ -2825,7 +2876,7 @@ def register_single_run_custom_plot_callbacks(
     )
     def update_y_metric_options(plot_type, request_metrics):
         """Update Y-metric options based on selected plot type."""
-        run = _drill_down_run_cache.get("current", runs[0])
+        run = _DRILL_DOWN_RUN_CACHE.get("current", runs[0])
         options = get_single_run_y_metric_options(
             run, plot_type, EXCLUDED_METRIC_COLUMNS, request_metrics
         )
@@ -2847,8 +2898,8 @@ def register_single_run_custom_plot_callbacks(
             return [{"label": "Average", "value": "avg"}], None
 
         # Use drill-down cached run if available, otherwise fall back to runs[0]
-        if "current" in _drill_down_run_cache:
-            run = _drill_down_run_cache["current"]
+        if "current" in _DRILL_DOWN_RUN_CACHE:
+            run = _DRILL_DOWN_RUN_CACHE["current"]
         else:
             run = runs[0]
 
@@ -2967,8 +3018,8 @@ def register_single_run_custom_plot_callbacks(
             raise PreventUpdate
 
         # Use drill-down cached run if available to compute metric_stats dynamically
-        if "current" in _drill_down_run_cache:
-            run = _drill_down_run_cache["current"]
+        if "current" in _DRILL_DOWN_RUN_CACHE:
+            run = _DRILL_DOWN_RUN_CACHE["current"]
             if run.requests is not None and not run.requests.empty:
                 _, metric_stats = get_single_run_metrics_with_stats(
                     list(run.requests.columns), EXCLUDED_METRIC_COLUMNS
@@ -3014,7 +3065,7 @@ def register_single_run_custom_plot_callbacks(
         return new_state
 
 
-def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
+def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list) -> None:
     """
     Register callbacks for editing existing single-run plots.
 
@@ -3126,8 +3177,8 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             )
 
             # Use drill-down cached run if available, otherwise fall back to runs[0]
-            if "current" in _drill_down_run_cache:
-                run = _drill_down_run_cache["current"]
+            if "current" in _DRILL_DOWN_RUN_CACHE:
+                run = _DRILL_DOWN_RUN_CACHE["current"]
             else:
                 run = runs[0]
 
@@ -3266,7 +3317,7 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
     )
     def update_edit_y_metric_options(plot_type, request_metrics, current_value):
         """Update Y-metric options in edit modal based on selected plot type."""
-        run = _drill_down_run_cache.get("current", runs[0])
+        run = _DRILL_DOWN_RUN_CACHE.get("current", runs[0])
         options = get_single_run_y_metric_options(
             run, plot_type, EXCLUDED_METRIC_COLUMNS, request_metrics
         )
@@ -3322,8 +3373,8 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             raise PreventUpdate
 
         # Use drill-down cached run if available to compute metric_stats dynamically
-        if "current" in _drill_down_run_cache:
-            run = _drill_down_run_cache["current"]
+        if "current" in _DRILL_DOWN_RUN_CACHE:
+            run = _DRILL_DOWN_RUN_CACHE["current"]
             if run.requests is not None and not run.requests.empty:
                 _, metric_stats = get_single_run_metrics_with_stats(
                     list(run.requests.columns), EXCLUDED_METRIC_COLUMNS
@@ -3423,8 +3474,8 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             raise PreventUpdate
 
         # Use drill-down cached run if available to compute metric_stats dynamically
-        if "current" in _drill_down_run_cache:
-            run = _drill_down_run_cache["current"]
+        if "current" in _DRILL_DOWN_RUN_CACHE:
+            run = _DRILL_DOWN_RUN_CACHE["current"]
             if run.requests is not None and not run.requests.empty:
                 _, metric_stats = get_single_run_metrics_with_stats(
                     list(run.requests.columns), EXCLUDED_METRIC_COLUMNS
@@ -3563,7 +3614,7 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         raise PreventUpdate
 
 
-def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
+def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list) -> None:
     """
     Register callbacks for editing existing multi-run plots.
 
@@ -3666,7 +3717,9 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         )
 
         # Calculate actual stats being used (with fallbacks)
-        result = runs_to_dataframe(runs, x_metric, x_stat, y_metric, y_stat)
+        result = runs_to_dataframe(
+            runs, x_metric=x_metric, x_stat=x_stat, y_metric=y_metric, y_stat=y_stat
+        )
         x_stat_actual = result["x_stat_actual"]
         y_stat_actual = result["y_stat_actual"]
 
@@ -4132,7 +4185,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         raise PreventUpdate  # Don't actually change anything
 
 
-def register_nested_run_selector_callbacks(app: dash.Dash, runs: list):
+def register_nested_run_selector_callbacks(app: dash.Dash, runs: list) -> None:
     """
     Register callbacks for nested run selector functionality.
 
@@ -4242,7 +4295,7 @@ def register_nested_run_selector_callbacks(app: dash.Dash, runs: list):
         return new_style, new_arrow
 
 
-def register_resize_toggle_callbacks(app: dash.Dash):
+def register_resize_toggle_callbacks(app: dash.Dash) -> None:
     """
     Register callback for toggling plot size between half and full.
 
@@ -4302,7 +4355,7 @@ def register_resize_toggle_callbacks(app: dash.Dash):
         return new_state
 
 
-def register_context_menu_callbacks(app: dash.Dash):
+def register_context_menu_callbacks(app: dash.Dash) -> None:
     """
     Register callbacks for right-click context menu on plots.
 
@@ -4456,7 +4509,7 @@ def register_context_menu_callbacks(app: dash.Dash):
     )
 
 
-def register_layout_theme_callbacks(app: dash.Dash):
+def register_layout_theme_callbacks(app: dash.Dash) -> None:
     """Register callbacks to update header, sidebar, and main area when theme changes."""
 
     @app.callback(
@@ -4612,6 +4665,54 @@ def _get_stat_for_timeslice_metric(
     return stat_value, label, std
 
 
+def _custom_timeslice_plot(
+    config: dict,
+    run: RunData,
+    plot_gen,
+    theme: PlotTheme,
+    *,
+    y_metric: str,
+    title: str,
+):
+    """Render a user-customised timeslice scatter plot, or an error placeholder on failure."""
+    stat = config.get("stat") or "avg"
+    try:
+        # y_metric is a display name (e.g., "Time to First Token")
+        # Extract user-selected stat plus std for error bars (if different)
+        stats_to_extract = [stat]
+        if stat != "std":
+            stats_to_extract.append("std")
+        plot_df, unit = prepare_timeslice_metrics(run, y_metric, stats_to_extract)
+
+        if plot_df.empty:
+            return _create_empty_figure(
+                f"No timeslice data for metric '{y_metric}'", theme
+            )
+
+        y_label = f"{y_metric} ({unit})" if unit else y_metric
+
+        average_value, average_label, average_std = _get_stat_for_timeslice_metric(
+            y_metric, run, stat
+        )
+
+        return plot_gen.create_timeslice_scatter(
+            df=plot_df,
+            x_col="Timeslice",
+            y_col=stat,
+            metric_name=y_metric,
+            title=title,
+            y_label=y_label,
+            slice_duration=run.slice_duration,
+            unit=unit,
+            average_value=average_value,
+            average_label=average_label,
+            average_std=average_std,
+        )
+    except Exception as e:  # noqa: BLE001 - prepare_timeslice_metrics / plot_gen can raise varied exceptions; surface error text in the figure rather than crash the callback
+        _logger.error(f"Error creating timeslice scatter plot: {e}")
+        return _create_empty_figure(f"Error preparing timeslice data: {str(e)}", theme)
+
+
 def _generate_custom_single_run_plot(
     config: dict,
     run: RunData,
@@ -4673,51 +4774,9 @@ def _generate_custom_single_run_plot(
                     "Timeslice data requires running benchmarks with slice_duration configured.",
                     theme,
                 )
-
-            stat = config.get("stat") or "avg"
-
-            try:
-                # Prepare timeslice data using prepare_timeslice_metrics
-                # y_metric is a display name (e.g., "Time to First Token")
-                # Extract user-selected stat plus std for error bars (if different)
-                stats_to_extract = [stat]
-                if stat != "std":
-                    stats_to_extract.append("std")
-                plot_df, unit = prepare_timeslice_metrics(
-                    run, y_metric, stats_to_extract
-                )
-
-                if plot_df.empty:
-                    return _create_empty_figure(
-                        f"No timeslice data for metric '{y_metric}'", theme
-                    )
-
-                y_label = f"{y_metric} ({unit})" if unit else y_metric
-
-                # Extract run stat value and std for legend and outlier detection
-                average_value, average_label, average_std = (
-                    _get_stat_for_timeslice_metric(y_metric, run, stat)
-                )
-
-                # Create timeslice scatter plot
-                return plot_gen.create_timeslice_scatter(
-                    df=plot_df,
-                    x_col="Timeslice",
-                    y_col=stat,
-                    metric_name=y_metric,
-                    title=title,
-                    y_label=y_label,
-                    slice_duration=run.slice_duration,
-                    unit=unit,
-                    average_value=average_value,
-                    average_label=average_label,
-                    average_std=average_std,
-                )
-            except Exception as e:
-                _logger.error(f"Error creating timeslice scatter plot: {e}")
-                return _create_empty_figure(
-                    f"Error preparing timeslice data: {str(e)}", theme
-                )
+            return _custom_timeslice_plot(
+                config, run, plot_gen, theme, y_metric=y_metric, title=title
+            )
 
         elif plot_type == "dual_axis":
             y2_metric = config.get("y2_metric")
@@ -4849,7 +4908,7 @@ def _generate_custom_single_run_plot(
 
         return _create_empty_figure(f"Unsupported plot type: {plot_type}", theme)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - custom-plot dispatch calls into multiple plot_gen.create_* methods; any failure should render an error placeholder instead of breaking the dashboard
         _logger.error(f"Error generating custom single-run plot: {e!r}")
         return _create_empty_figure(f"Error: {e}", theme)
 
@@ -4905,6 +4964,7 @@ def _build_available_metrics_dict(plot_specs: list[PlotSpec]) -> dict:
 
 def _generate_singlerun_figure(
     plot_id: str,
+    *,
     config: dict,
     run: RunData,
     plot_specs: list,
@@ -4944,18 +5004,18 @@ def _generate_singlerun_figure(
             return fig
         else:
             return _generate_custom_single_run_plot(config, run, plot_gen, theme)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - third-party plot handlers/plugins raise varied exceptions; surface the error message into an empty figure instead of 500-ing the dashboard
         _logger.error(f"Error generating single-run plot '{plot_id}': {e!r}")
         return _create_empty_figure(f"Error: {str(e)}", theme)
 
 
 def _render_single_run_plots(
     plot_state: dict,
+    *,
     theme_data: dict,
     theme: PlotTheme,
     runs: list[RunData],
     plot_specs: list,
-    *,
     default_plot_order: list[str],
 ):
     """Render plots for single-run mode with caching.
@@ -5011,7 +5071,11 @@ def _render_single_run_plots(
 
         if fig is None:
             fig = _generate_singlerun_figure(
-                plot_id, config, run, plot_specs, current_theme
+                plot_id,
+                config=config,
+                run=run,
+                plot_specs=plot_specs,
+                theme=current_theme,
             )
 
             if fig is not None:
@@ -5019,7 +5083,11 @@ def _render_single_run_plots(
 
                 # Also generate and cache for opposite theme
                 other_fig = _generate_singlerun_figure(
-                    plot_id, config, run, plot_specs, other_theme
+                    plot_id,
+                    config=config,
+                    run=run,
+                    plot_specs=plot_specs,
+                    theme=other_theme,
                 )
                 if other_fig is not None:
                     other_key = CacheKey(
@@ -5059,11 +5127,12 @@ def _render_single_run_plots(
 
 def register_dynamic_grid_callback(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     mode: VisualizationMode,
     theme: PlotTheme,
     plot_config,
-):
+) -> None:
     """
     Register callback to dynamically rebuild plot grid based on visible plots.
 
@@ -5107,7 +5176,7 @@ def register_dynamic_grid_callback(
                 Input("mode-store", "data"),
             ]
             grid_states = []
-    except Exception:
+    except Exception:  # noqa: BLE001 - guard around Dash Input list construction; log traceback but let callback registration continue with defaults
         traceback.print_exc()
 
         # Don't return - register callback anyway with empty specs
@@ -5153,7 +5222,7 @@ def register_dynamic_grid_callback(
                 selected_runs = args[0]
                 theme_data = args[1]
                 mode_data = args[2] if len(args) > 2 else None
-        except Exception:
+        except Exception:  # noqa: BLE001 - wrapper logs traceback then re-raises; kept broad so unexpected arg-shape errors surface clearly in logs before propagating
             traceback.print_exc()
             raise
 
@@ -5168,12 +5237,12 @@ def register_dynamic_grid_callback(
         # Use drill-down cache whenever we're in single-run mode and cache exists
         use_drill_down_cache = (
             actual_mode == VisualizationMode.SINGLE_RUN
-            and "current" in _drill_down_run_cache
+            and "current" in _DRILL_DOWN_RUN_CACHE
         )
 
         if use_drill_down_cache:
-            runs_to_use = [_drill_down_run_cache["current"]]
-            specs_to_use = _drill_down_specs_cache.get("current", [])
+            runs_to_use = [_DRILL_DOWN_RUN_CACHE["current"]]
+            specs_to_use = _DRILL_DOWN_SPECS_CACHE.get("current", [])
             order_to_use = [spec.name for spec in specs_to_use]
         else:
             runs_to_use = runs
@@ -5308,7 +5377,7 @@ def register_dynamic_grid_callback(
     # serialization, network transfer, and full re-render of all figures.
 
 
-def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme):
+def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme) -> None:
     """
     Register callback to sync sidebar state on page load and theme changes.
 
@@ -5373,7 +5442,7 @@ def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme):
         return sidebar_style, button_style
 
 
-def register_sidebar_toggle_callback(app: dash.Dash, theme: PlotTheme):
+def register_sidebar_toggle_callback(app: dash.Dash, theme: PlotTheme) -> None:
     """
     Register callback for sidebar toggle button.
 
@@ -5401,7 +5470,7 @@ def register_sidebar_toggle_callback(app: dash.Dash, theme: PlotTheme):
         return new_state
 
 
-def register_collapsible_sections_callback(app: dash.Dash):
+def register_collapsible_sections_callback(app: dash.Dash) -> None:
     """
     Register callback for collapsible section toggles.
 
@@ -5463,7 +5532,7 @@ def register_collapsible_sections_callback(app: dash.Dash):
         return new_styles, new_arrows
 
 
-def register_run_count_badge_callback(app: dash.Dash):
+def register_run_count_badge_callback(app: dash.Dash) -> None:
     """
     Register callback for run count badge update.
 
@@ -5501,6 +5570,7 @@ def register_run_count_badge_callback(app: dash.Dash):
 
 def register_drill_down_callbacks(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     run_dirs: list[Path],
     loader: DataLoader,
@@ -5595,9 +5665,9 @@ def register_drill_down_callbacks(
 
         # Populate module-level caches for drill-down mode
         # These are used by update_grid_children when mode switches to single_run
-        _drill_down_run_cache["current"] = run
-        _drill_down_specs_cache["current"] = plot_config.get_single_run_plot_specs()
-        _drill_down_plot_config_cache["current"] = plot_config
+        _DRILL_DOWN_RUN_CACHE["current"] = run
+        _DRILL_DOWN_SPECS_CACHE["current"] = plot_config.get_single_run_plot_specs()
+        _DRILL_DOWN_PLOT_CONFIG_CACHE["current"] = plot_config
 
         # Get sidebar children (strip the outer div wrapper)
         sidebar_div = builder._build_sidebar()
@@ -5651,7 +5721,7 @@ def register_drill_down_callbacks(
         )
 
 
-def register_toast_notifications_callbacks(app: dash.Dash):
+def register_toast_notifications_callbacks(app: dash.Dash) -> None:
     """
     Register callbacks for toast notifications.
 
@@ -5745,6 +5815,6 @@ def register_toast_notifications_callbacks(app: dash.Dash):
         raise PreventUpdate
 
 
-def register_drag_drop_callbacks(app: dash.Dash):
+def register_drag_drop_callbacks(app: dash.Dash) -> None:
     """Register drag-and-drop callbacks for plot reordering (placeholder)."""
     pass

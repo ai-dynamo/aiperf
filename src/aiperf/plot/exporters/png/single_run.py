@@ -68,7 +68,7 @@ class SingleRunPNGExporter(BasePNGExporter):
                 self.debug(f"Generated {spec.filename}")
                 generated_files.append(path)
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - PNG export aggregates across heterogeneous plot specs; one bad spec shouldn't block the rest — log and continue
                 self.error(f"Failed to generate {spec.name}: {e}")
 
         self._create_summary_file(generated_files)
