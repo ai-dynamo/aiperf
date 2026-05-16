@@ -58,7 +58,7 @@ def _make_config(
     results.was_cancelled = False
 
     return ExporterConfig(
-        cfg=cfg,
+        config=cfg,
         results=results,
         telemetry_results=None,
         run=SimpleNamespace(benchmark_id=benchmark_id),

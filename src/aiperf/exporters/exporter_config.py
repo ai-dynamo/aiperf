@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.models import ProfileResults
 from aiperf.common.models.export_models import TelemetryExportData
@@ -19,15 +19,24 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class ExporterConfig:
-    """Configuration for the exporter."""
+    """Configuration for the exporter.
+
+    ``cfg`` is the canonical attribute name; ``config`` is retained as an
+    alias because parts of the codebase (and most of the tests) still spell
+    it the old way. Both point at the same underlying object — see
+    :meth:`__post_init__`.
+    """
 
     results: ProfileResults | None
     """Profiling results from the benchmark run."""
 
-    config: BenchmarkConfig
-    """Benchmark configuration used for this run."""
+    config: BenchmarkConfig | None = None
+    """Benchmark configuration used for this run (alias of ``cfg``)."""
 
-    telemetry_results: TelemetryExportData | None
+    cfg: BenchmarkConfig | None = None
+    """Benchmark configuration used for this run (alias of ``config``)."""
+
+    telemetry_results: TelemetryExportData | None = None
     """Telemetry data collected during the run."""
 
     server_metrics_results: ServerMetricsResults | None = None
@@ -38,6 +47,20 @@ class ExporterConfig:
 
     energy_efficiency_results: EnergyEfficiencySummary | None = None
     """Energy efficiency metrics results, if computed."""
+
+    run: Any = None
+    """Optional ``BenchmarkRun`` reference (mlflow exporter reads benchmark_id off this)."""
+
+    def __post_init__(self) -> None:
+        # Synchronize the two aliases so call sites can read either.
+        if self.cfg is None and self.config is not None:
+            self.cfg = self.config
+        elif self.config is None and self.cfg is not None:
+            self.config = self.cfg
+        if self.cfg is None:
+            raise TypeError(
+                "ExporterConfig requires either ``cfg=`` or ``config=`` to be set."
+            )
 
 
 @dataclass(slots=True)

@@ -211,7 +211,7 @@ class TestMLflowMetadataRoundtripParentRunId:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -266,7 +266,7 @@ class TestMLflowMetadataRoundtripParentRunId:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
@@ -306,7 +306,7 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -345,7 +345,7 @@ class TestMLflowMetadataByteEqualityRoundtrip:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -384,7 +384,7 @@ class TestMLflowTrackingUriRedactedInMetadata:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(exporter_config)
@@ -430,7 +430,7 @@ class TestMLflowTrackingUriRedactedInMetadata:
         state = _install_fake_mlflow_with_parent_tracking()
         exporter_config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )

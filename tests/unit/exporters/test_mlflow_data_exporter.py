@@ -216,7 +216,7 @@ class TestMLflowDataExporter:
     ) -> None:
         config = ExporterConfig(
             results=sample_results,
-            cfg=_make_mlflow_cfg(tmp_path, tracking_uri=None),
+            config=_make_mlflow_cfg(tmp_path, tracking_uri=None),
             telemetry_results=None,
         )
         with pytest.raises(
@@ -228,7 +228,7 @@ class TestMLflowDataExporter:
     def test_disabled_without_results(self, mlflow_cfg: BenchmarkConfig) -> None:
         config = ExporterConfig(
             results=None,
-            cfg=mlflow_cfg,
+            config=mlflow_cfg,
             telemetry_results=None,
         )
         with pytest.raises(DataExporterDisabled, match="no profile results"):
@@ -251,7 +251,7 @@ class TestMLflowDataExporter:
         state = _install_fake_mlflow_modules(monkeypatch)
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_cfg,
+            config=mlflow_cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id="bench-upload-001"),
         )
@@ -347,7 +347,7 @@ class TestMLflowDataExporter:
         )
         config = ExporterConfig(
             results=sample_results,
-            cfg=cfg,
+            config=cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
@@ -391,7 +391,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_cfg,
+            config=mlflow_cfg,
             telemetry_results=None,
             run=types.SimpleNamespace(benchmark_id=benchmark_id),
         )
@@ -472,7 +472,7 @@ class TestMLflowDataExporter:
         exporter = MLflowDataExporter(
             ExporterConfig(
                 results=sample_results,
-                cfg=mlflow_cfg,
+                config=mlflow_cfg,
                 telemetry_results=None,
             )
         )
@@ -508,7 +508,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_cfg,
+            config=mlflow_cfg,
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
@@ -546,7 +546,7 @@ class TestMLflowDataExporter:
 
         config = ExporterConfig(
             results=sample_results,
-            cfg=mlflow_cfg,
+            config=mlflow_cfg,
             telemetry_results=None,
         )
         await mlflow_export_subprocess.export_with_timeout(
