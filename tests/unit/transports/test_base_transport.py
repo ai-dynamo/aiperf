@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.models import RequestInfo, RequestRecord
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType

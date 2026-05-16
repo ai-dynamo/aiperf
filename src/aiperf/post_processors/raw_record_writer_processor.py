@@ -13,8 +13,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
-from aiperf.common.models import ParsedResponseRecord, RawRecordInfo
-from aiperf.common.models.record_models import RequestInfo
+from aiperf.common.models import ParsedResponseRecord, RawRecordInfo, RequestInfo
 from aiperf.common.redact import redact_headers
 from aiperf.config.defaults import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo

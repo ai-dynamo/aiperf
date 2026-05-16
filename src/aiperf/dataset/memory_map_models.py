@@ -9,20 +9,44 @@ schema without pulling in mmap/zstd code paths.
 import types
 
 import msgspec
+import orjson
 from pydantic import Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel, Conversation
 
-# Hot-path JSON codec for Conversation (msgspec.Struct). Reuses the encoder/decoder
-# singletons to amortize setup cost across millions of conversations.
-_CONVERSATION_ENCODER = msgspec.json.Encoder()
-_CONVERSATION_DECODER: msgspec.json.Decoder | None = None
+
+class _ConversationOrjsonEncoder:
+    """msgspec-API-compatible wrapper around orjson for Pydantic Conversations.
+
+    Branch carried Conversation as ``msgspec.Struct`` so ``msgspec.json.Encoder``
+    could serialize it directly. On main Conversation is a Pydantic model
+    (kept for the field-description/validator surface), so we encode the JSON
+    via orjson's default dispatch. Decoder still uses msgspec.json.Decoder so
+    the workers' fast-path bytes-to-struct conversion stays intact — Pydantic
+    will accept the dict msgspec materialized.
+    """
+
+    @staticmethod
+    def encode(conversation: Conversation) -> bytes:
+        return orjson.dumps(conversation.model_dump())
 
 
-def _get_conversation_decoder() -> msgspec.json.Decoder:
+_CONVERSATION_ENCODER = _ConversationOrjsonEncoder()
+class _ConversationOrjsonDecoder:
+    """msgspec-API-compatible decoder for Pydantic Conversations."""
+
+    @staticmethod
+    def decode(data: bytes) -> Conversation:
+        return Conversation.model_validate(orjson.loads(data))
+
+
+_CONVERSATION_DECODER: _ConversationOrjsonDecoder | None = None
+
+
+def _get_conversation_decoder() -> _ConversationOrjsonDecoder:
     global _CONVERSATION_DECODER
     if _CONVERSATION_DECODER is None:
-        _CONVERSATION_DECODER = msgspec.json.Decoder(Conversation)
+        _CONVERSATION_DECODER = _ConversationOrjsonDecoder()
     return _CONVERSATION_DECODER
 
 

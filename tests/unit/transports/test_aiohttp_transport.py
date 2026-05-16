@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import ConnectionReuseStrategy
-from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.models import RequestInfo, RequestRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_transport import (

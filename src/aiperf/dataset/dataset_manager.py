@@ -339,7 +339,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self, conversations: list[Conversation]
     ) -> DatasetMetadata:
         """Build the DatasetMetadata describing loaded conversations."""
-        from aiperf.config.resolved import (
+        from aiperf.config.resolution import (
             conversations_have_timing_data,
             get_sampling_strategy,
         )

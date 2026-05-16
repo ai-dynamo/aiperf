@@ -87,6 +87,11 @@ class ConfigurationError(AIPerfError):
     """Exception raised when something fails to configure, or there is a configuration error."""
 
 
+# Alias retained for back-compat with branch-side callers that import the
+# `AIPerf`-prefixed name (mostly dataset/generator modules ported in).
+AIPerfConfigurationError = ConfigurationError
+
+
 class ConsoleExporterDisabled(AIPerfError):
     """Raised when initializing a console exporter to indicate to the caller that it is disabled and should not be used."""
 

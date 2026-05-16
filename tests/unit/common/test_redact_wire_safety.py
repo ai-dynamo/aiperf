@@ -19,7 +19,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestInfo, RequestRecord, Turn
+from aiperf.common.models import RequestInfo, RequestRecord, Turn
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.plugin.enums import TransportType

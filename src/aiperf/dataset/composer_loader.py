@@ -68,7 +68,7 @@ async def load_conversations_for_run(
     run: BenchmarkRun, tokenizer: Tokenizer | None
 ) -> ConversationLoadResult:
     """Pick the composer based on the dataset config and return conversations."""
-    from aiperf.config.resolved import is_file_dataset, is_public_dataset
+    from aiperf.config.resolution import is_file_dataset, is_public_dataset
 
     dataset_config = run.cfg.get_default_dataset()
     if is_public_dataset(dataset_config):

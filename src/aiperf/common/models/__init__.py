@@ -85,8 +85,6 @@ from aiperf.common.models.record_models import (
     RawRecordInfo,
     ReasoningResponseData,
     RecordContext,
-    RequestInfo,
-    RequestRecord,
     SSEField,
     SSEMessage,
     TextResponse,
@@ -95,6 +93,7 @@ from aiperf.common.models.record_models import (
     ToolCallResponseData,
     VideoResponseData,
 )
+from aiperf.common.models.request_record_models import RequestInfo, RequestRecord
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     SequenceLengthDistribution,

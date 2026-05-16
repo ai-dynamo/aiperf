@@ -10,7 +10,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.models.dataset_models import Text, Turn
-from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.models import RequestInfo, RequestRecord
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import TransportType

@@ -76,11 +76,11 @@ class BaseComponentService(BaseService):
         self._registration_ack_event: asyncio.Event | None = None
         self._pending_registration_rid: str | None = None
 
-        from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
-
-        control_address = self.comms.get_address(CommAddress.CONTROL)
-        self.control_client = ZMQStreamingDealerClient(
-            address=control_address,
+        # Route DEALER creation through `self.comms` so test harnesses
+        # (FakeCommunication) can substitute an in-process dealer instead of
+        # binding a real ZMQ socket on a fake:// address.
+        self.control_client = self.comms.create_streaming_dealer_client(
+            address=CommAddress.CONTROL,
             identity=self.id,
             bind=False,
             decode_type=ServiceBoundMessage,
