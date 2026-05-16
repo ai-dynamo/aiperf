@@ -469,6 +469,28 @@ def benchmark_run(cli_config: CLIConfig):
     return make_run_from_cli(cli_config)
 
 
+@pytest.fixture
+def run(benchmark_run):
+    """Alias of :func:`benchmark_run` so tests ported from the K8s branch that
+    request ``run`` continue to work without renaming.
+    """
+    return benchmark_run
+
+
+@pytest.fixture
+def config(benchmark_run):
+    """Minimal :class:`AIPerfConfig` envelope wrapping ``benchmark_run.cfg``.
+
+    Branch tests ported from the K8s branch take ``config: AIPerfConfig`` as
+    an input. The current tree's ``benchmark_run`` already carries a fully
+    resolved :class:`BenchmarkConfig`; wrap it in an envelope so those tests
+    don't need to be re-keyed.
+    """
+    from aiperf.config import AIPerfConfig
+
+    return AIPerfConfig.model_construct(benchmark=benchmark_run.cfg)
+
+
 class MockPubClient:
     """Mock pub client."""
 
