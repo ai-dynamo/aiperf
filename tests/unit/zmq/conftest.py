@@ -14,13 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 import zmq.asyncio
 
-from aiperf.common.enums import CreditPhase, LifecycleState
+from aiperf.common.enums import LifecycleState
 from aiperf.common.messages import HeartbeatMessage
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
-    WorkerReady,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import Credit
 
@@ -130,7 +132,7 @@ def sample_credit():
     """Create a sample credit struct for testing."""
     return Credit(
         id=1,
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         conversation_id="conv-001",
         x_correlation_id="corr-001",
         turn_index=0,
@@ -140,9 +142,21 @@ def sample_credit():
 
 
 @pytest.fixture
+def sample_worker_connected():
+    """Create a sample WorkerConnected struct for testing."""
+    return WorkerConnected(worker_id="worker-1")
+
+
+@pytest.fixture
 def sample_worker_ready():
-    """Create a sample WorkerReady struct for testing."""
-    return WorkerReady(worker_id="worker-1")
+    """Create a sample WorkerDispatchable struct for testing."""
+    return WorkerDispatchable(worker_id="worker-1")
+
+
+@pytest.fixture
+def sample_worker_undispatchable():
+    """Create a sample WorkerUndispatchable struct for testing."""
+    return WorkerUndispatchable(worker_id="worker-1", reason="draining")
 
 
 @pytest.fixture

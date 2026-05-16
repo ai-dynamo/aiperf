@@ -286,6 +286,7 @@ class TestZMQRouterReplyClientDuplicateRequestId:
 
         async def handler(msg: Message) -> Message:
             return Message(
+                message_type=MessageType.HEARTBEAT,
                 request_id=msg.request_id,
             )
 
