@@ -14,7 +14,7 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.transports.aiohttp_client import AioHttpClient
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
 
@@ -49,7 +49,7 @@ class BasePublicDatasetLoader(BaseLoader):
     url: ClassVar[str]
     filename: ClassVar[str] = "dataset.json"
 
-    def __init__(self, run: BenchmarkRun | None = None, **kwargs):
+    def __init__(self, run: BenchmarkRun, **kwargs):
         super().__init__(run=run, **kwargs)
         self.http_client = AioHttpClient(
             timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT
@@ -131,7 +131,7 @@ class BasePublicDatasetLoader(BaseLoader):
         self.info(f"Saving {self.tag} dataset to local cache {self.cache_filepath}")
         try:
             self.cache_filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_filepath, "w", encoding="utf-8") as f:
+            with open(self.cache_filepath, "w") as f:
                 f.write(dataset)
         except Exception as e:
             raise DatasetLoaderError(f"Error saving dataset to local cache: {e}") from e
@@ -145,7 +145,7 @@ class BasePublicDatasetLoader(BaseLoader):
         """
         self.info(f"Loading {self.tag} dataset from local cache {self.cache_filepath}")
         try:
-            with open(self.cache_filepath, encoding="utf-8") as f:
+            with open(self.cache_filepath) as f:
                 return f.read()
         except Exception as e:
             raise DatasetLoaderError(
@@ -154,9 +154,9 @@ class BasePublicDatasetLoader(BaseLoader):
 
     def is_valid_sequence(
         self,
-        *,
         prompt_len: int,
         output_len: int,
+        *,
         min_seq_len: int = 4,
         max_prompt_len: int = 1024,
         max_total_len: int = 2048,

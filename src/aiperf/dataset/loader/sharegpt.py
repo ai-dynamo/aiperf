@@ -14,7 +14,7 @@ from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
 class ShareGPTLoader(BasePublicDatasetLoader):
@@ -30,7 +30,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     - Configurable max prompt length and total sequence length
 
     Example:
-        >>> loader = ShareGPTLoader(run, tokenizer)
+        >>> loader = ShareGPTLoader(user_config, tokenizer)
         >>> dataset = await loader.load_dataset()
         >>> conversations = await loader.convert_to_conversations(dataset)
         >>> print(f"Loaded {len(conversations)} valid conversations")
@@ -40,31 +40,18 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     url = "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
     filename = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
-    def __init__(
-        self,
-        run: BenchmarkRun | None = None,
-        tokenizer: Tokenizer | None = None,
-        **kwargs,
-    ):
+    def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer | None = None, **kwargs):
         if tokenizer is None:
             raise ValueError(
                 "ShareGPTLoader requires a tokenizer; ensure the endpoint supports tokenization."
             )
         self.tokenizer = tokenizer
-        # Synthetic prompt OSL `mean` only exists on SyntheticDataset.prompts.osl
-        # when configured as a {mean, stddev} distribution. ShareGPT only uses
-        # this to skip the min-output-length sanity check, so a missing value
-        # collapses to None and the check stays enabled.
-        from aiperf.dataset.loader.base_loader import _default_test_run
-
-        active_run = run or _default_test_run()
-        dataset = active_run.cfg.get_default_dataset()
-        prompts = getattr(dataset, "prompts", None)
+        self.run = run
+        self.dataset_config = run.cfg.get_default_dataset()
+        # Get output tokens mean from dataset prompts config if available
+        prompts = getattr(self.dataset_config, "prompts", None)
         osl = getattr(prompts, "osl", None) if prompts else None
-        if isinstance(osl, dict):
-            self.output_tokens_mean = osl.get("mean")
-        else:
-            self.output_tokens_mean = getattr(osl, "mean", None) if osl else None
+        self.output_tokens_mean = osl.mean if osl else None
         self.turn_count = 0
 
         self._rng = rng.derive("dataset.loader.sharegpt")
@@ -141,9 +128,8 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         return filtered_dataset
 
     def _select_model_name(self) -> str:
-        models_cfg = self.run.cfg.models
+        selection_strategy = self.run.cfg.models.strategy
         model_names = self.run.cfg.get_model_names()
-        selection_strategy = models_cfg.strategy
         if selection_strategy == ModelSelectionStrategy.RANDOM:
             return self._rng.choice(model_names)
         elif selection_strategy == ModelSelectionStrategy.ROUND_ROBIN:
@@ -151,14 +137,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
             self.turn_count += 1
             return model_name
         else:
-            supported = (
-                ModelSelectionStrategy.RANDOM,
-                ModelSelectionStrategy.ROUND_ROBIN,
-            )
-            raise ValueError(
-                f"Unsupported model selection strategy {selection_strategy.value!r} for ShareGPT loader; "
-                f"supported: {', '.join(s.value for s in supported)}."
-            )
+            raise ValueError(f"Invalid model selection strategy: {selection_strategy}.")
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:

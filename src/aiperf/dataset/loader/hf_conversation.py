@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
-
-if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class HFConversationDatasetLoader(BaseHFDatasetLoader):
@@ -47,8 +43,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        run: BenchmarkRun | None = None,
-        *,
+        run: BenchmarkRun,
         conversation_column: str,
         message_content_key: str = "content",
         image_column: str | None = None,

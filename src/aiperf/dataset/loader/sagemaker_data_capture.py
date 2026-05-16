@@ -25,7 +25,7 @@ from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Turn
 from aiperf.dataset.loader.base_trace_loader import (
     BaseTraceDatasetLoader,
-    _has_meaningful_synthesis,
+    _synthesis_should_apply,
 )
 from aiperf.dataset.loader.models import SageMakerDataCaptureTrace
 
@@ -106,8 +106,13 @@ class SageMakerDataCaptureLoader(
     # Template-method hooks
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, record: dict) -> SageMakerDataCaptureTrace:
-        """Parse a single record dict from a SageMaker Data Capture file."""
+    def _parse_trace(self, line: str) -> SageMakerDataCaptureTrace:
+        """Parse a single JSONL line from a SageMaker Data Capture file."""
+        try:
+            record = orjson.loads(line)
+        except orjson.JSONDecodeError as e:
+            raise DatasetLoaderError(f"Invalid JSON in capture record: {e}") from e
+
         event_id = record.get("eventMetadata", {}).get("eventId", "<unknown>")
 
         try:
@@ -237,13 +242,7 @@ class SageMakerDataCaptureLoader(
                 for line in f:
                     if not (line := line.strip()):
                         continue
-                    try:
-                        record = orjson.loads(line)
-                    except orjson.JSONDecodeError as e:
-                        raise DatasetLoaderError(
-                            f"Invalid JSON in capture record: {e}"
-                        ) from e
-                    trace = self._parse_trace(record)
+                    trace = self._parse_trace(line)
                     self._preprocess_trace(trace)
                     items.append(trace)
         return items
@@ -255,11 +254,9 @@ class SageMakerDataCaptureLoader(
     def load_dataset(
         self,
     ) -> dict[str, list[SageMakerDataCaptureTrace]]:
-        """Load SageMaker Data Capture traces from a file, directory, or inline records.
+        """Load SageMaker Data Capture traces from a file or directory.
 
         When given a directory, recursively globs ``**/*.jsonl`` files.
-        When ``inline_records`` is set, iterates record dicts via
-        :meth:`_iter_record_dicts` instead.
         Timestamps are zero-aligned (earliest becomes 0) so that
         ``--fixed-schedule-end-offset`` works with relative offsets.
         """
@@ -267,17 +264,8 @@ class SageMakerDataCaptureLoader(
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
 
-        if self.inline_records is not None:
-            raw_items: list[SageMakerDataCaptureTrace] = []
-            for record_dict in self._iter_record_dicts():
-                trace = self._parse_trace(record_dict)
-                self._preprocess_trace(trace)
-                raw_items.append(trace)
-            source_desc = "inline records"
-        else:
-            files = self._resolve_files()
-            raw_items = self._read_all_traces(files)
-            source_desc = f"{len(files)} file(s)"
+        files = self._resolve_files()
+        raw_items = self._read_all_traces(files)
 
         if not raw_items:
             self._log_filtering_summary()
@@ -293,11 +281,11 @@ class SageMakerDataCaptureLoader(
         items.sort(key=lambda t: t.timestamp)
 
         self._log_filtering_summary()
-        self.info(f"Loaded {len(items):,} traces from {source_desc}")
+        self.info(f"Loaded {len(items):,} traces from {len(files)} file(s)")
 
         data = self._group_traces(items)
 
-        if _has_meaningful_synthesis(self._synthesis):
+        if _synthesis_should_apply(self._synthesis_config):
             data = self._apply_synthesis(data)
 
         return data

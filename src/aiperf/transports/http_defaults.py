@@ -35,7 +35,7 @@ class SocketDefaults:
     def build_socket_options(cls) -> list[tuple[int, int, int]]:
         """Build socket options as a list of (level, optname, value) tuples.
 
-        Used by httpcore which accepts ``socket_options`` in this format.
+        Used by httpcore which accepts socket_options in this format.
         """
         options = [
             (socket.SOL_TCP, socket.TCP_NODELAY, cls.TCP_NODELAY),

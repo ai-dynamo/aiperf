@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
-
-if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class MMVUDatasetLoader(BaseHFDatasetLoader):
@@ -30,7 +26,7 @@ class MMVUDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        run: BenchmarkRun | None = None,
+        run: BenchmarkRun,
         video_column: str = "video",
         **kwargs,
     ) -> None:

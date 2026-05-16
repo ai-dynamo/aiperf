@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -10,7 +9,7 @@ from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
 class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
@@ -38,9 +37,9 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        *,
-        run: BenchmarkRun | None = None,
+        run: BenchmarkRun,
         prompt_column: str,
+        *,
         image_column: str | None = None,
         video_column: str | None = None,
         audio_column: str | None = None,
@@ -62,8 +61,8 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         conversations = []
         skipped = 0
         max_conversations = self._max_conversations()
-
         column_validated = False
+
         for row in dataset:
             if (
                 max_conversations is not None

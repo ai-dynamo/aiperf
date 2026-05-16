@@ -19,7 +19,7 @@ from aiperf.dataset.loader.models import RandomPool
 from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 logger = logging.getLogger(__name__)
 
@@ -88,33 +88,25 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     def __init__(
         self,
         *,
-        filename: str | Path | None = None,
-        inline_records: list[dict[str, Any]]
-        | dict[str, list[dict[str, Any]]]
-        | None = None,
-        run: BenchmarkRun | None = None,
+        filename: str,
+        run: BenchmarkRun,
         num_conversations: int = 1,
         **kwargs,
     ):
-        super().__init__(
-            filename=filename, inline_records=inline_records, run=run, **kwargs
-        )
+        super().__init__(filename=filename, run=run, **kwargs)
         self._rng = rng.derive("dataset.loader.random_pool")
         self.num_conversations = (
             num_conversations if num_conversations is not None else 100
         )
-        # Per-modality batch_size only exists on SyntheticDataset (and even then
-        # only when the modality config block is present). FileDataset has none
-        # of these, so default to 1 for missing fields rather than crashing.
-        dataset = self.run.cfg.get_default_dataset()
-        prompts = getattr(dataset, "prompts", None)
-        images = getattr(dataset, "images", None)
-        audio = getattr(dataset, "audio", None)
-        video = getattr(dataset, "video", None)
-        self.batch_size_image = getattr(images, "batch_size", 1) if images else 1
-        self.batch_size_text = getattr(prompts, "batch_size", 1) if prompts else 1
-        self.batch_size_audio = getattr(audio, "batch_size", 1) if audio else 1
-        self.batch_size_video = getattr(video, "batch_size", 1) if video else 1
+        dataset_config = run.cfg.get_default_dataset()
+        images_config = getattr(dataset_config, "images", None)
+        prompts_config = getattr(dataset_config, "prompts", None)
+        audio_config = getattr(dataset_config, "audio", None)
+        video_config = getattr(dataset_config, "video", None)
+        self.batch_size_image = images_config.batch_size if images_config else 1
+        self.batch_size_text = prompts_config.batch_size if prompts_config else 1
+        self.batch_size_audio = audio_config.batch_size if audio_config else 1
+        self.batch_size_video = video_config.batch_size if video_config else 1
 
     @staticmethod
     def _validate_path(path: Path) -> int:
@@ -141,7 +133,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             # if path is a file, validate the first non-empty line against the RandomPool model
             # if the line is valid, increment the valid count and break the loop,
             # otherwise a ValidationError will be raised and the function will exit early
-            with open(path, encoding="utf-8") as f:
+            with open(path) as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
@@ -194,33 +186,21 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         return DatasetSamplingStrategy.SHUFFLE
 
     def load_dataset(self) -> dict[Filename, list[RandomPool]]:
-        """Load random pool data from a file, directory, or inline records.
+        """Load random pool data from a file or directory.
 
-        Returns a dictionary mapping pool name to a list of RandomPool objects.
-          - File mode (single file): one pool keyed by file basename.
-          - File mode (directory): one pool per file, keyed by file basename.
-          - Inline mode (flat list): one pool keyed by ``"<inline>"``.
-          - Inline mode (dict-of-lists): one pool per dict key.
+        If filename is a file, reads and parses using the RandomPool model.
+        If filename is a directory, reads each file in the directory and merges
+        items with different modality names into combined RandomPool objects.
+
+        Returns:
+            A dictionary mapping filename to list of RandomPool objects.
         """
-        if self.inline_records is not None:
-            if isinstance(self.inline_records, dict):
-                return {
-                    pool_name: [
-                        RandomPool.model_validate(r)
-                        for r in self._iter_record_dicts(source=pool_name)
-                    ]
-                    for pool_name in self.inline_records
-                }
-            return {
-                "<inline>": [
-                    RandomPool.model_validate(r) for r in self._iter_record_dicts()
-                ]
-            }
-
         path = Path(self.filename)
+
         if path.is_file():
             dataset_pool = self._load_dataset_from_file(path)
             return {path.name: dataset_pool}
+
         return self._load_dataset_from_dir(path)
 
     def _load_dataset_from_file(self, file_path: Path) -> list[RandomPool]:
@@ -234,7 +214,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """
         dataset_pool: list[RandomPool] = []
 
-        with open(file_path, encoding="utf-8") as f:
+        with open(file_path) as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines

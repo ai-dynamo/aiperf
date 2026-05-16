@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# TODO(branch-port): re-add main's multi-vendor `session_header` support (was used
+# by `model_endpoint.endpoint.session_header` in HEAD's build_url path). Branch's
+# version dropped this. Cross-reference origin/main:src/aiperf/transports/base_transports.py.
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -14,9 +18,9 @@ from aiperf.common.models import (
     RequestRecord,
     SSEMessage,
 )
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
+from aiperf.config import BenchmarkRun
 from aiperf.plugin.schema.schemas import TransportMetadata
 
 FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
@@ -63,9 +67,9 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
     Transports handle the protocol layer (HTTP, gRPC, etc.).
     """
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.model_endpoint: ModelEndpointInfo = model_endpoint
+        self.run: BenchmarkRun = run
         from aiperf import __version__
 
         self.user_agent: str = f"aiperf/{__version__}"
@@ -115,11 +119,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         if request_info.x_request_id:
             headers["X-Request-ID"] = request_info.x_request_id
         if request_info.x_correlation_id:
-            correlation_header = (
-                request_info.model_endpoint.endpoint.session_header
-                or "X-Correlation-ID"
-            )
-            headers[correlation_header] = request_info.x_correlation_id
+            headers["X-Correlation-ID"] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
         headers.update(self.get_transport_headers(request_info))

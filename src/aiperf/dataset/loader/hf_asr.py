@@ -14,7 +14,7 @@ from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 _ASR_PROMPT = "Transcribe this audio."
 _MAX_DURATION_SECONDS = 30
@@ -50,7 +50,7 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        run: BenchmarkRun | None = None,
+        run: BenchmarkRun,
         audio_column: str = "audio",
         **kwargs,
     ) -> None:

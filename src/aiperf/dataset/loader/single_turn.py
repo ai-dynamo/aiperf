@@ -91,16 +91,27 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         return DatasetSamplingStrategy.SEQUENTIAL
 
     def load_dataset(self) -> dict[str, list[SingleTurn]]:
-        """Load single-turn data from a file or inline records.
+        """Load single-turn data from a JSONL file.
 
-        Each record represents a single turn conversation. Multiple records with
+        Each line represents a single turn conversation. Multiple turns with
         the same session_id (or generated UUID) are grouped together.
+
+        Returns:
+            A dictionary mapping session_id to list of CustomData.
         """
         data: dict[str, list[SingleTurn]] = defaultdict(list)
-        for record_dict in self._iter_record_dicts():
-            single_turn_data = SingleTurn.model_validate(record_dict)
-            session_id = single_turn_data.session_id or self.session_id_generator.next()
-            data[session_id].append(single_turn_data)
+
+        with open(self.filename) as f:
+            for line in f:
+                if (line := line.strip()) == "":
+                    continue  # Skip empty lines
+
+                single_turn_data = SingleTurn.model_validate_json(line)
+                session_id = (
+                    single_turn_data.session_id or self.session_id_generator.next()
+                )
+                data[session_id].append(single_turn_data)
+
         return data
 
     def convert_to_conversations(
@@ -136,7 +147,6 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         delay=single_turn.delay,
                         role=single_turn.role,
                         max_tokens=single_turn.output_length,
-                        extra_body=single_turn.extra,
                     )
                 )
             conversations.append(conversation)

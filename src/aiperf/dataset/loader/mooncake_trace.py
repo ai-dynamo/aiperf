@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Turn
-from aiperf.dataset.loader.base_loader import LoaderProbeData
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 
@@ -38,7 +37,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
 
     @classmethod
     def can_load(
-        cls, data: LoaderProbeData | None = None, filename: str | Path | None = None
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
     ) -> bool:
         """Check if this loader can handle the given data format.
 
@@ -58,8 +57,8 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     # Template-method hooks (see BaseTraceDatasetLoader.load_dataset)
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, record: dict) -> MooncakeTrace:
-        return MooncakeTrace.model_validate(record)
+    def _parse_trace(self, line: str) -> MooncakeTrace:
+        return MooncakeTrace.model_validate_json(line)
 
     def _group_traces(
         self, items: list[MooncakeTrace]
@@ -77,47 +76,22 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces are self-contained.
-
-        Self-contained traces (pre-built `messages` or verbatim `payload`) bypass
-        endpoint formatting and need to be replayed verbatim. Mixed sessions that
-        combine self-contained traces with synthesized prompts, or mix `messages`
-        and `payload` modes, are rejected.
-        """
-        msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
-        payload_trace_count = sum(1 for trace in traces if trace.payload is not None)
-        self_contained_count = msg_trace_count + payload_trace_count
-
-        if msg_trace_count > 0 and payload_trace_count > 0:
-            raise ValueError(
-                f"mooncake trace: mixed session contains {msg_trace_count} "
-                f"`messages` trace(s) and {payload_trace_count} `payload` "
-                f"trace(s); each session must use exactly one mode. Split "
-                f"the offending sessions or convert all entries to a single "
-                f"self-contained mode."
-            )
-        if self_contained_count == len(traces) and self_contained_count > 0:
+        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces use pre-built messages."""
+        raw_msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
+        if raw_msg_trace_count == len(traces):
             return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-        if self_contained_count > 0:
+        if raw_msg_trace_count > 0:
             raise ValueError(
-                "Mixed Mooncake sessions with both raw `messages`/`payload` and synthesized prompts are unsupported."
+                "Mixed Mooncake sessions with both raw `messages` and synthesized prompts are unsupported."
             )
         return None
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
-        if trace.messages is not None or trace.payload is not None:
+        if trace.messages is not None:
             return ""
         return trace.text_input
 
     def _build_turn(self, trace: MooncakeTrace, prompt: str) -> Turn:
-        if trace.payload is not None:
-            return Turn(
-                timestamp=trace.timestamp,
-                delay=trace.delay,
-                max_tokens=trace.output_length,
-                raw_payload=trace.payload,
-                extra_body=trace.extra,
-            )
         if trace.messages is not None:
             return Turn(
                 timestamp=trace.timestamp,
@@ -125,12 +99,8 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 max_tokens=trace.output_length,
                 raw_messages=trace.messages,
                 raw_tools=trace.tools,
-                extra_body=trace.extra,
             )
-        turn = super()._build_turn(trace, prompt)
-        if trace.extra is not None:
-            turn.extra_body = trace.extra
-        return turn
+        return super()._build_turn(trace, prompt)
 
     # ------------------------------------------------------------------
     # Synthesis hooks

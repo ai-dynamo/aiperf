@@ -6,10 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.dataset.loader.base_trace_loader import (
-    BaseTraceDatasetLoader,
-    _has_meaningful_synthesis,
-)
+from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import BurstGPTTrace
 
 
@@ -37,7 +34,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         if filename is None:
             return False
         try:
-            with open(filename, newline="", encoding="utf-8") as f:
+            with open(filename, newline="") as f:
                 reader = csv.DictReader(f)
                 return cls._REQUIRED_COLUMNS.issubset(set(reader.fieldnames or []))
         except (OSError, csv.Error, UnicodeDecodeError):
@@ -47,7 +44,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
     # Template-method hooks (see BaseTraceDatasetLoader)
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, record: dict) -> BurstGPTTrace:
+    def _parse_trace(self, line: str) -> BurstGPTTrace:
         # BurstGPT is CSV format; load_dataset() is overridden to use csv.DictReader.
         raise NotImplementedError
 
@@ -83,7 +80,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         self._capped_max_osl = 0
         items: list[BurstGPTTrace] = []
 
-        with open(self.filename, newline="", encoding="utf-8") as f:
+        with open(self.filename, newline="") as f:
             reader = csv.DictReader(f)
             missing = self._REQUIRED_COLUMNS - set(reader.fieldnames or [])
             if missing:
@@ -112,7 +109,13 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
             )
         )
 
-        if _has_meaningful_synthesis(self._synthesis):
+        dataset = self.run.cfg.get_default_dataset()
+        synthesis = getattr(dataset, "synthesis", None)
+        if synthesis is not None and (
+            synthesis.speedup_ratio != 1.0
+            or synthesis.prefix_len_multiplier != 1.0
+            or synthesis.prefix_root_multiplier != 1
+        ):
             data = self._apply_synthesis(data)
 
         return data
