@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.environment import Environment
-from aiperf.common.messages.command_messages import ConnectionProbeMessage
+from aiperf.common.messages.service_messages import ConnectionProbeMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 
 SERVICE_ID = "test-service-1"

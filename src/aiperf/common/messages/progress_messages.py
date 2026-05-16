@@ -1,55 +1,113 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import time
+from typing import TYPE_CHECKING, Any
 
-from pydantic import Field
+import msgspec
 
-from aiperf.common.enums import MessageType
-from aiperf.common.messages.base_messages import RequiresRequestNSMixin
+from aiperf.common.enums import MessageType, SystemState
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import (
-    PhaseRecordsStats,
-    WorkerProcessingStats,
-)
+from aiperf.common.models import PhaseRecordsStats, WorkerProcessingStats
+from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
-from aiperf.common.types import MessageTypeT
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
+
+if TYPE_CHECKING:
+    pass
 
 
-class RecordsProcessingStatsMessage(BaseServiceMessage):
-    """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
-    This contains the stats for a single credit phase only."""
+class RecordsProcessingStatsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROCESSING_STATS.value
+):
+    """Per-phase processing stats from the RecordsManager."""
 
-    message_type: MessageTypeT = MessageType.PROCESSING_STATS
-
-    processing_stats: PhaseRecordsStats = Field(
-        ..., description="The stats for the credit phase"
-    )
-    worker_stats: dict[str, WorkerProcessingStats] = Field(
-        default_factory=dict,
-        description="The stats for each worker how many requests were processed and how many errors were "
-        "encountered, keyed by worker service_id",
-    )
+    processing_stats: PhaseRecordsStats
+    worker_stats: dict[str, WorkerProcessingStats] = msgspec.field(default_factory=dict)
 
 
-class ProfileResultsMessage(BaseServiceMessage):
-    """Message for profile results."""
+class ProfileResultsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROFILE_RESULTS.value
+):
+    """Final profile results."""
 
-    message_type: MessageTypeT = MessageType.PROFILE_RESULTS
-
-    profile_results: ProfileResults = Field(..., description="The profile results")
-
-
-class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
-    """This is sent by the RecordsManager to signal that all parsed records have been received, and the final processing stats are available."""
-
-    message_type: MessageTypeT = MessageType.ALL_RECORDS_RECEIVED
-    final_processing_stats: PhaseRecordsStats = Field(
-        ..., description="The final processing stats for the profile run"
-    )
+    profile_results: ProfileResults
 
 
-class ProcessRecordsResultMessage(BaseServiceMessage):
-    """Message for process records result."""
+class AllRecordsReceivedMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.ALL_RECORDS_RECEIVED.value
+):
+    """All parsed records received; final stats available."""
 
-    message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
+    final_processing_stats: PhaseRecordsStats
+    request_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]
 
-    results: ProcessRecordsResult = Field(..., description="The process records result")
+
+class ProcessRecordsResultMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROCESS_RECORDS_RESULT.value
+):
+    """Record-processor batch result."""
+
+    results: ProcessRecordsResult
+
+
+class BenchmarkCompleteMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.BENCHMARK_COMPLETE.value
+):
+    """Benchmark completion signal."""
+
+    was_cancelled: bool = False
+
+
+class SystemStateChangedMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.SYSTEM_STATE_CHANGED.value
+):
+    """Published by the SystemController whenever its outer-lifecycle
+    ``SystemState`` advances (e.g. CONFIGURING -> READY -> PROFILING ->
+    PROCESSING -> STOPPING -> SHUTDOWN).
+
+    Subscribers (notably the ProgressRouter that fronts ``/api/progress``)
+    mirror the new value so external tooling — operator, dashboard,
+    ``kubectl get aiperfjob`` — can observe the controller's view of where
+    the run is, distinct from the operator's outer ``phase`` field.
+    """
+
+    state: SystemState
+
+
+class ResultsExportedMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.RESULTS_EXPORTED.value
+):
+    """Signals that all result artifacts have been written to disk.
+
+    Published by the SystemController after ``ExporterManager.export_data()``
+    completes and (in K8s mode) after ``write_ready_marker(...)`` is on disk.
+    The operator gates ``JobProgress.is_complete`` on this signal: for
+    sub-second benchmarks the existing ``is_requests_complete &&
+    is_records_complete`` check flips True before the controller has finished
+    writing, so the kopf-timer monitor can otherwise claim completion and
+    fetch a partial artifact set. Without this gate, the operator races the
+    controller's exporter and surfaces ``Phase.Failed``.
+    """
+
+    was_cancelled: bool = False
+
+
+class ProcessAllResultsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROCESS_ALL_RESULTS.value
+):
+    """Unified message carrying all accumulator results from RecordsManager to SystemController.
+
+    The optional summary payloads (steady-state, energy efficiency) and the
+    ``exported_artifacts`` map are typed as ``Any`` to keep this foundation
+    module out of the ``aiperf.analysis`` / ``aiperf.exporters`` /
+    ``aiperf.post_processors`` import graph; producers/consumers cast to the
+    concrete types they own (``SteadyStateSummary``,
+    ``EnergyEfficiencySummary``, ``dict[str, FileExportInfo]``).
+    """
+
+    results: ProcessRecordsResult
+    telemetry_results: TelemetryExportData | None = None
+    server_metrics_results: ServerMetricsResults | None = None
+    steady_state_results: Any = None
+    energy_efficiency_results: Any = None
+    exported_artifacts: dict[str, Any] = msgspec.field(default_factory=dict)

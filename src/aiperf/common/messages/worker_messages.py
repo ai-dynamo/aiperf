@@ -1,151 +1,95 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 import time
 
-from pydantic import Field
+import msgspec
 
 from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
-from aiperf.common.types import MessageTypeT
 
 
-class WorkerHealthMessage(BaseServiceMessage):
-    """Message for a worker health check."""
+class WorkerHealthMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_HEALTH.value
+):
+    """Worker health check."""
 
-    message_type: MessageTypeT = MessageType.WORKER_HEALTH
-
-    health: ProcessHealth = Field(..., description="The health of the worker process")
-
-    # Worker specific fields
-    task_stats: WorkerTaskStats = Field(
-        ...,
-        description="Stats for the tasks that have been sent to the worker",
-    )
+    health: ProcessHealth
+    task_stats: WorkerTaskStats
 
     @property
     def error_rate(self) -> float:
-        """The error rate of the worker."""
         if self.task_stats.total == 0:
             return 0
         return self.task_stats.failed / self.task_stats.total
 
 
-class WorkerStatusSummaryMessage(BaseServiceMessage):
-    """Message for a worker status summary."""
+class WorkerStatusSummaryMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_STATUS_SUMMARY.value
+):
+    """Aggregate worker status by worker_id."""
 
-    message_type: MessageTypeT = MessageType.WORKER_STATUS_SUMMARY
-
-    worker_statuses: dict[str, WorkerStatus] = Field(
-        ...,
-        description="A mapping of worker IDs to their status",
-    )
-    worker_startup_states: dict[str, WorkerStartupState] = Field(
-        default_factory=dict,
-        description="A mapping of worker IDs to their startup state",
+    worker_statuses: dict[str, WorkerStatus]
+    worker_startup_states: dict[str, WorkerStartupState] = msgspec.field(
+        default_factory=dict
     )
 
 
-class WorkerPodStateMessage(BaseServiceMessage):
+class WorkerPodStateMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_POD_STATE.value
+):
     """Controller-facing aggregate snapshot for a Kubernetes worker pod."""
 
-    message_type: MessageTypeT = MessageType.WORKER_POD_STATE
-
-    pod_index: str = Field(..., description="Pod index (e.g. ordinal in StatefulSet)")
-    declared_workers: int = Field(
-        ..., ge=0, description="Workers declared in the pod's spec"
-    )
-    declared_record_processors: int = Field(
-        ..., ge=0, description="Record processors declared in the pod's spec"
-    )
-    pod_state: str = Field(..., description="Coarse pod lifecycle state")
-    admission_state: str = Field(
-        ..., description="WGM admission state (e.g. probing/ready/full)"
-    )
-    benchmark_generation: str | None = Field(
-        None, description="Benchmark generation tag this pod last reported on"
-    )
-    dataset_generation: str | None = Field(
-        None, description="Dataset generation tag this pod last reported on"
-    )
-    router_connected_workers: int = Field(
-        0, ge=0, description="Workers that have completed router probe"
-    )
-    dispatchable_workers: int = Field(
-        0, ge=0, description="Workers eligible to receive credits"
-    )
-    ready_workers: int = Field(
-        0, ge=0, description="Workers in READY startup state"
-    )
-    ready_record_processors: int = Field(
-        0, ge=0, description="Record processors in READY state"
-    )
-    degraded_workers: int = Field(
-        0, ge=0, description="Workers in degraded state"
-    )
-    degraded_record_processors: int = Field(
-        0, ge=0, description="Record processors in degraded state"
-    )
+    pod_index: str
+    declared_workers: int
+    declared_record_processors: int
+    pod_state: str
+    admission_state: str
+    benchmark_generation: str | None = None
+    dataset_generation: str | None = None
+    router_connected_workers: int = 0
+    dispatchable_workers: int = 0
+    ready_workers: int = 0
+    ready_record_processors: int = 0
+    degraded_workers: int = 0
+    degraded_record_processors: int = 0
 
 
-class WorkerStartupStateMessage(BaseServiceMessage):
-    """Worker startup lifecycle transition."""
+class WorkerStartupStateMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_STARTUP_STATE.value
+):
+    """Worker startup lifecycle transition.
 
-    message_type: MessageTypeT = MessageType.WORKER_STARTUP_STATE
+    Inlines ``request_ns`` with a default_factory to avoid the
+    multi-Struct-inheritance pattern (see gotcha_msgspec_multiple_struct_inheritance).
+    """
 
-    startup_state: WorkerStartupState = Field(
-        ..., description="The worker's current startup state"
-    )
-    request_ns: int = Field(
-        default_factory=time.time_ns,
-        ge=0,
-        description="Nanosecond timestamp when this transition was reported",
-    )
+    startup_state: WorkerStartupState
+    request_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]
 
 
-class WorkerGroupStatsMessage(BaseServiceMessage):
+class WorkerGroupStatsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_GROUP_STATS.value
+):
     """Aggregate stats for a single worker-group manager.
 
     Per-worker maps (statuses, startup states, task stats, health) are carried
-    inline so the controller can populate full per-worker stats for the
-    per-child dropdown rendered by the local web UI when exactly one group
-    exists.
+    inline so the controller can populate ``WorkerGroupStats.workers`` with
+    full ``WorkerStats`` for the per-child dropdown rendered by the local
+    web UI when exactly one group exists.
     """
 
-    message_type: MessageTypeT = MessageType.WORKER_GROUP_STATS
-
-    group_id: str = Field(..., description="Worker group manager identifier")
-    status: WorkerStatus = Field(..., description="Aggregated group status")
-    task_stats: WorkerTaskStats = Field(
-        ..., description="Aggregated task stats across the group"
+    group_id: str
+    status: WorkerStatus
+    task_stats: WorkerTaskStats
+    startup_state: WorkerStartupState | None = None
+    declared_workers: int = 0
+    ready_workers: int = 0
+    health: ProcessHealth | None = None
+    worker_statuses: dict[str, WorkerStatus] = msgspec.field(default_factory=dict)
+    worker_startup_states: dict[str, WorkerStartupState] = msgspec.field(
+        default_factory=dict
     )
-    startup_state: WorkerStartupState | None = Field(
-        None, description="Aggregated startup state for the group, if known"
-    )
-    declared_workers: int = Field(
-        0, ge=0, description="Workers declared in the group"
-    )
-    ready_workers: int = Field(
-        0, ge=0, description="Workers in READY startup state"
-    )
-    health: ProcessHealth | None = Field(
-        None, description="Aggregated group health, if known"
-    )
-    worker_statuses: dict[str, WorkerStatus] = Field(
-        default_factory=dict, description="Per-worker status map"
-    )
-    worker_startup_states: dict[str, WorkerStartupState] = Field(
-        default_factory=dict, description="Per-worker startup-state map"
-    )
-    worker_task_stats: dict[str, WorkerTaskStats] = Field(
-        default_factory=dict, description="Per-worker task stats map"
-    )
-    worker_health: dict[str, ProcessHealth] = Field(
-        default_factory=dict, description="Per-worker health map"
-    )
-    last_update_ns: int = Field(
-        default_factory=time.time_ns,
-        ge=0,
-        description="Nanosecond timestamp when these stats were sampled",
-    )
+    worker_task_stats: dict[str, WorkerTaskStats] = msgspec.field(default_factory=dict)
+    worker_health: dict[str, ProcessHealth] = msgspec.field(default_factory=dict)
+    last_update_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]

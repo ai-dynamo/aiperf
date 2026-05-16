@@ -4,7 +4,6 @@
 from aiperf.common.messages.base_messages import (
     ErrorMessage,
     Message,
-    RequiresRequestNSMixin,
 )
 from aiperf.common.messages.command_messages import (
     CommandAcknowledgedResponse,
@@ -13,7 +12,6 @@ from aiperf.common.messages.command_messages import (
     CommandResponse,
     CommandSuccessResponse,
     CommandUnhandledResponse,
-    ConnectionProbeMessage,
     ProcessRecordsCommand,
     ProcessRecordsResponse,
     ProfileCancelCommand,
@@ -35,6 +33,7 @@ from aiperf.common.messages.dataset_messages import (
     ConversationTurnResponseMessage,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
 )
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
@@ -44,9 +43,13 @@ from aiperf.common.messages.inference_messages import (
 )
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
+    BenchmarkCompleteMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
+    ResultsExportedMessage,
+    SystemStateChangedMessage,
 )
 from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
@@ -58,7 +61,9 @@ from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
     BaseServiceMessage,
     BaseStatusMessage,
+    ConnectionProbeMessage,
     HeartbeatMessage,
+    MemoryReportMessage,
     RegistrationMessage,
     StatusMessage,
 )
@@ -81,6 +86,7 @@ __all__ = [
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
     "BaseStatusMessage",
+    "BenchmarkCompleteMessage",
     "CommandAcknowledgedResponse",
     "CommandErrorResponse",
     "CommandMessage",
@@ -94,12 +100,15 @@ __all__ = [
     "ConversationTurnResponseMessage",
     "DatasetConfigurationFailedNotification",
     "DatasetConfiguredNotification",
+    "DatasetDownloadedNotification",
     "ErrorMessage",
     "HeartbeatMessage",
     "InferenceResultsMessage",
+    "MemoryReportMessage",
     "Message",
     "MetricRecordsData",
     "MetricRecordsMessage",
+    "ProcessAllResultsMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
     "ProcessRecordsResultMessage",
@@ -117,7 +126,7 @@ __all__ = [
     "RecordsProcessingStatsMessage",
     "RegisterServiceCommand",
     "RegistrationMessage",
-    "RequiresRequestNSMixin",
+    "ResultsExportedMessage",
     "ServerMetricsRecordMessage",
     "ServerMetricsStatusMessage",
     "ShutdownCommand",
@@ -125,6 +134,7 @@ __all__ = [
     "SpawnWorkersCommand",
     "StartRealtimeTelemetryCommand",
     "StatusMessage",
+    "SystemStateChangedMessage",
     "TargetedServiceMessage",
     "TelemetryRecordsMessage",
     "TelemetryStatusMessage",

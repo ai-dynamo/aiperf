@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeAlias
+from typing import Any
 
 import orjson
 from msgspec import Struct
@@ -14,12 +14,7 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 from aiperf.common.types import MetricTagT
 
-# Trace data rides the wire as a native msgspec tagged union. Both
-# BaseTraceData and AioHttpTraceData are msgspec.Struct subclasses with
-# distinct tag values (``tag="base"`` / ``tag="aiohttp"``) on
-# ``tag_field="__struct_tag"``, so the decoder dispatches to the right
-# concrete type without a dict round-trip.
-TraceDataWireT: TypeAlias = BaseTraceData | AioHttpTraceData
+TraceDataWireT = BaseTraceData | AioHttpTraceData
 
 
 def _json_safe(value: Any) -> Any:
