@@ -567,11 +567,29 @@ class _RecordSettings(BaseSettings):
         default=100,
         description="Batch size for record export results processor",
     )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.1,
+        le=300.0,
+        default=2.0,
+        description="Maximum seconds record JSONL data may remain buffered before being flushed to disk",
+    )
     RAW_EXPORT_BATCH_SIZE: int = Field(
         ge=1,
         le=1000000,
         default=10,
         description="Batch size for raw record writer processor",
+    )
+    INGEST_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=64,
+        description="Batch size for record-processor to records-manager ingestion",
+    )
+    INGEST_BATCH_FLUSH_INTERVAL: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=0.01,
+        description="Maximum seconds metric records may remain buffered before ingestion flush",
     )
     PROCESSOR_SCALE_FACTOR: int = Field(
         ge=1,
@@ -591,6 +609,12 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+    CHECKPOINT_INTERVAL: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Interval in seconds between controller-side partial checkpoint writes",
     )
 
 

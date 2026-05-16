@@ -30,6 +30,7 @@ from aiperf.common.models.dataset_models import (
 from aiperf.common.models.error_models import (
     ErrorDetails,
     ErrorDetailsCount,
+    ErrorTrackingState,
     ExitErrorInfo,
 )
 from aiperf.common.models.export_models import (
@@ -180,6 +181,7 @@ __all__ = [
     "EndpointInfo",
     "ErrorDetails",
     "ErrorDetailsCount",
+    "ErrorTrackingState",
     "ExitErrorInfo",
     "ExtractedPayload",
     "GaugeMetricData",
