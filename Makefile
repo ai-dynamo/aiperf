@@ -282,6 +282,9 @@ integration-tests-slow test-integration-slow: #? run only the slow-marked integr
 	$(activate_venv) && pytest tests/integration/ -m 'integration and slow and not performance and not ffmpeg and not stress' -n auto -v --tb=long --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server slow integration tests passed!$(reset)\n"
 
+kubernetes-tests-ci test-kubernetes-ci: #? run kubernetes tests on Kind for CI (full suite minus gpu/k8s_slow).
+	$(activate_venv) && pytest tests/kubernetes/ --ignore=tests/kubernetes/gpu -m 'k8s and not k8s_slow' -n auto -v --tb=long $(args)
+
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running Fake Component Integration tests...$(reset)\n"
 	$(activate_venv) && pytest tests/component_integration/ -m 'component_integration and not stress and not performance and not slow' -n auto --tb=short $(args)
@@ -314,6 +317,12 @@ generate-config-schema: #? generate JSON Schema for AIPerf YAML config files.
 
 check-config-schema: #? check if the AIPerf config JSON Schema is up-to-date.
 	$(activate_venv) && python -m tools.generate_config_schema --check $(args)
+
+validate-config-examples: #? validate config example YAML files.
+	$(activate_venv) && python -m tools.validate_config_examples $(args)
+
+validate-template-metadata: #? validate template YAML metadata blocks.
+	$(activate_venv) && python -m tools.validate_template_metadata $(args)
 
 generate-crd: #? generate Kubernetes CRD YAML from AIPerfConfig model.
 	$(activate_venv) && python -m tools.generate_crd $(args)

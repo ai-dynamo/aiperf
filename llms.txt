@@ -1,0 +1,79 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# AIPerf
+
+> Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. Services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
+
+AIPerf drives synthetic load against LLM-serving endpoints (OpenAI-compatible chat/completions, embeddings, rankings, image/audio, etc.), collects per-request telemetry, and emits latency / throughput / token-rate / goodput metrics. It runs as a local multi-process pipeline or as a Kubernetes Custom Resource (`AIPerfJob`) managed by a kopf-based operator. Inter-service communication uses a ZMQ message bus with Pydantic-modeled messages for control traffic and tagged `msgspec.Struct` payloads for hot-path wire formats.
+
+Agents working in this repo should read `CLAUDE.md` first — it defines coding standards, build/test commands, and the three-file-sync rule that keeps Claude, Copilot, and Cursor on the same conventions. Then consult the docs below as the task requires.
+
+## Agent bootstrap
+
+- [CLAUDE.md](CLAUDE.md): Coding standards, build/test commands, pre-commit hooks, per-subsystem conventions, LLM-ergonomics floor/ceiling. Kept identical to `.github/copilot-instructions.md` and `.cursor/rules/python.mdc` by the three-file-sync rule.
+- [CONTRIBUTING.md](CONTRIBUTING.md): Dev setup, available `make` targets, DCO sign-off, contribution workflow.
+- [README.md](README.md): Install, quickstart, tutorial index.
+
+## Architecture and patterns
+
+- [docs/architecture.md](docs/architecture.md): Three-plane architecture (control, data, observability), core components, credit system, data flow, communication patterns.
+- [docs/dev/patterns.md](docs/dev/patterns.md): Canonical code patterns with reference-file paths — CLI commands, services, models, messages, plugins, kopf handlers, FastAPI routers, error handling, logging, testing, plus LLM-ergonomics exemplars. Grep this file first when adding a new piece of code.
+- [docs/dev/kubernetes-flow.md](docs/dev/kubernetes-flow.md): Operator/CR lifecycle, kopf handler module split, `aiperf kube` CLI flow.
+
+## Reference
+
+- [docs/cli-options.md](docs/cli-options.md): Auto-generated CLI command and option reference. Regenerate with `make generate-cli-docs` — do not edit by hand.
+- [docs/environment-variables.md](docs/environment-variables.md): Auto-generated `AIPERF_*` environment variable reference. Regenerate with `make generate-env-vars-docs` — do not edit by hand.
+- [docs/metrics-reference.md](docs/metrics-reference.md): Metric definitions, formulas, and requirements.
+- [docs/plugins/plugin-system.md](docs/plugins/plugin-system.md): Plugin architecture, categories (endpoint, dataset, grader, ui, service, ...), YAML registry format, creation guide.
+- [docs/plugins/creating-your-first-plugin.md](docs/plugins/creating-your-first-plugin.md): End-to-end plugin walkthrough.
+- [docs/sweeping/bayesian-optimization.md](docs/sweeping/bayesian-optimization.md): Bayesian-Optimization adaptive outer loop (in-process + cluster-side via AIPerfSweep): --search-space CLI flags, search-space grammar, convergence detection, mutual-exclusion rules.
+- [docs/sweeping/search-recipes.md](docs/sweeping/search-recipes.md): Named `--search-recipe` presets that compile to BO / grid + post-process — catalog (max-throughput-{ttft,itl}-sla, concurrency-ramp, prefill-ttft-curve, decode-itl-curve), per-recipe usage, plus how to author your own recipe and post-process handler.
+- [docs/tutorials/adaptive-search.md](docs/tutorials/adaptive-search.md): Narrative walkthrough — picking concurrency that maximizes throughput on a real model with `aiperf profile --search-*`; reading `search_history.json`; when to use BO vs grid.
+- [docs/tutorials/migrating-config.md](docs/tutorials/migrating-config.md): Migrating flat YAML configs onto the envelope shape (`benchmark:` body + top-level `sweep`/`multi_run`/`variables`/`random_seed`); covers the migration script, body vs envelope field lists, Jinja aliasing, and common gotchas.
+- [docs/tutorials/migrating-k8s-resources.md](docs/tutorials/migrating-k8s-resources.md): Migrating AIPerfJob/AIPerfSweep CRs onto the unified spec shape — kind toggles cardinality (no embedded sweep on AIPerfJob, no `template:` wrapping on AIPerfSweep), `multi_run.adaptive_search` moves to `sweep.type: adaptive_search`. Three before/after cases with the regenerate-via-`aiperf kube generate` migration path.
+- [docs/api/search-history.md](docs/api/search-history.md): Schema reference for `search_history.json` (BO trajectory artifact) — top-level keys, per-iteration fields, `convergence_reason` enum, mid-run partial-state semantics, programmatic consumption.
+- [docs/troubleshooting/adaptive-search-errors.md](docs/troubleshooting/adaptive-search-errors.md): Adaptive-search error catalog — missing `[bo]` extra, malformed `--search-space`, mutual-exclusion conflicts, all-trials-failed sentinel, n_initial_points validator.
+- [docs/reference/](docs/reference/): Tokenizer and other reference material.
+
+## Kubernetes
+
+- [docs/kubernetes/getting-started.md](docs/kubernetes/getting-started.md): Helm install, first `AIPerfJob`.
+- [docs/kubernetes/workflow.md](docs/kubernetes/workflow.md): End-to-end narrative walkthrough — `init` → `validate` → `preflight` → `profile` → `attach`/`watch` → `results` → cleanup, with the "last benchmark" state file.
+- [docs/kubernetes/init-and-generate.md](docs/kubernetes/init-and-generate.md): `aiperf kube init` scaffold and `aiperf kube generate` for rendering CR/JobSet manifests without deploying (GitOps workflow).
+- [docs/kubernetes/configuration.md](docs/kubernetes/configuration.md): CR schema, operator tunables, composite CLI flags, `resourceMode` QoS modes, `AIPERF_K8S_*` env var reference.
+- [docs/kubernetes/production.md](docs/kubernetes/production.md): Production rollout, sizing, observability.
+- [docs/kubernetes/rbac-security.md](docs/kubernetes/rbac-security.md): Two-role RBAC model (operator `ClusterRole` + per-namespace benchmark `Role`), pod `securityContext`, `NetworkPolicy` allow-list, least-privilege checklist.
+- [docs/kubernetes/monitoring.md](docs/kubernetes/monitoring.md): Metrics endpoints, Prometheus scraping, Loki integration.
+- [docs/kubernetes/validate.md](docs/kubernetes/validate.md): `aiperf kube validate` CLI — offline schema + naming check; JSON output schema for CI gates.
+- [docs/kubernetes/crd-validation.md](docs/kubernetes/crd-validation.md): Apiserver-side CRD validation — shorthand acceptance, the 18 CEL `x-kubernetes-validations` rules, error-message catalog, and how to add new rules to `tools/generate_crd.py`.
+- [docs/kubernetes/preflight.md](docs/kubernetes/preflight.md): Preflight check catalog — tiered validations (K8s version, RBAC, node resources, quotas, image, secrets, ConfigMap size, dry run) with status values, skip mechanisms, and fix recipes.
+- [docs/kubernetes/debug-command.md](docs/kubernetes/debug-command.md): `aiperf kube debug` — one-shot snapshot (events, pod problem map, logs, node resources); triage recipes; contrast with `watch` and `preflight`.
+- [docs/kubernetes/attach.md](docs/kubernetes/attach.md): `aiperf kube attach` — re-attach to a detached AIPerfJob, stream progress via WebSocket, exit codes, port-forward semantics.
+- [docs/kubernetes/logs.md](docs/kubernetes/logs.md): `aiperf kube logs` — fetch/stream container logs; full container catalog (12 names) grouped by pod.
+- [docs/kubernetes/diagnosis-issues.md](docs/kubernetes/diagnosis-issues.md): Watch diagnosis engine — the 9 issue IDs with exact thresholds, `warning`/`critical` severities, health rollup logic, CI-gate jq recipes.
+- [docs/kubernetes/results-api.md](docs/kubernetes/results-api.md): Operator Results Server HTTP API — 14 `/api/v1/...` endpoints (jobs, results, analytics, meta) with query params, examples, zstd/gzip content negotiation.
+- [docs/kubernetes/dashboard-ui.md](docs/kubernetes/dashboard-ui.md): Web dashboard (port 8081) — 6 pages (Dashboard, Jobs, Job Detail, Leaderboard, Compare, History), command palette, access patterns.
+- [docs/kubernetes/sidecars.md](docs/kubernetes/sidecars.md): Controller-pod sidecars — event-bus proxy (XPUB:5663/XSUB:5664, fan-in isolation) and results sidecar (port 9091, fallback retrieval with readiness marker).
+- [docs/kubernetes/memory-estimator.md](docs/kubernetes/memory-estimator.md): Per-component memory model (RecordsManager, Workers, DatasetManager, RecordProcessor, ...); calibration constants; OOM-risk thresholds; tuning recipes.
+- [docs/kubernetes/kueue.md](docs/kubernetes/kueue.md): Kueue gang-scheduling integration — `spec.scheduling.{queueName,priorityClass}`, namespace default queues, Workload admission watching.
+- [docs/kubernetes/sweeps.md](docs/kubernetes/sweeps.md): Tutorial: parameter sweeps and multi-run on Kubernetes via AIPerfSweep CRD. AIPerfJob and AIPerfSweep share the same flat envelope spec; kind toggles cardinality (sweep block forbidden on AIPerfJob, required on AIPerfSweep).
+- [docs/kubernetes/adaptive-search.md](docs/kubernetes/adaptive-search.md): Cluster-side Bayesian Optimization deep-dive — controller-pod ownership, `multi_run.adaptive_search` CR shape, status fields as upper bounds, cancellation, results layout.
+- [docs/kubernetes/gpu-telemetry.md](docs/kubernetes/gpu-telemetry.md): GPU telemetry on Kubernetes — opt-out sidecar, endpoint configuration (no auto-discovery), DCGM scrape flow, ingest path.
+- [docs/kubernetes/direct-mode.md](docs/kubernetes/direct-mode.md): `aiperf kube profile --no-operator` — operator-vs-direct feature matrix, when to use, cleanup, limitations.
+- [docs/kubernetes/user-files.md](docs/kubernetes/user-files.md): User-declared templated output files (`artifacts.user_files`) — schema, jinja2 context, injected names, error catalog.
+- [docs/kubernetes/ai-debugging-guide.md](docs/kubernetes/ai-debugging-guide.md) / [ai-deployment-guide.md](docs/kubernetes/ai-deployment-guide.md): Agent-oriented runbooks for debugging and deploying `AIPerfJob` CRs.
+- [docs/superpowers/specs/2026-04-29-fast-job-sweep-index-design.md](docs/superpowers/specs/2026-04-29-fast-job-sweep-index-design.md): Fast runs/sweep SQLite index design — schema, write points, read fallback, bootstrap and rebuild story.
+
+## Optional
+
+- [docs/tutorials/](docs/tutorials/): Feature-specific walkthroughs (arrival patterns, ramping, goodput, multi-turn, vision, audio, custom datasets, ...). Index: `README.md`.
+- [docs/benchmark-modes/](docs/benchmark-modes/): Benchmark modes, timing, traces.
+- [docs/accuracy/](docs/accuracy/): Accuracy benchmarks and graders. Note: `docs/accuracy/accuracy_stubs.md` — all accuracy loaders currently raise `NotImplementedError`; framework exists but implementations do not.
+- [docs/server-metrics/](docs/server-metrics/): Server-side metric schemas.
+- [docs/api/synthesis.md](docs/api/synthesis.md): Dataset synthesis API.
+- [docs/comprehensive-llm-benchmarking.md](docs/comprehensive-llm-benchmarking.md): End-to-end methodology walkthrough.
+- [docs/reproducibility.md](docs/reproducibility.md): How to reproduce a published benchmark run.

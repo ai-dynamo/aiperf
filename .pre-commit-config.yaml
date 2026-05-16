@@ -28,6 +28,8 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
@@ -78,6 +80,20 @@ repos:
         files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/generate_plugin_artifacts\.py)$
         pass_filenames: false
         args: []
+      - id: validate-template-metadata
+        name: validate-template-metadata
+        entry: make validate-template-metadata
+        language: python
+        files: (^src/aiperf/config/templates/.*\.yaml$|^src/aiperf/config/templates\.py$|^tools/validate_template_metadata\.py$)
+        pass_filenames: false
+        args: []
+      - id: validate-config-examples
+        name: validate-config-examples
+        entry: make validate-config-examples
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/config/templates/.*\.yaml$|^tools/validate_config_examples\.py$)
+        pass_filenames: false
+        args: []
       - id: generate-config-schema
         name: generate-config-schema
         entry: make generate-config-schema
@@ -117,6 +133,17 @@ repos:
         entry: make check-agent-files-sync
         language: python
         files: ^(AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.cursor/rules/python\.mdc|tools/check_agent_files_sync\.py)$
+        pass_filenames: false
+        args: []
+      - id: check-docs-index
+        name: check-docs-index
+        description: >-
+          Every markdown file under docs/ is listed in docs/index.yml or
+          covered by an ALLOWLIST_PREFIXES entry. Catches user-facing pages
+          that would otherwise be silently excluded from the Fern site.
+        entry: uv run python tools/check_docs_index.py
+        language: system
+        files: (^docs/.*\.md$|^docs/index\.yml$|^tools/check_docs_index\.py$)
         pass_filenames: false
         args: []
       - id: check-ergonomics

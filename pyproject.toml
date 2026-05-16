@@ -9,6 +9,9 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build.targets.wheel]
+artifacts = ["aiperf/operator/ui/**"]
+
 [project]
 name = "aiperf"
 version = "0.8.0"
@@ -104,12 +107,16 @@ dev = [
   "pytest-xdist>=3.8.0",
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
+  "pympler>=1.1",
 ]
 botorch = [
   "optuna-integration>=3.6",
   "botorch>=0.10",
   "gpytorch>=1.11",
   "torch>=2.0",
+]
+bo = [
+  "scikit-optimize>=0.10",
 ]
 optuna = [
   "aiperf[botorch]",
@@ -128,6 +135,8 @@ accuracy = [
 dev = [
     "hypothesis>=6.152.4",
     "pre-commit>=4.6.0",
+    "playwright>=1.58.0",
+    "pytest-playwright-asyncio>=0.7.2",
 ]
 
 [tool.ruff]
@@ -186,6 +195,11 @@ max-complexity = 10
 "json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
 "json.load".msg = "Use orjson.loads on file bytes instead."
 
+[tool.ruff.lint.per-file-ignores]
+# sys.path manipulation before imports is required for direct script execution
+"dev/kube.py" = ["E402"]
+"dev/benchmarks/record_processing_benchmark.py" = ["E402"]
+
 [tool.pytest.ini_options]
 # Basic pytest configuration
 testpaths = ["tests"]
@@ -201,6 +215,18 @@ markers = [
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
+    "benchmark: marks tests as resource benchmarks for K8s sizing (deselected by default)",
+    "gpu: marks tests requiring a GPU Kubernetes cluster (deselected by default)",
+    "vllm: marks tests requiring a vLLM server (deselected by default)",
+    "dynamo: marks tests requiring a Dynamo deployment (deselected by default)",
+    "k8s: marks tests requiring a Kubernetes cluster",
+    "k8s_slow: marks k8s tests that are known to be slow",
+    "k8s_audit: marks Kubernetes operator-vs-bare-pod correctness audit tests",
+    "trtllm: marks tests requiring a TRT-LLM server (deselected by default)",
+    "sglang: marks tests requiring an SGLang server (deselected by default)",
+    "e2e: marks tests as browser-based end-to-end UI tests (requires playwright chromium, deselected by default)",
+    "memory_limit(mb=N): cap this test's virtual address space at N MiB (default 4096)",
+    "no_memory_limit: disable the per-test virtual address space cap entirely",
 ]
 # Better console output
 console_output_style = "progress"
@@ -219,5 +245,5 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*,src/aiperf/operator/ui-v1/vendor/*,tests/_js_cache/*,src/aiperf/config/schema/aiperf-config.schema.json"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,aks,ot,genrate"

@@ -120,6 +120,14 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ## Tutorials and Feature Guides
 
+### Configuration
+- [YAML Config Reference](docs/tutorials/yaml-config.md) - Complete guide to the YAML config system
+- [Migrating to the Envelope Config Shape](docs/tutorials/migrating-config.md) - Move flat YAML configs onto the envelope shape
+- [Distribution Types](docs/tutorials/distributions.md) - Statistical distributions for workload modeling
+- [Sweeps and Multi-Run](docs/tutorials/sweeps.md) - Parameter sweeps and confidence intervals
+- [Adaptive Search Tutorial](docs/tutorials/adaptive-search.md) - Bayesian-Optimization walkthrough for finding the best point without grid enumeration
+- [Find the Maximum Passing Concurrency](docs/sweeping/find-max-passing-concurrency.md) - 1D SLA-saturation search via `max-concurrency-under-sla` and `max-goodput-under-slo` recipes (closes issue #883)
+
 ### Getting Started
 - [Basic Tutorial](docs/tutorial.md) - Profile Qwen3-0.6B with vLLM
 - [Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md) - 5 real-world use cases
@@ -182,6 +190,15 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [SGLang Image Edit](docs/tutorials/sglang-image-edit.md) - Benchmark OpenAI-compatible image-to-image (image edit) endpoints
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
+
+### Kubernetes
+- [Getting Started on Kubernetes](docs/kubernetes/getting-started.md) - Install operator, run first benchmark, retrieve results
+- [Kubernetes Configuration](docs/kubernetes/configuration.md) - CRD fields, CLI flags, Helm chart, config patterns
+- [Monitoring and Troubleshooting](docs/kubernetes/monitoring.md) - Watch, debug, logs, and common issues
+- [Production Deployments](docs/kubernetes/production.md) - CI/CD, Kueue, secrets, GitOps, multi-tenant
+- [AI Agent Deployment Guide](docs/kubernetes/ai-deployment-guide.md) - Step-by-step deployment playbook with JSON gates for AI agents
+- [AI Agent Debugging Guide](docs/kubernetes/ai-debugging-guide.md) - Machine-parseable diagnostics and decision trees for AI agents
+- [Parameter Sweeps on Kubernetes](docs/kubernetes/sweeps.md) - grid/scenarios sweeps, multi-run trials, adaptive convergence on cluster
 
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis
