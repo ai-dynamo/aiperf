@@ -8,7 +8,7 @@ from datetime import datetime
 from rich.console import Console, RenderableType
 from rich.table import Table
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
@@ -75,11 +75,14 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             metric_class = MetricRegistry.get_class(record.tag)
         except MetricTypeError:
             return True
+        # NO_CONSOLE was retired in favour of ``MetricConsoleGroup.NONE``;
+        # treat any metric whose console_group is NONE as if it had the
+        # legacy NO_CONSOLE flag set so the filter still excludes it from
+        # the console table.
+        if getattr(metric_class, "console_group", None) == MetricConsoleGroup.NONE:
+            return True
         return metric_class.missing_flags(
-            MetricFlags.ERROR_ONLY
-            | MetricFlags.NO_CONSOLE
-            | MetricFlags.INTERNAL
-            | MetricFlags.EXPERIMENTAL
+            MetricFlags.ERROR_ONLY | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
         )
 
     def _format_row(self, record: MetricResult) -> list[str]:

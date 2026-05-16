@@ -14,7 +14,7 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.models.record_models import MetricResult
 from aiperf.config import BenchmarkRun
@@ -67,8 +67,9 @@ class RealtimeMetricsTable(Widget):
         metric_class = MetricRegistry.get_class(metric.tag)
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
+        # ``NO_CONSOLE`` was retired in favour of ``MetricConsoleGroup.NONE``.
         return (
-            metric_class.has_flags(MetricFlags.NO_CONSOLE)
+            getattr(metric_class, "console_group", None) == MetricConsoleGroup.NONE
             and not Environment.DEV.SHOW_INTERNAL_METRICS
         )
 
