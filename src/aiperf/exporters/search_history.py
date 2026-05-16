@@ -118,7 +118,7 @@ def _compute_best_payload(
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
-    if cfg.objective.direction == OptimizationDirection.MAXIMIZE:
+    if cfg.objectives and cfg.objectives[0].direction == OptimizationDirection.MAXIMIZE:
         best = max(ranking_pool, key=lambda h: h.objective_value)
     else:
         best = min(ranking_pool, key=lambda h: h.objective_value)
@@ -133,12 +133,23 @@ def _compute_best_payload(
 
 def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
     """Project an AdaptiveSearchSweep into the search_history.json `config` shape."""
+    objectives = list(cfg.objectives or [])
+    primary = objectives[0] if objectives else None
     return {
-        "algorithm": cfg.algorithm,
+        "algorithm": str(cfg.planner),
         "planner": str(cfg.planner),
-        "objective_metric": cfg.objective.metric,
-        "objective_stat": cfg.objective.stat,
-        "objective_direction": str(cfg.objective.direction),
+        "objective_metric": primary.metric if primary else None,
+        "objective_stat": primary.stat if primary else None,
+        "objective_direction": str(primary.direction) if primary else None,
+        "objectives": [
+            {
+                "metric": o.metric,
+                "stat": o.stat,
+                "direction": str(o.direction),
+                "threshold": o.threshold,
+            }
+            for o in objectives
+        ],
         "max_iterations": cfg.max_iterations,
         "n_initial_points": cfg.n_initial_points,
         "random_seed": cfg.random_seed,

@@ -61,6 +61,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             )
 
         super().__init__(exporter_config, **kwargs)
+        self._cfg = exporter_config.cfg
         self._file_path = exporter_config.cfg.artifacts.server_metrics_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing ServerMetricsJsonExporter with config: {exporter_config}",
