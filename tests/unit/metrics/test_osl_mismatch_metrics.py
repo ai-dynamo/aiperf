@@ -42,16 +42,6 @@ def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
     """Create a RequestInfo with a turn that has max_tokens set."""
     turn = Turn(max_tokens=max_tokens)
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=[turn],
         turn_index=0,
         credit_num=0,

@@ -42,7 +42,7 @@ class JMESPathResponseMixin:
     """
 
     def _init_response_parser(self) -> None:
-        extra = self.model_endpoint.endpoint.extra
+        extra = self.run.cfg.endpoint.extra
         extra_dict = dict(extra) if extra else {}
         response_field = extra_dict.get("response_field")
         self._compiled_jmespath = None

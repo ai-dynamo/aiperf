@@ -67,7 +67,7 @@ class ImageEditEndpoint(BaseEndpoint):
             raise ValueError("Image edit endpoint requires at least one turn.")
 
         turn = request_info.turns[-1]
-        model_endpoint = request_info.model_endpoint
+        cfg = self.run.cfg
 
         if not turn.texts or not turn.texts[0].contents:
             raise ValueError("Image edit endpoint requires a text prompt.")
@@ -83,7 +83,7 @@ class ImageEditEndpoint(BaseEndpoint):
 
         payload: dict[str, Any] = {
             "prompt": prompt,
-            "model": turn.model or model_endpoint.primary_model_name,
+            "model": turn.model or cfg.get_model_names()[0],
             "response_format": "b64_json",
             "n": 1,
         }
@@ -93,9 +93,12 @@ class ImageEditEndpoint(BaseEndpoint):
         else:
             payload["image"] = self._build_image_field(image_content)
 
-        self._merge_with_reserved_filter(
-            payload, model_endpoint.endpoint.extra or [], "--extra-inputs"
-        )
+        extra = cfg.endpoint.extra
+        if extra:
+            extra_items = extra.items() if isinstance(extra, dict) else extra
+        else:
+            extra_items = []
+        self._merge_with_reserved_filter(payload, extra_items, "--extra-inputs")
         self._merge_with_reserved_filter(
             payload, (turn.extra_body or {}).items(), "extra_body"
         )

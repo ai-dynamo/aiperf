@@ -3,9 +3,14 @@
 
 import pytest
 
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
+from aiperf.common.models import (
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestInfo,
+    RequestRecord,
+)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
@@ -54,8 +59,14 @@ def create_record_with_usage(
     fields like `cache_read_input_tokens` (Anthropic) here.
     """
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
+        request_info=RequestInfo(
+            conversation_id="test-conversation",
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="",
+            x_correlation_id="",
+        ),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

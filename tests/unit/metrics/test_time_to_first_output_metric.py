@@ -1,10 +1,11 @@
+from aiperf.common.enums import CreditPhase
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
+from aiperf.common.models import RequestInfo, ParsedResponse, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
@@ -33,8 +34,14 @@ def create_response_record(
         responses: List of (timestamp, reasoning, content) tuples
     """
     request = RequestRecord(
+        request_info=RequestInfo(
         conversation_id="test-conversation",
         turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="",
+            x_correlation_id="",
+        ),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
@@ -244,8 +251,14 @@ def _create_record_with_responses(
 ) -> ParsedResponseRecord:
     """Helper to create test records from pre-built ParsedResponse objects."""
     request = RequestRecord(
+        request_info=RequestInfo(
         conversation_id="test-conversation",
         turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="",
+            x_correlation_id="",
+        ),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

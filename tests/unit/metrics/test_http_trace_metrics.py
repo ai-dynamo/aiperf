@@ -4,8 +4,10 @@
 
 import pytest
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
+    RequestInfo,
     AioHttpTraceData,
     BaseTraceData,
     ParsedResponse,
@@ -41,8 +43,14 @@ def create_record_with_trace(
     responses = responses or [start_ns + 50]
 
     request = RequestRecord(
+        request_info=RequestInfo(
         conversation_id="test-conversation",
         turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="",
+            x_correlation_id="",
+        ),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
@@ -829,7 +837,7 @@ class TestMetricAttributes:
     )  # fmt: skip
     def test_timing_metrics_use_nanoseconds_internally(self, metric_class):
         """Test that timing metrics use nanoseconds as internal unit."""
-        from aiperf.common.enums import MetricTimeUnit
+        from aiperf.common.enums import CreditPhase, MetricTimeUnit
 
         assert metric_class.unit == MetricTimeUnit.NANOSECONDS
 

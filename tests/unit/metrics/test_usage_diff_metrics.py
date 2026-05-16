@@ -3,8 +3,8 @@
 
 import pytest
 
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags
-from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
+from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
+from aiperf.common.models import RequestInfo, ParsedResponse, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -52,8 +52,14 @@ def create_record_with_usage(
         usage_reasoning_tokens: API-reported reasoning token count (optional)
     """
     request = RequestRecord(
+        request_info=RequestInfo(
         conversation_id="test-conversation",
         turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="",
+            x_correlation_id="",
+        ),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

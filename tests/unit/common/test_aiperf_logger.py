@@ -21,7 +21,7 @@ from aiperf.common.aiperf_logger import (
 )
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models import RequestRecord, TextResponse
+from aiperf.common.models import RequestInfo, RequestRecord, TextResponse
 from tests.harness.time_traveler import TimeTraveler
 
 
@@ -48,6 +48,14 @@ def standard_logger():
 @pytest.fixture
 def large_message():
     return RequestRecord(
+        request_info=RequestInfo(
+        credit_phase=CreditPhase.PROFILING,
+            credit_num=0,
+            x_request_id="",
+            x_correlation_id="",
+            conversation_id="",
+            turn_index=0,
+        ),
         request={
             "id": "123",
             "url": "http://localhost:8000",
@@ -69,9 +77,7 @@ def large_message():
             for i in range(1, 101)
         ],
         error=None,
-        delayed_ns=None,
-        credit_phase=CreditPhase.PROFILING,
-    )
+        delayed_ns=None,)
 
 
 def compare_logger_performance(

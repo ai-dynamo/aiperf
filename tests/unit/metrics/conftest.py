@@ -5,7 +5,7 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
-from aiperf.common.enums import CreditPhase, MetricType, ModelSelectionStrategy
+from aiperf.common.enums import CreditPhase, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ErrorDetails,
@@ -14,32 +14,15 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
 )
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
-from aiperf.plugin.enums import EndpointType
 
 
 def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:
     """Create a RequestInfo for testing metrics."""
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=[],
         turn_index=0,
         credit_num=0,
