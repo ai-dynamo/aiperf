@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -67,8 +67,25 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
     Transports handle the protocol layer (HTTP, gRPC, etc.).
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
+    def __init__(
+        self,
+        run: BenchmarkRun | None = None,
+        model_endpoint: Any = None,  # ModelEndpointInfo
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
+        # Dual-shape constructor for source-compat with branch (``run=``) and
+        # main-keeper / harness (``model_endpoint=``). When only the latter is
+        # given, synthesise a BenchmarkRun whose ``.cfg`` mirrors the endpoint
+        # so transports that read ``self.run.cfg.endpoint.*`` keep working.
+        if run is None and model_endpoint is not None:
+            from aiperf.endpoints.base_endpoint import _run_shim_from_model_endpoint
+            run = _run_shim_from_model_endpoint(model_endpoint)
+        if run is None:
+            raise TypeError(
+                "BaseTransport requires either run=BenchmarkRun(...) or "
+                "model_endpoint=ModelEndpointInfo(...)."
+            )
         self.run: BenchmarkRun = run
         from aiperf import __version__
 

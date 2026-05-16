@@ -59,7 +59,6 @@ def model_endpoint_with_key():
 @pytest.fixture
 def request_info(model_endpoint_with_key):
     return RequestInfo(
-        model_endpoint=model_endpoint_with_key,
         turns=[],
         turn_index=0,
         credit_num=0,

@@ -71,6 +71,18 @@ def _run_shim_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Any:
             }
         ],
     }
+    # Carry-through optional auth/header fields when the input endpoint has them.
+    api_key = getattr(endpoint_cfg, "api_key", None)
+    if api_key is not None:
+        payload["endpoint"]["api_key"] = api_key
+    headers = getattr(endpoint_cfg, "headers", None)
+    if headers:
+        # BenchmarkConfig stores headers as a dict; if EndpointInfo carries
+        # them as a list-of-pairs, normalize.
+        if isinstance(headers, dict):
+            payload["endpoint"]["headers"] = dict(headers)
+        else:
+            payload["endpoint"]["headers"] = {k: v for k, v in headers}
     cfg = BenchmarkConfig.model_validate(payload)
     return BenchmarkRun(
         benchmark_id=uuid.uuid4().hex,
