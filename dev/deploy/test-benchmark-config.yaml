@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Test benchmark configuration for K8s no-operator deployment against mock server
+
+benchmark:
+  models:
+    - mock-model
+
+  endpoint:
+    urls:
+      - http://aiperf-mock-server.default.svc.cluster.local:8000/v1/chat/completions
+    type: chat
+    use_server_token_count: true
+
+  tokenizer:
+    name: builtin
+
+  datasets:
+    main:
+      type: synthetic
+      entries: 100
+      isl: 50
+      osl: 20
+
+profiling:
+  type: concurrency
+  requests: 50
+  concurrency: 5

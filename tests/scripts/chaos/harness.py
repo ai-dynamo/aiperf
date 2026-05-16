@@ -8,16 +8,13 @@ import signal
 import socket
 import subprocess
 import time
-import urllib.error
-import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 BASE = Path(__file__).resolve().parents[3]
 LOCAL_DEFAULT_URL = "http://127.0.0.1:36037"
-MOCK_SERVER_READY_TIMEOUT_SECONDS = 30
 
 Expected = Literal[
     "PASS_REQUIRED",
@@ -41,13 +38,6 @@ CRASH_MARKERS = (
 
 @dataclass(slots=True)
 class Context:
-    """Per-run chaos harness state.
-
-    ``create_context`` creates the run directories and seeds ``env`` with
-    unbuffered Python plus localhost proxy bypasses so child commands write logs
-    promptly and do not route mock-server traffic through HTTP_PROXY.
-    """
-
     base: Path
     url: str
     root: Path
@@ -59,13 +49,6 @@ class Context:
 
 @dataclass(slots=True)
 class Case:
-    """Single chaos case definition.
-
-    ``run`` receives the shared context, stable case name, and log path, then
-    returns ``(return_code, combined_output)``. ``expected`` controls how
-    ``verdict_for`` classifies pass/fail/timeout/crash outcomes.
-    """
-
     name: str
     expected: Expected
     run: Callable[[Context, str, Path], tuple[int, str]]
@@ -116,72 +99,6 @@ def free_port() -> str:
     return port
 
 
-@contextlib.contextmanager
-def start_mock_server(
-    log_path: Path | None = None,
-    ready_timeout: float = MOCK_SERVER_READY_TIMEOUT_SECONDS,
-) -> Iterator[str]:
-    """Spawn `aiperf-mock-server` on a free port, yield its base URL, kill on exit.
-
-    The server's stdout/stderr is redirected to ``log_path`` (or ``/dev/null``
-    if not given). Readiness is detected by polling ``GET /health`` until 200.
-    """
-    port = free_port()
-    url = f"http://127.0.0.1:{port}"
-    cmd = ["uv", "run", "aiperf-mock-server", "--port", port, "--host", "127.0.0.1"]
-    with contextlib.ExitStack() as stack:
-        if log_path is not None:
-            log_handle = stack.enter_context(log_path.open("w"))
-        else:
-            log_handle = stack.enter_context(open(os.devnull, "w"))  # noqa: SIM115
-        log_handle.write(f"$ {shlex.join(cmd)}\n")
-        log_handle.flush()
-        proc = subprocess.Popen(
-            cmd,
-            cwd=BASE,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        health_url = f"{url}/health"
-        deadline = time.monotonic() + ready_timeout
-        # Bypass any HTTP_PROXY/http_proxy env so the loopback probe doesn't get
-        # routed through a sandbox proxy that returns 405 for our health URL.
-        no_proxy_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        try:
-            last_err: str = ""
-            while time.monotonic() < deadline:
-                if proc.poll() is not None:
-                    raise RuntimeError(
-                        f"mock server exited rc={proc.returncode} before becoming ready; "
-                        f"see {log_path or '/dev/null'}"
-                    )
-                try:
-                    with no_proxy_opener.open(health_url, timeout=1) as resp:
-                        if 200 <= resp.status < 300:
-                            break
-                except (urllib.error.URLError, ConnectionError, OSError) as exc:
-                    last_err = repr(exc)
-                time.sleep(0.2)
-            else:
-                raise RuntimeError(
-                    f"mock server at {url} did not become ready within "
-                    f"{ready_timeout}s (last error: {last_err}); see "
-                    f"{log_path or '/dev/null'}"
-                )
-            yield url
-        finally:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait(timeout=5)
-
-
 def run_cmd(
     cmd: list[str],
     log: Path,
@@ -190,12 +107,6 @@ def run_cmd(
     *,
     start_new_session: bool = True,
 ) -> tuple[int, str]:
-    """Run a command from the repo root and return its rc plus captured log text.
-
-    Output is streamed to ``log``. On timeout, the child process group is sent
-    SIGTERM then SIGKILL when ``start_new_session`` is true; otherwise only the
-    child process is terminated. The command inherits ``ctx.env``.
-    """
     with log.open("w") as out:
         out.write(f"$ {shlex.join(cmd)}\n\n")
         proc = subprocess.Popen(

@@ -259,8 +259,7 @@ spec:
                       which is the native K8s PriorityClass used by the default scheduler for preemption.
               schemaVersion:
                 type: string
-                description: AIPerf config schema version. Pinned to '2.0' for the envelope/body shape (envelope keys at top
-                  level, swept body under ``benchmark``).
+                description: AIPerf config schema version. Pinned to '2.0' for the envelope/body shape introduced post-Plan-A.
                 enum:
                 - '2.0'
                 default: '2.0'
@@ -283,8 +282,8 @@ spec:
                     properties:
                       urls:
                         x-kubernetes-preserve-unknown-fields: true
-                        description: 'List of server URLs to benchmark. Requests distributed according to url_strategy. URLs
-                          without a scheme have ``http://`` prepended automatically. Example: [''http://localhost:8000/v1/chat/completions'']'
+                        description: 'List of server URLs to benchmark. Requests distributed according to url_strategy. Example:
+                          [''http://localhost:8000/v1/chat/completions'']'
                       urlStrategy:
                         type: string
                         enum:
@@ -303,17 +302,15 @@ spec:
                         - hf_tei_rankings
                         - huggingface_generate
                         - image_generation
-                        - image_edit
                         - video_generation
                         - image_retrieval
                         - nim_embeddings
                         - nim_rankings
                         - solido_rag
-                        - raw
                         - template
                         description: 'API endpoint type determining request/response format. chat: OpenAI chat completions,
                           completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom
-                          format, and others — see `aiperf plugins` for the full list.'
+                          format.'
                       path:
                         type: string
                         description: 'Override default endpoint path. Use for servers with non-standard API paths. Example:
@@ -326,7 +323,7 @@ spec:
                         type: number
                         description: Request timeout in seconds (0 = no timeout). Requests exceeding this duration are marked
                           as failed. Should exceed expected max response time.
-                        default: 21600
+                        default: 600.0
                         minimum: 0.0
                       streaming:
                         type: boolean
@@ -337,8 +334,10 @@ spec:
                         type: string
                         enum:
                         - http
-                        description: Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected
-                          from URL when unset; explicit setting overrides auto-detection.
+                        - http2
+                        description: HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. Both are used over the
+                          URL's scheme (http:// or https://). Auto-detected from URL when unset; explicit setting overrides
+                          auto-detection.
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
@@ -399,11 +398,6 @@ spec:
                         enum:
                         - application/json
                         - multipart/form-data
-                      sessionHeader:
-                        type: string
-                        description: HTTP header name used to carry the per-session affinity identifier. When set, replaces
-                          the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity
-                          header (e.g. `--session-header X-Session-ID`).
                       waitForModelTimeout:
                         type: number
                         description: Enable a pre-flight readiness probe by setting this to a positive value (seconds). aiperf
@@ -449,14 +443,14 @@ spec:
                       message: endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')
                   datasets:
                     type: array
-                    description: Dataset configuration as a single-element list. The list shape exists to share the schema
-                      between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:`
-                      shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.
+                    description: Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval').
+                      Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the
+                      list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry
+                      list with name='default'.
                     items:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     minItems: 1
-                    maxItems: 1
                   dataset:
                     description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted into `datasets`
                       as a one-entry list with name='default' by the before-validator and not present after validation.
@@ -490,22 +484,15 @@ spec:
                         default: artifacts
                       prefix:
                         type: string
-                        description: 'Base filename override applied to ALL profile and server-metrics exports. With prefix=''foo''
-                          every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`,
-                          `foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default),
-                          historical per-file names are used: `profile_export_aiperf.csv/json`, `profile_export.jsonl`, `profile_export_raw.jsonl`,
-                          `gpu_telemetry_export.jsonl`, `server_metrics_export.{jsonl,json,csv,parquet}`. Known suffixes (`_raw.jsonl`,
-                          `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, `_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`)
-                          are stripped from the supplied value so `--profile-export-prefix foo_raw.jsonl` still yields a clean
-                          `foo` base.'
+                        description: 'Filename prefix for all exported files. Example: ''my_run'' produces ''my_run_summary.json'',
+                          ''my_run_records.jsonl''.'
+                        default: aiperf
                       summary:
                         x-kubernetes-preserve-unknown-fields: true
-                        description: Summary export formats. Only 'json' is wired up to this field; the CSV summary is emitted
-                          regardless. Set to false to disable the summary JSON file only.
+                        description: 'Summary export formats. Options: json, yaml. Set to false to disable.'
                       records:
                         x-kubernetes-preserve-unknown-fields: true
-                        description: Per-request records export formats. Only 'jsonl' is wired up today. Set to false to disable
-                          the per-record JSONL file.
+                        description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
                       raw:
                         type: boolean
                         description: Export raw request/response payloads as JSONL.
@@ -513,6 +500,11 @@ spec:
                       trace:
                         type: boolean
                         description: Export HTTP trace data for debugging.
+                        default: false
+                      perChunkData:
+                        type: boolean
+                        description: Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports.
+                          These arrays contain one timing value per SSE chunk and can be very large for long responses.
                         default: false
                       sliceDuration:
                         type: number
@@ -523,10 +515,18 @@ spec:
                         description: 'Display HTTP trace timing metrics in console output. Shows detailed timing breakdown:
                           blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration.'
                         default: false
+                      cliCommand:
+                        type: string
+                        description: CLI command used to run the benchmark, recorded in artifacts for reproducibility. [auto-populated
+                          by the CLI runner; do not set in a CR spec — any user value is overwritten.]
+                      benchmarkId:
+                        type: string
+                        description: Unique identifier for this benchmark run, used to correlate artifacts across export formats.
+                          [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]
                       userFiles:
                         type: array
                         description: User-defined templated files materialized into the run directory before the benchmark
-                          begins.
+                          begins. See docs/kubernetes/user-files.md.
                         items:
                           type: object
                           description: |-
@@ -534,7 +534,8 @@ spec:
 
                             Path is relative to the run directory; subdirectories are allowed; absolute
                             paths and any segment equal to '..' are rejected. Content is rendered with
-                            jinja2 against a documented context (variables: + system-injected names).
+                            jinja2 against a documented context (variables: + system-injected names);
+                            see docs/kubernetes/user-files.md.
                           properties:
                             path:
                               type: string
@@ -556,21 +557,49 @@ spec:
                           required:
                           - path
                           - content
-                      autoPlot:
-                        type: boolean
-                        description: Auto-invoke `aiperf plot` against the artifact directory after the benchmark completes.
-                          Resolved by the CLI converter from the tri-state CLI flag and the active search recipe's auto_plot_default;
-                          by the time it lands here it is a plain bool.
-                        default: false
-                      plotRequired:
-                        type: boolean
-                        description: 'Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only
-                          meaningful when auto_plot is True. Default False = warn and continue.'
-                        default: false
-                      exportOutputsJson:
-                        type: boolean
-                        description: Export generated response text to outputs.json after the run.
-                        default: false
+                      steadyState:
+                        type: object
+                        description: Steady-state detection and windowed metric computation. When enabled, AIPerf detects
+                          the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and
+                          ramp-down periods.
+                        properties:
+                          enabled:
+                            type: boolean
+                            description: Enable steady-state metric computation. When enabled, AIPerf detects the steady-state
+                              region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+                            default: false
+                          startPct:
+                            type: number
+                            minimum: 0.0
+                            exclusiveMaximum: true
+                            maximum: 100.0
+                            description: 'Manual override: start of steady-state window as a percentage of total benchmark
+                              duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.'
+                          endPct:
+                            type: number
+                            maximum: 100.0
+                            exclusiveMinimum: true
+                            minimum: 0.0
+                            description: 'Manual override: end of steady-state window as a percentage of total benchmark duration.
+                              Must be used together with --steady-state-start-pct. Overrides automatic detection.'
+                          minWindowPct:
+                            type: number
+                            description: Minimum steady-state window size as a percentage of total benchmark duration. If
+                              the detected window is smaller than this, AIPerf falls back to the full duration.
+                            default: 10.0
+                            maximum: 100.0
+                            exclusiveMinimum: true
+                            minimum: 0.0
+                          bootstrapIterations:
+                            type: integer
+                            exclusiveMinimum: true
+                            minimum: 0
+                            description: Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+
+                              to enable. Increases summarize time proportionally.
+                    x-kubernetes-validations:
+                    - rule: '!has(oldSelf.benchmarkId) || oldSelf.benchmarkId == self.benchmarkId'
+                      message: artifacts.benchmarkId is immutable once set; mutating it would orphan artifacts already keyed
+                        by the old id
                   slos:
                     type: object
                     additionalProperties:
@@ -618,56 +647,6 @@ spec:
                     description: 'Server metrics configuration for Prometheus scraping. Collects operational metrics (queue
                       depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled:
                       false to disable.'
-                  otel:
-                    type: object
-                    description: OpenTelemetry metrics streaming configuration.
-                    properties:
-                      metricsUrl:
-                        type: string
-                        description: OTLP/HTTP metrics endpoint URL.
-                      streamMetricsEnabled:
-                        type: boolean
-                        description: Stream metric records to OTel.
-                        default: true
-                      streamTimingEnabled:
-                        type: boolean
-                        description: Stream timing records to OTel.
-                        default: true
-                      customResourceAttributes:
-                        type: object
-                        description: Custom OTel resource attributes.
-                        additionalProperties:
-                          type: string
-                      genAiProvider:
-                        type: string
-                        description: GenAI semantic convention provider override.
-                  mlflow:
-                    type: object
-                    description: MLflow tracking and artifact-upload configuration.
-                    properties:
-                      trackingUri:
-                        type: string
-                        description: MLflow tracking URI.
-                      experiment:
-                        type: string
-                        description: MLflow experiment name.
-                        default: aiperf
-                      runName:
-                        type: string
-                        description: MLflow run name.
-                      tags:
-                        type: object
-                        additionalProperties:
-                          type: string
-                        description: Additional MLflow run tags to attach on upload.
-                      parentRunId:
-                        type: string
-                        description: Optional MLflow parent run ID.
-                      artifactGlobs:
-                        type: array
-                        items:
-                          type: string
-                        description: Artifact glob overrides for MLflow upload.
                   runtime:
                     type: object
                     description: Runtime configuration for worker processes and inter-process communication.
@@ -798,11 +777,12 @@ spec:
                         maximum: 32
                         description: Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None
                           uses the benchmark default (e.g. MMLU=5). Maximum 32.
+                        default: 0
                       enableCot:
                         type: boolean
                         description: Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions
-                          to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME
-                          defaults to True).
+                          to the prompt.
+                        default: false
                       grader:
                         type: string
                         enum:
@@ -810,9 +790,6 @@ spec:
                         - math
                         - multiple_choice
                         - code_execution
-                        - lighteval_expr
-                        - lighteval_latex
-                        - lighteval_gpqa
                         description: Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice,
                           code_execution). If not set, uses the benchmark's default grader.
                       systemPrompt:
@@ -829,9 +806,8 @@ spec:
               sweep:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
-                description: Sweep configuration for parameter exploration. Supports grid (Cartesian product), zip (lock-stepped
-                  axes), scenarios (hand-picked), sobol / latin_hypercube (QMC sampling), and adaptive_search (Bayesian /
-                  monotonic outer-loop) strategies.
+                description: Sweep configuration for parameter exploration. Supports grid (Cartesian product), scenarios (hand-picked),
+                  and sequential (ordered) sweep strategies.
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.sweep is immutable after creation
@@ -843,18 +819,15 @@ spec:
                   numRuns:
                     type: integer
                     description: Upper bound on trials per variation. When `convergence` is set, trials may stop earlier;
-                      this is the hard ceiling. Cap matches `BenchmarkPlan.trials` so programmatic plan assembly cannot exceed
-                      what user-facing config validation allows.
+                      this is the hard ceiling.
                     default: 1
                     minimum: 1
                     maximum: 10
                   cooldownSeconds:
                     type: number
-                    description: Cooldown between trials within a single variation. Capped at 24h to surface typos like `1e18`
-                      at config-load time rather than blocking the orchestrator inside ``asyncio.sleep``.
+                    description: Cooldown between trials within a single variation.
                     default: 0.0
                     minimum: 0
-                    maximum: 86400
                   confidenceLevel:
                     type: number
                     description: Confidence level for aggregate statistics (0.90, 0.95, 0.99).
@@ -867,13 +840,6 @@ spec:
                     type: boolean
                     description: Auto-set a random seed when none is given for cross-trial consistency.
                     default: true
-                  varySeedPerTrial:
-                    type: boolean
-                    description: When True, derive a distinct seed for each trial of a variation via SHA-256 over `(envelope_seed,
-                      variation.label, trial)`. When False (default), all trials of a variation share the variation's seed.
-                      Off gives pure-runtime variance for confidence statistics; on captures end-to-end variance including
-                      per-trial workload sampling.
-                    default: false
                   disableWarmupAfterFirst:
                     type: boolean
                     description: Skip warmup on trials 2..N of a variation (steady-state measurement).
@@ -910,12 +876,12 @@ spec:
                         description: Convergence criterion plugin name (ci_width|cv|distribution).
                       threshold:
                         type: number
+                        description: Criterion threshold (interpretation depends on `mode`).
+                        default: 0.1
                         exclusiveMinimum: true
                         minimum: 0
                         exclusiveMaximum: true
                         maximum: 1
-                        description: 'Criterion threshold (interpretation depends on `mode`). When None (default), each criterion
-                          uses its own algorithm-specific default: ci_width=0.10, cv=0.05, distribution=0.05 (KS p-value).'
                       minRuns:
                         type: integer
                         description: Minimum trials before the criterion is checked.
@@ -926,13 +892,6 @@ spec:
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.multiRun is immutable after creation
-              plot:
-                type: object
-                x-kubernetes-preserve-unknown-fields: true
-                description: Plot configuration for this run/sweep. When set, ``~/.aiperf/plot_config.yaml`` is ignored. May
-                  be a bare-string path to a plot YAML (resolved relative to the AIPerf config file's directory, or absolute),
-                  or an inline mapping mirroring ``default_plot_config.yaml``. Presence implies ``artifacts.auto_plot=True``
-                  unless explicitly set False.
               variables:
                 type: object
                 description: 'User-defined values exposed to Jinja2 in `{{ "{{" }} ... {{ "}}" }}` expressions during config load. Cross-variation:
@@ -941,14 +900,8 @@ spec:
                 x-kubernetes-preserve-unknown-fields: true
               randomSeed:
                 type: integer
-                minimum: 0
                 description: Global random seed for reproducibility. Base seed for per-variation derivation in sweep mode
-                  (variation N gets base + N). Must be non-negative; numpy and scipy reject negative seeds.
-              noSweepTable:
-                type: boolean
-                description: Suppress the per-cell streaming sweep table during multi-variation sweeps. Auto-suppressed when
-                  stdout is non-interactive, when the dashboard UI is active, or for single-cell sweeps.
-                default: false
+                  (variation N gets base + N).
               skipEndpointCheck:
                 type: boolean
                 description: Skip the operator-side endpoint reachability probe before deploying.

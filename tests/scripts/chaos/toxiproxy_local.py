@@ -115,13 +115,6 @@ def start_toxiproxy(bin_path: str | None = None) -> Iterator[ToxiproxyClient]:
 
 @contextlib.contextmanager
 def chaos_proxy(upstream_url: str, toxics: list[Toxic]) -> Iterator[str]:
-    """Yield a local toxiproxy URL forwarding to ``upstream_url`` with toxics applied.
-
-    Requires ``upstream_url`` to include host and port. Starts a temporary
-    toxiproxy server, creates one proxy named ``aiperf-upstream``, installs each
-    toxic, preserves the upstream scheme/path in the yielded URL, and tears the
-    proxy server down on exit.
-    """
     parsed = urlparse(upstream_url)
     if not parsed.hostname or not parsed.port:
         raise ValueError(f"upstream_url must include host:port; got {upstream_url!r}")

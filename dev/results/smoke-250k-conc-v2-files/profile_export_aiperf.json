@@ -1,0 +1,410 @@
+{
+  "schema_version": "1.0",
+  "aiperf_version": "0.8.0",
+  "benchmark_id": "85ef46690d9e40328e53245b864d3e95",
+  "request_throughput": {
+    "unit": "requests/sec",
+    "avg": 6898.077725074819
+  },
+  "request_latency": {
+    "unit": "ms",
+    "avg": 3.100946977578,
+    "p1": 1.07294997,
+    "p5": 1.2776519,
+    "p10": 1.4377986,
+    "p25": 1.7015637499999998,
+    "p50": 2.0208239999999997,
+    "p75": 2.6840715,
+    "p90": 4.400957599999999,
+    "p95": 6.2430429999999975,
+    "p99": 41.725764160000004,
+    "min": 0.756124,
+    "max": 212.50534,
+    "std": 5.1632657421253425
+  },
+  "request_count": {
+    "unit": "requests",
+    "avg": 1000000.0
+  },
+  "time_to_first_token": {
+    "unit": "ms",
+    "avg": 1.678294920568,
+    "p1": 0.6037709699999999,
+    "p5": 0.7430219,
+    "p10": 0.8513664999999999,
+    "p25": 1.15196575,
+    "p50": 1.3991905,
+    "p75": 1.7932705,
+    "p90": 2.7588394999999997,
+    "p95": 3.6263044999999954,
+    "p99": 5.937915980000002,
+    "min": 0.429119,
+    "max": 210.04305,
+    "std": 1.3033736049081601
+  },
+  "time_to_second_token": {
+    "unit": "ms",
+    "avg": 0.00011768747999999999,
+    "p1": 0.0,
+    "p5": 0.0,
+    "p10": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 2.96242,
+    "std": 0.008956132122448687
+  },
+  "inter_token_latency": {
+    "unit": "ms",
+    "avg": 0.0142265205701,
+    "p1": 0.0,
+    "p5": 0.0030625865,
+    "p10": 0.003870128,
+    "p25": 0.0048563799999999996,
+    "p50": 0.00602811,
+    "p75": 0.0077728225,
+    "p90": 0.015822470999999998,
+    "p95": 0.027846718999999975,
+    "p99": 0.4083157898,
+    "min": 0.0,
+    "max": 2.08528798,
+    "std": 0.050177074345598066
+  },
+  "output_token_throughput": {
+    "unit": "tokens/sec",
+    "avg": 696705.8502325567
+  },
+  "output_token_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 160602.22578267922,
+    "p1": 2446.8819404733013,
+    "p5": 34923.474809400606,
+    "p10": 60717.27994585175,
+    "p25": 126627.88054700744,
+    "p50": 163343.97791589415,
+    "p75": 199989.20058316848,
+    "p90": 238699.94462161287,
+    "p95": 268834.65687380545,
+    "p99": 331546.8374108429,
+    "min": 479.55007154455467,
+    "max": 524708.5244146877,
+    "std": 66842.12028288684
+  },
+  "output_sequence_length": {
+    "unit": "tokens",
+    "avg": 101.0,
+    "p1": 101.0,
+    "p5": 101.0,
+    "p10": 101.0,
+    "p25": 101.0,
+    "p50": 101.0,
+    "p75": 101.0,
+    "p90": 101.0,
+    "p95": 101.0,
+    "p99": 101.0,
+    "min": 101.0,
+    "max": 101.0,
+    "std": 0.0
+  },
+  "input_sequence_length": {
+    "unit": "tokens",
+    "avg": 128.0,
+    "p1": 128.0,
+    "p5": 128.0,
+    "p10": 128.0,
+    "p25": 128.0,
+    "p50": 128.0,
+    "p75": 128.0,
+    "p90": 128.0,
+    "p95": 128.0,
+    "p99": 128.0,
+    "min": 128.0,
+    "max": 128.0,
+    "std": 0.0
+  },
+  "output_token_count": {
+    "unit": "tokens",
+    "avg": 101.0,
+    "p1": 101.0,
+    "p5": 101.0,
+    "p10": 101.0,
+    "p25": 101.0,
+    "p50": 101.0,
+    "p75": 101.0,
+    "p90": 101.0,
+    "p95": 101.0,
+    "p99": 101.0,
+    "min": 101.0,
+    "max": 101.0,
+    "std": 0.0
+  },
+  "inter_chunk_latency": {
+    "unit": "ms",
+    "avg": 0.014370222798080807,
+    "p1": 0.0,
+    "p5": 0.0,
+    "p10": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.31965883868038775,
+    "min": 0.0,
+    "max": 208.027174,
+    "std": 0.5183461993514414
+  },
+  "total_output_tokens": {
+    "unit": "tokens",
+    "avg": 101000000.0
+  },
+  "benchmark_duration": {
+    "unit": "sec",
+    "avg": 144.967922928
+  },
+  "total_isl": {
+    "unit": "tokens",
+    "avg": 128000000.0
+  },
+  "total_osl": {
+    "unit": "tokens",
+    "avg": 101000000.0
+  },
+  "input_config": {
+    "models": {
+      "strategy": "round_robin",
+      "items": [
+        {
+          "name": "mock"
+        }
+      ]
+    },
+    "endpoint": {
+      "urls": [
+        "http://aiperf-mock-server-rs.acasagrande-aiperf-bench.svc.cluster.local:8000/v1/chat/completions"
+      ],
+      "url_strategy": "round_robin",
+      "type": "chat",
+      "timeout": 600.0,
+      "ready_check_timeout": 0.0,
+      "ready_check_mode": "inference",
+      "ready_check_interval": 5.0,
+      "streaming": true,
+      "connection_reuse": "pooled",
+      "use_legacy_max_tokens": false,
+      "use_server_token_count": false,
+      "headers": {},
+      "extra": {},
+      "download_video_content": false
+    },
+    "datasets": [
+      {
+        "name": "main",
+        "type": "synthetic",
+        "entries": 500,
+        "sampling": "sequential",
+        "prompts": {
+          "isl": {
+            "mean": 128.0,
+            "stddev": 0.0
+          },
+          "osl": {
+            "mean": 128.0,
+            "stddev": 0.0
+          },
+          "batch_size": 1
+        },
+        "turn_delay_ratio": 1.0
+      }
+    ],
+    "phases": [
+      {
+        "name": "profiling",
+        "type": "concurrency",
+        "exclude_from_results": false,
+        "requests": 1000000,
+        "concurrency": 250000,
+        "seamless": false
+      }
+    ],
+    "artifacts": {
+      "dir": "/results",
+      "prefix": "aiperf",
+      "summary": [
+        "json"
+      ],
+      "records": [
+        "jsonl"
+      ],
+      "raw": false,
+      "trace": false,
+      "per_chunk_data": false,
+      "show_trace_timing": false,
+      "benchmark_id": "85ef46690d9e40328e53245b864d3e95",
+      "user_files": []
+    },
+    "tokenizer": {
+      "name": "builtin",
+      "revision": "main",
+      "trust_remote_code": false
+    },
+    "gpu_telemetry": {
+      "enabled": true,
+      "urls": [],
+      "collector": "dcgm",
+      "mode": "summary"
+    },
+    "server_metrics": {
+      "enabled": true,
+      "urls": [],
+      "formats": [
+        "json",
+        "csv",
+        "parquet"
+      ],
+      "discovery": {
+        "mode": "auto"
+      }
+    },
+    "runtime": {
+      "ui": "simple",
+      "workers": 100,
+      "record_processors": 40,
+      "service_run_type": "kubernetes",
+      "communication": {
+        "type": "dual",
+        "ipc_path": "/aiperf/ipc",
+        "tcp_host": "0.0.0.0",
+        "records_port": 5557,
+        "credit_router_port": 5564,
+        "control_port": 5667,
+        "event_bus_proxy": {
+          "frontend_port": 5663,
+          "backend_port": 5664
+        },
+        "dataset_manager_proxy": {
+          "frontend_port": 5661,
+          "backend_port": 5662
+        },
+        "raw_inference_proxy": {
+          "frontend_port": 5665,
+          "backend_port": 5666
+        }
+      },
+      "api_port": 9090,
+      "api_host": "0.0.0.0",
+      "dataset_api_base_url": "http://aiperf-smoke-rs-c250k-controller-0-0.aiperf-smoke-rs-c250k.acasagrande-aiperf-bench.svc.cluster.local:9090/api/dataset",
+      "workers_per_pod": 10,
+      "record_processors_per_pod": 4
+    },
+    "logging": {
+      "level": "INFO"
+    },
+    "metrics": {},
+    "variables": {}
+  },
+  "was_cancelled": false,
+  "error_summary": [],
+  "start_time": "2026-05-01T05:54:03.231174",
+  "end_time": "2026-05-01T05:56:28.204202",
+  "time_to_first_output_token": {
+    "unit": "ms",
+    "avg": 1.678294920568,
+    "p1": 0.6037709699999999,
+    "p5": 0.7430219,
+    "p10": 0.8513664999999999,
+    "p25": 1.15196575,
+    "p50": 1.3991905,
+    "p75": 1.7932705,
+    "p90": 2.7588394999999997,
+    "p95": 3.6263044999999954,
+    "p99": 5.937915980000002,
+    "min": 0.429119,
+    "max": 210.04305,
+    "std": 1.3033736049081601
+  },
+  "prefill_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 95041.92343892399,
+    "p1": 21556.384501319422,
+    "p5": 35297.642545535135,
+    "p10": 46396.31990191449,
+    "p25": 71377.9655662823,
+    "p50": 91481.467319959,
+    "p75": 111114.41464298575,
+    "p90": 150346.53113599998,
+    "p95": 172269.4849237203,
+    "p99": 212000.91816277834,
+    "min": 609.3988827528451,
+    "max": 298285.557153144,
+    "std": 39507.13394777905
+  },
+  "osl_mismatch_diff_pct": {
+    "unit": "%",
+    "avg": -21.09375,
+    "p1": -21.09375,
+    "p5": -21.09375,
+    "p10": -21.09375,
+    "p25": -21.09375,
+    "p50": -21.09375,
+    "p75": -21.09375,
+    "p90": -21.09375,
+    "p95": -21.09375,
+    "p99": -21.09375,
+    "min": -21.09375,
+    "max": -21.09375,
+    "std": 0.0
+  },
+  "e2e_output_token_throughput": {
+    "unit": "tokens/sec/user",
+    "avg": 48566.88067721108,
+    "p1": 2420.566813653457,
+    "p5": 16178.00806434446,
+    "p10": 22949.550797766577,
+    "p25": 37629.39996205871,
+    "p50": 49979.6122769844,
+    "p75": 59357.164843225255,
+    "p90": 70246.27788625634,
+    "p95": 79051.26584166763,
+    "p99": 94133.00044177065,
+    "min": 475.28217408560175,
+    "max": 133575.97431109182,
+    "std": 18384.595338796145
+  },
+  "osl_mismatch_count": {
+    "unit": "requests",
+    "avg": 1000000.0,
+    "p1": null,
+    "p5": null,
+    "p10": null,
+    "p25": null,
+    "p50": null,
+    "p75": null,
+    "p90": null,
+    "p95": null,
+    "p99": null,
+    "min": null,
+    "max": null,
+    "std": null
+  },
+  "total_token_throughput": {
+    "unit": "tokens/sec",
+    "avg": 1579659.7990421336,
+    "p1": null,
+    "p5": null,
+    "p10": null,
+    "p25": null,
+    "p50": null,
+    "p75": null,
+    "p90": null,
+    "p95": null,
+    "p99": null,
+    "min": null,
+    "max": null,
+    "std": null
+  }
+}

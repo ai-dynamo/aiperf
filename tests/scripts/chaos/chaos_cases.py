@@ -112,11 +112,6 @@ class SlowHandler(http.server.BaseHTTPRequestHandler):
 
 @contextlib.contextmanager
 def http_server(handler: type[http.server.BaseHTTPRequestHandler]) -> Iterator[str]:
-    """Run a one-off loopback HTTP server for a chaos handler.
-
-    Starts ``handler`` on a free localhost port in a daemon thread, yields the
-    base URL, then shuts down the TCPServer and joins the thread on context exit.
-    """
     port = int(free_port())
     server = socketserver.TCPServer(("127.0.0.1", port), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -214,7 +209,7 @@ def case_bad_config_unknown_nested(
     """).strip()
     )
     return run_cmd(
-        ["uv", "run", "aiperf", "config", "validate", str(cfg)], log, ctx, 30
+        ["uv", "run", "aiperf", "config", "validate", "--path", str(cfg)], log, ctx, 30
     )
 
 

@@ -43,14 +43,8 @@ def build_cases(ctx: Context) -> list[Case]:
         json.dumps(
             {
                 "input_config": {
-                    "models": {"items": [{"name": "mock-model"}]},
-                    "datasets": [
-                        {
-                            "name": "main",
-                            "type": "public",
-                            "dataset": "speed_bench_coding",
-                        }
-                    ],
+                    "endpoint": {"model_names": ["mock-model"]},
+                    "input": {"public_dataset": "speed_bench_coding"},
                 },
                 "output_token_throughput": {"avg": 42.0},
             }
@@ -286,36 +280,13 @@ def build_cases(ctx: Context) -> list[Case]:
             "--input-file",
             str(single),
         ),
-        # `aiperf config generate` was retired; the surviving config commands
-        # are init / expand / validate. Verify the retired verb fails cleanly.
-        (
+        config_pass(
             "config-generate-gpu-telemetry-tokens",
-            [
-                "uv",
-                "run",
-                "aiperf",
-                "config",
-                "generate",
-                "--model",
-                "mock-model",
-                "--url",
-                URL,
-                "--endpoint-type",
-                "chat",
-                "--request-count",
-                "1",
-                "--tokenizer",
-                "builtin",
-                "--ui",
-                "none",
-                "--gpu-telemetry",
-                "pynvml",
-                "dashboard",
-                "--format",
-                "json",
-            ],
-            60,
-            "fail",
+            "--gpu-telemetry",
+            "pynvml",
+            "dashboard",
+            "--format",
+            "json",
         ),
         prof_pass(
             "ready-check-mode-interval",
@@ -435,7 +406,7 @@ def build_cases(ctx: Context) -> list[Case]:
             "--request-count",
             "2",
             "--benchmark-duration",
-            "5",
+            "1",
         ),
         prof_pass(
             "bad-arrival-pattern-for-concurrency",
@@ -518,7 +489,7 @@ def build_cases(ctx: Context) -> list[Case]:
             "--header",
             "NoColonHeader",
         ),
-        prof(
+        prof_pass(
             "http2-transport-local-mock",
             "--endpoint-type",
             "chat",
@@ -873,9 +844,7 @@ def build_cases(ctx: Context) -> list[Case]:
                 str(FIX / "init_minimal.yaml"),
             ],
         ),
-        # `aiperf config generate/show/schema/diff` were retired; only
-        # init/expand/validate remain. Verify the retired verbs fail cleanly.
-        (
+        cmd_pass(
             "config-generate-yaml",
             [
                 "uv",
@@ -898,10 +867,8 @@ def build_cases(ctx: Context) -> list[Case]:
                 "--output",
                 str(FIX / "generated.yaml"),
             ],
-            60,
-            "fail",
         ),
-        (
+        cmd_pass(
             "config-generate-json",
             [
                 "uv",
@@ -924,12 +891,8 @@ def build_cases(ctx: Context) -> list[Case]:
                 "--format",
                 "json",
             ],
-            60,
-            "fail",
         ),
-        # `aiperf config validate` no longer accepts `--path`; it takes the
-        # path as a positional argument. The legacy `--path` form is rejected.
-        (
+        cmd_pass(
             "config-validate",
             [
                 "uv",
@@ -940,10 +903,8 @@ def build_cases(ctx: Context) -> list[Case]:
                 "--path",
                 str(FIX / "generated.yaml"),
             ],
-            60,
-            "fail",
         ),
-        (
+        cmd_pass(
             "config-show",
             [
                 "uv",
@@ -956,10 +917,8 @@ def build_cases(ctx: Context) -> list[Case]:
                 "--format",
                 "json",
             ],
-            60,
-            "fail",
         ),
-        (
+        cmd_pass(
             "config-schema",
             [
                 "uv",
@@ -970,10 +929,8 @@ def build_cases(ctx: Context) -> list[Case]:
                 "--output",
                 str(FIX / "schema.json"),
             ],
-            60,
-            "fail",
         ),
-        (
+        cmd_pass(
             "config-diff",
             [
                 "uv",
@@ -988,17 +945,11 @@ def build_cases(ctx: Context) -> list[Case]:
                 "--format",
                 "json",
             ],
-            60,
-            "fail",
         ),
-        # `profile --config` depends on the retired `config generate` step
-        # above producing generated.yaml; with that gone the fixture file is
-        # absent and aiperf reports a clean "Configuration file not found".
-        (
+        cmd_pass(
             "profile-from-config",
             ["uv", "run", "aiperf", "profile", "--config", str(FIX / "generated.yaml")],
             180,
-            "fail",
         ),
         cmd_pass(
             "profile-template-config",
@@ -1218,7 +1169,7 @@ def build_cases(ctx: Context) -> list[Case]:
             "--endpoint-type",
             "chat",
             "--benchmark-duration",
-            "5",
+            "1",
             "--benchmark-grace-period",
             "1",
         ),

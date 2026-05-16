@@ -78,169 +78,20 @@ def _flag_combos(rng: random.Random) -> list[str]:
 
 
 _YAML_BODIES: list[str] = [
-    # Legacy flat shape (kept for back-compat coverage)
     "model: mock-model\nendpoint:\n  urls: [{url}]\n  type: chat\n  unknownNested: yes\n",
     "model: mock-model\nendpoint:\n  urls: [{url}]\n  type: chat\nphases:\n  type: concurrency\n  concurrency: -1\n  requests: 1\n",
     "model: mock-model\nendpoint:\n  urls: [{url}]\n  type: not-a-real-type\n",
     "model: mock-model\nendpoint:\n  urls: [{url}]\n  type: chat\ndataset:\n  type: synthetic\n  prompts:\n    isl: -5\n    osl: 0\n",
     "model: mock-model\nendpoint:\n  urls: [{url}]\n  type: template\n  path: /v1/x\n  template:\n    body: 'not jinja'\n    responseField: ''\n",
     "model: mock-model\nendpoint:\n  urls: [{url}]\n  type: chat\nphases:\n  type: concurrency\n  concurrency: 9999999999999\n  requests: 9999999999999\n",
-    # Schema-v2 envelope shape, malformed in different dimensions
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n    UNKNOWN_NESTED_FIELD: yes\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: -5\n      osl: 0\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nsweep:\n  type: grid\n  parameters:\n    "phases.profiling.rate": []\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nsweep:\n  type: not-a-real-sweep-type\n  parameters:\n    "phases.profiling.rate": [1.0]\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: definitely-not-a-real-dataset-type\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\nplot:\n  not_a_real_plot_field: true\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\nplot: /tmp/aiperf_chaos_definitely_missing.yaml\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: poisson\n    rate: -1.0\n    duration: -5\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n    timeout: -1.0\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schema_version: "99.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: .nan\n      osl: .inf\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\nUNKNOWN_TOP_LEVEL_KEY: 42\n',
-    'schemaVersion: "2.0"\nmulti_run:\n  numRuns: -1\n  cooldownSeconds: -5\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: synthetic\n    entries: 1\n    prompts:\n      isl: 8\n      osl: 4\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
-    'schemaVersion: "2.0"\nbenchmark:\n  model: mock-model\n  endpoint:\n    url: {url}\n    type: chat\n  dataset:\n    type: file\n    records: []\n  phases:\n    type: concurrency\n    concurrency: 1\n    requests: 1\n',
 ]
-
-
-_JINJA_FRAGMENTS: list[str] = [
-    "{{ unclosed",
-    "{% if true %}only-open",
-    "{{ undefined_variable_xyz }}",
-    "{% for x in [1,2,3 %}{{ x }}",
-    "{{ ''.__class__.__mro__ }}",
-    "{# unclosed comment",
-    "{{ }}",
-    "{{ a + }}",
-]
-
-
-def _jinja_fuzz_yaml(rng: random.Random, ctx: Context) -> tuple[Path, list[str]]:
-    fragment = rng.choice(_JINJA_FRAGMENTS)
-    body = (
-        f'schemaVersion: "2.0"\n'
-        f"benchmark:\n"
-        f'  model: "mock-{fragment}"\n'
-        f"  endpoint:\n"
-        f"    url: {ctx.url}\n"
-        f"    type: chat\n"
-        f"  dataset:\n"
-        f"    type: synthetic\n"
-        f"    entries: 1\n"
-        f"    prompts:\n"
-        f"      isl: 8\n"
-        f"      osl: 4\n"
-        f"  phases:\n"
-        f"    type: concurrency\n"
-        f"    concurrency: 1\n"
-        f"    requests: 1\n"
-    )
-    cfg = ctx.fixtures / f"fuzz_jinja_{rng.randint(0, 1_000_000):06d}.yaml"
-    cfg.write_text(body)
-    return cfg, ["uv", "run", "aiperf", "config", "validate", str(cfg)]
-
-
-_ENVVAR_PATTERNS: list[str] = [
-    "${DEFINITELY_UNSET_FUZZ_VAR_XYZZY}",
-    "${DEFINITELY_UNSET_FUZZ_VAR:fallback}",
-    "${DEFINITELY_UNSET_FUZZ_VAR:}",
-    "${1INVALID_IDENT}",
-    "${VAR-WITH-DASHES}",
-    "${UNTERMINATED",
-    "${NESTED_${INNER}}",
-    "${}",
-]
-
-
-def _envvar_fuzz_yaml(rng: random.Random, ctx: Context) -> tuple[Path, list[str]]:
-    pattern = rng.choice(_ENVVAR_PATTERNS)
-    target_field = rng.choice(["model", "concurrency", "url"])
-    if target_field == "concurrency":
-        concurrency = f'"{pattern}"'
-        model = "mock-model"
-        url = ctx.url
-    elif target_field == "url":
-        concurrency = "1"
-        model = "mock-model"
-        url = pattern
-    else:
-        concurrency = "1"
-        model = f'"mock-{pattern}"'
-        url = ctx.url
-    body = (
-        f'schemaVersion: "2.0"\n'
-        f"benchmark:\n"
-        f"  model: {model}\n"
-        f"  endpoint:\n"
-        f"    url: {url}\n"
-        f"    type: chat\n"
-        f"  dataset:\n"
-        f"    type: synthetic\n"
-        f"    entries: 1\n"
-        f"    prompts:\n"
-        f"      isl: 8\n"
-        f"      osl: 4\n"
-        f"  phases:\n"
-        f"    type: concurrency\n"
-        f"    concurrency: {concurrency}\n"
-        f"    requests: 1\n"
-    )
-    cfg = ctx.fixtures / f"fuzz_envvar_{rng.randint(0, 1_000_000):06d}.yaml"
-    cfg.write_text(body)
-    return cfg, ["uv", "run", "aiperf", "config", "validate", str(cfg)]
-
-
-_SWEEP_PATH_PATTERNS: list[str] = [
-    "",
-    ".phases.profiling.rate",
-    "phases.profiling.rate.",
-    "phases..profiling.rate",
-    "benchmark.phases.profiling.rate",
-    "sweep.something",
-    "multi_run.numRuns",
-    "random_seed",
-    "phases.profiling.NOT_A_REAL_FIELD",
-    "datasets.default.prompts.NOT_A_REAL",
-    "....",
-    "phases.profiling.rate.subfield.too.deep",
-]
-
-
-def _sweep_path_fuzz_yaml(rng: random.Random, ctx: Context) -> tuple[Path, list[str]]:
-    path = rng.choice(_SWEEP_PATH_PATTERNS)
-    values = rng.choice(["[1.0, 2.0, 3.0]", "[1, 2]", '["a"]', "[]"])
-    body = (
-        f'schemaVersion: "2.0"\n'
-        f"sweep:\n"
-        f"  type: grid\n"
-        f"  parameters:\n"
-        f'    "{path}": {values}\n'
-        f"benchmark:\n"
-        f"  model: mock-model\n"
-        f"  endpoint:\n"
-        f"    url: {ctx.url}\n"
-        f"    type: chat\n"
-        f"  dataset:\n"
-        f"    type: synthetic\n"
-        f"    entries: 1\n"
-        f"    prompts:\n"
-        f"      isl: 8\n"
-        f"      osl: 4\n"
-        f"  phases:\n"
-        f"    type: concurrency\n"
-        f"    concurrency: 1\n"
-        f"    requests: 1\n"
-    )
-    cfg = ctx.fixtures / f"fuzz_sweep_path_{rng.randint(0, 1_000_000):06d}.yaml"
-    cfg.write_text(body)
-    return cfg, ["uv", "run", "aiperf", "config", "validate", str(cfg)]
 
 
 def _config_yaml(rng: random.Random, ctx: Context) -> tuple[Path, list[str]]:
     template = rng.choice(_YAML_BODIES)
     cfg = ctx.fixtures / f"fuzz_config_{rng.randint(0, 1_000_000):06d}.yaml"
     cfg.write_text(template.format(url=ctx.url))
-    return cfg, ["uv", "run", "aiperf", "config", "validate", str(cfg)]
+    return cfg, ["uv", "run", "aiperf", "config", "validate", "--path", str(cfg)]
 
 
 def _run_one(cmd: list[str], ctx: Context, log: Path, header: str) -> tuple[int, str]:
@@ -344,36 +195,6 @@ def _config_arg_factory() -> Callable[
     return _factory
 
 
-def _jinja_arg_factory() -> Callable[
-    [random.Random, Context], tuple[list[str], list[str]]
-]:
-    def _factory(rng: random.Random, ctx: Context) -> tuple[list[str], list[str]]:
-        _, cmd = _jinja_fuzz_yaml(rng, ctx)
-        return cmd, []
-
-    return _factory
-
-
-def _envvar_arg_factory() -> Callable[
-    [random.Random, Context], tuple[list[str], list[str]]
-]:
-    def _factory(rng: random.Random, ctx: Context) -> tuple[list[str], list[str]]:
-        _, cmd = _envvar_fuzz_yaml(rng, ctx)
-        return cmd, []
-
-    return _factory
-
-
-def _sweep_path_arg_factory() -> Callable[
-    [random.Random, Context], tuple[list[str], list[str]]
-]:
-    def _factory(rng: random.Random, ctx: Context) -> tuple[list[str], list[str]]:
-        _, cmd = _sweep_path_fuzz_yaml(rng, ctx)
-        return cmd, []
-
-    return _factory
-
-
 def build_fuzz_cases() -> list[Case]:
     return [
         Case(
@@ -393,23 +214,5 @@ def build_fuzz_cases() -> list[Case]:
             expected="PASS_REQUIRED",
             run=_fuzz_runner(_config_arg_factory(), "config-yaml"),
             why="random invalid config YAML inputs must reject without crash",
-        ),
-        Case(
-            name="fuzz-config-v2-jinja",
-            expected="PASS_REQUIRED",
-            run=_fuzz_runner(_jinja_arg_factory(), "config-v2-jinja"),
-            why="random malformed jinja in v2 config must reject without crash",
-        ),
-        Case(
-            name="fuzz-config-v2-envvar",
-            expected="PASS_REQUIRED",
-            run=_fuzz_runner(_envvar_arg_factory(), "config-v2-envvar"),
-            why="random env-var patterns in v2 config must reject without crash",
-        ),
-        Case(
-            name="fuzz-config-v2-sweep-path",
-            expected="PASS_REQUIRED",
-            run=_fuzz_runner(_sweep_path_arg_factory(), "config-v2-sweep-path"),
-            why="random malformed sweep dotted paths must reject without crash",
         ),
     ]

@@ -1,0 +1,49 @@
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: mock-25k-aws-dev-02
+  namespace: acasagrande-aiperf-bench
+spec:
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-multi-20260501-131740-28affb7e0
+  connectionsPerWorker: 1000
+  resourceMode: burstable
+  ttlSecondsAfterFinished: 1800
+  benchmark:
+    models:
+      items:
+        - name: mock
+    tokenizer:
+      name: builtin
+    endpoint:
+      streaming: true
+      useServerTokenCount: true
+      urls:
+        - http://aiperf-mock-server-rs.acasagrande-aiperf-bench.svc.cluster.local:8000/v1/chat/completions
+    datasets:
+      - name: main
+        type: synthetic
+        prompts:
+          isl:
+            mean: 550
+          osl: 2500
+    phases:
+      - name: profiling
+        type: concurrency
+        concurrency: 25000
+        requests: 75000
+    runtime:
+      ui: none
+      workers: 75
+      workersPerPod: 10
+      recordProcessorsPerPod: 2
+    artifacts: {}
+    gpuTelemetry:
+      enabled: false
+    serverMetrics:
+      enabled: false
+  podTemplate:
+    imagePullSecrets:
+      - nvcr-imagepullsecret
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      nodeGroup: customer-cpu
