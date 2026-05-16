@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import multiprocessing
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-from pydantic import Field
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -22,18 +21,12 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
+@dataclass(slots=True, kw_only=True)
 class WorkerStatusInfo(WorkerStats):
     """Information about a worker's status."""
 
-    worker_id: str = Field(..., description="The ID of the worker")
-    last_error_ns: int | None = Field(
-        default=None,
-        description="The last time the worker had an error",
-    )
-    last_high_load_ns: int | None = Field(
-        default=None,
-        description="The last time the worker was in high load",
-    )
+    last_error_ns: int | None = None
+    last_high_load_ns: int | None = None
 
 
 class WorkerManager(BaseComponentService):

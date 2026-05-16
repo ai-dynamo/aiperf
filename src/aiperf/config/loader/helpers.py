@@ -205,3 +205,8 @@ class BenchmarkHelpersMixin:
     def output(self):  # type: ignore[no-untyped-def]
         """Alias for artifacts config (convenience access via config.output.*)."""
         return self.artifacts  # type: ignore[attr-defined]
+
+    @property
+    def benchmark_id(self) -> str:
+        """Benchmark ID from artifacts config."""
+        return self.artifacts.benchmark_id  # type: ignore[attr-defined]

@@ -54,7 +54,28 @@ def create_test_request_info(
     turns: list[Turn] | None = None,
 ) -> RequestInfo:
     """Create a RequestInfo for testing."""
+    from aiperf.common.enums import ModelSelectionStrategy
+    from aiperf.common.models.model_endpoint_info import (
+        EndpointInfo,
+        ModelEndpointInfo,
+        ModelInfo,
+        ModelListInfo,
+    )
+    from aiperf.plugin.enums import EndpointType
+
+    model_endpoint = ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name=model_name)],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+        ),
+        endpoint=EndpointInfo(
+            type=EndpointType.CHAT,
+            base_url="http://test",
+            custom_endpoint=None,
+        ),
+    )
     return RequestInfo(
+        model_endpoint=model_endpoint,
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
