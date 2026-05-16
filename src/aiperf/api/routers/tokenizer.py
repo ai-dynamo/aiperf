@@ -31,7 +31,6 @@ import zstandard
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from aiperf.api.routers.base_router import BaseRouter
 from aiperf.common.environment import Environment
 
 _CHUNK_SIZE = 1 << 16  # 64 KiB
@@ -284,10 +283,3 @@ def build_tokenizer_router() -> APIRouter:
         return StreamingResponse(_stream_bytes(payload), media_type="application/zstd")
 
     return router
-
-
-class TokenizerRouter(BaseRouter):
-    """Tokenizer bundle download endpoint for distributed workers."""
-
-    def get_router(self) -> APIRouter:
-        return build_tokenizer_router()

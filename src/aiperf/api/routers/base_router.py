@@ -14,7 +14,7 @@ from starlette.requests import HTTPConnection
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
 class BaseRouter(AIPerfLifecycleMixin):
@@ -27,12 +27,10 @@ class BaseRouter(AIPerfLifecycleMixin):
 
     def __init__(
         self,
-        *,
         run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
-        self.run = run
+        super().__init__(run=run, **kwargs)
 
     @abstractmethod
     def get_router(self) -> APIRouter:

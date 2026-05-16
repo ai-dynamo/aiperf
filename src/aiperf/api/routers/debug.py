@@ -66,17 +66,15 @@ class WorkerStartupStatesResponse(AIPerfBaseModel):
     state on the message bus.
     """
 
-    worker_count: int = Field(
-        ge=0, description="Number of distinct workers seen so far."
-    )
+    worker_count: int = Field(description="Number of distinct workers seen so far.")
     workers: dict[str, str] = Field(
         description="Per-worker startup state, keyed by worker service_id."
     )
     ready_count: int = Field(
-        ge=0, description="Number of workers in WorkerStartupState.READY."
+        description="Number of workers in WorkerStartupState.READY."
     )
     snapshot_time_ns: int = Field(
-        ge=0, description="time.time_ns() when this snapshot was taken."
+        description="time.time_ns() when this snapshot was taken."
     )
     source: str = Field(
         description=(
