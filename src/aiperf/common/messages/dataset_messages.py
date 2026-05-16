@@ -60,8 +60,8 @@ class DatasetConfiguredNotification(
 
     metadata: DatasetMetadata
     client_metadata: DatasetClientMetadataUnion
-    benchmark_generation: str
-    dataset_generation: str
+    benchmark_generation: str = ""
+    dataset_generation: str = ""
 
 
 class DatasetDownloadedNotification(

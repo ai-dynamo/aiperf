@@ -29,7 +29,6 @@ from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
 )
-from aiperf.common.types import CommandTypeT, ServiceTypeT
 
 
 class TargetedServiceMessage(BaseServiceMessage, kw_only=True, omit_defaults=True):
@@ -41,7 +40,10 @@ class TargetedServiceMessage(BaseServiceMessage, kw_only=True, omit_defaults=Tru
     """
 
     target_service_id: str | None = None
-    target_service_type: ServiceTypeT | None = None
+    # ServiceType is an ExtensibleStrEnum with a custom metaclass; msgspec
+    # cannot build a decoder for ``ServiceType | str``. Store the raw ``str``
+    # on the wire (enum members compare equal to their str values).
+    target_service_type: str | None = None
 
     def __post_init__(self) -> None:
         if self.target_service_id is not None and self.target_service_type is not None:
@@ -58,7 +60,7 @@ class CommandMessage(
     ``command`` field selects the concrete command class (SpawnWorkersCommand etc.).
     """
 
-    command: CommandTypeT
+    command: str
     command_id: str = msgspec.field(default_factory=lambda: str(uuid.uuid4()))
 
 
@@ -71,7 +73,7 @@ class CommandResponse(
     triggering CommandType so callers can correlate by (command_id, command).
     """
 
-    command: CommandTypeT
+    command: str
     command_id: str
     status: CommandResponseStatus
 
@@ -157,7 +159,7 @@ class CommandUnhandledResponse(
 class RealtimeMetricsCommand(
     CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
 ):
-    command: CommandTypeT = CommandType.REALTIME_METRICS
+    command: str = CommandType.REALTIME_METRICS
 
 
 class StartRealtimeTelemetryCommand(
@@ -169,13 +171,13 @@ class StartRealtimeTelemetryCommand(
     Always forces GPU telemetry mode to REALTIME_DASHBOARD.
     """
 
-    command: CommandTypeT = CommandType.START_REALTIME_TELEMETRY
+    command: str = CommandType.START_REALTIME_TELEMETRY
 
 
 class SpawnWorkersCommand(
     CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
 ):
-    command: CommandTypeT = CommandType.SPAWN_WORKERS
+    command: str = CommandType.SPAWN_WORKERS
     num_workers: int = 0  # validated > 0 in __post_init__
 
     def __post_init__(self) -> None:
@@ -187,7 +189,7 @@ class SpawnWorkersCommand(
 class ShutdownWorkersCommand(
     CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
 ):
-    command: CommandTypeT = CommandType.SHUTDOWN_WORKERS
+    command: str = CommandType.SHUTDOWN_WORKERS
     all_workers: bool = False
     worker_ids: list[str] | None = None
     num_workers: int | None = None
@@ -213,7 +215,7 @@ class ShutdownWorkersCommand(
 class ProcessRecordsCommand(
     CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
 ):
-    command: CommandTypeT = CommandType.PROCESS_RECORDS
+    command: str = CommandType.PROCESS_RECORDS
     cancelled: bool = False
 
 
@@ -226,7 +228,7 @@ class ProfileConfigureCommand(
     ``BenchmarkRun`` and reads from ``self.run.cfg`` directly.
     """
 
-    command: CommandTypeT = CommandType.PROFILE_CONFIGURE
+    command: str = CommandType.PROFILE_CONFIGURE
 
 
 class ProfileStartCommand(
@@ -234,7 +236,7 @@ class ProfileStartCommand(
 ):
     """Command sent to request services to start profiling."""
 
-    command: CommandTypeT = CommandType.PROFILE_START
+    command: str = CommandType.PROFILE_START
 
 
 class ProfileCompleteCommand(
@@ -245,7 +247,7 @@ class ProfileCompleteCommand(
     Triggers final scrape of server metrics to capture end state.
     """
 
-    command: CommandTypeT = CommandType.PROFILE_COMPLETE
+    command: str = CommandType.PROFILE_COMPLETE
 
 
 class ProfileCancelCommand(
@@ -253,7 +255,7 @@ class ProfileCancelCommand(
 ):
     """Command sent to request services to cancel profiling."""
 
-    command: CommandTypeT = CommandType.PROFILE_CANCEL
+    command: str = CommandType.PROFILE_CANCEL
 
 
 class ShutdownCommand(
@@ -261,7 +263,7 @@ class ShutdownCommand(
 ):
     """Command sent to request a service to shutdown."""
 
-    command: CommandTypeT = CommandType.SHUTDOWN
+    command: str = CommandType.SHUTDOWN
 
 
 class RegisterServiceCommand(
@@ -269,8 +271,8 @@ class RegisterServiceCommand(
 ):
     """Command sent from a service to the system controller to register itself."""
 
-    command: CommandTypeT = CommandType.REGISTER_SERVICE
-    service_type: ServiceTypeT = ""  # type: ignore[assignment]
+    command: str = CommandType.REGISTER_SERVICE
+    service_type: str = ""  # ExtensibleStrEnum -> str on the wire
     state: LifecycleState = LifecycleState.CREATED
 
 
@@ -279,5 +281,5 @@ class ProcessRecordsResponse(
 ):
     """Response to the process records command."""
 
-    command: CommandTypeT = CommandType.PROCESS_RECORDS
+    command: str = CommandType.PROCESS_RECORDS
     data: ProcessRecordsResult | None = None  # type: ignore[assignment]

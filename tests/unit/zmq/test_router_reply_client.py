@@ -11,7 +11,7 @@ import zmq
 import zmq.asyncio
 
 from aiperf.common.enums import MessageType
-from aiperf.common.messages import ErrorMessage, Message
+from aiperf.common.messages import ConnectionProbeMessage, ErrorMessage, Message
 from aiperf.zmq.router_reply_client import ZMQRouterReplyClient
 
 
@@ -99,8 +99,8 @@ class TestZMQRouterReplyClientRequestHandling:
         self, router_test_helper, sample_message
     ):
         """Test that _handle_request calls the registered handler."""
-        response = Message(
-            message_type=MessageType.HEARTBEAT, request_id=sample_message.request_id
+        response = ConnectionProbeMessage(
+            service_id="test", request_id=sample_message.request_id
         )
 
         async def handler(msg: Message) -> Message:
@@ -155,8 +155,8 @@ class TestZMQRouterReplyClientRequestHandling:
         self, router_test_helper, sample_message
     ):
         """Test that _wait_for_response sends the response back."""
-        response = Message(
-            message_type=MessageType.HEARTBEAT, request_id=sample_message.request_id
+        response = ConnectionProbeMessage(
+            service_id="test", request_id=sample_message.request_id
         )
 
         mock_socket = router_test_helper.setup_mock_socket()
@@ -177,24 +177,22 @@ class TestZMQRouterReplyClientRequestHandling:
             assert sent_data[0] == b"client_id"
 
     @pytest.mark.asyncio
-    async def test_wait_for_response_handles_none_response(
+    async def test_wait_for_response_sends_error_on_none(
         self, router_test_helper, sample_message
     ):
-        """Test that _wait_for_response handles None response gracefully."""
+        """Test that _wait_for_response sends an ErrorMessage when handler returns None."""
         mock_socket = router_test_helper.setup_mock_socket()
 
         async with router_test_helper.create_client() as client:
-            # Create and set response future with None
             client._response_futures[sample_message.request_id] = asyncio.Future()
             client._response_futures[sample_message.request_id].set_result(None)
 
             routing_envelope = (b"client_id",)
 
-            # Wait for and send response
             await client._wait_for_response(sample_message.request_id, routing_envelope)
 
-            # Verify error message was sent
             mock_socket.send_multipart.assert_called_once()
+            assert sample_message.request_id not in client._response_futures
 
 
 class TestZMQRouterReplyClientBackgroundTask:
@@ -207,8 +205,8 @@ class TestZMQRouterReplyClientBackgroundTask:
         """Test that background task receives and processes requests."""
         request_data = [b"client_id", sample_message.model_dump_json().encode()]
 
-        response = Message(
-            message_type=MessageType.HEARTBEAT, request_id=sample_message.request_id
+        response = ConnectionProbeMessage(
+            service_id="test", request_id=sample_message.request_id
         )
 
         handler_called = asyncio.Event()
@@ -252,7 +250,7 @@ class TestZMQRouterReplyClientBackgroundTask:
         self, router_test_helper, wait_for_background_task
     ):
         """Test that background task ignores requests without request_id."""
-        message_no_id = Message(message_type=MessageType.HEARTBEAT)
+        message_no_id = ConnectionProbeMessage(service_id="test")
         message_no_id.request_id = None
         request_data = [b"client_id", message_no_id.model_dump_json().encode()]
 
@@ -265,3 +263,56 @@ class TestZMQRouterReplyClientBackgroundTask:
             await wait_for_background_task()
 
             mock_socket.send_multipart.assert_not_called()
+
+
+class TestZMQRouterReplyClientDuplicateRequestId:
+    """A duplicate request_id arriving while one is in flight would, without
+    a collision check, overwrite the pending Future — and _wait_for_response
+    coroutines for the earlier envelope would then await the wrong future and
+    route their response to the wrong caller. The router must reject the
+    duplicate instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_duplicate_request_id_sends_error_and_preserves_first_future(
+        self, router_test_helper, sample_message
+    ):
+        request_json = sample_message.model_dump_json().encode()
+        duplicate_request_data = [b"client_id_2", request_json]
+        # Feed exactly one duplicate through recv_multipart.
+        mock_socket = router_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=[duplicate_request_data, zmq.Again()]
+        )
+
+        async def handler(msg: Message) -> Message:
+            return Message(
+                request_id=msg.request_id,
+            )
+
+        async with router_test_helper.create_client(auto_start=True) as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=handler,
+            )
+            # Pre-register a pending future under the same id to simulate the
+            # original request still being in flight.
+            client._response_futures[sample_message.request_id] = asyncio.Future()
+
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if mock_socket.send_multipart.called:
+                    break
+
+            # Pre-existing future must not be replaced.
+            assert not client._response_futures[sample_message.request_id].done()
+
+            # The router must have sent an ErrorMessage back to the duplicate
+            # caller's envelope.
+            assert mock_socket.send_multipart.called
+            sent = mock_socket.send_multipart.call_args[0][0]
+            assert sent[0] == b"client_id_2"
+            error_msg = Message.from_json(sent[-1])
+            assert isinstance(error_msg, ErrorMessage)
+            assert error_msg.error is not None
+            assert error_msg.error.type == "DUPLICATE_REQUEST_ID"

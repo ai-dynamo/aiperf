@@ -4,7 +4,7 @@ from enum import Enum
 from pathlib import PurePath
 from typing import Any
 
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 from aiperf.common.models.auto_routed_model import AutoRoutedModel
 
@@ -33,6 +33,9 @@ def _msgspec_enc_hook(obj: Any) -> Any:
     - numpy scalars (``float64``, ``int64``, ...) subclass float/int but
       msgspec's fast path keys on type identity, so coerce via ``.item()``
       to a builtin. Avoids an import of numpy in this module.
+    - Pydantic BaseModel instances: many AIPerf payload classes (ErrorDetails,
+      RequestRecord, etc.) still live on Pydantic while messages are now
+      msgspec.Struct; ``model_dump(mode='json')`` is the structural projection.
 
     Everything else raises ``NotImplementedError`` and lets msgspec emit
     its standard unsupported-type error.
@@ -43,6 +46,8 @@ def _msgspec_enc_hook(obj: Any) -> Any:
         return str(obj)
     if type(obj).__module__ == "numpy" and hasattr(obj, "item"):
         return obj.item()
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
     raise NotImplementedError(f"Objects of type {type(obj).__name__} are not supported")
 
 
@@ -52,4 +57,10 @@ def _msgspec_dec_hook(target_type: type, obj: Any) -> Any:
         return target_type(obj)
     if isinstance(target_type, type) and issubclass(target_type, PurePath):
         return target_type(obj)
+    # Pydantic BaseModel projection back — accept dict and revalidate.
+    if isinstance(target_type, type) and issubclass(target_type, BaseModel):
+        if isinstance(obj, target_type):
+            return obj
+        if isinstance(obj, dict):
+            return target_type.model_validate(obj)
     raise NotImplementedError(f"Cannot decode {type(obj).__name__} as {target_type!r}")

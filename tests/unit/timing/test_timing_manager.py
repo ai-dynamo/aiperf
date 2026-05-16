@@ -100,8 +100,8 @@ class TestTimingManagerDatasetConfiguration:
         ) as mock_orch:
             task = asyncio.create_task(
                 mgr._profile_configure_command(
-                    ProfileConfigureCommand.model_construct(
-                        service_id="test-system-controller", config={}
+                    ProfileConfigureCommand(
+                        service_id="test-system-controller"
                     )
                 )
             )
@@ -131,8 +131,8 @@ class TestTimingManagerDatasetConfiguration:
             pytest.raises(asyncio.TimeoutError),
         ):
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
+                ProfileConfigureCommand(
+                    service_id="test-system-controller"
                 )
             )
 
@@ -162,8 +162,8 @@ class TestTimingManagerDatasetConfiguration:
             "aiperf.timing.manager.PhaseOrchestrator", return_value=mock_engine
         ) as mock_orch:
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
+                ProfileConfigureCommand(
+                    service_id="test-system-controller"
                 )
             )
             assert mock_orch.call_args.kwargs["dataset_metadata"] == mock_metadata
@@ -173,7 +173,7 @@ class TestTimingManagerCancelCommand:
     @pytest.mark.asyncio
     async def test_cancel_calls_orchestrator_cancel(self, configured_manager) -> None:
         await configured_manager._handle_profile_cancel_command(
-            ProfileCancelCommand.model_construct(service_id="test-controller")
+            ProfileCancelCommand(service_id="test-controller")
         )
         configured_manager._phase_orchestrator.cancel.assert_called_once()
 
@@ -183,14 +183,14 @@ class TestTimingManagerCancelCommand:
     ) -> None:
         mgr = create_manager(cli_config)
         await mgr._handle_profile_cancel_command(
-            ProfileCancelCommand.model_construct(service_id="test-controller")
+            ProfileCancelCommand(service_id="test-controller")
         )
 
     @pytest.mark.asyncio
     async def test_cancel_can_be_called_multiple_times(
         self, configured_manager
     ) -> None:
-        cmd = ProfileCancelCommand.model_construct(service_id="test-controller")
+        cmd = ProfileCancelCommand(service_id="test-controller")
         await configured_manager._handle_profile_cancel_command(cmd)
         await configured_manager._handle_profile_cancel_command(cmd)
         assert configured_manager._phase_orchestrator.cancel.call_count == 2
@@ -204,7 +204,7 @@ class TestTimingManagerStartProfilingAndInitialization:
         mgr = create_manager(cli_config)
         with pytest.raises(InvalidStateError, match="No phase orchestrator configured"):
             await mgr._on_start_profiling(
-                CommandMessage.model_construct(service_id="test-controller")
+                CommandMessage(service_id="test-controller", command="profile_start")
             )
 
     @pytest.mark.asyncio
@@ -222,7 +222,7 @@ class TestTimingManagerStartProfilingAndInitialization:
         mgr._phase_orchestrator = mock_orchestrator
 
         await mgr._on_start_profiling(
-            CommandMessage.model_construct(service_id="test-controller")
+            CommandMessage(service_id="test-controller", command="profile_start")
         )
         await asyncio.sleep(0.05)  # Allow execute_async to run
         assert start_called.is_set()
@@ -237,8 +237,8 @@ class TestTimingManagerStartProfilingAndInitialization:
             InvalidStateError, match="Dataset metadata is not available"
         ):
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-controller", config={}
+                ProfileConfigureCommand(
+                    service_id="test-controller"
                 )
             )
 

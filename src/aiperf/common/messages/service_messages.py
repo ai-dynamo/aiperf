@@ -60,7 +60,15 @@ class MemoryReportMessage(
 class ConnectionProbeMessage(
     BaseServiceMessage, kw_only=True, tag=MessageType.CONNECTION_PROBE.value
 ):
-    """ZMQ slow-joiner self-echo probe."""
+    """ZMQ slow-joiner self-echo probe.
+
+    Optional targeting fields kept for back-compat with older
+    ``TargetedServiceMessage``-based probe call-sites; default to ``None``
+    when broadcasting.
+    """
+
+    target_service_id: str | None = None
+    target_service_type: str | None = None
 
 
 class BaseServiceErrorMessage(

@@ -50,6 +50,13 @@ class Message(
         no explicit ``tag=`` is supplied on the subclass. Filter those abstract
         intermediaries out by keeping only classes whose tag matches a valid
         ``MessageType`` value.
+
+        When multiple subclasses share the same tag (e.g. all Command*Command
+        subclasses share ``MessageType.COMMAND``; the concrete dispatch happens
+        on the inner ``command`` field), keep only the highest-up class in the
+        MRO — a msgspec tagged union must have unique tag values per branch.
+        Decoding into that base class is sufficient since the subclass adds
+        only fields, and downstream code dispatches on the inner discriminator.
         """
         seen: set[type] = set()
         stack: list[type] = list(cls.__subclasses__())
@@ -64,7 +71,19 @@ class Message(
         tagged = [
             s for s in seen if getattr(s.__struct_config__, "tag", None) in known_tags
         ]
-        return tagged
+        # Dedupe by tag: when multiple classes share a tag, keep the one
+        # nearest the root (its MRO under Message is shortest).
+        by_tag: dict[str, type] = {}
+        for s in tagged:
+            tag = s.__struct_config__.tag
+            current = by_tag.get(tag)
+            if current is None:
+                by_tag[tag] = s
+            else:
+                # Prefer the class higher up the chain (fewer ancestors before Message).
+                if len(s.__mro__) < len(current.__mro__):
+                    by_tag[tag] = s
+        return list(by_tag.values())
 
     @classmethod
     def _union_type(cls) -> Any:

@@ -534,6 +534,12 @@ class RecordContext(AIPerfBaseModel):
         description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
         " as well as the order that requests are sent in.",
     )
+    session_num: int | None = Field(
+        default=None,
+        description="The sequential number of the session in the benchmark. For single-turn datasets,"
+        " this is the request index; for multi-turn datasets, the session index. Populated by the"
+        " credit issuer before transport dispatch; may be None for ad-hoc records.",
+    )
     credit_phase: CreditPhase = Field(
         ...,
         description="The type of credit phase (either warmup or profiling)",
@@ -559,6 +565,12 @@ class RecordContext(AIPerfBaseModel):
         ge=0,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
         "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
+    )
+    credit_received_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Wall clock timestamp (time.time_ns) when the credit was received by the worker."
+        " Used for measuring credit drop latency.",
     )
 
     # --- DAG ------------------------------------------------------------------
@@ -725,6 +737,11 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
+    )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Optional measured clock offset (wall-clock - perf-counter) in nanoseconds."
+        " Populated when running under explicit clock-synchronization mode.",
     )
     trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,

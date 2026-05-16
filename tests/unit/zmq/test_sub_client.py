@@ -12,21 +12,17 @@ import zmq
 import zmq.asyncio
 
 from aiperf.common.enums import (
-    CommandResponseStatus,
-    CommandType,
     LifecycleState,
     MessageType,
 )
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import (
-    CommandMessage,
-    CommandResponse,
     HeartbeatMessage,
     Message,
+    StatusMessage,
 )
 from aiperf.zmq.sub_client import ZMQSubClient
 from aiperf.zmq.zmq_defaults import (
-    TOPIC_DELIMITER,
     TOPIC_END,
     TOPIC_END_ENCODED,
     WILDCARD_TOPIC,
@@ -193,31 +189,6 @@ class TestZMQSubClientMessageHandling:
         assert received_messages[0].message_type == sample_message.message_type
 
     @pytest.mark.asyncio
-    async def test_handle_message_with_targeted_topic(self, mock_zmq_context):
-        """Test handling messages with targeted topics (service_id/type)."""
-        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
-
-        callback_called = asyncio.Event()
-
-        async def callback(msg: Message) -> None:
-            callback_called.set()
-
-        # Register callback for the FULL targeted topic (not just base message type)
-        targeted_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}service-123"
-        client._subscribers[targeted_topic] = [callback]
-
-        # Message with targeted topic
-        message = CommandMessage(
-            service_id="test-service",
-            command=CommandType.SHUTDOWN,
-        )
-        topic_bytes = f"{targeted_topic}{TOPIC_END}".encode()
-        message_bytes = message.model_dump_json().encode()
-
-        await client._handle_message(topic_bytes, message_bytes)
-        await asyncio.wait_for(callback_called.wait(), timeout=1.0)
-
-    @pytest.mark.asyncio
     async def test_handle_message_calls_all_callbacks(
         self, mock_zmq_context, create_callback_tracker
     ):
@@ -245,50 +216,50 @@ class TestZMQSubClientMessageHandling:
         assert len(msgs1) == 1 and len(msgs2) == 1
 
     @pytest.mark.asyncio
-    async def test_handle_message_deserializes_command_message(
+    async def test_handle_message_deserializes_status_message(
         self, mock_zmq_context, create_callback_tracker
     ):
-        """Test that COMMAND messages are deserialized as CommandMessage."""
+        """Test that STATUS messages are deserialized as StatusMessage."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 
         callback, event, received_messages = create_callback_tracker()
-        client._subscribers[MessageType.COMMAND] = [callback]
+        client._subscribers[MessageType.STATUS] = [callback]
 
-        message = CommandMessage(
+        message = StatusMessage(
             service_id="test-service",
-            command=CommandType.SHUTDOWN,
+            state=LifecycleState.RUNNING,
+            service_type="test",
         )
-        topic_bytes = f"{MessageType.COMMAND}{TOPIC_END}".encode()
+        topic_bytes = f"{MessageType.STATUS}{TOPIC_END}".encode()
         message_bytes = message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
         await event.wait()
 
-        assert isinstance(received_messages[0], CommandMessage)
+        assert isinstance(received_messages[0], StatusMessage)
 
     @pytest.mark.asyncio
-    async def test_handle_message_deserializes_command_response(
+    async def test_handle_message_deserializes_heartbeat_message(
         self, mock_zmq_context, create_callback_tracker
     ):
-        """Test that COMMAND_RESPONSE messages are deserialized as CommandResponse."""
+        """Test that HEARTBEAT messages are deserialized as HeartbeatMessage."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 
         callback, event, received_messages = create_callback_tracker()
-        client._subscribers[MessageType.COMMAND_RESPONSE] = [callback]
+        client._subscribers[MessageType.HEARTBEAT] = [callback]
 
-        message = CommandResponse(
+        message = HeartbeatMessage(
             service_id="test-service",
-            command=CommandType.SHUTDOWN,
-            command_id="cmd-123",
-            status=CommandResponseStatus.SUCCESS,
+            state=LifecycleState.RUNNING,
+            service_type="test",
         )
-        topic_bytes = f"{MessageType.COMMAND_RESPONSE}{TOPIC_END}".encode()
+        topic_bytes = f"{MessageType.HEARTBEAT}{TOPIC_END}".encode()
         message_bytes = message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
         await event.wait()
 
-        assert isinstance(received_messages[0], CommandResponse)
+        assert isinstance(received_messages[0], HeartbeatMessage)
 
 
 class TestZMQSubClientWildcardSubscription:

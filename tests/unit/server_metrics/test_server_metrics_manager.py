@@ -134,7 +134,7 @@ class TestProfileConfigureCommand:
                 ProfileConfigureCommand(
                     service_id=manager.id,
                     command=CommandType.PROFILE_CONFIGURE,
-                    config={},
+                    ,
                 )
             )
 
@@ -162,7 +162,7 @@ class TestProfileConfigureCommand:
                 ProfileConfigureCommand(
                     service_id=manager.id,
                     command=CommandType.PROFILE_CONFIGURE,
-                    config={},
+                    ,
                 )
             )
 
@@ -192,7 +192,7 @@ class TestProfileConfigureCommand:
                 ProfileConfigureCommand(
                     service_id=manager.id,
                     command=CommandType.PROFILE_CONFIGURE,
-                    config={},
+                    ,
                 )
             )
 
@@ -419,7 +419,7 @@ class TestDisabledServerMetrics:
             ProfileConfigureCommand(
                 service_id=manager.id,
                 command=CommandType.PROFILE_CONFIGURE,
-                config={},
+                ,
             )
         )
 
@@ -454,7 +454,7 @@ class TestExceptionHandling:
                 ProfileConfigureCommand(
                     service_id=manager.id,
                     command=CommandType.PROFILE_CONFIGURE,
-                    config={},
+                    ,
                 )
             )
 
@@ -487,7 +487,7 @@ class TestExceptionHandling:
                 ProfileConfigureCommand(
                     service_id=manager.id,
                     command=CommandType.PROFILE_CONFIGURE,
-                    config={},
+                    ,
                 )
             )
 

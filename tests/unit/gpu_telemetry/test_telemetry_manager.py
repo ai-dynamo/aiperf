@@ -658,7 +658,7 @@ class TestProfileConfigureCommand:
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -694,7 +694,7 @@ class TestProfileConfigureCommand:
             ),
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -845,7 +845,7 @@ class TestSmartDefaultVisibility:
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -899,7 +899,7 @@ class TestSmartDefaultVisibility:
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -948,7 +948,7 @@ class TestPynvmlCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -985,7 +985,7 @@ class TestPynvmlCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -1017,7 +1017,7 @@ class TestPynvmlCollectorIntegration:
             ),
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -1045,7 +1045,7 @@ class TestPynvmlCollectorIntegration:
             side_effect=ValueError("Unexpected initialization error"),
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -1127,7 +1127,7 @@ class TestGenericLocalCollectorIntegration:
                 ):
                     await manager._profile_configure_command(
                         ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller", config={}
+                            command_id="test", service_id="system_controller"
                         )
                     )
 
@@ -1173,7 +1173,7 @@ class TestGenericLocalCollectorIntegration:
                 ):
                     await manager._profile_configure_command(
                         ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller", config={}
+                            command_id="test", service_id="system_controller"
                         )
                     )
 
@@ -1227,7 +1227,7 @@ class TestAmdsmiCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -1276,7 +1276,7 @@ class TestAmdsmiCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             await manager._profile_configure_command(configure_msg)
 
@@ -1314,7 +1314,7 @@ class TestAmdsmiCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
+                command_id="test", service_id="system_controller"
             )
             # Must NOT propagate CancelledError out of configure.
             await manager._profile_configure_command(configure_msg)
@@ -1345,7 +1345,7 @@ class TestAmdsmiCollectorIntegration:
         ):
             await manager._profile_configure_command(
                 ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller", config={}
+                    command_id="test", service_id="system_controller"
                 )
             )
 
@@ -1369,7 +1369,7 @@ class TestAmdsmiCollectorIntegration:
         ):
             await manager._profile_configure_command(
                 ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller", config={}
+                    command_id="test", service_id="system_controller"
                 )
             )
 
@@ -1389,7 +1389,7 @@ class TestAmdsmiCollectorIntegration:
         ):
             await manager._profile_configure_command(
                 ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller", config={}
+                    command_id="test", service_id="system_controller"
                 )
             )
 

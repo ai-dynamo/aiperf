@@ -812,7 +812,6 @@ def create_metric_records_message(
         metadata = create_metric_metadata(**metadata_kwargs)
 
     return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
         service_id=service_id,
         metadata=metadata,
         results=results,

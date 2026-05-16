@@ -21,20 +21,23 @@ from tests.harness.fake_transport import FakeTransport as FakeTransport
 
 
 @pytest.fixture
-async def mock_worker(
+def mock_worker(
     benchmark_run,
     fake_tokenizer: FakeTokenizer,
     skip_service_registration,
 ):
-    """Create a fully initialized and started MockWorker (no SystemController needed)."""
+    """Create a constructed MockWorker without starting the lifecycle.
+
+    These tests exercise internal worker methods directly and do not need the
+    full lifecycle. Avoid starting the worker so fixture teardown does not
+    depend on the fake in-process comms harness.
+    """
     worker = Worker(
         run=benchmark_run,
         service_id="mock-service-id",
     )
-    await worker.initialize()
-    await worker.start()
-    yield worker
-    await worker.stop()
+    worker._measure_baseline_rtt = AsyncMock()
+    return worker
 
 
 # --- FirstToken Callback Test Helpers ---
