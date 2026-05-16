@@ -20,11 +20,11 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 
 
 class MetricsCsvExporter(MetricsBaseExporter):
-    """Exports records to a CSV file in a two-section format."""
+    """Exports records to a CSV file in a legacy, two-section format."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        self._file_path = exporter_config.cfg.artifacts.profile_export_csv_file
+        self._file_path = exporter_config.config.artifacts.profile_export_csv_file
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
         self.trace_or_debug(
             lambda: f"Initializing MetricsCsvExporter with config: {exporter_config}",
@@ -49,7 +49,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
         writer = csv.writer(buf)
 
         # Use base class method to prepare metrics
-        prepared_metrics = self._prepare_metrics(self._results.records)
+        prepared_metrics = self._prepare_metrics(self._results.records or [])
 
         request_metrics, system_metrics = self._split_metrics(prepared_metrics)
 
@@ -130,7 +130,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
         if isinstance(value, numbers.Integral):
             return f"{int(value)}"
         # Real numbers (covers built-in float and many Real implementations) and Decimal
-        if isinstance(value, numbers.Real | Decimal):
+        if isinstance(value, (numbers.Real, Decimal)):
             return f"{float(value):.2f}"
 
         return str(value)
@@ -231,17 +231,18 @@ class MetricsCsvExporter(MetricsBaseExporter):
 
                     self._write_gpu_metric_row_from_summary(
                         writer,
-                        endpoint_display,
-                        gpu_summary,
-                        optional_fields,
-                        metric_key,
-                        metric_display,
-                        unit_enum.value,
+                        endpoint_display=endpoint_display,
+                        gpu_summary=gpu_summary,
+                        optional_fields=optional_fields,
+                        metric_key=metric_key,
+                        metric_display=metric_display,
+                        unit=unit_enum.value,
                     )
 
     def _write_gpu_metric_row_from_summary(
         self,
         writer: csv.writer,
+        *,
         endpoint_display: str,
         gpu_summary: GpuSummary,
         optional_fields: list[str],
@@ -286,7 +287,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
                 row.append(str(value))
 
             writer.writerow(row)
-        except Exception as e:
+        except (AttributeError, KeyError, ValueError, OSError) as e:
             self.warning(
                 f"Failed to write metric row for GPU {gpu_summary.gpu_uuid}, metric {metric_key}: {e}"
             )

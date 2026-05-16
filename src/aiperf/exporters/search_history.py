@@ -4,45 +4,6 @@
 
 Called after every BO iteration so a partial trajectory survives a crash.
 Sits next to sweep_aggregate/ in the artifact dir, NOT inside it.
-
-Output schema::
-
-    {
-      "config": {"objectives": [{metric, stat, direction, threshold}, ...],
-                 "outcome_constraints": [{metric, op, bound}, ...],
-                 ...rest of AdaptiveSearchSweep including sla_filters},
-      "iterations": [
-        {"iteration_idx": int, "variation_values": {...},
-         "objective_values": list[float] | None, "feasible": bool,
-         "non_monotonic_warning": bool}
-      ],
-      "best_trials": [
-        {"iteration_idx": int, "objective_values": list[float],
-         "variation_values": {...}, "feasible": bool,
-         "feasible_count": int, "pareto_rank": int}
-      ] | null,
-      "boundary_summary": {"swept_dim_path": str,
-                           "feasible_max": {...} | null,
-                           "infeasible_min": {..., "first_breach": {...}} | null}
-                          | null,
-      "recipe": str | null,
-      "convergence_reason": str | null
-    }
-
-``best_trials`` is a list because multi-objective runs surface the full
-non-dominated (Pareto) front. For length-1 ``objectives`` the list is
-length-1 (the single argmax/argmin under feasibility-first lexicographic
-ranking). For length-N ``objectives`` every member of the front is emitted
-with ``pareto_rank == 0``. Selection is feasibility-first: when at least
-one iteration satisfied every configured SLA filter the front is computed
-over the feasible subset; otherwise it falls back to the full pool with
-``feasible_count == 0`` so the reader can tell the two cases apart.
-
-``boundary_summary`` reports the literal SLA-feasibility boundary on
-the swept axis: ``feasible_max`` is the highest swept-dim value seen among
-feasible iterations; ``infeasible_min`` the lowest among infeasible. Distinct
-from ``best_trials`` (the GP/objective winners). Only populated for 1D
-search spaces.
 """
 
 from __future__ import annotations
@@ -51,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.finite import scrub_non_finite
 from aiperf.orchestrator.search_planner._sla_helpers import first_failing_filter
 
 if TYPE_CHECKING:
@@ -73,7 +33,37 @@ def write_search_history(
 ) -> None:
     """Write search_history.json under base_dir.
 
-    See module docstring for the output schema and best-selection semantics.
+    Schema:
+        {
+          "config": {...subset of AdaptiveSearchSweep, including sla_filters},
+          "iterations": [
+            {"iteration_idx": int, "variation_values": {...}, "objective_value": float | None}
+          ],
+          "best": {"iteration_idx": int, "objective_value": float, "variation_values": {...},
+                   "feasible": bool, "feasible_count": int}
+                  | null when no objectives recorded,
+          "boundary_summary": {"swept_dim_path": str,
+                               "feasible_max": {...} | null,
+                               "infeasible_min": {..., "first_breach": {...}} | null}
+                              | null when search_space dim count != 1 or no iterations,
+          "recipe": str | null,  // recipe name when expanded via --search-recipe
+          "convergence_reason": str | null  // why is_converged() fired, or null
+        }
+
+    Best-result selection is lexicographic feasibility-first: when at least one
+    iteration satisfied every configured SLA filter, the best is chosen from
+    the feasible subset; otherwise selection falls back to the full pool with
+    ``feasible_count == 0`` so the reader can tell the two cases apart.
+
+    ``boundary_summary`` (Plan-D) reports the literal SLA-feasibility boundary
+    on the swept axis: ``feasible_max`` is the highest swept-dim value seen
+    among feasible iterations; ``infeasible_min`` the lowest among infeasible.
+    Distinct from ``best`` (the GP/objective winner). Only populated for 1D
+    search spaces — multi-dim leaves it ``null`` since "highest swept value"
+    has no scalar meaning across multiple axes. When ``planner`` is supplied
+    and exposes ``boundary_summary()`` (e.g. ``MonotonicSLASearchPlanner``)
+    the precomputed planner shape is used directly; otherwise the boundary is
+    derived from ``history``.
 
     Args:
         base_dir: artifact dir; file lands at ``base_dir/search_history.json``.
@@ -81,31 +71,19 @@ def write_search_history(
             terminal calls (after planner.ask() returned None) record the
             final trajectory.
         cfg: AdaptiveSearchSweep from the plan.
-        convergence_reason: Examples include ``"max_iterations"``,
-            ``"improvement_patience"``, ``"plateau_cv"``,
-            ``"posterior_regret_bound"`` (Optuna terminator: Makarova 2022),
-            ``"emmr"`` (Optuna terminator: Ishibashi 2023). The 1D-SLA
-            planners additionally emit
-            ``"monotonic_no_pass_in_range"``,
-            ``"monotonic_no_failure_in_range"``,
-            ``"monotonic_precision_reached"``,
-            ``"smooth_isotonic_no_pass_in_range"``,
-            ``"smooth_isotonic_no_failure_in_range"``,
-            ``"smooth_isotonic_precision_reached"``,
-            ``"smooth_isotonic_cliff_precision_reached"``, and
-            ``"smooth_isotonic_pchip_fallback_bisection"``. ``None`` mid-loop.
-        planner: Optional planner instance. When supplied, its
-            ``boundary_summary()`` method is consulted; a non-None return is
-            used in place of the history-derived computation. Planners with
-            no single-boundary concept inherit the default ``None``.
+        convergence_reason: One of ``"max_iterations"``,
+            ``"improvement_patience"``, ``"plateau_cv"``, or None when the
+            history is being written mid-loop. Surfaced for post-run audit.
+        planner: Optional planner instance. When it exposes a
+            ``boundary_summary()`` method the precomputed dict is used in
+            place of the history-derived computation. Pure duck-typing — no
+            isinstance check, no widening of the SearchPlanner ABC required.
     """
     iterations_payload = [
         {
             "iteration_idx": h.iteration_idx,
             "variation_values": h.variation_values,
-            "objective_values": list(h.objective_values)
-            if h.objective_values
-            else None,
+            "objective_value": h.objective_value,
             "feasible": h.feasible,
             "non_monotonic_warning": h.non_monotonic_warning,
         }
@@ -114,115 +92,53 @@ def write_search_history(
     payload = {
         "config": _build_config_block(cfg),
         "iterations": iterations_payload,
-        "best_trials": _compute_best_trials(history, cfg),
+        "best": _compute_best_payload(history, cfg),
         "boundary_summary": _resolve_boundary_summary(history, cfg, planner),
         "recipe": cfg.recipe_name,
         "convergence_reason": convergence_reason,
     }
     out = base_dir / "search_history.json"
-    # Scrub non-finite values: orjson silently maps NaN/inf to JSON null,
-    # which would erase the difference between "scorer returned NaN"
-    # (objective_value=NaN) and "iteration was not scored"
-    # (objective_value=None) in the on-disk trajectory.
-    out.write_bytes(orjson.dumps(scrub_non_finite(payload), option=orjson.OPT_INDENT_2))
+    out.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
 
 
-def _compute_best_trials(
+def _compute_best_payload(
     history: list[SearchIteration], cfg: AdaptiveSearchSweep
-) -> list[dict] | None:
-    """Compute best_trials list.
+) -> dict | None:
+    """Lexicographic feasibility-first best-result selection.
 
-    For length-1 objectives: returns a length-1 list with the single argmax/argmin
-    over feasible-then-fallback. For length>1: returns the non-dominated set
-    (Pareto front) over feasible-then-fallback, with pareto_rank=0 for every
-    front member. Returns None when no scored iterations exist.
+    Prefers the best feasible iteration when any exist; falls back to the best
+    of the full scored pool otherwise (with ``feasible_count == 0`` so the
+    reader can distinguish the two cases). Returns ``None`` when the history
+    contains no scored iterations at all.
     """
-    from aiperf.common.enums import OptimizationDirection
+    from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 
-    scored = [h for h in history if h.objective_values]
+    scored = [h for h in history if h.objective_value is not None]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
-
-    n_obj = len(cfg.objectives)
-    if n_obj == 1:
-        direction = cfg.objectives[0].direction
-        if direction == OptimizationDirection.MAXIMIZE:
-            best = max(ranking_pool, key=lambda h: h.objective_values[0])
-        else:
-            best = min(ranking_pool, key=lambda h: h.objective_values[0])
-        return [_serialize_trial(best, len(feasible), pareto_rank=0)]
-
-    front = _pareto_front(ranking_pool, cfg.objectives)
-    return [_serialize_trial(h, len(feasible), pareto_rank=0) for h in front]
-
-
-def _serialize_trial(
-    h: SearchIteration, feasible_count: int, *, pareto_rank: int
-) -> dict:
+    if cfg.objective.direction == OptimizationDirection.MAXIMIZE:
+        best = max(ranking_pool, key=lambda h: h.objective_value)
+    else:
+        best = min(ranking_pool, key=lambda h: h.objective_value)
     return {
-        "iteration_idx": h.iteration_idx,
-        "objective_values": list(h.objective_values) if h.objective_values else None,
-        "variation_values": h.variation_values,
-        "feasible": h.feasible,
-        "feasible_count": feasible_count,
-        "pareto_rank": pareto_rank,
+        "iteration_idx": best.iteration_idx,
+        "objective_value": best.objective_value,
+        "variation_values": best.variation_values,
+        "feasible": best.feasible,
+        "feasible_count": len(feasible),
     }
-
-
-def _pareto_front(
-    pool: list[SearchIteration], objectives: list
-) -> list[SearchIteration]:
-    """Non-dominated set under direction-aware comparison.
-
-    A point p dominates q iff for every objective i, p is no worse than q,
-    and for at least one objective p is strictly better. "Better" depends
-    on each objective's direction.
-    """
-    from aiperf.common.enums import OptimizationDirection
-
-    def dominates(a: SearchIteration, b: SearchIteration) -> bool:
-        strictly_better_anywhere = False
-        for i, obj in enumerate(objectives):
-            av, bv = a.objective_values[i], b.objective_values[i]
-            if obj.direction == OptimizationDirection.MAXIMIZE:
-                if av < bv:
-                    return False
-                if av > bv:
-                    strictly_better_anywhere = True
-            else:
-                if av > bv:
-                    return False
-                if av < bv:
-                    strictly_better_anywhere = True
-        return strictly_better_anywhere
-
-    front: list[SearchIteration] = []
-    for p in pool:
-        if any(dominates(q, p) for q in pool if q is not p):
-            continue
-        front.append(p)
-    return front
 
 
 def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
     """Project an AdaptiveSearchSweep into the search_history.json `config` shape."""
     return {
+        "algorithm": cfg.algorithm,
         "planner": str(cfg.planner),
-        "objectives": [
-            {
-                "metric": obj.metric,
-                "stat": obj.stat,
-                "direction": obj.direction.name,
-                "threshold": obj.threshold,
-            }
-            for obj in cfg.objectives
-        ],
-        "outcome_constraints": [
-            {"metric": c.metric, "op": c.op, "bound": c.bound}
-            for c in cfg.outcome_constraints
-        ],
+        "objective_metric": cfg.objective.metric,
+        "objective_stat": cfg.objective.stat,
+        "objective_direction": str(cfg.objective.direction),
         "max_iterations": cfg.max_iterations,
         "n_initial_points": cfg.n_initial_points,
         "random_seed": cfg.random_seed,
@@ -244,31 +160,24 @@ def _resolve_boundary_summary(
 ) -> dict[str, Any] | None:
     """Prefer planner-precomputed boundary_summary; fall back to history-derived.
 
-    Shape rules (mirrored in ``_compute_boundary_summary``): null on
+    Plan-D shape rules (mirrored in ``_compute_boundary_summary``): null on
     empty history or non-1D search-space; otherwise a dict with
     ``swept_dim_path`` plus optional ``feasible_max`` / ``infeasible_min``
     blocks. The planner-supplied path lets ``MonotonicSLASearchPlanner``
     own the truth (latched ``feasible_max``/``infeasible_min`` from per-point
     verdict logs) without forcing the exporter to re-derive feasibility.
-
-    ``SearchPlanner.boundary_summary()`` is a concrete ABC method returning
-    ``None`` by default, so the planner-precomputed branch is taken whenever
-    a planner is supplied; planners with no boundary concept (Bayesian N-D)
-    inherit the default ``None`` and we fall through to history derivation.
     """
     if not history or len(cfg.search_space) != 1:
         return None
-    if planner is not None:
-        precomputed = planner.boundary_summary()
-        if precomputed is not None:
-            return precomputed
+    if planner is not None and hasattr(planner, "boundary_summary"):
+        return planner.boundary_summary()
     return _compute_boundary_summary(history, cfg)
 
 
 def _compute_boundary_summary(
     history: list[SearchIteration], cfg: AdaptiveSearchSweep
 ) -> dict[str, Any] | None:
-    """Derive ``boundary_summary`` from the iteration history.
+    """Derive Plan-D boundary_summary from the iteration history.
 
     For BO-style planners (no latched bracket of its own) this scans the
     recorded iterations for the highest feasible swept value and the lowest

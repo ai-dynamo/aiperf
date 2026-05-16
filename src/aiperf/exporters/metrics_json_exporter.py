@@ -4,16 +4,11 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-import orjson
-
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
     JsonExportData,
     JsonMetricResult,
-    RunInfo,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
@@ -25,13 +20,8 @@ class MetricsJsonExporter(MetricsBaseExporter):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
-        summary = exporter_config.cfg.artifacts.summary
-        if summary is False or "json" not in summary:
-            raise DataExporterDisabled(
-                "MetricsJsonExporter disabled: 'json' not in artifacts.summary"
-            )
         super().__init__(exporter_config, **kwargs)
-        self._file_path = exporter_config.cfg.artifacts.profile_export_json_file
+        self._file_path = exporter_config.config.artifacts.profile_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}",
             lambda: f"Initializing MetricsJsonExporter with file path: {self._file_path}",
@@ -52,7 +42,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
             str: Complete JSON content with all sections formatted and ready to write
         """
         # Use helper method to prepare metrics
-        prepared_json_metrics = self._prepare_metrics_for_json(self._results.records)
+        prepared_json_metrics = self._prepare_metrics_for_json(
+            self._results.records or []
+        )
 
         start_time = (
             datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND)
@@ -71,9 +63,8 @@ class MetricsJsonExporter(MetricsBaseExporter):
         export_data = JsonExportData(
             schema_version=JsonExportData.SCHEMA_VERSION,
             aiperf_version=aiperf_version,
-            benchmark_id=self._run.benchmark_id if self._run is not None else None,
-            input_config=self._cfg,
-            run_info=_build_run_metadata(self._run),
+            benchmark_id=self._config.artifacts.benchmark_id,
+            input_config=self._config,
             was_cancelled=self._results.was_cancelled,
             error_summary=self._results.error_summary,
             start_time=start_time,
@@ -85,29 +76,26 @@ class MetricsJsonExporter(MetricsBaseExporter):
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
 
-        # Splice DAG branch orchestration counters when present. Non-DAG
-        # runs leave ``branch_stats`` unset on ProfileResults so the
-        # section is omitted entirely (model_dump_json with
-        # ``exclude_none=True`` drops it).
-        branch_stats = getattr(self._results, "branch_stats", None)
-        if branch_stats is not None:
-            export_data.branch_stats = branch_stats
+        # Multi-turn TTFT trend: per-``turn_index`` MetricResult dict from
+        # ``MetricsAccumulator.summarize()``. Surfaced as a top-level
+        # ``multi_turn_ttft_trend`` key keyed by turn-index string so the
+        # JSON shape is dict[str, JsonMetricResult] — distinguishable from
+        # the flat per-tag percentile dicts at the same level. Only populated
+        # when records carry ``turn_index`` metadata. ``getattr`` because
+        # test doubles may not declare the attribute.
+        trend = getattr(self._results, "multi_turn_ttft_trend", None)
+        if trend:
+            export_data.multi_turn_ttft_trend = {
+                str(turn): mr.to_json_result() for turn, mr in sorted(trend.items())
+            }
 
         self.trace_or_debug(
             lambda: f"Exporting data to JSON file: {export_data}",
             lambda: f"Exporting data to JSON file: {self._file_path}",
         )
-        # Pydantic's model_dump_json silently coerces NaN/inf to JSON null,
-        # which collides with explicit-None ("metric was missing") semantics
-        # downstream. Round-trip through model_dump + scrub_non_finite +
-        # orjson.dumps so non-finite values are rewritten to null only when
-        # they were genuinely numerically absent.
-        payload = export_data.model_dump(
-            mode="json", exclude_unset=True, exclude_none=True
+        return export_data.model_dump_json(
+            indent=2, exclude_unset=True, exclude_none=True
         )
-        return orjson.dumps(
-            scrub_non_finite(payload), option=orjson.OPT_INDENT_2
-        ).decode("utf-8")
 
     def _prepare_metrics_for_json(
         self, metric_results: Iterable[MetricResult]
@@ -124,24 +112,3 @@ class MetricsJsonExporter(MetricsBaseExporter):
         """
         prepared = self._prepare_metrics(metric_results)
         return {tag: result.to_json_result() for tag, result in prepared.items()}
-
-
-def _build_run_metadata(run) -> RunInfo | None:
-    # Why: surfacing per-run reproducibility in profile_export_aiperf.json
-    # eliminates the need for a downstream reader to also load the internal
-    # run_config.json handoff file (which is multi-run only and absent on
-    # single-run paths).
-    if run is None:
-        return None
-    variation = getattr(run, "variation", None)
-    return RunInfo(
-        benchmark_id=run.benchmark_id,
-        sweep_id=getattr(run, "sweep_id", None),
-        random_seed=run.random_seed,
-        trial=run.trial,
-        run_label=run.label or None,
-        variation_label=variation.label if variation is not None else None,
-        variation_index=variation.index if variation is not None else None,
-        variation_values=dict(variation.values) if variation is not None else None,
-        cli_command=getattr(run, "cli_command", None),
-    )

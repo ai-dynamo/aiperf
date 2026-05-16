@@ -27,7 +27,7 @@ __all__ = [
     "AggregateConfidenceCsvExporter",
     "AggregateConfidenceJsonExporter",
     "AggregateDetailedJsonExporter",
+    "AggregateExporterConfig",
     "AggregateSweepCsvExporter",
     "AggregateSweepJsonExporter",
-    "AggregateExporterConfig",
 ]

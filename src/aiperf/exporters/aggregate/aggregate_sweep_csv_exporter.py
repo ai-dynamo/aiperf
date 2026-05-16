@@ -1,192 +1,213 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""CSV exporter for sweep aggregate results."""
+"""CSV exporter for sweep aggregate results.
+
+Multi-section CSV layout (matches PR #699 schema, byte-compatible with
+main's :class:`AggregateSweepCsvExporter`). Reads sweep sections directly
+from the enclosing :class:`~aiperf.orchestrator.aggregation.base.AggregateResult`.
+"""
+
+from __future__ import annotations
 
 import csv
 import io
-import math
+from typing import Any, Protocol
 
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
+class _CsvWriter(Protocol):
+    """Structural type for ``csv.writer``: only ``writerow`` is used here."""
+
+    def writerow(self, row: list[Any]) -> Any: ...
+
+
 class AggregateSweepCsvExporter(AggregateBaseExporter):
-    """Exports sweep aggregate results to CSV format.
+    """Exports sweep aggregate results to a multi-section CSV file.
 
-    Creates a CSV with multiple sections:
-    - Per-combination metrics table (one row per parameter combination)
-    - Blank line separator
-    - Best configurations section
-    - Pareto optimal points section
-    - Metadata section
+    Layout (blank-line separated):
 
-    Uses similar formatting approach as AggregateConfidenceCsvExporter for consistency.
+    1. Per-combination metrics table -- one row per parameter combination
+       with ``mean``/``std``/``min``/``max``/``cv`` columns per metric.
+    2. Best configurations -- one row per objective
+       (``best_throughput``, ``best_latency_p99``).
+    3. Pareto optimal points -- one row per non-dominated combination.
+    4. Metadata -- aggregation type, sweep parameters, combination count,
+       profile-run counts (matches PR #699 schema).
+
+    Constructor surface matches sibling aggregate exporters
+    (``AggregateConfidenceCsvExporter`` etc.): just ``(config, **kwargs)``.
+    Sweep sections are read from ``self._result.metadata`` (sweep_parameters,
+    num_combinations, best_configurations, pareto_optimal) and from
+    ``self._result.metrics`` (per_combination_metrics).
+
+    Example:
+        >>> result = AggregateResult(
+        ...     aggregation_type="sweep",
+        ...     num_runs=2,
+        ...     num_successful_runs=2,
+        ...     metadata={
+        ...         "sweep_parameters": [{"name": "concurrency", "values": [10, 20]}],
+        ...         "num_combinations": 2,
+        ...         "best_configurations": {},
+        ...         "pareto_optimal": [],
+        ...     },
+        ...     metrics=[
+        ...         {"parameters": {"concurrency": 10},
+        ...          "metrics": {"request_throughput_avg": {"mean": 100.0}}},
+        ...     ],
+        ... )  # doctest: +SKIP
+        >>> exp = AggregateSweepCsvExporter(AggregateExporterConfig(result, dir))  # doctest: +SKIP
+        >>> await exp.export()  # doctest: +SKIP
     """
 
     def get_file_name(self) -> str:
-        """Return CSV file name.
-
-        Returns:
-            str: "profile_export_aiperf_sweep.csv"
-        """
+        """Return ``"profile_export_aiperf_sweep.csv"``."""
         return "profile_export_aiperf_sweep.csv"
 
     def _generate_content(self) -> str:
-        """Generate CSV content from sweep aggregate result.
-
-        Format: Multiple sections separated by blank lines:
-        1. Per-combination metrics table (one row per parameter combination)
-        2. Best configurations section
-        3. Pareto optimal points section
-        4. Metadata section
-
-        Returns:
-            str: CSV content string
-        """
+        """Generate the multi-section CSV content."""
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Get sweep parameters from metadata
         sweep_parameters = self._result.metadata.get("sweep_parameters", [])
         param_names = [p["name"] for p in sweep_parameters]
+        per_combination_metrics = self._result.metrics or []
 
-        # Section 1: Per-combination metrics table
-        per_combination_metrics = self._result.metrics
+        _write_per_combination_section(writer, per_combination_metrics, param_names)
 
-        if per_combination_metrics:
-            # Build header: param1, param2, ..., metric1_mean, metric1_std, ...
-            header = param_names.copy()
-
-            # Build the metric column set as the UNION of metric keys across
-            # every combination. Using only the first combo's keys silently
-            # drops metrics that appear in later combos but not the first
-            # (and strips ALL metric columns if combo[0] failed and is
-            # empty). Combos missing a column write an empty cell, matching
-            # the missing-value convention used by _format_number(None).
-            metric_names = sorted(
-                {
-                    key
-                    for combo in per_combination_metrics
-                    for key in combo.get("metrics", {})
-                }
-            )
-
-            # Add columns for each metric's statistics
-            for metric_name in metric_names:
-                header.extend(
-                    [
-                        f"{metric_name}_mean",
-                        f"{metric_name}_std",
-                        f"{metric_name}_min",
-                        f"{metric_name}_max",
-                        f"{metric_name}_cv",
-                    ]
-                )
-
-            writer.writerow(header)
-
-            # Write data rows (one row per parameter combination)
-            for combo_entry in per_combination_metrics:
-                parameters = combo_entry.get("parameters", {})
-                metrics = combo_entry.get("metrics", {})
-
-                # Start row with parameter values
-                row = [parameters.get(param_name, "") for param_name in param_names]
-
-                # Add metric statistics
-                for metric_name in metric_names:
-                    metric_data = metrics.get(metric_name, {})
-                    if isinstance(metric_data, dict):
-                        row.extend(
-                            [
-                                self._format_number(metric_data.get("mean")),
-                                self._format_number(metric_data.get("std")),
-                                self._format_number(metric_data.get("min")),
-                                self._format_number(metric_data.get("max")),
-                                self._format_number(metric_data.get("cv"), decimals=4),
-                            ]
-                        )
-                    else:
-                        # If not a dict, fill with empty values
-                        row.extend(["", "", "", "", ""])
-
-                writer.writerow(row)
-
-        # Section 2: Best Configurations
-        writer.writerow([])  # Blank line
-        writer.writerow(["Best Configurations"])
-        best_configs = self._result.metadata.get("best_configurations", {})
-        if best_configs:
-            # Header with all parameter names
-            header = ["Configuration"] + param_names + ["Metric", "Unit"]
-            writer.writerow(header)
-
-            for config_name, config_data in best_configs.items():
-                # Format config name: best_throughput -> Best Throughput
-                formatted_name = config_name.replace("_", " ").title()
-                parameters = config_data.get("parameters", {})
-
-                # Build row with parameter values
-                row = [formatted_name]
-                row.extend(
-                    [parameters.get(param_name, "") for param_name in param_names]
-                )
-                row.extend(
-                    [
-                        self._format_number(config_data.get("metric")),
-                        config_data.get("unit", ""),
-                    ]
-                )
-                writer.writerow(row)
-
-        # Section 3: Pareto Optimal Points
-        writer.writerow([])  # Blank line
-        writer.writerow(["Pareto Optimal Points"])
-        pareto_optimal = self._result.metadata.get("pareto_optimal", [])
-        if pareto_optimal:
-            # Header with all parameter names
-            writer.writerow(param_names)
-            for combo_params in pareto_optimal:
-                row = [combo_params.get(param_name, "") for param_name in param_names]
-                writer.writerow(row)
-        else:
-            writer.writerow(["None"])
-
-        # Section 4: Metadata
-        writer.writerow([])  # Blank line
-        writer.writerow(["Metadata"])
-        writer.writerow(["Field", "Value"])
-        writer.writerow(["Aggregation Type", self._result.aggregation_type])
-        writer.writerow(["Sweep Parameters", ", ".join(param_names)])
-        writer.writerow(
-            ["Number of Combinations", self._result.metadata.get("num_combinations", 0)]
+        writer.writerow([])
+        _write_best_configurations_section(
+            writer,
+            self._result.metadata.get("best_configurations", {}),
+            param_names,
         )
-        writer.writerow(["Number of Profile Runs", self._result.num_runs])
-        writer.writerow(["Number of Successful Runs", self._result.num_successful_runs])
+
+        writer.writerow([])
+        _write_pareto_section(
+            writer,
+            self._result.metadata.get("pareto_optimal", []),
+            param_names,
+        )
+
+        writer.writerow([])
+        _write_metadata_section(
+            writer, self._result.metadata, param_names, self._result
+        )
 
         return buf.getvalue()
 
-    def _format_number(self, value: float | int | None, decimals: int = 2) -> str:
-        """Format a number for CSV output.
 
-        Non-finite floats (NaN, +inf, -inf) render as the empty string,
-        matching the missing-value convention used for ``None``. NaN must
-        be filtered with ``math.isfinite`` rather than equality against
-        ``float("inf")`` because NaN compares unequal to everything,
-        including itself; an equality check would let it fall through to
-        ``f"{value:.2f}"`` and produce the literal string ``"nan"``,
-        which downstream pandas/duckdb readers parse inconsistently.
+def _write_per_combination_section(
+    writer: _CsvWriter,
+    per_combination_metrics: list[dict[str, Any]],
+    param_names: list[str],
+) -> None:
+    """Section 1: param-cols + per-metric ``mean/std/min/max/cv`` columns."""
+    if not per_combination_metrics:
+        return
 
-        Args:
-            value: Number to format
-            decimals: Number of decimal places
+    metric_names = sorted(per_combination_metrics[0].get("metrics", {}).keys())
+    header = list(param_names)
+    for metric_name in metric_names:
+        header.extend(
+            [
+                f"{metric_name}_mean",
+                f"{metric_name}_std",
+                f"{metric_name}_min",
+                f"{metric_name}_max",
+                f"{metric_name}_cv",
+            ]
+        )
+    writer.writerow(header)
 
-        Returns:
-            str: Formatted number, or empty string if None / non-finite
-        """
-        if value is None:
-            return ""
-        if isinstance(value, float):
-            if not math.isfinite(value):
-                return ""
-            return f"{value:.{decimals}f}"
-        return str(value)
+    for combo_entry in per_combination_metrics:
+        parameters = combo_entry.get("parameters", {})
+        metrics = combo_entry.get("metrics", {})
+        row: list[Any] = [parameters.get(name, "") for name in param_names]
+        for metric_name in metric_names:
+            metric_data = metrics.get(metric_name, {})
+            if isinstance(metric_data, dict):
+                row.extend(
+                    [
+                        _format_number(metric_data.get("mean")),
+                        _format_number(metric_data.get("std")),
+                        _format_number(metric_data.get("min")),
+                        _format_number(metric_data.get("max")),
+                        _format_number(metric_data.get("cv"), decimals=4),
+                    ]
+                )
+            else:
+                row.extend(["", "", "", "", ""])
+        writer.writerow(row)
+
+
+def _write_best_configurations_section(
+    writer: _CsvWriter, best_configs: dict[str, Any], param_names: list[str]
+) -> None:
+    """Section 2: one row per objective with parameter values + metric/unit."""
+    writer.writerow(["Best Configurations"])
+    if not best_configs:
+        return
+    writer.writerow(["Configuration", *param_names, "Metric", "Unit"])
+    for config_name, config_data in best_configs.items():
+        formatted = config_name.replace("_", " ").title()
+        parameters = config_data.get("parameters", {})
+        row = [formatted]
+        row.extend(parameters.get(name, "") for name in param_names)
+        row.extend(
+            [
+                _format_number(config_data.get("metric")),
+                config_data.get("unit", ""),
+            ]
+        )
+        writer.writerow(row)
+
+
+def _write_pareto_section(
+    writer: _CsvWriter, pareto_optimal: list[dict[str, Any]], param_names: list[str]
+) -> None:
+    """Section 3: one row per non-dominated parameter combination."""
+    writer.writerow(["Pareto Optimal Points"])
+    if not pareto_optimal:
+        writer.writerow(["None"])
+        return
+    writer.writerow(param_names)
+    for combo_params in pareto_optimal:
+        writer.writerow([combo_params.get(name, "") for name in param_names])
+
+
+def _write_metadata_section(
+    writer: _CsvWriter,
+    metadata: dict[str, Any],
+    param_names: list[str],
+    result: Any,
+) -> None:
+    """Section 4: aggregation type, sweep parameters, run counts.
+
+    Schema mirrors PR #699: includes ``Aggregation Type``,
+    ``Number of Profile Runs``, and ``Number of Successful Runs`` so the
+    CSV stays byte-compatible with main's :class:`AggregateSweepCsvExporter`.
+    """
+    writer.writerow(["Metadata"])
+    writer.writerow(["Field", "Value"])
+    writer.writerow(["Aggregation Type", result.aggregation_type])
+    writer.writerow(["Sweep Parameters", ", ".join(param_names)])
+    writer.writerow(["Number of Combinations", metadata.get("num_combinations", 0)])
+    writer.writerow(["Number of Profile Runs", result.num_runs])
+    writer.writerow(["Number of Successful Runs", result.num_successful_runs])
+
+
+def _format_number(value: float | int | None, decimals: int = 2) -> str:
+    """Format a number for CSV output; numpy scalars unwrapped via ``.item()``."""
+    if value is None:
+        return ""
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float):
+        if value == float("inf"):
+            return "inf"
+        if value == float("-inf"):
+            return "-inf"
+        return f"{value:.{decimals}f}"
+    return str(value)

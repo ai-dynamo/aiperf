@@ -1,10 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import orjson
-
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models.export_models import (
     TimesliceCollectionExportData,
     TimesliceData,
@@ -19,11 +16,15 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
     Creates one JSON file containing an array of all timeslices in the format:
     {
         "timeslices": [
-            {"timeslice_index": 0, "metric_1": {...}, "metric_2": {...}},
-            {"timeslice_index": 1, "metric_1": {...}, "metric_2": {...}}
+            {"start_ns": ..., "end_ns": ..., "metric_1": {...}, ...},
+            {"start_ns": ..., "end_ns": ..., "metric_1": {...}, ...}
         ],
         "input_config": {...}
     }
+
+    Slice ordering is conveyed by position in the array — there is no
+    explicit timeslice_index field, matching the server-metrics
+    BaseTimeslice wire format.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
@@ -36,7 +37,7 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
 
         # Override file path for timeslice-specific output
         self._file_path = (
-            exporter_config.cfg.artifacts.profile_export_timeslices_json_file
+            exporter_config.config.artifacts.profile_export_timeslices_json_file
         )
         self.trace_or_debug(
             lambda: f"Initializing TimesliceMetricsJsonExporter with config: {exporter_config}",
@@ -59,14 +60,23 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
         """
         timeslices_list = []
 
-        for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
-            metric_results = self._results.timeslice_metric_results[timeslice_index]
-
+        # Slices are stored in chronological order. Position == slice index.
+        windows = self._results.timeslice_windows or []
+        for idx, metric_results in enumerate(self._results.timeslice_metric_results):
             # Reuse base class helper to prepare metrics
-            prepared_json_metrics = self._prepare_metrics_for_json(metric_results)
+            prepared_json_metrics = self._prepare_metrics_for_json(
+                metric_results.values()
+            )
 
-            # Create timeslice object with dynamic metrics
-            timeslice = TimesliceData(timeslice_index=timeslice_index)
+            # Window is parallel-indexed with the metric results in production.
+            # The bounds-check covers test paths where windows may be None or
+            # shorter than results.
+            window = windows[idx] if idx < len(windows) else None
+            timeslice = TimesliceData(
+                start_ns=window.start_ns if window else None,
+                end_ns=window.end_ns if window else None,
+                is_complete=window.is_complete if window else None,
+            )
             for tag, json_result in prepared_json_metrics.items():
                 setattr(timeslice, tag, json_result)
 
@@ -75,14 +85,9 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
         # Create collection with metadata
         export_data = TimesliceCollectionExportData(
             timeslices=timeslices_list,
-            input_config=self._cfg,
+            input_config=self._config,
         )
 
-        return orjson.dumps(
-            scrub_non_finite(
-                export_data.model_dump(
-                    mode="json", exclude_unset=True, exclude_none=True
-                )
-            ),
-            option=orjson.OPT_INDENT_2,
-        ).decode("utf-8")
+        return export_data.model_dump_json(
+            indent=2, exclude_unset=True, exclude_none=True
+        )

@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,8 +12,9 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 
 if TYPE_CHECKING:
-    from aiperf.config.config import BenchmarkConfig
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
+    from aiperf.config import BenchmarkConfig
+    from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
 @dataclass(slots=True)
@@ -19,10 +22,22 @@ class ExporterConfig:
     """Configuration for the exporter."""
 
     results: ProfileResults | None
-    cfg: "BenchmarkConfig"
+    """Profiling results from the benchmark run."""
+
+    config: BenchmarkConfig
+    """Benchmark configuration used for this run."""
+
     telemetry_results: TelemetryExportData | None
+    """Telemetry data collected during the run."""
+
     server_metrics_results: ServerMetricsResults | None = None
-    run: "BenchmarkRun | None" = None
+    """Server-side metrics results, if collected."""
+
+    steady_state_results: SteadyStateSummary | None = None
+    """Steady-state windowed metrics results, if computed."""
+
+    energy_efficiency_results: EnergyEfficiencySummary | None = None
+    """Energy efficiency metrics results, if computed."""
 
 
 @dataclass(slots=True)
@@ -30,4 +45,7 @@ class FileExportInfo:
     """Information about a file export."""
 
     export_type: str
+    """Type of export (e.g., "json", "csv")."""
+
     file_path: Path
+    """Filesystem path where the export was written."""

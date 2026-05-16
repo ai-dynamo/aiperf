@@ -23,7 +23,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
-        self._cfg = exporter_config.cfg
+        self._config = exporter_config.config
         self._exporter_config = exporter_config
         self._telemetry_results = exporter_config.telemetry_results
 
@@ -37,7 +37,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             console: Rich Console instance for formatted output
         """
 
-        if self._cfg.gpu_telemetry_disabled:
+        if not self._config.gpu_telemetry.enabled:
             return
 
         if not self._telemetry_results:
@@ -200,7 +200,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                     row.append(self._format_number(value))
 
                 metrics_table.add_row(*row)
-            except Exception as e:
+            except (AttributeError, KeyError, ValueError) as e:
                 self.debug(
                     f"Failed to retrieve metric {metric_key} for GPU {gpu_index}: {e}"
                 )
