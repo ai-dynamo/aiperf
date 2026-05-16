@@ -1,0 +1,481 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for pure helpers in ``aiperf.operator.handlers.monitor``.
+
+The end-to-end ``monitor_progress`` flow is exercised by ``test_main.py`` and
+``test_cancellation.py``. This file targets the small helper functions
+(``_classify_jobset_failure``, ``_should_poll_progress``,
+``_handle_kueue_suspension``, ``_container_status_by_name``,
+``_get_terminated_controller_info``, ``_update_worker_counts``,
+``_apply_controller_progress_status``) which have no direct unit tests.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from pytest import param
+
+from aiperf.common.enums.lifecycle_enums import SystemState
+from aiperf.operator.handlers.monitor import (
+    _apply_controller_progress_status,
+    _classify_jobset_failure,
+    _container_status_by_name,
+    _get_terminated_controller_info,
+    _handle_kueue_suspension,
+    _should_poll_progress,
+    _update_worker_counts,
+)
+from aiperf.operator.status import Phase, StatusBuilder
+
+
+def _make_status_builder() -> tuple[StatusBuilder, Any]:
+    """Return a StatusBuilder wrapping a MagicMock-backed patch with .status={}."""
+    patch = MagicMock()
+    patch.status = {}
+    return StatusBuilder(patch, {}), patch
+
+
+class TestClassifyJobsetFailure:
+    """Tests for ``_classify_jobset_failure``."""
+
+    @pytest.mark.parametrize(
+        "replicated,expected",
+        [
+            param(
+                [{"name": "controller", "failed": 1}, {"name": "workers", "failed": 0}],
+                (True, "controller"),
+                id="controller_failed",
+            ),
+            param(
+                [{"name": "controller", "failed": 0}, {"name": "workers", "failed": 2}],
+                (False, "workers"),
+                id="workers_only",
+            ),
+            param(
+                [{"name": "controller", "failed": 0}, {"name": "workers", "failed": 0}],
+                (True, None),
+                id="no_identified_failure",
+            ),
+            param([], (True, None), id="empty_status"),
+        ],
+    )  # fmt: skip
+    def test_classifies_fatal_vs_non_fatal(
+        self, replicated: list[dict[str, Any]], expected: tuple[bool, str | None]
+    ) -> None:
+        """Verify fatal/non-fatal classification per replicated-job role."""
+        jobset_status = {"replicatedJobsStatus": replicated}
+        assert _classify_jobset_failure(jobset_status) == expected
+
+
+class TestShouldPollProgress:
+    """Tests for ``_should_poll_progress``."""
+
+    @pytest.mark.parametrize(
+        "phase,succeeded,total,expected",
+        [
+            param(Phase.PENDING, 0, 0, True, id="pending_always"),
+            param(Phase.INITIALIZING, 0, 0, True, id="initializing_always"),
+            param(Phase.RUNNING, 0, 0, True, id="running_always"),
+            param(Phase.QUEUED, 0, 2, False, id="queued_no_progress"),
+            param(Phase.QUEUED, 2, 2, True, id="queued_all_succeeded"),
+            param(Phase.COMPLETED, 1, 0, True, id="completed_short_circuit_positive"),
+            param(Phase.COMPLETED, 0, 1, False, id="completed_no_succeeded"),
+        ],
+    )  # fmt: skip
+    def test_decision_matrix(
+        self, phase: Phase, succeeded: int, total: int, expected: bool
+    ) -> None:
+        """Verify the poll-decision truth table."""
+        assert _should_poll_progress(phase, succeeded, total) is expected
+
+
+class TestHandleKueueSuspension:
+    """Tests for ``_handle_kueue_suspension``."""
+
+    def test_detects_suspension_and_sets_queued_phase(self) -> None:
+        """Verify a kueue-managed suspended JobSet is marked QUEUED."""
+        sb, patch = _make_status_builder()
+        jobset = {
+            "metadata": {"labels": {"kueue.x-k8s.io/queue-name": "default"}},
+            "spec": {"suspend": True},
+        }
+
+        result = _handle_kueue_suspension(
+            jobset=jobset, current_phase=Phase.PENDING, sb=sb
+        )
+
+        assert result is True
+        assert patch.status["phase"] == str(Phase.QUEUED)
+
+    def test_ignores_suspended_but_not_kueue_managed(self) -> None:
+        """Verify a non-kueue-managed suspension is not treated as QUEUED."""
+        sb, patch = _make_status_builder()
+        jobset = {
+            "metadata": {"labels": {}},
+            "spec": {"suspend": True},
+        }
+
+        result = _handle_kueue_suspension(
+            jobset=jobset, current_phase=Phase.PENDING, sb=sb
+        )
+
+        assert result is False
+        assert "phase" not in patch.status
+
+    def test_ignores_kueue_managed_but_not_suspended(self) -> None:
+        """Verify a running kueue-managed JobSet is not marked QUEUED."""
+        sb, _patch = _make_status_builder()
+        jobset = {
+            "metadata": {"labels": {"kueue.x-k8s.io/queue-name": "default"}},
+            "spec": {"suspend": False},
+        }
+
+        result = _handle_kueue_suspension(
+            jobset=jobset, current_phase=Phase.PENDING, sb=sb
+        )
+
+        assert result is False
+
+    def test_ignores_suspension_when_phase_is_running(self) -> None:
+        """Verify post-admission suspension is not demoted to QUEUED."""
+        sb, _patch = _make_status_builder()
+        jobset = {
+            "metadata": {"labels": {"kueue.x-k8s.io/queue-name": "default"}},
+            "spec": {"suspend": True},
+        }
+
+        result = _handle_kueue_suspension(
+            jobset=jobset, current_phase=Phase.RUNNING, sb=sb
+        )
+
+        assert result is False
+
+
+class TestContainerStatusByName:
+    """Tests for ``_container_status_by_name``."""
+
+    def test_returns_matching_status(self) -> None:
+        """Verify returns the first container-status matching name."""
+        a = SimpleNamespace(name="controller", restart_count=2)
+        b = SimpleNamespace(name="sidecar", restart_count=0)
+
+        assert _container_status_by_name([a, b], "controller") is a
+        assert _container_status_by_name([a, b], "sidecar") is b
+
+    def test_returns_none_when_not_found(self) -> None:
+        """Verify returns None when no match exists."""
+        a = SimpleNamespace(name="controller")
+        assert _container_status_by_name([a], "missing") is None
+        assert _container_status_by_name([], "anything") is None
+
+
+class TestGetTerminatedControllerInfo:
+    """Tests for ``_get_terminated_controller_info``."""
+
+    def test_returns_none_when_status_missing(self) -> None:
+        """Verify returns None when the pod has no container statuses."""
+        pod = SimpleNamespace(status=SimpleNamespace(container_statuses=None))
+        assert _get_terminated_controller_info(pod) is None
+
+    def test_returns_none_when_controller_missing(self) -> None:
+        """Verify returns None when the controller container status is absent."""
+        sidecar = SimpleNamespace(name="results-sidecar", state=None)
+        pod = SimpleNamespace(status=SimpleNamespace(container_statuses=[sidecar]))
+        assert _get_terminated_controller_info(pod) is None
+
+    def test_returns_none_when_controller_still_running(self) -> None:
+        """Verify returns None when the controller is not terminated."""
+        controller = SimpleNamespace(
+            name="control-plane", state=SimpleNamespace(terminated=None)
+        )
+        sidecar = SimpleNamespace(name="results-sidecar", state=None)
+        pod = SimpleNamespace(
+            status=SimpleNamespace(container_statuses=[controller, sidecar])
+        )
+        assert _get_terminated_controller_info(pod) is None
+
+    def test_returns_none_on_zero_exit(self) -> None:
+        """Verify clean exits (exit_code==0) do not trigger recovery."""
+        terminated = SimpleNamespace(exit_code=0, reason="Completed")
+        controller = SimpleNamespace(
+            name="control-plane", state=SimpleNamespace(terminated=terminated)
+        )
+        sidecar = SimpleNamespace(name="results-sidecar", state=None)
+        pod = SimpleNamespace(
+            status=SimpleNamespace(container_statuses=[controller, sidecar])
+        )
+        assert _get_terminated_controller_info(pod) is None
+
+    def test_returns_exit_info_on_nonzero_exit(self) -> None:
+        """Verify returns (exit_code, reason) when the controller crashed."""
+        terminated = SimpleNamespace(exit_code=137, reason="OOMKilled")
+        controller = SimpleNamespace(
+            name="control-plane", state=SimpleNamespace(terminated=terminated)
+        )
+        sidecar = SimpleNamespace(name="results-sidecar", state=None)
+        pod = SimpleNamespace(
+            status=SimpleNamespace(container_statuses=[controller, sidecar])
+        )
+        assert _get_terminated_controller_info(pod) == (137, "OOMKilled")
+
+
+class TestUpdateWorkerCounts:
+    """Tests for ``_update_worker_counts``."""
+
+    def test_uses_crd_total_when_present(self) -> None:
+        """Verify the CRD status total is preferred over JobSet-derived total."""
+        sb, _patch = _make_status_builder()
+        status = {"workers": {"total": 16}}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 10,
+                    "succeeded": 0,
+                    "active": 6,
+                    "failed": 0,
+                    "suspended": 0,
+                },
+            ],
+        }
+
+        ready, succeeded, total = _update_worker_counts(
+            status=status, jobset_status=jobset_status, sb=sb
+        )
+
+        assert (ready, succeeded, total) == (10, 0, 16)
+
+    def test_derives_total_from_jobset_when_crd_missing(self) -> None:
+        """Verify total is summed from JobSet fields when CRD total is 0."""
+        sb, _patch = _make_status_builder()
+        status = {"workers": {"total": 0}}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 3,
+                    "active": 2,
+                    "succeeded": 1,
+                    "failed": 1,
+                    "suspended": 0,
+                },
+            ],
+        }
+
+        ready, succeeded, total = _update_worker_counts(
+            status=status, jobset_status=jobset_status, sb=sb
+        )
+
+        assert (ready, succeeded, total) == (3, 1, 7)
+
+    def test_fallback_total_of_one_when_all_zero(self) -> None:
+        """Verify a defensive total==1 when every JobSet count is zero."""
+        sb, _patch = _make_status_builder()
+        status = {"workers": {"total": 0}}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 0,
+                    "active": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "suspended": 0,
+                },
+            ],
+        }
+
+        _ready, _succeeded, total = _update_worker_counts(
+            status=status, jobset_status=jobset_status, sb=sb
+        )
+
+        assert total == 1
+
+    def test_no_workers_replicated_job(self) -> None:
+        """Verify zeros are returned when no 'workers' entry is present."""
+        sb, _patch = _make_status_builder()
+        status = {}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {"name": "controller", "ready": 1, "active": 0, "succeeded": 0},
+            ],
+        }
+
+        assert _update_worker_counts(
+            status=status, jobset_status=jobset_status, sb=sb
+        ) == (0, 0, 0)
+
+
+class TestApplyControllerProgressStatus:
+    """Tests for ``_apply_controller_progress_status``."""
+
+    def _progress(
+        self,
+        *,
+        current_phase: str | None,
+        workers: dict[str, int] | None = None,
+        is_complete: bool = False,
+        system_state: SystemState = SystemState.PROFILING,
+    ) -> MagicMock:
+        p = MagicMock()
+        p.current_phase = current_phase
+        p.is_complete = is_complete
+        p.system_state = system_state
+        p.workers = MagicMock()
+        p.workers.model_dump = MagicMock(
+            return_value=workers if workers is not None else {"ready": 1, "total": 1}
+        )
+        return p
+
+    def test_sets_running_when_profiling(self) -> None:
+        """Verify 'profiling' controller phase promotes the CR to RUNNING."""
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="profiling")
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
+
+        assert patch.status["currentPhase"] == "profiling"
+        assert patch.status["phase"] == str(Phase.RUNNING)
+
+    def test_sets_initializing_when_pre_profiling_in_pending(self) -> None:
+        """Verify pre-profiling phases advance PENDING to INITIALIZING."""
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="warmup")
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.PENDING)
+
+        assert patch.status["currentPhase"] == "warmup"
+        assert patch.status["phase"] == str(Phase.INITIALIZING)
+
+    def test_noop_when_controller_has_no_phase(self) -> None:
+        """Verify no phase fields are written when the controller has no phase yet."""
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase=None)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert "phase" not in patch.status
+        assert "currentPhase" not in patch.status
+
+    def test_does_not_demote_running_from_non_profiling_phase(self) -> None:
+        """Verify a RUNNING CR is not demoted back to INITIALIZING mid-run."""
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="warmup")
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        # Controller currentPhase still recorded, but CR phase unchanged.
+        assert patch.status["currentPhase"] == "warmup"
+        assert "phase" not in patch.status
+
+    def test_stamps_processing_when_profiling_complete(self) -> None:
+        """Verify 'processing' is stamped once profiling is complete (drain window).
+
+        is_complete=True from the controller means all profiling requests
+        have been sent AND all records processed; the operator is now
+        fetching results / aggregating. STAGE must reflect the drain, not
+        keep showing 'profiling' as if the workload were still in flight.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="profiling", is_complete=True)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["currentPhase"] == "processing"
+        # The CR phase stays RUNNING — terminal phase is set later by
+        # handle_completion. We only flip the in-flight stage label here.
+        assert patch.status["phase"] == str(Phase.RUNNING)
+
+    def test_keeps_profiling_when_workload_still_in_flight(self) -> None:
+        """Verify 'profiling' (not 'processing') while requests still pending."""
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="profiling", is_complete=False)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["currentPhase"] == "profiling"
+
+    def test_warmup_complete_does_not_stamp_processing(self) -> None:
+        """Verify is_complete only flips 'profiling', not earlier phases.
+
+        ``progress.is_complete`` is gated on the profiling phase finishing,
+        but a defensive check: even if a controller bug returned is_complete
+        with current_phase='warmup', we should not silently rewrite warmup
+        as processing — it'd hide a real bug.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="warmup", is_complete=True)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
+
+        assert patch.status["currentPhase"] == "warmup"
+
+    def test_stamps_subphase_from_system_state(self) -> None:
+        """Verify ``status.subPhase`` mirrors the controller's ``system_state``.
+
+        ``subPhase`` is the outer-lifecycle label (initializing → configuring →
+        ready → profiling → processing → stopping → shutdown) — distinct from
+        ``currentPhase`` (the inner benchmark stage). It is stamped on every
+        invocation so kubectl observers can see the controller advance through
+        startup before the workload ever begins.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(
+            current_phase="profiling", system_state=SystemState.PROFILING
+        )
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["subPhase"] == "profiling"
+
+    @pytest.mark.parametrize(
+        "system_state,expected",
+        [
+            param(SystemState.INITIALIZING, "initializing", id="initializing"),
+            param(SystemState.CONFIGURING, "configuring", id="configuring"),
+            param(SystemState.READY, "ready", id="ready"),
+            param(SystemState.PROFILING, "profiling", id="profiling"),
+            param(SystemState.PROCESSING, "processing", id="processing"),
+            param(SystemState.STOPPING, "stopping", id="stopping"),
+            param(SystemState.SHUTDOWN, "shutdown", id="shutdown"),
+        ],
+    )  # fmt: skip
+    def test_subphase_maps_every_system_state_value(
+        self, system_state: SystemState, expected: str
+    ) -> None:
+        """Every SystemState serializes to its lowercase enum value on the CR.
+
+        The CRD enum constraint (`crd.yaml status.properties.subPhase`) is
+        keyed on these exact strings; a drift between Python enum values and
+        CRD enum entries would cause the apiserver to reject the patch.
+        """
+        sb, patch = _make_status_builder()
+        # current_phase is required to exercise the subPhase stamp before the
+        # early return; pass any non-empty value.
+        progress = self._progress(current_phase="profiling", system_state=system_state)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["subPhase"] == expected
+
+    def test_subphase_stamped_even_when_current_phase_empty(self) -> None:
+        """``subPhase`` is stamped before the empty-current_phase early return.
+
+        The controller advances ``system_state`` through CONFIGURING and READY
+        long before any ``CreditPhase`` is active. We must not gate the
+        ``subPhase`` write behind the controller having a phase.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(
+            current_phase=None, system_state=SystemState.CONFIGURING
+        )
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
+
+        assert patch.status["subPhase"] == "configuring"
+        # Confirms we still hit the early-return after the stamp.
+        assert "currentPhase" not in patch.status
