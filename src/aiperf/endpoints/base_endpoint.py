@@ -106,6 +106,20 @@ def benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Benc
         payload["endpoint"]["template"] = template.model_dump() if hasattr(
             template, "model_dump"
         ) else template
+    else:
+        # Some pre-branch tests stash a Jinja template body under
+        # ``extra["payload_template"]`` rather than the dedicated
+        # ``template`` field. Promote it to a real TemplateConfig so the
+        # BenchmarkConfig "template is required when endpoint type is
+        # 'template'" validator passes.
+        if endpoint_cfg.type == "template" and "payload_template" in extra_dict:
+            payload["endpoint"]["template"] = {
+                "body": extra_dict["payload_template"],
+                "response_field": extra_dict.get("response_field", "text"),
+            }
+            extra_dict.pop("payload_template", None)
+            extra_dict.pop("response_field", None)
+            payload["endpoint"]["extra"] = extra_dict
     cfg = BenchmarkConfig.model_validate(payload)
     return BenchmarkRun(
         benchmark_id=uuid.uuid4().hex,

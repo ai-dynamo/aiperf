@@ -286,7 +286,12 @@ class TestChatEndpointParseResponse:
         assert parsed.data.text == '{"query": "test"}'
 
     def test_parse_response_tool_calls_with_content_prioritizes_content(self, endpoint):
-        """content takes priority over tool_calls when both present."""
+        """Mixed content+tool_calls now produces ToolCallResponseData(content=..., tool_call_text=...).
+
+        Older behavior prioritized ``content`` and dropped the tool call;
+        the FORK-mode replay path in ``build_assistant_turn`` needs both,
+        so the union shape carries content alongside the tool_call_text.
+        """
         mock_response = create_mock_response(
             123456789,
             {
@@ -307,8 +312,9 @@ class TestChatEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
-        assert isinstance(parsed.data, TextResponseData)
-        assert parsed.data.text == "Some text"
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.content == "Some text"
+        assert parsed.data.tool_call_text == '{"key": "val"}'
 
     def test_parse_response_multiple_tool_calls_concatenated(self, endpoint):
         """name+arguments from multiple tool calls are concatenated, no separator."""

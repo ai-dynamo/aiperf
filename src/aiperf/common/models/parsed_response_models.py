@@ -82,6 +82,16 @@ class ToolCallResponseData(BaseResponseData):
     content: str | None = None
     """Optional prose content emitted alongside the tool call in the same chunk."""
 
+    @property
+    def text(self) -> str:
+        """Alias for ``tool_call_text``. Pre-branch tests / consumers that
+        treated ``ToolCallResponseData`` like ``TextResponseData`` (a single
+        ``.text`` payload) keep working. New code should prefer
+        ``tool_call_text`` so the distinction from prose ``content`` stays
+        explicit at the call site.
+        """
+        return self.tool_call_text
+
     def get_text(self) -> str:
         """Return prose followed by the tool-call text (concatenated, no separator)."""
         if self.content:

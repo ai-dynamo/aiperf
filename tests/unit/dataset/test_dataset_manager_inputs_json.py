@@ -181,8 +181,9 @@ class TestDatasetManagerInputsJsonGeneration:
         caplog,
     ):
         """Test error handling when file I/O operation fails."""
+        # Branch writes via Path.write_bytes (synchronous), not aiofiles.open.
         with patch(
-            "aiofiles.open",
+            "pathlib.Path.write_bytes",
             side_effect=OSError("Permission denied"),
         ):
             await populated_dataset_manager._generate_inputs_json_file()

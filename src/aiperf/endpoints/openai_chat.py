@@ -11,6 +11,8 @@ from aiperf.common.models import (
     ParsedResponse,
     ReasoningResponseData,
     RequestInfo,
+    RequestRecord,
+    Text,
     ToolCallResponseData,
     Turn,
 )
@@ -59,6 +61,14 @@ class ChatEndpoint(BaseEndpoint):
 
         if turns[-1].raw_tools is not None:
             payload["tools"] = turns[-1].raw_tools
+        else:
+            # Walk back through prior turns so DAG FORK children inherit
+            # ``raw_tools`` from the parent turn that declared them. Stop on
+            # the first non-None value (closest ancestor wins).
+            for prior in reversed(turns[:-1]):
+                if prior.raw_tools is not None:
+                    payload["tools"] = prior.raw_tools
+                    break
 
         if turns[-1].max_tokens is not None:
             token_field = (
@@ -209,6 +219,158 @@ class ChatEndpoint(BaseEndpoint):
                     continue
                 parts.append({"type": "video_url", "video_url": {"url": content}})
 
+    def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
+        """Capture text + ``tool_calls`` from a chat response for replay.
+
+        Walks the raw responses on ``record``, accumulating ``content`` and
+        any ``tool_calls`` (reassembling streaming deltas keyed by ``index``,
+        with a fallback when ``index`` is missing so parallel tool calls
+        don't collapse), then returns a Turn whose ``raw_messages``
+        re-renders as the full assistant message — ``content`` plus
+        ``tool_calls`` — verbatim through ``_create_messages``. This means a
+        FORK-mode DAG child that inherits the parent's history sees the
+        parent's complete assistant message, not just the text.
+
+        Legacy non-streaming ``function_call`` (Chat Completions <2023, plus
+        LiteLLM / llama.cpp / older vLLM wrappers) and streaming
+        ``function_call`` deltas are normalised into the same index-keyed
+        accumulator as a synthesised function-type tool_call so downstream
+        replay sees a single shape.
+
+        Falls back to the base text-only behaviour when no ``tool_calls``
+        are present, so callers that don't care about tools see no
+        behavioural change.
+        """
+        content_parts: list[str] = []
+        tool_calls_by_index: dict[int, dict[str, Any]] = {}
+
+        for response in record.responses or []:
+            json_obj = response.get_json() if hasattr(response, "get_json") else None
+            if not json_obj:
+                continue
+            choices = json_obj.get("choices") or []
+            if not choices:
+                continue
+            self._absorb_chat_choice(
+                json_obj.get("object"),
+                choices[0],
+                content_parts,
+                tool_calls_by_index,
+            )
+
+        if not tool_calls_by_index:
+            return super().build_assistant_turn(record)
+
+        text = "".join(content_parts)
+        tool_calls = [tool_calls_by_index[k] for k in sorted(tool_calls_by_index)]
+        assistant_msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": text if text else None,
+            "tool_calls": tool_calls,
+        }
+        return Turn(role="assistant", raw_messages=[assistant_msg])
+
+    @staticmethod
+    def _absorb_chat_choice(
+        obj_type: str | None,
+        choice: dict[str, Any],
+        content_parts: list[str],
+        tool_calls_by_index: dict[int, dict[str, Any]],
+    ) -> None:
+        """Fold one ``choices[0]`` entry into the running assistant accumulators."""
+        if obj_type == "chat.completion":
+            msg = choice.get("message") or {}
+            if isinstance(msg.get("content"), str):
+                content_parts.append(msg["content"])
+            for tc in msg.get("tool_calls") or []:
+                idx = tc.get("index", len(tool_calls_by_index))
+                tool_calls_by_index[idx] = {
+                    k: v for k, v in tc.items() if k != "index"
+                }
+            ChatEndpoint._absorb_legacy_function_call(
+                msg.get("function_call"), tool_calls_by_index
+            )
+            return
+
+        if obj_type == "chat.completion.chunk":
+            delta = choice.get("delta") or {}
+            if isinstance(delta.get("content"), str):
+                content_parts.append(delta["content"])
+            for tc_delta in delta.get("tool_calls") or []:
+                ChatEndpoint._merge_tool_call_delta(tc_delta, tool_calls_by_index)
+            ChatEndpoint._merge_legacy_function_call_delta(
+                delta.get("function_call"), tool_calls_by_index
+            )
+
+    @staticmethod
+    def _absorb_legacy_function_call(
+        function_call: Any,
+        tool_calls_by_index: dict[int, dict[str, Any]],
+    ) -> None:
+        """Fold a legacy non-streaming ``function_call`` into a synthesised tool_call slot."""
+        if not isinstance(function_call, dict):
+            return
+        idx = len(tool_calls_by_index)
+        tool_calls_by_index[idx] = {
+            "type": "function",
+            "function": {
+                "name": function_call.get("name", ""),
+                "arguments": function_call.get("arguments", ""),
+            },
+        }
+
+    @staticmethod
+    def _merge_legacy_function_call_delta(
+        fn_delta: Any,
+        tool_calls_by_index: dict[int, dict[str, Any]],
+    ) -> None:
+        """Concatenate streaming ``function_call`` delta into a synthesised slot.
+
+        Legacy chunks emit ``delta.function_call={"name": ..., "arguments": ...}``
+        without an ``index``. Concatenate into a single slot keyed at index 0
+        so name/arguments fragments accumulate correctly across chunks.
+        """
+        if not isinstance(fn_delta, dict):
+            return
+        existing = tool_calls_by_index.setdefault(
+            0, {"type": "function", "function": {}}
+        )
+        existing.setdefault("type", "function")
+        fn = existing.setdefault("function", {})
+        if fn_delta.get("name"):
+            fn["name"] = fn.get("name", "") + fn_delta["name"]
+        if "arguments" in fn_delta:
+            fn["arguments"] = fn.get("arguments", "") + (fn_delta["arguments"] or "")
+
+    @staticmethod
+    def _merge_tool_call_delta(
+        tc_delta: dict[str, Any],
+        tool_calls_by_index: dict[int, dict[str, Any]],
+    ) -> None:
+        """Merge one streaming ``tool_calls`` delta into the index-keyed accumulator.
+
+        Falls back to ``len(tool_calls_by_index)`` when the server omits
+        ``index`` — defaulting to ``0`` would collapse parallel tool calls
+        into a single slot, overwriting names and concatenating arguments
+        into a Frankenstein call. Some Azure proxies and older vLLM
+        tool-call patches drop ``index`` even though the OpenAI streaming
+        spec requires it.
+        """
+        idx = tc_delta.get("index", len(tool_calls_by_index))
+        existing = tool_calls_by_index.setdefault(idx, {})
+        if tc_delta.get("id"):
+            existing["id"] = tc_delta["id"]
+        if tc_delta.get("type"):
+            existing["type"] = tc_delta["type"]
+        fn_delta = tc_delta.get("function") or {}
+        if not fn_delta:
+            return
+        fn = existing.setdefault("function", {})
+        if fn_delta.get("name"):
+            fn["name"] = fn_delta["name"]
+        if "arguments" in fn_delta:
+            fn["arguments"] = fn.get("arguments", "") + (fn_delta["arguments"] or "")
+
     def parse_response(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
@@ -290,7 +452,9 @@ class ChatEndpoint(BaseEndpoint):
         reasoning = data.get("reasoning_content") or data.get("reasoning")
         usage = json_obj.get("usage") or None
 
-        tool_call_text = "" if (content or reasoning) else _extract_tool_call_text(data)
+        # When tool_calls are present in the same delta as ``content``, both
+        # must round-trip — reassemble via ToolCallResponseData(content=...).
+        tool_call_text = "" if reasoning else _extract_tool_call_text(data)
 
         if not content and not reasoning and not tool_call_text and not usage:
             return None
@@ -300,10 +464,13 @@ class ChatEndpoint(BaseEndpoint):
                 content=content,
                 reasoning=reasoning,
             )
+        elif tool_call_text:
+            response_data = ToolCallResponseData(
+                tool_call_text=tool_call_text,
+                content=content if isinstance(content, str) and content else None,
+            )
         elif content:
             response_data = self.make_text_response_data(content)
-        elif tool_call_text:
-            response_data = ToolCallResponseData(tool_call_text=tool_call_text)
         else:
             response_data = None
 
@@ -355,12 +522,18 @@ class ChatEndpoint(BaseEndpoint):
         if reasoning:
             return ReasoningResponseData(content=content, reasoning=reasoning)
 
-        if content:
-            return self.make_text_response_data(content)
-
         tool_call_text = _extract_tool_call_text(data)
         if tool_call_text:
-            return ToolCallResponseData(tool_call_text=tool_call_text)
+            # Mixed-content chunk: prose lives in ``content`` and the tool
+            # call shape is preserved verbatim. ``ToolCallResponseData`` is
+            # the union shape that carries both.
+            return ToolCallResponseData(
+                tool_call_text=tool_call_text,
+                content=content if isinstance(content, str) and content else None,
+            )
+
+        if content:
+            return self.make_text_response_data(content)
 
         return None
 

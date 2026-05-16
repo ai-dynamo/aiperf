@@ -42,7 +42,7 @@ class ImageGenerationEndpoint(BaseEndpoint):
         if not request_info.turns:
             raise ValueError("Image generation endpoint requires at least one turn.")
 
-        turn = request_info.turns[0]
+        turn = request_info.turns[-1]
         model_endpoint = self.run.cfg
 
         if not turn.texts or not turn.texts[0].contents:
@@ -66,6 +66,17 @@ class ImageGenerationEndpoint(BaseEndpoint):
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
+
+        # Per-turn ``extra_body`` overrides endpoint-level extra and even the
+        # built-in keys (prompt, model, etc.). Matches the OpenAI client
+        # contract where ``extra_body`` is the last writer.
+        if turn.extra_body:
+            try:
+                payload.update(turn.extra_body)
+            except Exception as e:
+                self.warning(
+                    lambda exc=e: f"Failed to merge extra_body into payload: {exc}"
+                )
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload

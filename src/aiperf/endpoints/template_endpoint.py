@@ -85,7 +85,7 @@ class TemplateEndpoint(BaseEndpoint):
         if not request_info.turns:
             raise ValueError("Template endpoint requires at least one turn.")
 
-        turn = request_info.turns[0]
+        turn = request_info.turns[-1]
 
         texts, texts_by_name = self.extract_named_contents(turn.texts)
         images, images_by_name = self.extract_named_contents(turn.images)
