@@ -240,31 +240,31 @@ sweep:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="AIPerfSweepSpec.adaptive_search schema replaced singular "
-    "`objective` + `algorithm` with `objectives` (multi-objective). "
-    "Rewrite against the new shape — covered by tests/unit/orchestrator/"
-    "search_planner/ on HEAD."
-)
-def test_build_sweep_cr_dict_adaptive_search_round_trips_with_nested_objective(
+def test_build_sweep_cr_dict_adaptive_search_round_trips_with_objectives_list(
     tmp_path: Path,
 ) -> None:
-    """An ``AdaptiveSearchSweep`` body round-trips as
-    ``spec.sweep.type == 'adaptive_search'`` with a nested
-    ``objective: {metric, stat, direction}``."""
+    """An ``AdaptiveSearchSweep`` body round-trips as ``spec.sweep.type ==
+    'adaptive_search'`` with a multi-entry ``objectives: [Objective, ...]``
+    list (length-1 = single-objective BO; length-N = Pareto BO).
+
+    Exercises the post-port schema where the singular ``objective`` +
+    ``algorithm`` fields were replaced by ``objectives`` and ``planner``
+    on ``AdaptiveSearchSweep``.
+    """
     config_file = tmp_path / "adaptive.yaml"
     config_file.write_text(
         _yaml_with(
             """\
 sweep:
   type: adaptive_search
-  algorithm: bayes
+  planner: bayesian
   search_space:
     - {path: phases.profiling.concurrency, lo: 1, hi: 1000, kind: int}
-  objective:
-    metric: output_token_throughput
-    stat: avg
-    direction: maximize
+  objectives:
+    - {metric: output_token_throughput, stat: avg, direction: maximize}
+    - {metric: time_to_first_token, stat: p95, direction: minimize}
+  outcome_constraints:
+    - {metric: request_latency, op: "<=", bound: 5000.0}
   max_iterations: 30
 """
         )
@@ -275,22 +275,39 @@ sweep:
         **_kwargs(),
     )
     sweep = cr["spec"]["sweep"]
-    # type is a Literal default ("adaptive_search") and stripped by
+    # `type` is a Literal default ("adaptive_search") and stripped by
     # exclude_defaults; downstream consumers re-discriminate via SweepConfig.
-    # Discriminator presence is asserted via Pydantic round-trip below.
-    assert sweep["objective"]["metric"] == "output_token_throughput"
-    assert sweep["objective"]["direction"] == "maximize"
-    # stat is also a default ("avg") and gets stripped by exclude_defaults.
+    # Discriminator presence is asserted via the Pydantic round-trip below.
+    objectives = sweep["objectives"]
+    assert len(objectives) == 2
+    assert objectives[0]["metric"] == "output_token_throughput"
+    assert objectives[0]["direction"] == "maximize"
+    # `stat` is the default ("avg") and gets stripped by exclude_defaults.
+    assert objectives[1]["metric"] == "time_to_first_token"
+    assert objectives[1]["stat"] == "p95"
+    assert objectives[1]["direction"] == "minimize"
+
     assert sweep["maxIterations"] == 30
     assert sweep["searchSpace"][0]["path"] == "phases.profiling.concurrency"
 
-    # Round-trip through SweepConfig: re-stamping the literal type and
-    # validating with the discriminated union confirms the dump is consumable.
+    # outcome_constraints serializes through with camelCase round-trip.
+    constraints = sweep["outcomeConstraints"]
+    assert len(constraints) == 1
+    assert constraints[0]["metric"] == "request_latency"
+    assert constraints[0]["op"] == "<="
+    assert constraints[0]["bound"] == 5000.0
+
+    # Round-trip through AdaptiveSearchSweep: re-stamping the literal
+    # type and validating against the model confirms the dump is
+    # consumable by downstream code (operator CRD, sweep_controller).
     from aiperf.config.sweep import AdaptiveSearchSweep
 
     rebuilt = AdaptiveSearchSweep.model_validate({**sweep, "type": "adaptive_search"})
-    assert rebuilt.objective.metric == "output_token_throughput"
+    assert len(rebuilt.objectives) == 2
+    assert rebuilt.objectives[0].metric == "output_token_throughput"
+    assert rebuilt.objectives[1].direction == "minimize"
     assert rebuilt.max_iterations == 30
+    assert len(rebuilt.outcome_constraints) == 1
 
 
 # ---------------------------------------------------------------------------
