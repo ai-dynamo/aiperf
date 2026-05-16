@@ -8,25 +8,19 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from aiperf.config import BenchmarkRun
 from aiperf.common.models import Conversation
-from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.hf_asr import (
     _ASR_PROMPT,
     _MAX_DURATION_SECONDS,
     HFASRDatasetLoader,
 )
-from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
-def cli_config() -> CLIConfig:
-    return CLIConfig(model_names=["test-model"])
-
-
-@pytest.fixture
-async def loader(cli_config: CLIConfig) -> HFASRDatasetLoader:
+async def loader(default_user_run: BenchmarkRun) -> HFASRDatasetLoader:
     return HFASRDatasetLoader(
-        run=make_run_from_cli(cli_config),
+        run=default_user_run,
         hf_dataset_name="openslr/librispeech_asr",
         hf_split="test",
         hf_subset="clean",

@@ -4,11 +4,10 @@
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
-from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 
 
@@ -33,41 +32,88 @@ def create_jsonl_file():
 
 
 @pytest.fixture
-def create_cfg_and_composer(mock_tokenizer_cls):
-    """Create a CLIConfig and CustomDatasetComposer for testing."""
-
-    from tests.unit.conftest import make_run_from_cli
+def create_user_config_and_composer(mock_tokenizer_cls):
+    """Create an AIPerfConfig and CustomDatasetComposer for testing."""
 
     def _create():
-        config = CLIConfig.model_construct(
-            model_names=["test-model"],
-            input_file="test_data.jsonl",
-            conversation_num=5,
+        config = AIPerfConfig(
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "test_data.jsonl",
+                        "format": "single_turn",
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
         tokenizer = mock_tokenizer_cls.from_pretrained(
             "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
         )
-        run = make_run_from_cli(config)
-        composer = CustomDatasetComposer(run=run, tokenizer=tokenizer)
+        run = BenchmarkRun(
+            benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+        )
+        composer = CustomDatasetComposer(run, tokenizer)
         return config, composer
 
     return _create
 
 
 @pytest.fixture
-def default_cfg() -> CLIConfig:
-    """Create a default CLIConfig for testing."""
-    return CLIConfig(model_names=["test-model"])
+def default_user_config() -> AIPerfConfig:
+    """Create a default AIPerfConfig for testing."""
+    return AIPerfConfig(
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
+    )
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config.benchmark,
+        artifact_dir=Path("/tmp/test"),
+    )
 
 
 @pytest.fixture
-def mock_prompt_generator():
-    """Create a mock prompt generator for loader tests."""
-    generator = Mock()
-    generator.generate.return_value = "Generated prompt text"
-    generator._decoded_cache = {}
-    generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
-    return generator
+def default_user_run(default_user_config: AIPerfConfig) -> BenchmarkRun:
+    """Create a default BenchmarkRun wrapping default_user_config."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=default_user_config.benchmark,
+        artifact_dir=Path("/tmp/test"),
+    )
 
 
 @pytest.fixture

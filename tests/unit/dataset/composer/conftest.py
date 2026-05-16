@@ -1,19 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from PIL import Image
 
-from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.plugin.enums import CustomDatasetType
-from tests.unit.conftest import make_run_from_cli
-
-
-def make_run(cli_config: CLIConfig):
-    """Build a BenchmarkRun from a v1 CLIConfig fixture for composer tests."""
-    return make_run_from_cli(cli_config)
+from aiperf.config import AIPerfConfig, BenchmarkRun
 
 
 @pytest.fixture(autouse=True)
@@ -46,100 +40,125 @@ def mock_tokenizer(mock_tokenizer_cls):
 
 
 # ============================================================================
+# Base config helpers
+# ============================================================================
+
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    phases=[
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
+)
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config.benchmark,
+        artifact_dir=Path("/tmp/test"),
+    )
+
+
+def _config(**dataset_overrides) -> AIPerfConfig:
+    """Build an AIPerfConfig with a single synthetic dataset, merging overrides."""
+    dataset = {"type": "synthetic", "entries": 100, "prompts": {"isl": 128, "osl": 64}}
+    dataset.update(dataset_overrides)
+    return AIPerfConfig(
+        benchmark={**_BASE, "datasets": [{"name": "default", **dataset}]}
+    )
+
+
+# ============================================================================
 # Synthetic Composer Fixtures
 # ============================================================================
 
 
 @pytest.fixture
-def synthetic_config() -> CLIConfig:
+def synthetic_config() -> BenchmarkRun:
     """Basic synthetic configuration for testing."""
-    config = CLIConfig(
-        model_names=["test-model"],
-        conversation_num_dataset_entries=5,
-        prompt_input_tokens_mean=10,
-        prompt_input_tokens_stddev=2,
+    return _make_run(
+        _config(
+            entries=5,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def image_config() -> CLIConfig:
+def image_config() -> BenchmarkRun:
     """Synthetic configuration with image generation enabled."""
-    config = CLIConfig(
-        model_names=["test-model"],
-        conversation_num_dataset_entries=3,
-        prompt_input_tokens_mean=10,
-        prompt_input_tokens_stddev=2,
-        image_batch_size=1,
-        image_width_mean=10,
-        image_height_mean=10,
+    return _make_run(
+        _config(
+            entries=3,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            images={
+                "batch_size": 1,
+                "width": {"mean": 10},
+                "height": {"mean": 10},
+            },
+        )
     )
-    return config
 
 
 @pytest.fixture
-def audio_config() -> CLIConfig:
+def audio_config() -> BenchmarkRun:
     """Synthetic configuration with audio generation enabled."""
-    config = CLIConfig(
-        model_names=["test-model"],
-        conversation_num_dataset_entries=3,
-        prompt_input_tokens_mean=10,
-        prompt_input_tokens_stddev=2,
-        audio_batch_size=1,
-        audio_length_mean=2,
+    return _make_run(
+        _config(
+            entries=3,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            audio={"batch_size": 1, "length": {"mean": 2}},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def prefix_prompt_config() -> CLIConfig:
+def prefix_prompt_config() -> BenchmarkRun:
     """Synthetic configuration with prefix prompts enabled."""
-    config = CLIConfig(
-        model_names=["test-model"],
-        conversation_num_dataset_entries=5,
-        prompt_input_tokens_mean=10,
-        prompt_input_tokens_stddev=2,
-        prompt_prefix_pool_size=3,
-        prompt_prefix_length=20,
+    return _make_run(
+        _config(
+            entries=5,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            prefix_prompts={"pool_size": 3, "length": 20},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def multimodal_config() -> CLIConfig:
+def multimodal_config() -> BenchmarkRun:
     """Synthetic configuration with multimodal data generation enabled."""
-    config = CLIConfig(
-        model_names=["test-model"],
-        conversation_num_dataset_entries=2,
-        prompt_batch_size=2,
-        prompt_input_tokens_mean=10,
-        prompt_input_tokens_stddev=2,
-        prompt_prefix_pool_size=2,
-        prompt_prefix_length=15,
-        image_batch_size=2,
-        image_width_mean=10,
-        image_height_mean=10,
-        audio_batch_size=2,
-        audio_length_mean=2,
+    return _make_run(
+        _config(
+            entries=2,
+            prompts={
+                "isl": {"mean": 10, "stddev": 2},
+                "osl": 64,
+                "batch_size": 2,
+            },
+            prefix_prompts={"pool_size": 2, "length": 15},
+            images={
+                "batch_size": 2,
+                "width": {"mean": 10},
+                "height": {"mean": 10},
+            },
+            audio={"batch_size": 2, "length": {"mean": 2}},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def multiturn_config():
+def multiturn_config() -> BenchmarkRun:
     """Synthetic configuration with multiturn settings."""
-    config = CLIConfig(
-        model_names=["test-model"],
-        conversation_num=3,
-        conversation_num_dataset_entries=4,
-        conversation_turn_mean=2,
-        conversation_turn_stddev=0,
-        conversation_turn_delay_mean=1500,
-        conversation_turn_delay_stddev=0,
-        prompt_input_tokens_mean=10,
-        prompt_input_tokens_stddev=2,
+    return _make_run(
+        _config(
+            entries=4,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            turns={"mean": 2, "stddev": 0},
+            turn_delay={"mean": 1500, "stddev": 0},
+        )
     )
-    return config
 
 
 # ============================================================================
@@ -148,23 +167,40 @@ def multiturn_config():
 
 
 @pytest.fixture
-def custom_config() -> CLIConfig:
+def custom_config() -> BenchmarkRun:
     """Basic custom configuration for testing."""
-    # Use model_construct to bypass validation for testing
-    return CLIConfig.model_construct(
-        model_names=["test-model"],
-        input_file="test_data.jsonl",
-        custom_dataset_type=CustomDatasetType.SINGLE_TURN,
-        conversation_num_dataset_entries=5,
+    return _make_run(
+        AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "test_data.jsonl",
+                        "format": "single_turn",
+                    }
+                ],
+            },
+        )
     )
 
 
 @pytest.fixture
-def trace_config() -> CLIConfig:
+def trace_config() -> BenchmarkRun:
     """Configuration for TRACE dataset type."""
-    # Use model_construct to bypass validation for testing
-    return CLIConfig.model_construct(
-        model_names=["test-model"],
-        input_file="trace_data.jsonl",
-        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+    return _make_run(
+        AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "trace_data.jsonl",
+                        "format": "mooncake_trace",
+                    }
+                ],
+            },
+        )
     )

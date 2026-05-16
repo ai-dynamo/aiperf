@@ -6,10 +6,19 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import ValidationError
 
-from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config import AIPerfConfig
 from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
-from tests.unit.conftest import make_run_from_cli
+from tests.unit.dataset.loader.conftest import _make_run
+
+# Common base fields for creating AIPerfConfig in tests
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    phases=[
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
+)
 
 # ============================================================================
 # BailianTrace Model Tests
@@ -111,32 +120,53 @@ class TestBailianTraceDatasetLoader:
         return generator
 
     @pytest.fixture
-    def default_cfg(self):
-        return CLIConfig(model_names=["test-model"])
+    def default_user_config(self):
+        return AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "dummy.jsonl",
+                        "format": "mooncake_trace",
+                    }
+                ],
+            }
+        )
 
-    def _make_cfg(
+    def _make_config(
         self,
         start_offset: int | None = None,
         end_offset: int | None = None,
         file: str | None = None,
-    ) -> CLIConfig:
-        has_offsets = start_offset is not None or end_offset is not None
-        input_kwargs: dict = {}
-        if has_offsets:
-            input_kwargs = {
-                "file": file,
-                "fixed_schedule": True,
-                "fixed_schedule_start_offset": start_offset,
-                "fixed_schedule_end_offset": end_offset,
-            }
-        return CLIConfig(
-            model_names=["test-model"],
-            **input_kwargs,
+    ) -> AIPerfConfig:
+        load_kwargs: dict = {"type": "fixed_schedule", "requests": 100}
+        if start_offset is not None:
+            load_kwargs["start_offset"] = start_offset
+            load_kwargs["auto_offset"] = False
+        if end_offset is not None:
+            load_kwargs["end_offset"] = end_offset
+        return AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": file or "dummy.jsonl",
+                        "format": "mooncake_trace",
+                    }
+                ],
+                "phases": [{"name": "default", **load_kwargs}],
+            },
         )
 
     # ---- basic loading ----
 
-    def test_load_basic(self, create_jsonl_file, mock_prompt_generator, default_cfg):
+    def test_load_basic(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
         content = [
             '{"chat_id": 1, "parent_chat_id": -1, "timestamp": 1.0, "input_length": 100, "output_length": 40, "type": "text", "turn": 1, "hash_ids": [10, 20]}',
             '{"chat_id": 2, "parent_chat_id": -1, "timestamp": 2.0, "input_length": 200, "output_length": 80, "type": "text", "turn": 1, "hash_ids": [30]}',
@@ -145,7 +175,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -156,7 +186,7 @@ class TestBailianTraceDatasetLoader:
         assert all_traces[1].input_length == 200
 
     def test_timestamps_converted_to_milliseconds(
-        self, create_jsonl_file, mock_prompt_generator, default_cfg
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
         content = [
             '{"chat_id": 1, "timestamp": 1.5, "input_length": 10, "output_length": 5}',
@@ -165,7 +195,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -174,7 +204,7 @@ class TestBailianTraceDatasetLoader:
         assert trace.timestamp == 1500.0
 
     def test_skips_empty_lines(
-        self, create_jsonl_file, mock_prompt_generator, default_cfg
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
         content = [
             '{"chat_id": 1, "timestamp": 1.0, "input_length": 10, "output_length": 5}',
@@ -185,7 +215,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -196,7 +226,7 @@ class TestBailianTraceDatasetLoader:
     # ---- multi-turn grouping ----
 
     def test_groups_by_parent_chat_id(
-        self, create_jsonl_file, mock_prompt_generator, default_cfg
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
         """Entries with the same root should be grouped into one session."""
         content = [
@@ -208,7 +238,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -220,7 +250,7 @@ class TestBailianTraceDatasetLoader:
         assert [t.turn for t in session] == [1, 2, 3]
 
     def test_separate_sessions(
-        self, create_jsonl_file, mock_prompt_generator, default_cfg
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
         """Independent root entries form separate sessions."""
         content = [
@@ -231,7 +261,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -239,7 +269,7 @@ class TestBailianTraceDatasetLoader:
         assert len(dataset) == 2
 
     def test_turns_sorted_within_session(
-        self, create_jsonl_file, mock_prompt_generator, default_cfg
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
         """Turns are sorted even if JSONL order differs."""
         content = [
@@ -251,7 +281,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -287,10 +317,10 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = self._make_cfg(start_offset, end_offset, file=filename)
+        config = self._make_config(start_offset, end_offset, file=filename)
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -310,10 +340,10 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = self._make_cfg(1000, 3000, file=filename)
+        config = self._make_config(1000, 3000, file=filename)
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         loader.load_dataset()
@@ -341,14 +371,24 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = CLIConfig(
-            model_names=["test-model"],
-            input_file=filename,
-            synthesis_max_isl=max_isl,
+        synthesis = {"max_isl": max_isl} if max_isl is not None else {}
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": filename,
+                        "format": "mooncake_trace",
+                        **({"synthesis": synthesis} if synthesis else {}),
+                    }
+                ],
+            },
         )
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -375,14 +415,24 @@ class TestBailianTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = CLIConfig(
-            model_names=["test-model"],
-            input_file=filename,
-            synthesis_max_osl=max_osl,
+        synthesis = {"max_osl": max_osl} if max_osl is not None else {}
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": filename,
+                        "format": "mooncake_trace",
+                        **({"synthesis": synthesis} if synthesis else {}),
+                    }
+                ],
+            },
         )
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
@@ -409,7 +459,7 @@ class TestBailianTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_convert_to_conversations(
-        self, mock_parallel_decode, mock_prompt_generator, default_cfg
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
     ):
         mock_parallel_decode.return_value = ["decoded prompt 1", "decoded prompt 2"]
 
@@ -436,7 +486,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -446,15 +496,15 @@ class TestBailianTraceDatasetLoader:
         assert conversations[0].turns[0].timestamp == 1000.0
         assert conversations[0].turns[0].max_tokens == 50
 
-    def test_convert_empty_data(self, mock_prompt_generator, default_cfg):
+    def test_convert_empty_data(self, mock_prompt_generator, default_user_config):
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         assert loader.convert_to_conversations({}) == []
 
-    def test_convert_without_hash_ids(self, mock_prompt_generator, default_cfg):
+    def test_convert_without_hash_ids(self, mock_prompt_generator, default_user_config):
         """When hash_ids is empty, falls back to normal prompt generation."""
         trace_data = {
             "1": [
@@ -469,7 +519,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -481,7 +531,7 @@ class TestBailianTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_cfg
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
     ):
         """strict=True in zip guards against silent data loss."""
         mock_parallel_decode.return_value = ["only one"]  # expecting 2
@@ -509,7 +559,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
 
@@ -520,7 +570,7 @@ class TestBailianTraceDatasetLoader:
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_multi_turn_conversation_ordering(
-        self, mock_parallel_decode, mock_prompt_generator, default_cfg
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
     ):
         mock_parallel_decode.return_value = [
             "prompt turn 1",
@@ -561,7 +611,7 @@ class TestBailianTraceDatasetLoader:
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(default_cfg),
+            run=_make_run(default_user_config),
             prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -583,13 +633,33 @@ def _make_synthesis_config(
     speedup_ratio: float = 1.0,
     prefix_len_multiplier: float = 1.0,
     max_isl: int | None = None,
-) -> CLIConfig:
-    return CLIConfig.model_construct(
-        model_names=["test-model"],
-        input_file="dummy.jsonl",
-        synthesis_speedup_ratio=speedup_ratio,
-        synthesis_prefix_len_multiplier=prefix_len_multiplier,
-        synthesis_max_isl=max_isl,
+    block_size: int = 16,
+) -> AIPerfConfig:
+    synthesis: dict = {
+        "speedup_ratio": speedup_ratio,
+        "prefix_len_multiplier": prefix_len_multiplier,
+    }
+    if max_isl is not None:
+        synthesis["max_isl"] = max_isl
+    return AIPerfConfig(
+        benchmark={
+            **_BASE,
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "file",
+                    "path": "dummy.jsonl",
+                    "format": "mooncake_trace",
+                    "synthesis": synthesis,
+                },
+                {
+                    "name": "synthetic",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
+                },
+            ],
+        },
     )
 
 
@@ -623,11 +693,11 @@ class TestBailianTraceSynthesisIntegration:
                 ),
             ],
         }
-        cli_config = _make_synthesis_config(speedup_ratio=2.0)
+        config = _make_synthesis_config(speedup_ratio=2.0)
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         result = loader._apply_synthesis(data)
@@ -656,11 +726,11 @@ class TestBailianTraceSynthesisIntegration:
                 ),
             ],
         }
-        cli_config = _make_synthesis_config(speedup_ratio=2.0)
+        config = _make_synthesis_config(speedup_ratio=2.0)
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         result = loader._apply_synthesis(data)
@@ -681,11 +751,11 @@ class TestBailianTraceSynthesisIntegration:
                 ),
             ],
         }
-        cli_config = _make_synthesis_config(speedup_ratio=2.0)
+        config = _make_synthesis_config(speedup_ratio=2.0)
 
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         result = loader._apply_synthesis(data)
@@ -695,10 +765,10 @@ class TestBailianTraceSynthesisIntegration:
                 assert isinstance(trace, BailianTrace)
 
     def test_empty_input(self, mock_prompt_generator):
-        cli_config = _make_synthesis_config(speedup_ratio=2.0)
+        config = _make_synthesis_config(speedup_ratio=2.0)
         loader = BailianTraceDatasetLoader(
             filename="dummy.jsonl",
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         assert loader._apply_synthesis({}) == {}
@@ -710,10 +780,10 @@ class TestBailianTraceSynthesisIntegration:
         ]
         filename = create_jsonl_file(content)
 
-        cli_config = _make_synthesis_config(speedup_ratio=2.0)
+        config = _make_synthesis_config(speedup_ratio=2.0)
         loader = BailianTraceDatasetLoader(
             filename=filename,
-            run=make_run_from_cli(cli_config),
+            run=_make_run(config),
             prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()

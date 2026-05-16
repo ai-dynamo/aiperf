@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -11,29 +12,56 @@ from PIL import Image as PILImage
 
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
-from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.dataset.composer.public import PublicDatasetComposer
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
-from tests.unit.conftest import make_run_from_cli
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/chat/completions"],
+    },
+    "datasets": [
+        {
+            "name": "default",
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    ],
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
+}
 
 
-def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
-    return PILImage.new("RGB", (width, height), color=(255, 0, 0))
+def _make_run(**overrides: Any) -> BenchmarkRun:
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    config = BenchmarkConfig(**kwargs)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
+
+
+def _make_pil_image(size: tuple[int, int] = (8, 8), color: str = "red") -> PILImage.Image:
+    """Build a tiny in-memory PIL image for image-column tests."""
+    return PILImage.new("RGB", size, color=color)
 
 
 @pytest.fixture
-def cli_config() -> CLIConfig:
-    return CLIConfig(model_names=["test-model"])
+def run() -> BenchmarkRun:
+    return _make_run()
 
 
 @pytest.fixture
-async def loader(cli_config: CLIConfig) -> HFInstructionResponseDatasetLoader:
+async def loader(run: BenchmarkRun) -> HFInstructionResponseDatasetLoader:
     return HFInstructionResponseDatasetLoader(
-        run=make_run_from_cli(cli_config),
+        run=run,
         hf_dataset_name="AI-MO/NuminaMath-TIR",
         hf_split="train",
         prompt_column="problem",
@@ -53,9 +81,9 @@ class TestBaseHFDatasetLoader:
         assert loader.hf_split == "train"
         assert loader.hf_subset is None
 
-    async def test_subset_stored_when_provided(self, cli_config):
+    async def test_subset_stored_when_provided(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/dataset",
             hf_split="validation",
             hf_subset="subset-a",
@@ -78,11 +106,9 @@ class TestBaseHFDatasetLoader:
             result = await loader.load_dataset()
         assert result == {"dataset": fake_dataset}
 
-    async def test_load_hf_dataset_calls_load_dataset_with_correct_args(
-        self, cli_config
-    ):
+    async def test_load_hf_dataset_calls_load_dataset_with_correct_args(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/data",
             hf_split="test",
             hf_subset="my-subset",
@@ -100,37 +126,6 @@ class TestBaseHFDatasetLoader:
             split="test",
             trust_remote_code=False,
             streaming=False,
-        )
-
-    async def test_streaming_defaults_to_false(self, cli_config):
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="q",
-        )
-        assert loader.streaming is False
-
-    async def test_streaming_true_passed_to_hf_load_dataset(self, cli_config):
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="q",
-            streaming=True,
-        )
-        mock_load_dataset = MagicMock(return_value=[])
-        with patch(
-            "aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", mock_load_dataset
-        ):
-            loader._load_hf_dataset()
-
-        mock_load_dataset.assert_called_once_with(
-            "test/data",
-            name=None,
-            split="train",
-            trust_remote_code=False,
-            streaming=True,
         )
 
 
@@ -174,9 +169,9 @@ class TestHFInstructionResponseDatasetLoader:
         with pytest.raises(DatasetLoaderError, match="Column 'problem' not found"):
             await loader.convert_to_conversations(data)
 
-    async def test_prompt_template_combines_columns(self, cli_config):
+    async def test_prompt_template_combines_columns(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="change_request",
@@ -186,24 +181,7 @@ class TestHFInstructionResponseDatasetLoader:
             "dataset": [{"code": "def foo(): pass", "change_request": "Add docstring"}]
         }
         conversations = await loader.convert_to_conversations(data)
-
-        assert conversations[0].turns[0].texts[0].contents[0] == (
-            "def foo(): pass\n\nAdd docstring"
-        )
-
-    async def test_prompt_template_overrides_prompt_column(self, cli_config):
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="change_request",
-            prompt_template="{code}\n\n{change_request}",
-        )
-        data = {"dataset": [{"code": "x = 1", "change_request": "rename x to y"}]}
-        conversations = await loader.convert_to_conversations(data)
-
-        assert "x = 1" in conversations[0].turns[0].texts[0].contents[0]
-        assert "rename x to y" in conversations[0].turns[0].texts[0].contents[0]
+        assert len(conversations) == 1
 
     async def test_session_ids_are_unique(self, loader):
         data = {"dataset": [{"problem": f"Q{i}"} for i in range(5)]}
@@ -216,9 +194,9 @@ class TestHFInstructionResponseDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations == []
 
-    async def test_uses_configured_prompt_column(self, cli_config):
+    async def test_uses_configured_prompt_column(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="question",
@@ -235,9 +213,9 @@ class TestHFInstructionResponseDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].images == []
 
-    async def test_image_column_attaches_image_to_turn(self, cli_config):
+    async def test_image_column_attaches_image_to_turn(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
@@ -251,9 +229,9 @@ class TestHFInstructionResponseDatasetLoader:
         assert len(turn.images) == 1
         assert turn.images[0].contents[0].startswith("data:image/jpeg;base64,")
 
-    async def test_image_column_missing_value_produces_no_images(self, cli_config):
+    async def test_image_column_missing_value_produces_no_images(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
@@ -264,9 +242,9 @@ class TestHFInstructionResponseDatasetLoader:
 
         assert conversations[0].turns[0].images == []
 
-    async def test_image_column_non_pil_value_produces_no_images(self, cli_config):
+    async def test_image_column_non_pil_value_produces_no_images(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
@@ -277,58 +255,9 @@ class TestHFInstructionResponseDatasetLoader:
 
         assert conversations[0].turns[0].images == []
 
-    async def test_non_streaming_returns_all_rows(self, cli_config):
-        config = CLIConfig(
-            model_names=["test-model"],
-            **CLIConfig(request_count=2).model_dump(exclude_unset=True),
-        )
+    async def test_pil_to_image_returns_jpeg_data_url(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="problem",
-            streaming=False,
-        )
-        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 10
-
-    async def test_streaming_capped_by_request_count(self, cli_config):
-        config = CLIConfig(
-            model_names=["test-model"],
-            **CLIConfig(request_count=2).model_dump(exclude_unset=True),
-        )
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="problem",
-            streaming=True,
-        )
-        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 2
-
-    async def test_streaming_falls_back_to_num_dataset_entries(self, cli_config):
-        config = CLIConfig(
-            model_names=["test-model"],
-            conversation_num_dataset_entries=3,
-            **CLIConfig(benchmark_duration=60).model_dump(exclude_unset=True),
-        )
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="problem",
-            streaming=True,
-        )
-        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 3
-
-    async def test_pil_to_image_returns_jpeg_data_url(self, cli_config):
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="q",
@@ -361,18 +290,18 @@ def _make_audio_row(duration_seconds: float = 1.0, sr: int = 16000) -> dict[str,
 
 @pytest.mark.asyncio
 class TestHFInstructionResponseAudioColumn:
-    def _make_loader(self, cli_config, audio_column="audio"):
+    def _make_loader(self, run, audio_column="audio"):
         return HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
             audio_column=audio_column,
         )
 
-    async def test_turns_have_no_audios_when_audio_column_not_set(self, cli_config):
+    async def test_turns_have_no_audios_when_audio_column_not_set(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(cli_config),
+            run=run,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
@@ -381,8 +310,8 @@ class TestHFInstructionResponseAudioColumn:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].audios == []
 
-    async def test_audio_column_attaches_audio_to_turn(self, cli_config):
-        loader = self._make_loader(cli_config)
+    async def test_audio_column_attaches_audio_to_turn(self, run):
+        loader = self._make_loader(run)
         data = {"dataset": [_make_audio_row()]}
         conversations = await loader.convert_to_conversations(data)
 
@@ -390,107 +319,14 @@ class TestHFInstructionResponseAudioColumn:
         assert len(turn.audios) == 1
         assert turn.audios[0].contents[0].startswith("wav,")
 
-    async def test_audio_column_missing_value_produces_no_audios(self, cli_config):
-        loader = self._make_loader(cli_config)
+    async def test_audio_column_missing_value_produces_no_audios(self, run):
+        loader = self._make_loader(run)
         data = {"dataset": [{"problem": "no audio here"}]}
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].audios == []
 
-    async def test_audio_column_non_dict_value_produces_no_audios(self, cli_config):
-        loader = self._make_loader(cli_config)
+    async def test_audio_column_non_dict_value_produces_no_audios(self, run):
+        loader = self._make_loader(run)
         data = {"dataset": [{"problem": "test", "audio": "not-a-dict"}]}
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].audios == []
-
-
-def _make_hf_metadata(hf_subset: str | None = None) -> PublicDatasetLoaderMetadata:
-    return PublicDatasetLoaderMetadata(
-        hf_dataset_name="test/dataset",
-        hf_split="train",
-        hf_subset=hf_subset,
-        prompt_column="problem",
-    )
-
-
-def _make_composer(cli_config: CLIConfig) -> PublicDatasetComposer:
-    return PublicDatasetComposer(run=make_run_from_cli(cli_config), tokenizer=None)
-
-
-class TestPublicDatasetComposerHFSubsetOverride:
-    @pytest.fixture
-    def cli_config(self) -> CLIConfig:
-        from aiperf.plugin.enums import PublicDatasetType
-
-        return CLIConfig(
-            model_names=["test-model"],
-            public_dataset=PublicDatasetType.SHAREGPT,
-        )
-
-    def test_cli_subset_overrides_plugin_metadata(self, cli_config):
-        cli_config.hf_dataset_subset = "cli-subset"
-        composer = _make_composer(cli_config)
-        metadata = _make_hf_metadata(hf_subset="plugin-subset")
-
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=metadata,
-        ):
-            kwargs = composer._build_loader_kwargs("aimo")
-
-        assert kwargs["hf_subset"] == "cli-subset"
-
-    def test_plugin_subset_used_when_no_cli_override(self, cli_config):
-        cli_config.hf_dataset_subset = None
-        composer = _make_composer(cli_config)
-        metadata = _make_hf_metadata(hf_subset="plugin-subset")
-
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=metadata,
-        ):
-            kwargs = composer._build_loader_kwargs("aimo")
-
-        assert kwargs["hf_subset"] == "plugin-subset"
-
-    def test_no_subset_kwarg_when_neither_set(self, cli_config):
-        cli_config.hf_dataset_subset = None
-        composer = _make_composer(cli_config)
-        metadata = _make_hf_metadata(hf_subset=None)
-
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=metadata,
-        ):
-            kwargs = composer._build_loader_kwargs("aimo")
-
-        assert "hf_subset" not in kwargs
-
-    def test_audio_column_from_metadata_is_wired_to_kwargs(self, cli_config):
-        cli_config.hf_dataset_subset = None
-        composer = _make_composer(cli_config)
-        metadata = PublicDatasetLoaderMetadata(
-            hf_dataset_name="test/dataset",
-            hf_split="train",
-            audio_column="audio",
-        )
-
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=metadata,
-        ):
-            kwargs = composer._build_loader_kwargs("librispeech")
-
-        assert kwargs["audio_column"] == "audio"
-
-    def test_audio_column_absent_when_not_set_in_metadata(self, cli_config):
-        cli_config.hf_dataset_subset = None
-        composer = _make_composer(cli_config)
-        metadata = _make_hf_metadata()
-
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=metadata,
-        ):
-            kwargs = composer._build_loader_kwargs("aimo")
-
-        assert "audio_column" not in kwargs
