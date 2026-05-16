@@ -8,17 +8,22 @@ from multiprocessing.context import ForkProcess, SpawnProcess
 from pathlib import Path
 from typing import Any, TypeAlias
 
+import msgspec
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import (
     InputsFile,
     JsonExportData,
-    MetricRecordInfo,
-    RawRecordInfo,
     ServerMetricsExportData,
     SessionPayloads,
     SlimRecord,
+)
+from aiperf.common.models.record_models import (
+    MetricRecordInfo,
+    RawRecordInfo,
+    decode_metric_record_info_json,
+    decode_raw_record_info_json,
 )
 
 
@@ -27,9 +32,16 @@ class AIPerfRunnerResult:
     """AIPerf subprocess result."""
 
     exit_code: int
+    """Process exit code (0 = success)."""
+
     output_dir: Path
+    """Directory containing benchmark output artifacts."""
+
     stdout: str = ""
+    """Captured standard output from the process."""
+
     stderr: str = ""
+    """Captured standard error from the process."""
 
 
 AIPerfRunnerFn: TypeAlias = Callable[[list[str], float], AIPerfRunnerResult]
@@ -40,9 +52,16 @@ class AIPerfMockServer:
     """AIPerfMockServer server info."""
 
     host: str
+    """Hostname the mock server is bound to."""
+
     port: int
+    """Port the mock server is listening on."""
+
     url: str
+    """Base URL for the mock server."""
+
     process: SpawnProcess | ForkProcess
+    """Subprocess running the mock server."""
 
     @property
     def dcgm_urls(self) -> list[str]:
@@ -79,17 +98,40 @@ class VideoDetails:
     """Video file metadata extracted from ffprobe."""
 
     format_name: str
+    """Container format name (e.g. 'mp4', 'webm')."""
+
     duration: float
+    """Video duration in seconds."""
+
     codec_name: str
+    """Video codec name (e.g. 'h264', 'vp9')."""
+
     width: int
+    """Video frame width in pixels."""
+
     height: int
+    """Video frame height in pixels."""
+
     fps: float
+    """Frames per second."""
+
     pix_fmt: str | None = None
+    """Pixel format (e.g. 'yuv420p')."""
+
     is_fragmented: bool = False
+    """Whether the container uses fragmented MP4."""
+
     has_audio: bool = False
+    """Whether the video contains an audio stream."""
+
     audio_codec: str | None = None
+    """Audio codec name if audio is present."""
+
     audio_sample_rate: int | None = None
+    """Audio sample rate in Hz if audio is present."""
+
     audio_channels: int | None = None
+    """Number of audio channels if audio is present."""
 
 
 class AIPerfResults:
@@ -107,6 +149,7 @@ class AIPerfResults:
         self.csv = self._load_text_file("**/*aiperf.csv")
         self.inputs = self._load_inputs()
         self.jsonl = self._load_jsonl_records()
+        self.csv_records = self._load_csv_records()
         self.raw_records = self._load_raw_records()
         self.log = self._load_text_file("**/logs/aiperf*.log")
 
@@ -145,11 +188,11 @@ class AIPerfResults:
         return JsonExportData.model_validate_json(file_path.read_text())
 
     def _load_inputs(self) -> InputsFile | None:
-        """Load inputs file as Pydantic model."""
+        """Load inputs file as a msgspec Struct."""
         file_path = self._find_file("**/inputs.json")
-        return (
-            InputsFile.model_validate_json(file_path.read_text()) if file_path else None
-        )
+        if not file_path:
+            return None
+        return msgspec.json.decode(file_path.read_bytes(), type=InputsFile)
 
     def _load_jsonl_records(self) -> list[MetricRecordInfo] | None:
         """Load JSONL records as Pydantic models."""
@@ -161,8 +204,21 @@ class AIPerfResults:
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(MetricRecordInfo.model_validate_json(line))
+                    records.append(decode_metric_record_info_json(line))
         return records
+
+    def _load_csv_records(self) -> list[dict[str, str]] | None:
+        """Load CSV per-record export as list of dicts."""
+        import csv
+        import io
+
+        file_path = self._find_file("**/*profile_export_records.csv")
+        if not file_path:
+            return None
+
+        content = file_path.read_text(encoding="utf-8")
+        reader = csv.DictReader(io.StringIO(content))
+        return list(reader)
 
     def _load_raw_records(self) -> list[RawRecordInfo] | None:
         """Load raw records as Pydantic models."""
@@ -174,7 +230,7 @@ class AIPerfResults:
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(RawRecordInfo.model_validate_json(line))
+                    records.append(decode_raw_record_info_json(line))
         return records
 
     def _load_server_metrics_json(self) -> ServerMetricsExportData | None:
@@ -185,16 +241,19 @@ class AIPerfResults:
         return ServerMetricsExportData.model_validate_json(file_path.read_text())
 
     def _load_server_metrics_jsonl(self) -> list[SlimRecord] | None:
-        """Load server metrics JSONL records as Pydantic models."""
+        """Load server metrics JSONL records as msgspec structs."""
         file_path = self._find_file("**/*server_metrics_export.jsonl")
         if not file_path:
             return None
 
+        import msgspec
+
+        decoder = msgspec.json.Decoder(SlimRecord)
         records = []
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(SlimRecord.model_validate_json(line))
+                    records.append(decoder.decode(line))
         return records
 
     @property
@@ -206,6 +265,7 @@ class AIPerfResults:
                 bool(self.csv),
                 self.inputs is not None,
                 self.jsonl is not None,
+                self.csv_records is not None,
             )
         )
 

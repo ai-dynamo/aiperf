@@ -5,23 +5,24 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import zmq.asyncio
 
 from aiperf.common.base_comms import BaseCommunication
 from aiperf.common.enums import CommAddress, LifecycleState
 from aiperf.common.exceptions import InvalidStateError
+from aiperf.common.message_codecs import codec_cache_key
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.singleton import Singleton
-from aiperf.config.comm import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
+from aiperf.config import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
 if TYPE_CHECKING:
     from aiperf.common.protocols import CommunicationClientProtocol
     from aiperf.common.types import CommAddressType
-    from aiperf.config.comm.base import BaseZMQCommunicationConfig
+    from aiperf.config import BaseZMQCommunicationConfig
     from aiperf.plugin.enums import CommClientType
 
 
@@ -41,11 +42,39 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
 
         self.context = zmq.asyncio.Context.instance()
         self._clients_cache: dict[
-            tuple[CommClientType, CommAddressType, bool], CommunicationClientProtocol
+            tuple[CommClientType, CommAddressType, bool, Any],
+            CommunicationClientProtocol,
         ] = {}
 
         self._ensure_ipc_directory()
         self.debug(f"ZMQ communication using protocol: {type(self.config).__name__}")
+
+    @staticmethod
+    def _freeze_cache_value(value: Any) -> Any:
+        """Convert kwargs into a deterministic, hashable cache key fragment."""
+        if isinstance(value, dict):
+            return tuple(
+                sorted(
+                    (
+                        BaseZMQCommunication._freeze_cache_value(k),
+                        BaseZMQCommunication._freeze_cache_value(v),
+                    )
+                    for k, v in value.items()
+                )
+            )
+        if isinstance(value, (list, tuple)):
+            return tuple(BaseZMQCommunication._freeze_cache_value(v) for v in value)
+        if isinstance(value, (set, frozenset)):
+            return tuple(
+                sorted(BaseZMQCommunication._freeze_cache_value(v) for v in value)
+            )
+        if isinstance(value, type):
+            return ("type", value.__module__, value.__qualname__)
+        if hasattr(value, "cache_key"):
+            return ("codec", codec_cache_key(value))
+        if value is None or isinstance(value, (str, int, float, bool, bytes)):
+            return value
+        return ("repr", repr(value))
 
     def _ensure_ipc_directory(self) -> None:
         """Create IPC socket directory if the config specifies one."""
@@ -79,8 +108,20 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
             additional_bind_address: Optional second address to bind to for dual-bind mode (e.g., IPC + TCP).
         """
-        if (client_type, address, bind) in self._clients_cache:
-            return self._clients_cache[(client_type, address, bind)]
+        cache_kwargs = {
+            **kwargs,
+            "socket_ops": socket_ops,
+            "max_pull_concurrency": max_pull_concurrency,
+            "additional_bind_address": additional_bind_address,
+        }
+        cache_key = (
+            client_type,
+            address,
+            bind,
+            self._freeze_cache_value(cache_kwargs),
+        )
+        if cache_key in self._clients_cache:
+            return self._clients_cache[cache_key]
 
         if self.state != LifecycleState.CREATED:
             # We require the clients to be created before the communication class is initialized.
@@ -100,7 +141,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             **kwargs,
         )
 
-        self._clients_cache[(client_type, address, bind)] = client
+        self._clients_cache[cache_key] = client
         self.attach_child_lifecycle(client)
         return client
 

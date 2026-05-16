@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, cast
 
+from aiperf.common.message_codecs import MessageCodecProtocol
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.protocols import (
     CommunicationClientProtocol,
@@ -40,9 +41,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         self,
         client_type: CommClientType,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
-        *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
         **kwargs: Any,
@@ -67,7 +68,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     ) -> PubClientProtocol:
         return cast(
             PubClientProtocol,
-            self.create_client(CommClientType.PUB, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.PUB, address, bind=bind, socket_ops=socket_ops
+            ),
         )
 
     def create_sub_client(
@@ -78,7 +81,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     ) -> SubClientProtocol:
         return cast(
             SubClientProtocol,
-            self.create_client(CommClientType.SUB, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.SUB, address, bind=bind, socket_ops=socket_ops
+            ),
         )
 
     def create_push_client(
@@ -86,10 +91,17 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PushClientProtocol:
         return cast(
             PushClientProtocol,
-            self.create_client(CommClientType.PUSH, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.PUSH,
+                address,
+                bind=bind,
+                socket_ops=socket_ops,
+                codec=codec,
+            ),
         )
 
     def create_pull_client(
@@ -100,16 +112,18 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PullClientProtocol:
         return cast(
             PullClientProtocol,
             self.create_client(
                 CommClientType.PULL,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 max_pull_concurrency=max_pull_concurrency,
                 additional_bind_address=additional_bind_address,
+                codec=codec,
             ),
         )
 
@@ -121,7 +135,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     ) -> RequestClientProtocol:
         return cast(
             RequestClientProtocol,
-            self.create_client(CommClientType.REQUEST, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.REQUEST, address, bind=bind, socket_ops=socket_ops
+            ),
         )
 
     def create_reply_client(
@@ -129,27 +145,37 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> ReplyClientProtocol:
         return cast(
             ReplyClientProtocol,
-            self.create_client(CommClientType.REPLY, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.REPLY,
+                address,
+                bind=bind,
+                socket_ops=socket_ops,
+                additional_bind_address=additional_bind_address,
+            ),
         )
 
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
         return cast(
             StreamingRouterClientProtocol,
             self.create_client(
                 CommClientType.STREAMING_ROUTER,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 additional_bind_address=additional_bind_address,
+                decode_type=decode_type,
             ),
         )
 
@@ -157,8 +183,10 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         self,
         address: CommAddressType,
         identity: str,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         # Identity must be passed through client_kwargs since it's specific to DEALER
         return cast(
@@ -166,8 +194,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             self.create_client(
                 CommClientType.STREAMING_DEALER,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 identity=identity,
+                decode_type=decode_type,
             ),
         )

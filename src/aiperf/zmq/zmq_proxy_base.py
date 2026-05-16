@@ -12,7 +12,7 @@ from zmq import SocketType
 from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.hooks import background_task, on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
-from aiperf.config.comm.base import BaseZMQProxyConfig
+from aiperf.config.zmq import BaseZMQProxyConfig
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
@@ -34,9 +34,9 @@ class ProxySocketClient(BaseZMQClient):
         self,
         socket_type: SocketType,
         address: str,
-        *,
         end_type: ProxyEndType,
         socket_ops: dict | None = None,
+        *,
         proxy_uuid: str | None = None,
         **kwargs,
     ) -> None:
@@ -62,10 +62,8 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         - Frontend and Backend sockets both BIND
     - Multiple clients CONNECT to `frontend_address`
     - Multiple services CONNECT to `backend_address`
-    - Control: Optional REP socket exposed for proxy commands; the socket is
-      bound but command parsing (start/stop/pause) is not currently wired.
-    - Monitoring: Optional PUB capture socket that broadcasts forwarded
-      messages; ``_monitor_messages`` subscribes to it.
+    - Control: Optional REP socket for proxy commands (start/stop/pause) - not implemented yet
+    - Monitoring: Optional PUB socket that broadcasts copies of all forwarded messages - not implemented yet
     - Proxy runs in separate thread to avoid blocking main event loop
     """
 
@@ -189,7 +187,9 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
                             lifecycle_id=self.proxy_id,
                         ) from exc
 
-            self.debug("Proxy Sockets Initialized Successfully")
+            self.info(
+                f"Proxy {self.proxy_id} initialized: frontend={self.config.frontend_address}, backend={self.config.backend_address}"
+            )
 
             if self.control_client:
                 self.debug(
@@ -249,7 +249,7 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
             while not self.stop_requested:
                 recv_msg = await capture_socket.recv_multipart()
                 self.debug(lambda msg=recv_msg: f"Proxy Monitor Received: {msg}")
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug("Proxy Monitor Task Cancelled")
             return
         except Exception as e:

@@ -5,13 +5,11 @@ from aiperf.common.environment import Environment
 
 # ZMQ Constants
 TOPIC_END = "$"
-"""This is used to add to the end of each topic to prevent the topic from being a prefix of another topic.
-This is required for the PUB/SUB pattern to work correctly, otherwise topics like "command_response" will be
-received by the "command" subscriber as well.
+"""Suffix appended to every topic to prevent prefix collisions in ZMQ PUB/SUB filtering.
 
 For example:
-- "command$"
-- "command_response$"
+- "heartbeat$"
+- "heartbeat_summary$"
 """
 
 TOPIC_END_LENGTH = len(TOPIC_END)
@@ -19,16 +17,6 @@ TOPIC_END_LENGTH = len(TOPIC_END)
 
 TOPIC_END_ENCODED = TOPIC_END.encode()
 """The encoded version of TOPIC_END. Computed once at runtime to avoid recomputing the encoded version on every message."""
-
-TOPIC_DELIMITER = "."
-"""The delimiter between topic parts.
-This is used to create an inverted hierarchy of topics for filtering by service type or service id.
-
-For example:
-- "command$"
-- "system_controller.command$"
-- "timing_manager_eff34565.command$"
-"""
 
 WILDCARD_TOPIC = "*"
 """Sentinel for subscribing to all topics. Maps to an empty string ZMQ subscription internally and bypasses TOPIC_END appending."""

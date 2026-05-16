@@ -7,19 +7,18 @@ subprocesses, enabling fast isolated testing of the full service mesh.
 """
 
 import asyncio
+import os
 import sys
 import uuid
 
-from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import AIPerfError
-from aiperf.common.models import ServiceRunInfo
 from aiperf.common.protocols import ServiceProtocol
+from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
-from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.config import BenchmarkRun
 from aiperf.controller.base_service_manager import BaseServiceManager
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType
 from tests.harness.fake_communication import FakeCommunication
 
 
@@ -37,8 +36,19 @@ class FakeServiceManager(BaseServiceManager):
         run: BenchmarkRun,
         **kwargs,
     ):
-        super().__init__(required_services, run, **kwargs)
+        super().__init__(required_services, run=run, **kwargs)
         self.services: dict[str, ServiceProtocol] = {}
+
+        # Disable health server for in-process services to prevent port conflicts.
+        # Multiple services in the same process would all try to bind the same port.
+        Environment.SERVICE.HEALTH_ENABLED = False
+
+        # Signal to workers and other services that the WorkerGroupManager
+        # boundary is simulated (all services share one process and one
+        # FakeCommunication bus), so they should use the direct control path
+        # instead of waiting on pod-lifecycle channels that are never wired.
+        os.environ["AIPERF_FAKE_IN_PROCESS_MODE"] = "1"
+
         self.warning(
             "*** Using FakeServiceManager in-process mode to bypass multiprocessing. This is for component integration testing only. ***"
         )
@@ -59,6 +69,10 @@ class FakeServiceManager(BaseServiceManager):
                 service_id=service_id,
             )
 
+            # Set expectation before initialize/start so the service can't
+            # register via the message bus before the expectation exists.
+            ServiceRegistry.expect_service(service_id, service_type)
+
             await service.initialize()
             await service.start()
 
@@ -70,16 +84,19 @@ class FakeServiceManager(BaseServiceManager):
             self.execute_async(watch_service_stopped(service))
             self.services[service.service_id] = service
 
-            # Track in service maps
-            info = ServiceRunInfo(
-                service_type=service_type,
-                service_id=service_id,
-                registration_status=ServiceRegistrationStatus.REGISTERED,
-            )
-            self.service_map.setdefault(service_type, []).append(info)
-            self.service_id_map[service_id] = info
-
             self.debug(f"Service {service_type} started in-process (id: {service_id})")
+
+        # In real multiprocessing mode, WorkerGroupManager spawns Worker and
+        # RecordProcessor subprocesses under itself. The in-process fake
+        # service manager bypasses that boundary: spawn them directly as peer
+        # services so the controller can drive them over FakeCommunication.
+        if service_type == ServiceType.WORKER_GROUP_MANAGER:
+            worker_count = self.run.cfg.worker_group_declared_worker_capacity
+            rp_count = self.run.cfg.worker_group_declared_record_processor_capacity
+            if worker_count > 0:
+                await self.run_service(ServiceType.WORKER, worker_count)
+            if rp_count > 0:
+                await self.run_service(ServiceType.RECORD_PROCESSOR, rp_count)
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
@@ -88,7 +105,7 @@ class FakeServiceManager(BaseServiceManager):
         self.debug(f"Stopping {service_type} service(s) with id: {service_id}")
         results: list[BaseException | None] = []
 
-        for service in self.services.values():
+        for service in list(self.services.values()):
             if service.service_type == service_type and (
                 service_id is None or service.service_id == service_id
             ):
@@ -99,16 +116,8 @@ class FakeServiceManager(BaseServiceManager):
                     self.error(f"Error stopping service {service.service_id}: {e!r}")
                     results.append(e)
                 finally:
-                    # Always remove from tracking, regardless of stop success
                     self.services.pop(service.service_id, None)
-                    if service.service_id in self.service_id_map:
-                        del self.service_id_map[service.service_id]
-                    if service_type in self.service_map:
-                        self.service_map[service_type] = [
-                            info
-                            for info in self.service_map[service_type]
-                            if info.service_id != service.service_id
-                        ]
+                    ServiceRegistry.forget(service.service_id)
 
         return results
 
@@ -122,10 +131,7 @@ class FakeServiceManager(BaseServiceManager):
             ],
             return_exceptions=True,
         )
-        # Clear all tracking state after shutdown
         self.services.clear()
-        self.service_map.clear()
-        self.service_id_map.clear()
         # Clean up shared bus
         FakeCommunication.clear_shared_bus()
         return results
@@ -138,45 +144,15 @@ class FakeServiceManager(BaseServiceManager):
 
     async def wait_for_all_services_registration(
         self,
-        stop_event: asyncio.Event,
         timeout_seconds: float = Environment.SERVICE.REGISTRATION_TIMEOUT,
     ) -> None:
         """Wait for all required services to be registered.
 
         For in-process mode, services are already registered by the time
-        run_service returns, so this is essentially a no-op that validates
-        all expected services are present.
+        run_service returns, so this delegates to ServiceRegistry.
         """
         self.debug("Checking all required services are registered (in-process)...")
-
-        required_types = set(self.required_services.keys())
-        registered_types = {
-            service_info.service_type
-            for service_info in self.service_id_map.values()
-            if service_info.registration_status == ServiceRegistrationStatus.REGISTERED
-        }
-
-        if not required_types.issubset(registered_types):
-            missing = required_types - registered_types
-            raise AIPerfError(f"Services not registered: {missing}")
-
-    async def wait_for_all_services_start(
-        self,
-        stop_event: asyncio.Event,
-        timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
-    ) -> None:
-        """Wait for all required services to be started.
-
-        For in-process mode, services are already started by the time
-        run_service returns. This validates all services are in RUNNING state.
-        """
-        self.debug("Checking all required services are started (in-process)...")
-
-        for service in self.services.values():
-            if service.state != LifecycleState.RUNNING:
-                raise AIPerfError(
-                    f"Service {service.service_id} is not running: {service.state}"
-                )
+        await ServiceRegistry.wait_for_all(timeout_seconds)
 
     async def _stop_service_gracefully(
         self, service: ServiceProtocol
