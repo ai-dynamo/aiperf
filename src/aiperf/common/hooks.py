@@ -409,6 +409,17 @@ def on_profiling_progress(func: Callable) -> Callable:
     return _hook_decorator(AIPerfHook.ON_PROFILING_PROGRESS, func)
 
 
+def on_phase_progress(func: Callable) -> Callable:
+    """Decorator: invoked when a phase-progress update arrives.
+
+    Generalizes ``on_profiling_progress`` and ``on_warmup_progress`` to any
+    phase (warmup, profiling, cooldown, custom). Callback receives a
+    ``CombinedPhaseStats`` instance so the consumer can branch on
+    ``stats.phase``.
+    """
+    return _hook_decorator(AIPerfHook.ON_PHASE_PROGRESS, func)
+
+
 def on_records_progress(func: Callable) -> Callable:
     """Decorator to specify that the function is a hook that should be called when a records progress update is received.
     See :func:`aiperf.common.hooks._hook_decorator`.

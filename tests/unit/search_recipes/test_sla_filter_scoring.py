@@ -52,17 +52,17 @@ def _base_config() -> BenchmarkConfig:
 
 def _cfg_with_filter(threshold: float = 200.0, **overrides) -> AdaptiveSearchSweep:
     kwargs: dict = dict(
-        algorithm="bayes",
+        planner="bayesian",
         search_space=[
             SearchSpaceDimension(
                 path="phases.profiling.concurrency", lo=1, hi=100, kind="int"
             ),
         ],
-        objective=AdaptiveObjective(
+        objectives=[AdaptiveObjective(
             metric="output_token_throughput",
             stat="avg",
             direction=OptimizationDirection.MAXIMIZE,
-        ),
+        )],
         max_iterations=5,
         n_initial_points=2,
         random_seed=42,

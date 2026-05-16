@@ -88,6 +88,44 @@ def make_run(cfg: BenchmarkConfig | None = None, **config_kwargs: Any) -> Benchm
     return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
 
 
+def create_model_endpoint_info(**config_kwargs: Any) -> "ModelEndpointInfo":
+    """Build a ``ModelEndpointInfo`` from transport-test config kwargs.
+
+    Alias for the legacy ``create_model_endpoint_info`` shape that
+    ``test_build_url_adversarial`` and friends import. Internally this
+    builds a ``BenchmarkConfig`` via ``create_config`` and synthesizes the
+    matching ModelEndpointInfo so the transport layer receives a real
+    ``ModelEndpointInfo`` object.
+    """
+    from aiperf.common.enums import ModelSelectionStrategy
+    from aiperf.common.models.model_endpoint_info import (
+        EndpointInfo,
+        ModelEndpointInfo,
+        ModelInfo,
+        ModelListInfo,
+    )
+
+    cfg = create_config(**config_kwargs)
+    endpoint_cfg = cfg.endpoint
+    return ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name=m.name) for m in cfg.models.items],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+        ),
+        endpoint=EndpointInfo(
+            type=endpoint_cfg.type,
+            base_url=endpoint_cfg.urls[0] if endpoint_cfg.urls else "",
+            streaming=endpoint_cfg.streaming,
+            path=endpoint_cfg.path,
+            extra=list((endpoint_cfg.extra or {}).items()),
+            api_key=endpoint_cfg.api_key,
+            headers=list((endpoint_cfg.headers or {}).items()),
+            use_legacy_max_tokens=getattr(endpoint_cfg, "use_legacy_max_tokens", False),
+            connection_reuse=endpoint_cfg.connection_reuse,
+        ),
+    )
+
+
 @pytest.fixture
 def complex_sse_message_data() -> dict[str, str]:
     """Fixture providing complex SSE message test data."""
