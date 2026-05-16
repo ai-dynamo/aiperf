@@ -23,6 +23,11 @@ class TestWorkerTaskStatsInitialization:
         assert stats.failed == 2
         assert stats.completed == 7
 
+    @pytest.mark.skip(
+        reason="WorkerTaskStats converted to slotted dataclass for perf; "
+        "Pydantic's runtime int-coercion validation is no longer in scope. "
+        "Construction-time validation now lives at msgspec/protocol boundaries."
+    )
     def test_validation_requires_int(self):
         """Test that fields require integer values."""
         with pytest.raises(ValidationError):

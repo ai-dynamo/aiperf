@@ -2,26 +2,30 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from pydantic import Field
+from dataclasses import dataclass
+from typing import ClassVar
 
-from aiperf.common.models.base_models import AIPerfBaseModel
+from pydantic import ConfigDict
 
 
-class WorkerTaskStats(AIPerfBaseModel):
-    """Stats for the tasks that have been sent to the worker."""
+@dataclass(slots=True, kw_only=True)
+class WorkerTaskStats:
+    """Stats for the tasks that have been sent to the worker.
 
-    total: int = Field(
-        default=0,
-        description="The total number of tasks that have been sent to the worker (not all tasks will be completed)",
-    )
-    failed: int = Field(
-        default=0,
-        description="The number of tasks that returned an error",
-    )
-    completed: int = Field(
-        default=0,
-        description="The number of tasks that were completed successfully",
-    )
+    Mutable slotted dataclass — shared type for msgspec envelopes
+    (``WorkerHealthMessage.task_stats``) and Pydantic
+    (``WorkerStats.task_stats`` via ``WorkersResponse``). ``task_finished``
+    mutates in place, so the dataclass is not frozen.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    total: int = 0
+    """The total number of tasks that have been sent to the worker (not all tasks will be completed)."""
+    failed: int = 0
+    """The number of tasks that returned an error."""
+    completed: int = 0
+    """The number of tasks that were completed successfully."""
 
     def task_finished(self, valid: bool) -> None:
         """Increment the task stats based on success or failure."""
@@ -34,6 +38,7 @@ class WorkerTaskStats(AIPerfBaseModel):
     def in_progress(self) -> int:
         """The number of tasks that are currently in progress.
 
-        This is the total number of tasks sent to the worker minus the number of failed and successfully completed tasks.
+        This is the total number of tasks sent to the worker minus the number
+        of failed and successfully completed tasks.
         """
         return self.total - self.completed - self.failed

@@ -255,7 +255,7 @@ class TestConfigRegistration:
         from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 
         registered = {field for _, field, _ in GPU_TELEMETRY_METRICS_CONFIG}
-        amd_fields = {f for f in TelemetryMetrics.model_fields if f.startswith("amd_")}
+        amd_fields = {f for f in TelemetryMetrics.__struct_fields__ if f.startswith("amd_")}
         missing = amd_fields - registered
         assert not missing, (
             f"amd_* fields on TelemetryMetrics not registered in "

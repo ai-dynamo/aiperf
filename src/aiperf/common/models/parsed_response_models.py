@@ -333,7 +333,7 @@ class ParsedResponseRecord:
         return [response for response in self.responses if response.data]
 
     @cached_property
-    def final_usage(self) -> "Usage | None":
+    def final_usage(self) -> Usage | None:
         """API-reported usage from the last streaming response chunk that had any.
 
         Returns the most recent non-empty ``Usage`` block across the

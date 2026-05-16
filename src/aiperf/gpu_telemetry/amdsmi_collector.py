@@ -18,6 +18,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import msgspec
+
 if TYPE_CHECKING:
     import amdsmi
 else:
@@ -350,12 +352,12 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
 
             for gpu in self._gpus:
                 metrics = self._snapshot_gpu(gpu, ExcType)
-                if metrics.model_fields_set:
+                if metrics.any_field_set():
                     records.append(
                         TelemetryRecord(
                             timestamp_ns=now_ns,
                             dcgm_url=AMDSMI_SOURCE_IDENTIFIER,
-                            **gpu.metadata.model_dump(),
+                            **msgspec.to_builtins(gpu.metadata),
                             telemetry_data=metrics,
                         )
                     )

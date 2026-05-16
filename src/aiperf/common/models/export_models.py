@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, ClassVar
 
@@ -16,8 +18,14 @@ from aiperf.config.config import BenchmarkConfig
 # =============================================================================
 
 
-class JsonMetricResult(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class JsonMetricResult:
     """The result values of a single metric for JSON export.
+
+    Slotted dataclass — shared between Pydantic parents (``JsonExportData``
+    metric-result fields) via ``__pydantic_config__`` and msgspec wire
+    envelopes (``TelemetryExportData.endpoints[...].gpus[...].metrics``
+    carried on ``ProcessTelemetryResultMessage``).
 
     NOTE:
     The shape of this model originates from GenAI-Perf JSON output for
@@ -28,7 +36,9 @@ class JsonMetricResult(AIPerfBaseModel):
     not remove or rename existing fields without a matching schema bump.
     """
 
-    unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    unit: str
     avg: float | None = None
     p1: float | None = None
     p5: float | None = None
@@ -42,35 +52,43 @@ class JsonMetricResult(AIPerfBaseModel):
     min: int | float | None = None
     max: int | float | None = None
     std: float | None = None
-    count: int | None = Field(
-        default=None,
-        description=(
-            "Number of records contributing to this metric's distribution. "
-            "Present only for record-type metrics; omitted for derived/aggregate "
-            "scalar metrics where the count would trivially be 1 and risks being "
-            "misread as the request count."
-        ),
-    )
-    sum: int | float | None = Field(
-        default=None,
-        description=(
-            "Sum of all metric values across records. Present for record-type "
-            "metrics with at least one observation; absent for derived/aggregate "
-            "metrics whose value is itself the computed total or rate."
-        ),
-    )
+    count: int | None = None
+    """Number of records contributing to this metric's distribution. Present only
+    for record-type metrics; omitted for derived/aggregate scalar metrics where
+    the count would trivially be 1 and risks being misread as the request count."""
+    sum: int | float | None = None
+    """Sum of all metric values across records. Present for record-type metrics
+    with at least one observation; absent for derived/aggregate metrics whose
+    value is itself the computed total or rate."""
 
-    @staticmethod
+    @classmethod
     def project_summary_dict(
-        payload: dict[str, Any] | None,
-    ) -> dict[str, "JsonMetricResult"]:
-        if not payload:
+        cls, summary: dict[str, Any] | None
+    ) -> dict[str, JsonMetricResult]:
+        """Filter a raw status.summary / profile-export dict into JsonMetricResults.
+
+        ``status.summary`` (written by ``MetricsSummary.to_status_dict``) and
+        ``profile_export_aiperf.json`` mix two shapes: per-tag stat dicts and
+        bolted-on top-level scalars. Only per-tag dicts with a ``unit`` key
+        are projected; everything else is dropped. Returns an empty dict for
+        ``None`` / empty input. Never raises.
+        """
+        if not summary:
             return {}
-        return {
-            key: JsonMetricResult.model_validate(value)
-            for key, value in payload.items()
-            if isinstance(value, dict) and "unit" in value
-        }
+        known = set(cls.__dataclass_fields__.keys())
+        out: dict[str, JsonMetricResult] = {}
+        for tag, value in summary.items():
+            if not isinstance(value, dict):
+                continue
+            if "unit" not in value:
+                continue
+            projected = {k: v for k, v in value.items() if k in known}
+            try:
+                out[tag] = cls(**projected)
+            except TypeError:
+                # Defensive: a JsonMetricResult field type changed under us.
+                continue
+        return out
 
 
 # =============================================================================
@@ -78,42 +96,51 @@ class JsonMetricResult(AIPerfBaseModel):
 # =============================================================================
 
 
-class TelemetrySummary(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class TelemetrySummary:
     """Summary information for telemetry collection."""
 
-    endpoints_configured: list[str] | None = None
-    endpoints_successful: list[str] | None = None
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     start_time: datetime
     end_time: datetime
+    endpoints_configured: list[str] | None = None
+    endpoints_successful: list[str] | None = None
 
 
-class GpuSummary(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class GpuSummary:
     """Summary of GPU telemetry data."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     gpu_index: int
     gpu_name: str
     gpu_uuid: str
     hostname: str | None
+    metrics: dict[str, JsonMetricResult]
     namespace: str | None = None
     pod_name: str | None = None
-    metrics: dict[str, JsonMetricResult]  # metric_key -> {stat_key -> value}
 
 
-class EndpointData(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class EndpointData:
     """Data for a single endpoint."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     gpus: dict[str, GpuSummary]
 
 
-class TelemetryExportData(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class TelemetryExportData:
     """Telemetry data structure for JSON export."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     summary: TelemetrySummary
     endpoints: dict[str, EndpointData]
-    error_summary: list[ErrorDetailsCount] | None = Field(
-        default=None,
-        description="A list of the unique error details and their counts",
-    )
+    error_summary: list[ErrorDetailsCount] | None = None
 
 
 # =============================================================================

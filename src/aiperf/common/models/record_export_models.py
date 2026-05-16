@@ -42,7 +42,7 @@ class MetricRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=
         return _METRIC_RECORD_INFO_ENCODER.encode(self)
 
     @classmethod
-    def model_validate_json(cls, data: bytes | str) -> "MetricRecordInfo":
+    def model_validate_json(cls, data: bytes | str) -> MetricRecordInfo:
         """Pydantic-style JSON decoder for compat with ``model_validate_json`` callers.
 
         msgspec.Struct does not ship this method natively; tests and exporters
@@ -62,7 +62,8 @@ class MetricRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=
 
         metadata = MetricRecordMetadata(**payload["metadata"])
         metrics = {
-            key: MetricValue(**value) for key, value in payload.get("metrics", {}).items()
+            key: MetricValue(**value)
+            for key, value in payload.get("metrics", {}).items()
         }
         return cls(
             metadata=metadata,

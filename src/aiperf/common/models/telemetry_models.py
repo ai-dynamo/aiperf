@@ -1,180 +1,228 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any, ClassVar
+
+import msgspec
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 
+__all__ = [
+    "GpuMetadata",
+    "GpuMetricTimeSeries",
+    "GpuTelemetryData",
+    "GpuTelemetrySnapshot",
+    "ProcessTelemetryResult",
+    "TelemetryHierarchy",
+    "TelemetryMetrics",
+    "TelemetryRecord",
+]
 
-class TelemetryMetrics(AIPerfBaseModel):
+
+class TelemetryMetrics(msgspec.Struct, kw_only=True, omit_defaults=True):
     """GPU metrics collected at a single point in time.
 
-    All fields are optional to handle cases where specific metrics are not available
-    from the DCGM exporter or are filtered out due to invalid values.
+    All fields are optional to handle cases where specific metrics are not
+    available from the DCGM exporter or are filtered out due to invalid values.
 
-    Custom metrics from user-provided CSV files are supported via extra='allow'.
+    Custom metrics from user-provided CSV files arrive via DCGM with field
+    names not declared here; they are routed into ``custom_metrics`` by the
+    DCGM collector. Collectors that set declared fields directly
+    (pynvml, amdsmi) bypass that dict.
     """
 
-    model_config = ConfigDict(extra="allow")
-
-    gpu_power_usage: float | None = Field(
-        default=None, description="Current GPU power usage in W"
-    )
-    energy_consumption: float | None = Field(
-        default=None, description="Cumulative energy consumption in MJ"
-    )
-    gpu_utilization: float | None = Field(
-        default=None,
-        description="GPU utilization percentage (0-100). "
-        "Percent of time over the past sample period during which one or more kernels was executing on the GPU.",
-    )
-    gpu_memory_used: float | None = Field(
-        default=None, description="GPU memory used in GB"
-    )
-    gpu_temperature: float | None = Field(
-        default=None, description="GPU temperature in °C"
-    )
-    mem_utilization: float | None = Field(
-        default=None,
-        description="Memory bandwidth utilization percentage (0-100). "
-        "Percent of time over the past sample period during which global (device) memory was being read or written.",
-    )
-    sm_utilization: float | None = Field(
-        default=None,
-        description="Streaming multiprocessor utilization percentage (0-100)",
-    )
-    decoder_utilization: float | None = Field(
-        default=None, description="Video decoder (NVDEC) utilization percentage (0-100)"
-    )
-    encoder_utilization: float | None = Field(
-        default=None, description="Video encoder (NVENC) utilization percentage (0-100)"
-    )
-    jpg_utilization: float | None = Field(
-        default=None, description="JPEG decoder utilization percentage (0-100)"
-    )
-    xid_errors: float | None = Field(
-        default=None, description="Value of the last XID error encountered"
-    )
-    power_violation: float | None = Field(
-        default=None,
-        description="Throttling duration due to power constraints in microseconds",
-    )
+    # perf: validation moved to msgspec/protocol boundary
+    gpu_power_usage: float | None = None
+    """Current GPU power usage in W."""
+    energy_consumption: float | None = None
+    """Cumulative energy consumption in MJ."""
+    gpu_utilization: float | None = None
+    """GPU utilization percentage (0-100)."""
+    gpu_memory_used: float | None = None
+    """GPU memory used in GB."""
+    gpu_temperature: float | None = None
+    """GPU temperature in C."""
+    mem_utilization: float | None = None
+    """Memory bandwidth utilization percentage (0-100)."""
+    sm_utilization: float | None = None
+    """Streaming multiprocessor utilization percentage (0-100)."""
+    decoder_utilization: float | None = None
+    """Video decoder (NVDEC) utilization percentage (0-100)."""
+    encoder_utilization: float | None = None
+    """Video encoder (NVENC) utilization percentage (0-100)."""
+    jpg_utilization: float | None = None
+    """JPEG decoder utilization percentage (0-100)."""
+    xid_errors: float | None = None
+    """Value of the last XID error encountered."""
+    power_violation: float | None = None
+    """Throttling duration due to power constraints in microseconds."""
 
     # AMD ROCm telemetry (collected by AMDSMITelemetryCollector). These mirror
     # the amdsmi field names rather than being aliased onto NVML-shaped fields,
     # because the underlying signals do not always measure the same physical
     # quantity (e.g. gfx_activity vs sm_utilization sample differently).
-    amd_power: float | None = Field(
-        default=None, description="AMD GPU current socket power in W"
-    )
-    amd_energy_consumption: float | None = Field(
-        default=None,
-        description="AMD GPU cumulative energy consumption in MJ "
-        "(accumulator * counter_resolution)",
-    )
-    amd_gfx_activity: float | None = Field(
-        default=None,
-        description="AMD GPU graphics engine activity percentage (0-100)",
-    )
-    amd_umc_activity: float | None = Field(
-        default=None,
-        description="AMD GPU memory controller activity percentage (0-100)",
-    )
-    amd_mm_activity: float | None = Field(
-        default=None,
-        description="AMD GPU multimedia engine activity percentage (0-100). "
-        "Not supported on Instinct GPUs.",
-    )
-    amd_memory_used: float | None = Field(
-        default=None, description="AMD GPU VRAM used in GB"
-    )
-    amd_temperature: float | None = Field(
-        default=None,
-        description="AMD GPU temperature in °C (junction sensor preferred, "
-        "hotspot fallback)",
-    )
-    amd_ecc_uncorrectable: float | None = Field(
-        default=None,
-        description="AMD GPU cumulative uncorrectable ECC error count",
-    )
-    amd_throttle_status: float | None = Field(
-        default=None,
-        description="AMD GPU throttle status snapshot (1.0 if any throttle "
-        "indicator is active, 0.0 otherwise)",
-    )
+    amd_power: float | None = None
+    """AMD GPU current socket power in W."""
+    amd_energy_consumption: float | None = None
+    """AMD GPU cumulative energy consumption in MJ."""
+    amd_gfx_activity: float | None = None
+    """AMD GPU graphics engine activity percentage (0-100)."""
+    amd_umc_activity: float | None = None
+    """AMD GPU memory controller activity percentage (0-100)."""
+    amd_mm_activity: float | None = None
+    """AMD GPU multimedia engine activity percentage (0-100)."""
+    amd_memory_used: float | None = None
+    """AMD GPU VRAM used in GB."""
+    amd_temperature: float | None = None
+    """AMD GPU temperature in C."""
+    amd_ecc_uncorrectable: float | None = None
+    """AMD GPU cumulative uncorrectable ECC error count."""
+    amd_throttle_status: float | None = None
+    """AMD GPU throttle status snapshot."""
+
+    custom_metrics: dict[str, float] = msgspec.field(default_factory=dict)
+    """User-CSV-defined GPU metrics not in the canonical fields. Populated by
+    the DCGM collector when a metric's mapped field name is not a declared
+    attribute on this struct."""
+
+    @classmethod
+    def from_mapping(cls, metrics: dict[str, float]) -> TelemetryMetrics:
+        """Construct from a flat ``{field_name: value}`` mapping.
+
+        Field names matching declared attributes set them directly; unknown
+        keys are routed into ``custom_metrics``. This replaces the prior
+        Pydantic ``extra="allow"`` setattr semantics used by the DCGM
+        collector for custom-CSV metrics.
+        """
+        known = _TELEMETRY_METRICS_FIELDS
+        declared = {k: v for k, v in metrics.items() if k in known}
+        custom = {k: v for k, v in metrics.items() if k not in known}
+        return cls(**declared, custom_metrics=custom)
+
+    def to_flat_dict(self) -> dict[str, float]:
+        """Return all known + custom metrics as a single flat mapping.
+
+        None values are dropped. Used by ``GpuTelemetryData.add_record`` to
+        feed the numpy time series.
+        """
+        out: dict[str, float] = {}
+        for name in _TELEMETRY_METRICS_FIELDS:
+            value = getattr(self, name)
+            if value is not None:
+                out[name] = value
+        out.update(self.custom_metrics)
+        return out
+
+    def any_field_set(self) -> bool:
+        """True if any declared field is non-None or any custom metric is set.
+
+        Replaces the prior Pydantic ``model_fields_set`` check used in
+        pynvml_collector to skip emitting records with no metrics.
+        """
+        if self.custom_metrics:
+            return True
+        for name in _TELEMETRY_METRICS_FIELDS:
+            if getattr(self, name) is not None:
+                return True
+        return False
 
 
-class GpuMetadata(AIPerfBaseModel):
+# Names of declared TelemetryMetrics fields; excludes ``custom_metrics`` since
+# that is the catch-all bucket, not a declared metric.
+_TELEMETRY_METRICS_FIELDS: frozenset[str] = frozenset(
+    f for f in TelemetryMetrics.__struct_fields__ if f != "custom_metrics"
+)
+
+
+class GpuMetadata(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
     """Static metadata for a GPU that doesn't change over time.
 
     This is stored once per GPU and referenced by all telemetry data points
     to avoid duplicating metadata in every time-series entry.
     """
 
-    gpu_index: int = Field(
-        description="GPU index on this node (0, 1, 2, etc.) - used for display ordering"
-    )
-    gpu_uuid: str = Field(
-        description="Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data"
-    )
-    gpu_model_name: str = Field(
-        description="GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')"
-    )
-    pci_bus_id: str | None = Field(
-        default=None, description="PCI Bus ID (e.g., '00000000:02:00.0')"
-    )
-    device: str | None = Field(
-        default=None, description="Device identifier (e.g., 'nvidia0')"
-    )
-    hostname: str | None = Field(
-        default=None, description="Hostname where GPU is located"
-    )
-    namespace: str | None = Field(
-        default=None, description="Namespace where the GPU is located (kubernetes only)"
-    )
-    pod_name: str | None = Field(
-        default=None, description="Pod name where the GPU is located (kubernetes only)"
-    )
+    gpu_index: int
+    """GPU index on this node (0, 1, 2, etc.) - used for display ordering."""
+
+    gpu_uuid: str
+    """Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data."""
+
+    gpu_model_name: str
+    """GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')."""
+
+    pci_bus_id: str | None = None
+    """PCI Bus ID (e.g., '00000000:02:00.0')."""
+
+    device: str | None = None
+    """Device identifier (e.g., 'nvidia0')."""
+
+    hostname: str | None = None
+    """Hostname where GPU is located."""
+
+    namespace: str | None = None
+    """Namespace where the GPU is located (kubernetes only)."""
+
+    pod_name: str | None = None
+    """Pod name where the GPU is located (kubernetes only)."""
 
 
-class TelemetryRecord(GpuMetadata):
+class TelemetryRecord(
+    GpuMetadata,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Single telemetry data point from GPU monitoring.
-
-    This record contains all telemetry data for one GPU at one point in time,
-    along with metadata to identify the source DCGM endpoint and specific GPU.
-    Used for hierarchical storage: dcgm_url -> gpu_uuid -> time series data.
 
     Inherits from GpuMetadata to avoid duplicating metadata fields.
     """
 
-    timestamp_ns: int = Field(
-        description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
-    )
-    dcgm_url: str = Field(
-        description="Source identifier (DCGM URL e.g., 'http://node1:9401/metrics' or 'pynvml://localhost')"
-    )
-    telemetry_data: TelemetryMetrics = Field(
-        description="GPU metrics snapshot collected at this timestamp"
-    )
+    timestamp_ns: int
+    """Nanosecond wall-clock timestamp when telemetry was collected."""
+
+    dcgm_url: str
+    """Source identifier (DCGM URL e.g., 'http://node1:9401/metrics' or
+    'pynvml://localhost')."""
+
+    telemetry_data: TelemetryMetrics
+    """GPU metrics snapshot collected at this timestamp."""
+
+    @classmethod
+    def model_validate(cls, value: Any) -> TelemetryRecord:
+        """Pydantic-compat constructor from a dict-like value."""
+        return msgspec.convert(value, type=cls)
+
+    @classmethod
+    def model_validate_json(cls, value: str | bytes) -> TelemetryRecord:
+        """Pydantic-compat constructor from a JSON string / bytes."""
+        return msgspec.json.decode(value, type=cls)
+
+    def model_dump_json(self) -> str:
+        """Pydantic-compat JSON serializer."""
+        return msgspec.json.encode(self).decode("utf-8")
 
 
-class GpuTelemetrySnapshot(AIPerfBaseModel):
-    """All metrics for a single GPU at one point in time.
+class GpuTelemetrySnapshot(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """All metrics for a single GPU at one point in time."""
 
-    Groups all metric values collected during a single collection cycle,
-    eliminating timestamp duplication across individual metrics.
-    """
+    timestamp_ns: int
+    """Collection timestamp for all metrics."""
 
-    timestamp_ns: int = Field(description="Collection timestamp for all metrics")
-    metrics: dict[str, float] = Field(
-        default_factory=dict, description="All metric values at this timestamp"
-    )
+    metrics: dict[str, float] = msgspec.field(default_factory=dict)
+    """All metric values at this timestamp."""
 
 
 def _last_valid(arr: np.ndarray) -> float | None:
@@ -212,57 +260,29 @@ class GpuMetricTimeSeries:
         self._capacity: int = self._INITIAL_CAPACITY
 
     def append_snapshot(self, metrics: dict[str, float], timestamp_ns: int) -> None:
-        """Append all metrics from a single scrape (insert-sorted).
-
-        Args:
-            metrics: Dict of metric_name -> value for keys present this scrape.
-                Keys may differ between snapshots (AMDSMI sensors can fail
-                transiently); the schema is the union of all keys ever seen.
-            timestamp_ns: Timestamp for this scrape
-
-        Note:
-            - **Dynamic schemas**: any key first seen mid-stream allocates a
-              new array NaN-backfilled for prior positions; any *known* key
-              absent from this snapshot writes NaN at this index. This keeps
-              `np.nan*` stat methods producing meaningful results even when
-              individual sensors come and go.
-            - Data kept sorted by timestamp (O(1) in-order, O(k) out-of-order).
-        """
+        """Append all metrics from a single scrape (insert-sorted)."""
         if self._size >= self._capacity:
             self._grow()
 
-        # Fast path: in-order append (99.9% of cases)
         if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
             insert_pos = self._size
         else:
-            # Slow path: find insert position from end (reverse linear search)
             insert_pos = self._size - 1
             while insert_pos > 0 and self._timestamps[insert_pos - 1] > timestamp_ns:
                 insert_pos -= 1
 
-            # Shift timestamps right
             self._timestamps[insert_pos + 1 : self._size + 1] = self._timestamps[
                 insert_pos : self._size
             ]
-
-            # Shift all metric arrays right
             for arr in self._metrics.values():
                 arr[insert_pos + 1 : self._size + 1] = arr[insert_pos : self._size]
 
-        # Insert timestamp at position
         self._timestamps[insert_pos] = timestamp_ns
 
-        # Allocate any late-arriving metric arrays NaN-backfilled. Existing
-        # positions [0, insert_pos) get NaN; the value below fills insert_pos.
-        # _grow also NaN-fills, so slots > insert_pos stay NaN until subsequent
-        # writes.
         for name in metrics:
             if name not in self._metrics:
                 self._metrics[name] = np.full(self._capacity, np.nan, dtype=np.float64)
 
-        # Write this snapshot's values; for any *known* key absent from this
-        # snapshot, write NaN so a transient sensor failure doesn't leave
-        # stale or garbage data at this index.
         for name, arr in self._metrics.items():
             arr[insert_pos] = metrics.get(name, np.nan)
 
@@ -272,14 +292,10 @@ class GpuMetricTimeSeries:
         """Double capacity of all arrays."""
         new_capacity = self._capacity * 2
 
-        # Grow timestamps
         new_ts = np.empty(new_capacity, dtype=np.int64)
         new_ts[: self._size] = self._timestamps[: self._size]
         self._timestamps = new_ts
 
-        # Grow each metric array. NaN-fill new capacity so absent-but-known
-        # keys can be written as NaN at any future index without being
-        # confused with garbage.
         for name, old_arr in self._metrics.items():
             new_arr = np.full(new_capacity, np.nan, dtype=np.float64)
             new_arr[: self._size] = old_arr[: self._size]
@@ -301,20 +317,7 @@ class GpuMetricTimeSeries:
     def to_metric_result(
         self, metric_name: str, tag: str, header: str, unit: str
     ) -> MetricResult:
-        """Compute stats for a metric using vectorized NumPy operations.
-
-        Args:
-            metric_name: Name of the metric to analyze
-            tag: Unique identifier for this metric
-            header: Human-readable name for display
-            unit: Unit of measurement
-
-        Returns:
-            MetricResult with min/max/avg/percentiles computed from all values
-
-        Raises:
-            NoMetricValue: If no data for this metric
-        """
+        """Compute stats for a metric using vectorized NumPy operations."""
         arr = self.get_metric_array(metric_name)
         if arr is None or len(arr) == 0:
             raise NoMetricValue(
@@ -326,15 +329,10 @@ class GpuMetricTimeSeries:
                 f"(sensor never returned a successful read)"
             )
 
-        # NaN-aware stats: dynamic-schema collectors (e.g. AMDSMI) write NaN
-        # for keys absent from a given scrape. nan* variants ignore them.
         p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.nanpercentile(
             arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
-        # ddof=1 needs at least 2 *non-NaN* samples; otherwise nanstd
-        # divides by zero and emits a RuntimeWarning. Count valid samples,
-        # not total scrapes.
         non_nan = int(np.count_nonzero(~np.isnan(arr)))
         std_dev = float(np.nanstd(arr, ddof=1)) if non_nan > 1 else 0.0
 
@@ -348,11 +346,6 @@ class GpuMetricTimeSeries:
             sum=float(np.nansum(arr)),
             std=std_dev,
             count=len(arr),
-            # ``current`` must be the most recent *valid* sample. Dynamic-
-            # schema metrics whose latest scrape didn't include this key
-            # would otherwise return NaN, which the realtime dashboard
-            # renders literally and which breaks change-detection
-            # (NaN != NaN, causing republish every interval).
             current=_last_valid(arr),
             p1=p1,
             p5=p5,
@@ -366,19 +359,7 @@ class GpuMetricTimeSeries:
         )
 
     def get_time_mask(self, time_filter: TimeRangeFilter | None) -> NDArray[np.bool_]:
-        """Get boolean mask for points within time range.
-
-        Uses np.searchsorted for O(log n) binary search on sorted timestamps,
-        then slice assignment for mask creation (10-100x faster than element-wise
-        boolean comparisons for large arrays).
-
-        Args:
-            time_filter: Time range filter specifying start_ns and/or end_ns bounds.
-                        None returns all-True mask.
-
-        Returns:
-            Boolean mask array where True indicates timestamp within range
-        """
+        """Get boolean mask for points within time range."""
         if time_filter is None:
             return np.ones(self._size, dtype=bool)
 
@@ -386,7 +367,6 @@ class GpuMetricTimeSeries:
         first_idx = 0
         last_idx = self._size
 
-        # O(log n) binary search for range boundaries
         if time_filter.start_ns is not None:
             first_idx = int(
                 np.searchsorted(timestamps, time_filter.start_ns, side="left")
@@ -396,23 +376,12 @@ class GpuMetricTimeSeries:
                 np.searchsorted(timestamps, time_filter.end_ns, side="right")
             )
 
-        # Single allocation + slice assignment
         mask = np.zeros(self._size, dtype=bool)
         mask[first_idx:last_idx] = True
         return mask
 
     def get_reference_idx(self, time_filter: TimeRangeFilter | None) -> int | None:
-        """Get index of last point BEFORE time filter start (for delta calculation).
-
-        Uses np.searchsorted for O(log n) lookup. Returns None if no baseline exists
-        (i.e., time_filter is None, start_ns is None, or no data before start_ns).
-
-        Args:
-            time_filter: Time range filter. Reference point is found before start_ns.
-
-        Returns:
-            Index of last timestamp before start_ns, or None if no baseline exists
-        """
+        """Get index of last point BEFORE time filter start (for delta calculation)."""
         if time_filter is None or time_filter.start_ns is None:
             return None
         insert_pos = int(
@@ -429,42 +398,19 @@ class GpuMetricTimeSeries:
         time_filter: TimeRangeFilter | None = None,
         is_counter: bool = False,
     ) -> MetricResult:
-        """Compute stats with time filtering and optional delta for counters.
-
-        For gauges: Uses vectorized NumPy on filtered array (np.mean, np.std, np.percentile)
-        For counters: Computes delta from reference point before profiling start
-
-        Args:
-            metric_name: Name of the metric to analyze
-            tag: Unique identifier for this metric
-            header: Human-readable name for display
-            unit: Unit of measurement
-            time_filter: Optional time range filter to exclude warmup/cooldown periods
-            is_counter: If True, compute delta from baseline instead of statistics
-
-        Returns:
-            MetricResult with min/max/avg/percentiles for gauges, or delta for counters
-
-        Raises:
-            NoMetricValue: If no data for this metric or no data in filtered range
-        """
+        """Compute stats with time filtering and optional delta for counters."""
         arr = self.get_metric_array(metric_name)
         if arr is None or len(arr) == 0:
             raise NoMetricValue(
                 f"No telemetry data available for metric '{metric_name}'"
             )
 
-        # Common: apply time filter
         time_mask = self.get_time_mask(time_filter)
         filtered = arr[time_mask]
         if len(filtered) == 0:
             raise NoMetricValue(f"No data in time range for metric '{metric_name}'")
 
         if is_counter:
-            # Counter: compute delta from baseline using nearest valid
-            # (non-NaN) endpoints. A NaN baseline or NaN final sample
-            # would otherwise zero out a delta even when there was real
-            # counter movement among valid samples in between.
             filtered_last = _last_valid(filtered)
             if filtered_last is None:
                 raise NoMetricValue(
@@ -475,23 +421,16 @@ class GpuMetricTimeSeries:
             reference_idx = self.get_reference_idx(time_filter)
             reference_value: float | None
             if reference_idx is not None:
-                # Walk back from the chosen reference index for the
-                # nearest non-NaN baseline sample.
                 reference_value = _last_valid(arr[: reference_idx + 1])
             else:
                 reference_value = None
 
             if reference_value is None:
-                # No pre-window baseline; fall back to first valid in-window
-                # sample (existing semantic: "delta from earliest available").
                 mask = ~np.isnan(filtered)
                 reference_value = float(filtered[mask][0])
 
-            # Clamp negative deltas to 0 to handle counter resets
-            # (e.g., DCGM restart).
             delta = max(filtered_last - reference_value, 0.0)
 
-            # Counters report a single delta value, not a distribution
             return MetricResult(
                 tag=tag,
                 header=header,
@@ -499,9 +438,6 @@ class GpuMetricTimeSeries:
                 avg=delta,
             )
 
-        # Gauge: vectorized NaN-aware stats on filtered data. Dynamic-schema
-        # collectors (e.g. AMDSMI) may write NaN for keys absent from a given
-        # scrape; nan* variants ignore them.
         if np.all(np.isnan(filtered)):
             raise NoMetricValue(
                 f"All in-range samples for metric '{metric_name}' are NaN"
@@ -510,9 +446,6 @@ class GpuMetricTimeSeries:
             filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
-        # ddof=1 needs at least 2 *non-NaN* samples; otherwise nanstd
-        # divides by zero and emits a RuntimeWarning. Count valid samples,
-        # not total scrapes.
         non_nan = int(np.count_nonzero(~np.isnan(filtered)))
         std_dev = float(np.nanstd(filtered, ddof=1)) if non_nan > 1 else 0.0
 
@@ -542,34 +475,31 @@ class GpuMetricTimeSeries:
         return self._size
 
 
-class GpuTelemetryData(AIPerfBaseModel):
+class GpuTelemetryData(msgspec.Struct, kw_only=True):
     """Complete telemetry data for one GPU: metadata + grouped metric time series.
 
-    This combines static GPU information with dynamic time-series data,
-    providing the complete picture for one GPU's telemetry using efficient columnar storage.
+    Not frozen because ``time_series`` is mutated in place as records arrive.
+    ``time_series`` is a numpy-backed columnar store; it is excluded from
+    serialization via ``_omit_fields_`` to keep wire payloads small.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    metadata: GpuMetadata
+    """Static GPU information."""
 
-    metadata: GpuMetadata = Field(description="Static GPU information")
-    time_series: GpuMetricTimeSeries = Field(
-        default_factory=GpuMetricTimeSeries,
-        description="Columnar time series for all metrics",
-        exclude=True,  # Numpy arrays are not serializable by default
+    time_series: GpuMetricTimeSeries = msgspec.field(
+        default_factory=GpuMetricTimeSeries
     )
+    """Columnar time series for all metrics. Numpy-backed, not serialized."""
 
     def add_record(self, record: TelemetryRecord) -> None:
         """Add telemetry record as a grouped snapshot.
 
         Args:
             record: New telemetry data point from DCGM collector
-
-        Note: Groups all metric values from the record into a single snapshot
         """
-        metric_mapping = record.telemetry_data.model_dump()
-        valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
-        if valid_metrics:
-            self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
+        flat = record.telemetry_data.to_flat_dict()
+        if flat:
+            self.time_series.append_snapshot(flat, record.timestamp_ns)
 
     def get_metric_result(
         self,
@@ -581,19 +511,7 @@ class GpuTelemetryData(AIPerfBaseModel):
         time_filter: TimeRangeFilter | None = None,
         is_counter: bool = False,
     ) -> MetricResult:
-        """Get MetricResult for a specific metric with optional time filtering.
-
-        Args:
-            metric_name: Name of the metric to analyze
-            tag: Unique identifier for this metric
-            header: Human-readable name for display
-            unit: Unit of measurement
-            time_filter: Optional time range filter to exclude warmup/cooldown periods
-            is_counter: If True, compute delta from baseline instead of statistics
-
-        Returns:
-            MetricResult with statistical summary for the specified metric
-        """
+        """Get MetricResult for a specific metric with optional time filtering."""
         if time_filter is not None or is_counter:
             return self.time_series.to_metric_result_filtered(
                 metric_name, tag, header, unit, time_filter, is_counter
@@ -601,40 +519,16 @@ class GpuTelemetryData(AIPerfBaseModel):
         return self.time_series.to_metric_result(metric_name, tag, header, unit)
 
 
-class TelemetryHierarchy(AIPerfBaseModel):
-    """Hierarchical storage: dcgm_url -> gpu_uuid -> complete GPU telemetry data.
+class TelemetryHierarchy(msgspec.Struct, kw_only=True):
+    """Hierarchical storage: dcgm_url -> gpu_uuid -> complete GPU telemetry data."""
 
-    This provides the requested hierarchical structure while maintaining efficient
-    access patterns for both real-time display and final aggregation.
-
-    Structure:
-    {
-        "http://node1:9401/metrics": {
-            "GPU-ef6ef310-...": GpuTelemetryData(metadata + time series),
-            "GPU-a1b2c3d4-...": GpuTelemetryData(metadata + time series)
-        },
-        "http://node2:9401/metrics": {
-            "GPU-f5e6d7c8-...": GpuTelemetryData(metadata + time series)
-        }
-    }
-    """
-
-    dcgm_endpoints: dict[str, dict[str, GpuTelemetryData]] = Field(
-        default_factory=dict,
-        description="Nested dict: dcgm_url -> gpu_uuid -> telemetry data",
+    dcgm_endpoints: dict[str, dict[str, GpuTelemetryData]] = msgspec.field(
+        default_factory=dict
     )
+    """Nested dict: dcgm_url -> gpu_uuid -> telemetry data."""
 
     def add_record(self, record: TelemetryRecord) -> None:
-        """Add telemetry record to hierarchical storage.
-
-        Args:
-            record: New telemetry data from GPU monitoring
-
-        Note: Automatically creates hierarchy levels as needed:
-        - New DCGM endpoints get empty GPU dict
-        - New GPUs get initialized with metadata and empty metrics
-        """
-
+        """Add telemetry record to hierarchical storage."""
         if record.dcgm_url not in self.dcgm_endpoints:
             self.dcgm_endpoints[record.dcgm_url] = {}
 
@@ -655,16 +549,18 @@ class TelemetryHierarchy(AIPerfBaseModel):
         dcgm_data[record.gpu_uuid].add_record(record)
 
 
-class ProcessTelemetryResult(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class ProcessTelemetryResult:
     """Result of telemetry processing - mirrors ProcessRecordsResult pattern.
 
-    This provides a parallel structure to ProcessRecordsResult for the telemetry pipeline,
-    maintaining complete separation while following the same architectural patterns.
+    Slotted dataclass — shared between msgspec envelopes
+    (``ProcessTelemetryResultMessage.telemetry_result``) and Pydantic parents
+    via ``__pydantic_config__``.
 
     Note: Uses TelemetryExportData (wire-safe, pre-computed stats) rather than
     TelemetryResults (internal, contains non-serializable GpuMetricTimeSeries).
     """
 
-    results: TelemetryExportData | None = Field(
-        default=None, description="Pre-computed telemetry export data (wire-safe)"
-    )
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    results: TelemetryExportData | None = None

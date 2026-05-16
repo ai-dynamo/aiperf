@@ -27,6 +27,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestInfo,
     RequestRecord,
+    TelemetryMetrics,
     TelemetryRecord,
     TextResponse,
 )
@@ -860,5 +861,7 @@ def make_telemetry_record(
         hostname=hostname,
         pci_bus_id=pci_bus_id,
         device=device,
-        telemetry_data={k: v for k, v in raw_metrics.items() if v is not None},
+        telemetry_data=TelemetryMetrics(
+            **{k: v for k, v in raw_metrics.items() if v is not None}
+        ),
     )

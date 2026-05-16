@@ -259,9 +259,9 @@ class ProgressClient:
         phases: dict[CreditPhase, CombinedPhaseStats] = {}
 
         # Filter to declared fields so older/newer peers adding computed
-        # or auxiliary keys don't break parsing (Pydantic model_validate
-        # with ``extra="forbid"`` would reject unknown kwargs).
-        valid_fields = set(CombinedPhaseStats.model_fields.keys())
+        # or auxiliary keys don't break parsing (dataclass ctor with
+        # unexpected kwargs would raise TypeError).
+        valid_fields = set(CombinedPhaseStats.__dataclass_fields__.keys())
         for phase_name, phase_data in data.get("phases", {}).items():
             try:
                 phase = CreditPhase(phase_name)

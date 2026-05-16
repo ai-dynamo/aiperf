@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import msgspec
+
 if TYPE_CHECKING:
     import pynvml
 else:
@@ -468,11 +470,11 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                     )
 
                 # Create record if any metrics were collected
-                if telemetry_data.model_fields_set:
+                if telemetry_data.any_field_set():
                     record = TelemetryRecord(
                         timestamp_ns=current_timestamp,
                         dcgm_url=PYNVML_SOURCE_IDENTIFIER,
-                        **gpu.metadata.model_dump(),
+                        **msgspec.to_builtins(gpu.metadata),
                         telemetry_data=telemetry_data,
                     )
                     records.append(record)

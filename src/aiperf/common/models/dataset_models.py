@@ -1,239 +1,281 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
-from functools import cached_property
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+import msgspec
+from pydantic import ConfigDict
 
 from aiperf.common.enums import (
     ConversationBranchMode,
     ConversationContextMode,
     MediaType,
 )
-from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch import ConversationBranchInfo
 from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
 
-class DatasetClientMetadata(AIPerfBaseModel):
-    """Base class for dataset client access metadata.
+def _iter_dataset_client_subclasses(cls: type) -> list[type]:
+    seen: list[type] = []
+    stack: list[type] = list(cls.__subclasses__())
+    while stack:
+        sub = stack.pop()
+        if sub in seen:
+            continue
+        seen.append(sub)
+        stack.extend(sub.__subclasses__())
+    return seen
 
-    Uses discriminated union pattern based on client_type for extensibility.
-    Workers receive this metadata to know how to access the dataset backing store.
+
+def _dataset_client_union_target(cls: type) -> Any:
+    subs = _iter_dataset_client_subclasses(cls)
+    if not subs:
+        return cls
+    if len(subs) == 1:
+        return subs[0]
+    import typing as _typing
+
+    return _typing.Union[tuple(subs)]  # noqa: UP007
+
+
+def _make_dataset_client_metadata_validator(cls: type) -> Any:
+    from aiperf.common.models.base_models import _msgspec_dec_hook
+
+    def _validate(value: Any) -> Any:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
+            )
+        return msgspec.convert(
+            value, _dataset_client_union_target(cls), dec_hook=_msgspec_dec_hook
+        )
+
+    return _validate
+
+
+def _serialize_dataset_client_metadata(value: Any) -> Any:
+    from aiperf.common.models.base_models import _msgspec_enc_hook
+
+    return msgspec.to_builtins(value, enc_hook=_msgspec_enc_hook)
+
+
+class _PydanticCompatMixin:
+    """Mixin providing Pydantic-style ``model_validate`` / ``model_dump``
+    methods on msgspec.Struct subclasses. Used by hot-path dataset models
+    so callers (tests, loaders) that still speak Pydantic vocabulary keep
+    working after the perf restoration to msgspec.
     """
 
-    discriminator_field: ClassVar[str] = "client_type"
+    @classmethod
+    def model_validate(cls, value: Any) -> Any:
+        if isinstance(value, cls):
+            return value
+        from aiperf.common.models.base_models import _msgspec_dec_hook
 
-    client_type: DatasetClientStoreType = Field(
-        ...,
-        description="The type of client store to use for dataset access.",
-    )
+        return msgspec.convert(value, cls, dec_hook=_msgspec_dec_hook)
+
+    @classmethod
+    def model_validate_json(cls, value: str | bytes) -> Any:
+        from aiperf.common.models.base_models import _msgspec_dec_hook
+
+        return msgspec.json.decode(value, type=cls, dec_hook=_msgspec_dec_hook)
+
+    def model_dump(self, **_: Any) -> dict[str, Any]:
+        from aiperf.common.models.base_models import _msgspec_enc_hook
+
+        return msgspec.to_builtins(self, enc_hook=_msgspec_enc_hook)
+
+    def model_dump_json(self, **_: Any) -> str:
+        from aiperf.common.models.base_models import _msgspec_enc_hook
+
+        return msgspec.json.encode(self, enc_hook=_msgspec_enc_hook).decode("utf-8")
 
 
-class MemoryMapClientMetadata(DatasetClientMetadata):
+class DatasetClientMetadata(
+    msgspec.Struct,
+    tag_field="client_type",
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Base class for dataset client access metadata.
+
+    Discriminated union keyed on ``client_type`` — msgspec routes dicts to
+    the correct subclass on decode. Every subclass must declare ``tag=...``
+    or it becomes unreachable via the union decoder.
+    """
+
+    @property
+    def client_type(self) -> str:
+        """String tag that identifies the concrete client store type."""
+        return type(self).__struct_config__.tag
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: Any,
+    ) -> Any:
+        # Custom core schema for the tagged-union base class so validation
+        # dispatches across every tagged subclass. msgspec.convert requires a
+        # Union type when decoding via tag; the bare base class does not route.
+        from pydantic_core import core_schema as _core_schema
+
+        validate = _make_dataset_client_metadata_validator(cls)
+        serialize = _serialize_dataset_client_metadata
+
+        return _core_schema.no_info_plain_validator_function(
+            validate,
+            serialization=_core_schema.plain_serializer_function_ser_schema(
+                serialize,
+                return_schema=_core_schema.any_schema(),
+                when_used="always",
+            ),
+        )
+
+
+class MemoryMapClientMetadata(
+    DatasetClientMetadata,
+    tag=DatasetClientStoreType.MEMORY_MAP.value,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Client metadata for memory-mapped dataset access.
 
     Contains paths to mmap files that workers use for zero-copy,
-    O(1) conversation lookups.
+    O(1) conversation lookups. For Kubernetes deployments, also includes
+    paths to pre-compressed files for efficient network transfer.
     """
 
-    client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
-
-    data_file_path: Path = Field(
-        ...,
-        description="Path to the memory-mapped data file containing serialized conversations.",
-    )
-    index_file_path: Path = Field(
-        ...,
-        description="Path to the memory-mapped index file for O(1) conversation lookups.",
-    )
-    conversation_count: int = Field(
-        default=0,
-        ge=0,
-        description="Number of conversations stored in the mmap files.",
-    )
-    total_size_bytes: int = Field(
-        default=0,
-        ge=0,
-        description="Total size of the data file in bytes.",
-    )
+    data_file_path: Path
+    index_file_path: Path
+    conversation_count: int = 0
+    total_size_bytes: int = 0
     # Pre-compressed files for Kubernetes HTTP transfer (optional)
-    compressed_data_file_path: Path | None = Field(
-        default=None,
-        description="Path to zstd-compressed data file for HTTP transfer (K8s only).",
-    )
-    compressed_index_file_path: Path | None = Field(
-        default=None,
-        description="Path to zstd-compressed index file for HTTP transfer (K8s only).",
-    )
-    compressed: bool = Field(
-        default=False,
-        description="True when the on-disk data/index files are pre-compressed "
-        "(zstd) and should be served with Content-Encoding=zstd. The dataset "
-        "router checks this flag to decide whether to add the encoding header "
-        "and (for older clients) whether to fall back to gzip on-the-fly.",
-    )
-    compressed_size_bytes: int = Field(
-        default=0,
-        ge=0,
-        description="Total size of the compressed data file in bytes.",
-    )
+    compressed_data_file_path: Path | None = None
+    compressed_index_file_path: Path | None = None
+    compressed: bool = False
+    compressed_size_bytes: int = 0
 
 
-class Media(AIPerfBaseModel):
+# Hot-path dataset models use msgspec.Struct for ~3-4x faster encode/decode/construct
+# vs Pydantic v2. These are instantiated per-turn per-request at high QPS.
+# Media (and its Text/Image/Audio/Video subclasses) is a slotted dataclass so it
+# works natively with both msgspec (Turn.texts / Turn.images / ...) and Pydantic
+# (SingleTurn / RandomPool / MultiTurn dataset-loader schemas) without a
+# compatibility shim. ``extra="forbid"`` keeps Pydantic's union discrimination
+# honest when the loader unions a Media-subclass variant with another shape.
+
+
+@dataclass(slots=True, kw_only=True)
+class Media:
     """Base class for all media fields. Contains name and contents of the media data."""
 
-    name: str = Field(default="", description="Name of the media field.")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    contents: list[str] = Field(
-        default=[],
-        description="List of media contents. Supports batched media payload in a single turn.",
-    )
+    name: str = ""
+    contents: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True, kw_only=True)
 class Text(Media):
     """Media that contains text/prompt data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.TEXT
 
 
+@dataclass(slots=True, kw_only=True)
 class Image(Media):
     """Media that contains image data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.IMAGE
 
 
+@dataclass(slots=True, kw_only=True)
 class Audio(Media):
     """Media that contains audio data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.AUDIO
 
 
+@dataclass(slots=True, kw_only=True)
 class Video(Media):
     """Media that contains video data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
 
 
-class TurnMetadata(AIPerfBaseModel):
-    """Metadata of a turn."""
+class TurnMetadata(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Metadata of a turn: timing + DAG projection fields."""
 
-    timestamp_ms: int | float | None = Field(
-        default=None,
-        description="The absolute timestamp of the turn in milliseconds.",
-    )
-    delay_ms: int | float | None = Field(
-        default=None,
-        ge=0,
-        description="The delay of the turn in the conversation (in milliseconds).",
-    )
-    branch_ids: list[str] = Field(
-        default_factory=list,
-        description="Branch IDs declared on this turn (DAG projection). "
-        "Mirrors ``Turn.branch_ids`` for ``ConversationMetadata`` consumers.",
-    )
-    has_forks: bool = Field(
-        default=False,
-        description="True if this turn triggers any FORK-mode branch. Stamped at "
-        "load time by the dag_jsonl loader's topology walk so the sticky router "
-        "can defer parent-session eviction until all forks have spawned. Stays "
-        "False on non-DAG datasets.",
-    )
-    prerequisites: list["TurnPrerequisite"] = Field(
-        default_factory=list,
-        description="Conditions gating dispatch of this turn (DAG projection). "
-        "Mirrors ``Turn.prerequisites`` so consumers of "
-        "``ConversationMetadata`` can reach prereqs without holding the full "
-        "Turn list.",
-    )
+    timestamp_ms: int | float | None = None
+    delay_ms: int | float | None = None
+    branch_ids: list[str] = msgspec.field(default_factory=list)
+    """Branch IDs declared on this turn (DAG projection). Mirrors
+    ``Turn.branch_ids`` for ``ConversationMetadata`` consumers."""
+    has_forks: bool = False
+    """True if this turn triggers any FORK-mode branch. Stamped at load time
+    by the dag_jsonl loader's topology walk so the sticky router can defer
+    parent-session eviction until all forks have spawned."""
+    prerequisites: list[TurnPrerequisite] = msgspec.field(default_factory=list)
+    """Conditions gating dispatch of this turn (DAG projection)."""
 
 
-class Turn(AIPerfBaseModel):
+class Turn(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=False,
+):
     """A dataset representation of a single turn within a conversation.
 
     A turn is a single interaction between a user and an AI assistant,
     and it contains timestamp, delay, and raw data that user sends in each turn.
     """
 
-    model: str | None = Field(default=None, description="Model name used for the turn.")
-    role: str | None = Field(default=None, description="Role of the turn.")
-    timestamp: int | float | None = Field(
-        default=None,
-        description="The absolute timestamp of the turn in milliseconds.",
-    )
-    delay: int | float | None = Field(
-        default=None,
-        description="The delay of the turn in the conversation (in milliseconds).",
-    )
-    max_tokens: int | None = Field(
-        default=None,
-        ge=1,
-        description="Maximum number of tokens to generate for this turn.",
-    )
-    raw_messages: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Pre-formatted OpenAI-compatible messages array. "
-        "When set, bypasses normal turn-based message construction in endpoints. "
-        "Typed list[dict[str, Any]] rather than a narrower TypedDict because callers "
-        "such as MooncakeTrace pass the full OpenAI message spec, which includes "
-        "tool-call messages, assistant messages with tool_calls, and multi-modal "
-        "content arrays — shapes that do not fit a single narrow TypedDict.",
-    )
-    raw_tools: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Pre-formatted OpenAI-compatible tool definitions. "
-        "When set alongside raw_messages, injected into the API payload.",
-    )
-    texts: list[Text] = Field(
-        default=[], description="Collection of text data in each turn."
-    )
-    images: list[Image] = Field(
-        default=[], description="Collection of image data in each turn."
-    )
-    audios: list[Audio] = Field(
-        default=[], description="Collection of audio data in each turn."
-    )
-    videos: list[Video] = Field(
-        default=[], description="Collection of video data in each turn."
-    )
-    raw_payload: dict[str, Any] | None = Field(
-        default=None,
-        description="Complete pre-built API request payload for verbatim replay. "
-        "When set, bypasses all endpoint payload construction (format_payload) "
-        "and sends this dict directly to the transport. Populated by the "
-        "raw_payload, inputs_json, and mooncake_trace (payload mode) loaders. "
-        "Mutually exclusive with normal turn-content fields in spirit, but no "
-        "validator enforces that — loaders construct one or the other.",
-    )
-    extra_body: dict[str, Any] | None = Field(
-        default=None,
-        description="Non-native per-turn request-body fields (temperature, "
-        "top_p, seed, stop, vendor tunables like ignore_eos/min_tokens). "
-        "Merged into the top level of the chat-completions payload at "
-        "dispatch time, matching the OpenAI SDK's extra_body convention.",
-    )
-    prerequisites: list[TurnPrerequisite] = Field(
-        default_factory=list,
-        description="Conditions gating dispatch of this turn (DAG authoring). "
-        "Attached to the gated turn; resolved against branch_ids declared on "
-        "prior turns. Empty on non-DAG datasets.",
-    )
-    branch_ids: list[str] = Field(
-        default_factory=list,
-        description="Branch IDs declared on this turn (DAG authoring). Each "
-        "entry resolves to a ``ConversationBranchInfo`` on the parent. "
-        "Empty on non-DAG datasets.",
-    )
-    audio_duration_seconds: float | None = Field(
-        default=None,
-        ge=0,
-        description="Duration of the audio content in seconds. Used by ASR-specific "
-        "metrics like RTFx. Set by ASR dataset loaders.",
-    )
+    model: str | None = None
+    role: str | None = None
+    timestamp: int | float | None = None
+    delay: int | float | None = None
+    max_tokens: int | None = None
+    raw_messages: list[dict[str, Any]] | None = None
+    """Pre-formatted OpenAI-compatible messages array. When set, bypasses
+    normal turn-based message construction in endpoints."""
+    raw_tools: list[dict[str, Any]] | None = None
+    """Pre-formatted OpenAI-compatible tool definitions. When set alongside
+    raw_messages, injected into the API payload."""
+    texts: list[Text] = msgspec.field(default_factory=list)
+    images: list[Image] = msgspec.field(default_factory=list)
+    audios: list[Audio] = msgspec.field(default_factory=list)
+    videos: list[Video] = msgspec.field(default_factory=list)
+    raw_payload: dict[str, Any] | None = None
+    """Complete pre-built API request payload for verbatim replay. When set,
+    bypasses all endpoint payload construction and sends this dict directly
+    to the transport."""
+    extra_body: dict[str, Any] | None = None
+    """Non-native per-turn request-body fields merged into the top level of
+    the chat-completions payload at dispatch time."""
+    prerequisites: list[TurnPrerequisite] = msgspec.field(default_factory=list)
+    """Conditions gating dispatch of this turn (DAG authoring)."""
+    branch_ids: list[str] = msgspec.field(default_factory=list)
+    """Branch IDs declared on this turn (DAG authoring)."""
+    audio_duration_seconds: float | None = None
+    """Duration of the audio content in seconds. Used by ASR-specific metrics
+    like RTFx."""
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -244,16 +286,12 @@ class Turn(AIPerfBaseModel):
             prerequisites=list(self.prerequisites),
         )
 
-    def copy_with_stripped_media(self) -> "Turn":
+    def copy_with_stripped_media(self) -> Turn:
         """Create a copy of this turn with multimodal data replaced by placeholders.
 
         This preserves text data (needed for tokenization) and raw messages/tools
         (needed for API payload reconstruction) but replaces potentially large
-        image/audio/video contents with small placeholder strings. This is
-        more efficient than a full deep copy followed by stripping.
-
-        Returns:
-            A new Turn with stripped multimodal contents and messages.
+        image/audio/video contents with small placeholder strings.
         """
         return Turn(
             model=self.model,
@@ -295,51 +333,41 @@ class Turn(AIPerfBaseModel):
         )
 
 
-class ConversationMetadata(AIPerfBaseModel):
+class ConversationMetadata(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Metadata of a conversation."""
 
-    conversation_id: str = Field(
-        ...,
-        description="The ID of the conversation.",
-    )
-    turns: list[TurnMetadata] = Field(
-        default_factory=list,
-        description="The metadata of the turns in the conversation.",
-    )
-    branches: list[ConversationBranchInfo] = Field(
-        default_factory=list,
-        description="Branch descriptors (DAG projection); empty on non-DAG datasets.",
-    )
-    is_root: bool = Field(
-        default=True,
-        description="True for sampleable roots; False for fork/spawn children.",
-    )
-    agent_depth: int = Field(
-        default=0,
-        description="DAG nesting level (0 = root). Mirrors Conversation.agent_depth.",
-    )
-    parent_conversation_id: str | None = Field(
-        default=None,
-        description="DAG child's parent conversation_id; None for roots.",
-    )
-    context_mode: ConversationContextMode | None = Field(
-        default=None,
-        description="Optional per-conversation context-mode override. "
-        "Falls back to DatasetMetadata.default_context_mode when None.",
-    )
-    accuracy_ground_truth: str | None = Field(
-        default=None,
-        description="Ground-truth answer for this conversation (accuracy mode only). "
-        "Set by AccuracyDatasetLoader; None for all other dataset types.",
-    )
-    accuracy_task: str | None = Field(
-        default=None,
-        description="Benchmark sub-task name for this conversation (accuracy mode only). "
-        "Set by AccuracyDatasetLoader; None for all other dataset types.",
-    )
+    conversation_id: str
+    turns: list[TurnMetadata] = msgspec.field(default_factory=list)
+    branches: list[ConversationBranchInfo] = msgspec.field(default_factory=list)
+    """Branch descriptors (DAG projection); empty on non-DAG datasets."""
+    is_root: bool = True
+    """True for sampleable roots; False for fork/spawn children."""
+    agent_depth: int = 0
+    """DAG nesting level (0 = root). Mirrors Conversation.agent_depth."""
+    parent_conversation_id: str | None = None
+    """DAG child's parent conversation_id; None for roots."""
+    context_mode: ConversationContextMode | None = None
+    """Optional per-conversation context-mode override. Falls back to
+    DatasetMetadata.default_context_mode when None."""
+    accuracy_ground_truth: str | None = None
+    """Ground-truth answer for this conversation (accuracy mode only)."""
+    accuracy_task: str | None = None
+    """Benchmark sub-task name for this conversation (accuracy mode only)."""
 
 
-class DatasetMetadata(AIPerfBaseModel):
+class DatasetMetadata(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Metadata of a dataset's structure.
 
     Contains dataset structure information (conversations, timing) used by
@@ -348,43 +376,30 @@ class DatasetMetadata(AIPerfBaseModel):
     DatasetConfiguredNotification).
     """
 
-    conversations: list[ConversationMetadata] = Field(
-        default_factory=list,
-        description="The conversation metadata of the dataset.",
-    )
-    sampling_strategy: DatasetSamplingStrategy = Field(
-        ...,
-        description="The sampling strategy to use when choosing conversations from the dataset.",
-    )
-    has_timing_data: bool = Field(
-        default=False,
-        description="Whether the dataset has timing data (timestamps/delays in turns).",
-    )
-    default_context_mode: ConversationContextMode | None = Field(
-        default=None,
-        description="Dataset-level default for how prior turns are accumulated. "
-        "Set by the loader based on dataset format semantics. "
-        "Individual conversations can override this via their own context_mode field.",
-    )
+    sampling_strategy: DatasetSamplingStrategy
+    conversations: list[ConversationMetadata] = msgspec.field(default_factory=list)
+    has_timing_data: bool = False
+    # Dataset-level default for how prior turns are accumulated. Set by the
+    # loader based on dataset format semantics. Individual conversations can
+    # override this via their own context_mode field.
+    default_context_mode: ConversationContextMode | None = None
 
-    @field_validator("default_context_mode")
-    @classmethod
-    def _reject_unimplemented_context_mode(
-        cls,
-        v: ConversationContextMode | None,
-    ) -> ConversationContextMode | None:
-        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+    def __post_init__(self) -> None:
+        # perf: validation moved to msgspec/protocol boundary
+        if (
+            self.default_context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES
+        ):
             raise ValueError(
                 f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
             )
-        return v
 
-    @cached_property
+    @property
     def total_turn_count(self) -> int:
         """Get the total number of turns in the dataset."""
         return sum(len(conversation.turns) for conversation in self.conversations)
 
-    @cached_property
+    @property
     def average_turn_count(self) -> float:
         """Get the average number of turns across all conversations in the dataset."""
         if len(self.conversations) == 0:
@@ -392,85 +407,48 @@ class DatasetMetadata(AIPerfBaseModel):
         return self.total_turn_count / len(self.conversations)
 
 
-class Conversation(AIPerfBaseModel):
+class Conversation(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=False,
+):
     """A dataset representation of a full conversation.
 
     A conversation is a sequence of turns between a user and an endpoint,
     and it contains the session ID and all the turns that consists the conversation.
     """
 
-    session_id: str = Field(
-        default="", description="Unique identifier for the conversation."
-    )
-    context_mode: ConversationContextMode | None = Field(
-        default=None,
-        description="How prior turns are accumulated for this conversation. "
-        "When None, inherits the dataset-level default.",
-    )
+    session_id: str = ""
+    context_mode: ConversationContextMode | None = None
+    turns: list[Turn] = msgspec.field(default_factory=list)
+    system_message: str | None = None
+    """Optional shared system message prepended to the first turn."""
+    user_context_message: str | None = None
+    """Optional per-conversation user context prepended to the first turn."""
+    accuracy_ground_truth: str | None = None
+    """Ground-truth answer for this conversation (accuracy mode only)."""
+    accuracy_task: str | None = None
+    """Benchmark sub-task name for this conversation (accuracy mode only)."""
+    agent_depth: int = 0
+    """Static DAG nesting level — 0 for sampleable roots,
+    ``parent_depth + 1`` for fork-spawned descendants."""
+    branches: list[ConversationBranchInfo] = msgspec.field(default_factory=list)
+    """Branch descriptors (DAG authoring). Empty on non-DAG datasets."""
+    is_root: bool = True
+    """True for sampleable roots; False for fork/spawn children."""
+    parent_conversation_id: str | None = None
+    """DAG child's parent conversation_id; None for roots."""
 
-    @field_validator("context_mode")
-    @classmethod
-    def _reject_unimplemented_context_mode(
-        cls,
-        v: ConversationContextMode | None,
-    ) -> ConversationContextMode | None:
-        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+    def __post_init__(self) -> None:
+        # perf: validation moved to msgspec/protocol boundary
+        if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
             raise ValueError(
                 f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
             )
-        return v
-
-    turns: list[Turn] = Field(
-        default=[], description="List of turns in the conversation."
-    )
-    system_message: str | None = Field(
-        default=None,
-        description="Optional shared system message prepended to the first turn. "
-        "Identical across all conversations when using --shared-system-prompt-length.",
-    )
-    user_context_message: str | None = Field(
-        default=None,
-        description="Optional per-conversation user context prepended to the first turn. "
-        "Unique for each conversation when using --user-context-prompt-length.",
-    )
-    accuracy_ground_truth: str | None = Field(
-        default=None,
-        description="Ground-truth answer for this conversation (accuracy mode only). "
-        "Propagated to ConversationMetadata so processors receive it via "
-        "DatasetConfiguredNotification without re-loading the benchmark.",
-    )
-    accuracy_task: str | None = Field(
-        default=None,
-        description="Benchmark sub-task name for this conversation (accuracy mode only). "
-        "Propagated to ConversationMetadata so processors receive it via "
-        "DatasetConfiguredNotification without re-loading the benchmark.",
-    )
-    agent_depth: int = Field(
-        default=0,
-        description="Static DAG nesting level — 0 for sampleable roots, "
-        "``parent_depth + 1`` for fork-spawned descendants. Stamped by the "
-        "dag_jsonl loader's topology walk; non-DAG conversations stay at 0. "
-        "The sampler treats ``agent_depth == 0`` as the root predicate.",
-    )
-    branches: list[ConversationBranchInfo] = Field(
-        default_factory=list,
-        description="Branch descriptors (DAG authoring). Empty on non-DAG datasets.",
-    )
-    is_root: bool = Field(
-        default=True,
-        description="True for sampleable roots; False for fork/spawn children.",
-    )
-    parent_conversation_id: str | None = Field(
-        default=None,
-        description="DAG child's parent conversation_id; None for roots.",
-    )
 
     def metadata(self) -> ConversationMetadata:
-        """Project this Conversation into its DatasetMetadata form.
-
-        Used by loaders to invoke ``validate_for_orchestrator_v1`` without
-        round-tripping through DatasetManager.
-        """
+        """Project this Conversation into its DatasetMetadata form."""
         modes = {b.branch_id: b.mode for b in self.branches}
         turn_metas = [
             TurnMetadata(
@@ -497,23 +475,28 @@ class Conversation(AIPerfBaseModel):
         )
 
 
-class SessionPayloads(AIPerfBaseModel):
+class SessionPayloads(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+):
     """A single session, with its session ID and a list of formatted payloads (one per turn)."""
 
-    session_id: str | None = Field(
-        default=None, description="Session ID of the conversation."
-    )
-    payloads: list[dict[str, Any]] = Field(
-        default=[],
-        description="List of formatted payloads in the session (one per turn). These have been formatted for the model and endpoint.",
-    )
+    session_id: str | None = None
+    payloads: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
 
-class InputsFile(AIPerfBaseModel):
-    """A list of all dataset sessions. Each session contains a list of formatted payloads (one per turn).
-    This is similar to the format used by GenAI-Perf for the inputs.json file.
+class InputsFile(
+    _PydanticCompatMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+):
+    """A list of all dataset sessions.
+
+    Intentionally does not set ``omit_defaults=True``: the on-disk inputs.json
+    schema contract always includes ``"data": [...]``.
     """
 
-    data: list[SessionPayloads] = Field(
-        default=[], description="List of all dataset sessions."
-    )
+    data: list[SessionPayloads] = msgspec.field(default_factory=list)

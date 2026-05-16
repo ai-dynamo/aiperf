@@ -3,6 +3,7 @@
 
 import time
 
+import msgspec
 from prometheus_client.parser import text_string_to_metric_families
 
 from aiperf.common.environment import Environment
@@ -175,8 +176,8 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
             record = TelemetryRecord(
                 timestamp_ns=current_timestamp,
                 dcgm_url=self.endpoint_url,
-                **metadata.model_dump(),
-                telemetry_data=TelemetryMetrics(**scaled_metrics),
+                **msgspec.to_builtins(metadata),
+                telemetry_data=TelemetryMetrics.from_mapping(scaled_metrics),
             )
             records.append(record)
 

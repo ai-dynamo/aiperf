@@ -168,7 +168,7 @@ class TestTelemetryRecord:
         )
         assert record.timestamp_ns == 1000000000
 
-        with pytest.raises(ValidationError):  # Pydantic validation error
+        with pytest.raises(TypeError):  # msgspec missing-required-argument
             TelemetryRecord()  # No fields provided
 
     def test_telemetry_record_metadata_structure(self):

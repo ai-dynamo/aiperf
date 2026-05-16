@@ -16,28 +16,31 @@ from aiperf.common.models import AIPerfBaseModel, Conversation
 
 
 class _ConversationOrjsonEncoder:
-    """msgspec-API-compatible wrapper around orjson for Pydantic Conversations.
+    """msgspec-API-compatible wrapper around msgspec.json for Conversation.
 
-    Branch carried Conversation as ``msgspec.Struct`` so ``msgspec.json.Encoder``
-    could serialize it directly. On main Conversation is a Pydantic model
-    (kept for the field-description/validator surface), so we encode the JSON
-    via orjson's default dispatch. Decoder still uses msgspec.json.Decoder so
-    the workers' fast-path bytes-to-struct conversion stays intact — Pydantic
-    will accept the dict msgspec materialized.
+    Conversation is a msgspec.Struct (restored from the older performance
+    branch), so we use msgspec.json.encode directly. The pydantic-compat
+    ``model_dump`` shim is also available for callers that need a dict.
     """
 
     @staticmethod
     def encode(conversation: Conversation) -> bytes:
-        return orjson.dumps(conversation.model_dump())
+        from aiperf.common.models.base_models import _msgspec_enc_hook
+
+        return msgspec.json.encode(conversation, enc_hook=_msgspec_enc_hook)
 
 
 _CONVERSATION_ENCODER = _ConversationOrjsonEncoder()
+
+
 class _ConversationOrjsonDecoder:
-    """msgspec-API-compatible decoder for Pydantic Conversations."""
+    """msgspec-API-compatible decoder for Conversation msgspec.Struct."""
 
     @staticmethod
     def decode(data: bytes) -> Conversation:
-        return Conversation.model_validate(orjson.loads(data))
+        from aiperf.common.models.base_models import _msgspec_dec_hook
+
+        return msgspec.json.decode(data, type=Conversation, dec_hook=_msgspec_dec_hook)
 
 
 _CONVERSATION_DECODER: _ConversationOrjsonDecoder | None = None
