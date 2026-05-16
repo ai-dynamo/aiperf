@@ -95,7 +95,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         }
 
         # Timeslice config
-        slice_dur = self.run.cfg.output.slice_duration
+        slice_dur = self.run.cfg.artifacts.slice_duration
         self._slice_duration_ns: int | None = (
             int(slice_dur * NANOS_PER_SECOND) if slice_dur else None
         )

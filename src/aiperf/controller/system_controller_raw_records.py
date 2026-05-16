@@ -26,9 +26,7 @@ class SystemControllerRawRecordsMixin:
 
     def _should_wait_for_raw_records(self) -> bool:
         """Check if we need to wait for raw record uploads from worker pods."""
-        from aiperf.common.enums import ExportLevel
-
-        return self.run.cfg.output.export_level == ExportLevel.RAW
+        return bool(self.run.cfg.artifacts.raw)
 
     async def _wait_for_raw_record_uploads(self) -> None:
         """Wait for worker pods to upload raw record files to the API.
@@ -37,7 +35,7 @@ class SystemControllerRawRecordsMixin:
         per worker group manager, or the timeout expires.
         """
         raw_records_dir = (
-            self.run.cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+            self.run.cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
         )
         timeout = Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT
         poll_interval = 1.0
@@ -107,7 +105,7 @@ class SystemControllerRawRecordsMixin:
                 self.debug(f"Failed to send shutdown to {svc.service_id}: {e}")
 
         raw_records_dir = (
-            self.run.cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+            self.run.cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
         )
         expected = len(wgm_services)
         deadline = time.monotonic() + Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT

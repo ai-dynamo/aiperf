@@ -98,8 +98,14 @@ class SteadyStateAnalyzer:
     summary_dependencies: ClassVar[list[AccumulatorType]] = ["metric_results"]
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
-        ss_config = run.cfg.output.steady_state
-        if not ss_config.enabled:
+        # Steady-state is a branch-only feature that has not yet been
+        # wired into v2 ``BenchmarkConfig``. Accept either the legacy
+        # ``cfg.output.steady_state`` placement or a future ``cfg.steady_state``
+        # block; if neither exists, treat the plugin as disabled.
+        ss_config = getattr(run.cfg, "steady_state", None) or getattr(
+            getattr(run.cfg, "output", None), "steady_state", None
+        )
+        if ss_config is None or not getattr(ss_config, "enabled", False):
             raise PluginDisabled("Steady-state analysis is disabled")
 
         env_ss = Environment.STEADY_STATE
