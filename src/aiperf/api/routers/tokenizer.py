@@ -283,3 +283,19 @@ def build_tokenizer_router() -> APIRouter:
         return StreamingResponse(_stream_bytes(payload), media_type="application/zstd")
 
     return router
+
+
+class TokenizerRouter:
+    """Plugin-loadable wrapper around :func:`build_tokenizer_router`.
+
+    Existence is purely so ``plugins.yaml`` (which references
+    ``aiperf.api.routers.tokenizer:TokenizerRouter``) resolves; the actual
+    router is constructed by ``build_tokenizer_router`` which the
+    ``aiperf.api.api_service`` mount point calls directly.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:  # noqa: D401 - protocol shim
+        self._router = build_tokenizer_router()
+
+    def get_router(self):
+        return self._router
