@@ -669,12 +669,20 @@ class TestCreateEnum:
         assert enum_cls.TYPE_A.value == "type_a"
         assert enum_cls.TYPE_B.value == "type_b"
 
-    def test_create_enum_empty_category_raises(
+    def test_create_enum_empty_category_returns_empty_enum(
         self, registry_with_types: _PluginRegistry
     ) -> None:
-        """create_enum() raises KeyError for empty category."""
-        with pytest.raises(KeyError, match="No types registered"):
-            registry_with_types.create_enum("nonexistent", "TestEnum", module=__name__)
+        """create_enum() returns an empty ExtensibleStrEnum for an unknown category.
+
+        Stub plugin categories (registered via categories.yaml but with no
+        concrete plugin entries yet) must still surface as importable enums
+        so the orphan modules under aiperf.{metrics,records}.* that reference
+        the empty AccumulatorType / StreamExporterType import cleanly.
+        """
+        enum_cls = registry_with_types.create_enum(
+            "nonexistent", "TestEnum", module=__name__
+        )
+        assert list(enum_cls) == []
 
     def test_create_enum_stores_category(
         self, registry_with_types: _PluginRegistry
