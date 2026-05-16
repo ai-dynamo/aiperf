@@ -199,7 +199,39 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     - All `BaseRecordMetric`s as a MetricArray of their values.
     - The most recent value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
+
+    Optional ``window_start_ns`` / ``window_end_ns`` attributes carry the
+    steady-state / timeslice window bounds when this dict represents a
+    sub-range of the full run. They drive :meth:`observation_duration` so
+    derived metrics divide by the windowed elapsed time instead of the full
+    benchmark duration.
     """
+
+    window_start_ns: int | None = None
+    window_end_ns: int | None = None
+
+    def observation_duration(self, target_unit: MetricUnitT) -> float:
+        """Return the observation duration converted to ``target_unit``.
+
+        If explicit window bounds are set, uses
+        ``window_end_ns - window_start_ns``; otherwise falls back to
+        :class:`BenchmarkDurationMetric`. Raises :class:`NoMetricValue` when
+        the resulting duration is zero.
+        """
+        from aiperf.common.enums import MetricTimeUnit
+        from aiperf.common.exceptions import NoMetricValue
+        from aiperf.metrics.types.benchmark_duration_metric import (
+            BenchmarkDurationMetric,
+        )
+
+        if self.window_start_ns is not None and self.window_end_ns is not None:
+            duration_ns = self.window_end_ns - self.window_start_ns
+            duration = MetricTimeUnit.NANOSECONDS.convert_to(target_unit, duration_ns)
+        else:
+            duration = self.get_converted_or_raise(BenchmarkDurationMetric, target_unit)
+        if duration == 0:
+            raise NoMetricValue("Observation duration is zero")
+        return duration
 
     def get_converted_or_raise(
         self, metric: type["BaseMetric"], other_unit: MetricUnitT
