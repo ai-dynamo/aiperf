@@ -216,7 +216,7 @@ async def _run_service(
 
     from aiperf.common.logging import setup_child_process_logging
 
-    setup_child_process_logging(log_queue, service.service_id, run.cfg)
+    setup_child_process_logging(log_queue, service.service_id, run)
 
     # Redirect child process stdio to /dev/null unconditionally.
     # - On macOS this fixes Textual UI terminal corruption.

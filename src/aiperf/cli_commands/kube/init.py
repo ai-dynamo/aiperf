@@ -117,13 +117,13 @@ def _generate_template(
     output: Path | None,
     job_name: str,
 ) -> None:
+    from aiperf.config._cli_runner_templates import build_overrides
     from aiperf.config.templates import (
         apply_overrides,
         get_template,
         load_template_content,
         strip_spdx_header,
     )
-    from aiperf.config.templates_cli import build_overrides
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.init_template import wrap_as_aiperf_job
 
@@ -172,7 +172,7 @@ def init_config(
         aiperf kube init -t goodput_slo --model my-model --url http://svc:8000
     """
     from aiperf.cli_utils import exit_on_error
-    from aiperf.config.templates_cli import handle_list, handle_search
+    from aiperf.config._cli_runner_templates import handle_list, handle_search
 
     with exit_on_error(title="Error Generating Config Template"):
         if search:

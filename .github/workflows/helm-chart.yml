@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Helm chart CI for deploy/helm/aiperf-operator.
+#
+# Default behavior (PR + push to main):
+#   - `helm lint` (strict).
+#   - `helm template` smoke render with defaults.
+#   - `helm template` render with gated features (ingress, networkPolicy, storage)
+#     enabled to catch template regressions behind feature flags.
+#   - `helm package` and upload the `.tgz` as a workflow artifact (14 day retention).
+#
+# Publish is OPT-IN only:
+#   - Trigger manually via `workflow_dispatch` with `publish: true`.
+#   - Requires the `HELM_REGISTRY_TOKEN` repo/org secret to be set.
+#   - Registry default is `oci://ghcr.io/ai-dynamo/charts` and is overridable via
+#     the `registry` input. No chart registry has been formally chosen yet; the
+#     publish step is intentionally gated so merging this workflow is safe.
+name: "Helm Chart"
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/helm/**'
+      - '.github/workflows/helm-chart.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'deploy/helm/**'
+      - '.github/workflows/helm-chart.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the packaged chart to the OCI registry (requires HELM_REGISTRY_TOKEN secret)."
+        type: boolean
+        default: false
+      registry:
+        description: "OCI registry to push to (only used when publish=true)."
+        type: string
+        default: "oci://ghcr.io/ai-dynamo/charts"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  helm-chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
+      - name: Report tool versions
+        shell: bash
+        run: helm version
+
+      - name: Helm lint (strict)
+        run: helm lint --strict deploy/helm/aiperf-operator
+
+      - name: Helm template (defaults smoke render)
+        shell: bash
+        run: |
+          mkdir -p /tmp/helm-render
+          helm template test deploy/helm/aiperf-operator --debug > /tmp/helm-render/defaults.yaml
+
+      - name: Helm template (gated features enabled)
+        shell: bash
+        run: |
+          helm template test deploy/helm/aiperf-operator \
+            --set ingress.enabled=true \
+            --set networkPolicy.enabled=true \
+            --set storage.enabled=true \
+            > /tmp/helm-render/gated.yaml
+
+      - name: Helm package
+        shell: bash
+        run: |
+          mkdir -p dist
+          helm package deploy/helm/aiperf-operator -d dist/
+          ls -la dist/
+
+      - name: Upload packaged chart
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiperf-operator-helm-chart-${{ github.run_id }}
+          path: dist/*.tgz
+          retention-days: 14
+
+      - name: Publish chart to OCI registry (opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true && env.HELM_REGISTRY_TOKEN != '' }}
+        env:
+          HELM_REGISTRY_TOKEN: ${{ secrets.HELM_REGISTRY_TOKEN }}
+          HELM_REGISTRY_USER: ${{ secrets.HELM_REGISTRY_USER || github.actor }}
+          REGISTRY: ${{ inputs.registry }}
+        shell: bash
+        run: |
+          # Strip oci:// prefix for `helm registry login`; keep it for `helm push`.
+          registry_host="${REGISTRY#oci://}"
+          registry_host="${registry_host%%/*}"
+          echo "Logging in to ${registry_host}"
+          echo "${HELM_REGISTRY_TOKEN}" | helm registry login "${registry_host}" \
+            --username "${HELM_REGISTRY_USER}" \
+            --password-stdin
+          for pkg in dist/*.tgz; do
+            echo "Pushing ${pkg} to ${REGISTRY}"
+            helm push "${pkg}" "${REGISTRY}"
+          done
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Helm chart"
+            echo ""
+            echo "- Chart path: \`deploy/helm/aiperf-operator\`"
+            echo "- Lint: strict"
+            echo "- Renders: defaults + gated (ingress/networkPolicy/storage)"
+            if [[ -d dist ]]; then
+              echo "- Packaged:"
+              for f in dist/*.tgz; do
+                [[ -e "$f" ]] && echo "  - \`$(basename "$f")\`"
+              done
+            fi
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish }}" == "true" ]]; then
+              echo "- Publish requested: target \`${{ inputs.registry }}\`"
+            else
+              echo "- Publish: skipped (opt-in via workflow_dispatch)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
