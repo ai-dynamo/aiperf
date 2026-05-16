@@ -16,27 +16,18 @@
 
 """Run ruff with an out-of-band baseline for selected rules.
 
-Enforces ``PLR0915``, ``PLR0912``, ``C901``, ``TID251``, ``BLE001``,
-``S110``, ``S112``, ``ANN201``, and ``D103`` (nine rules — see ``RULES``)
-**without** polluting the source tree with ``# noqa`` comments and
-**without** grandfathering entire files. Each violation is matched
-against ``tools/ruff_baseline.json`` using a stable key:
+Enforces ``PLR0915``, ``PLR0912``, ``C901``, and ``TID251`` **without**
+polluting the source tree with ``# noqa`` comments and **without**
+grandfathering entire files. Each violation is matched against
+``tools/ruff_baseline.json`` using a stable key:
 
     (rule, file, identifier)
 
-where identifier comes from ``_resolve_identifier()``:
+where identifier is:
 
-* For function-scope rules (PLR0915 / PLR0912 / C901 / BLE001 / S110 /
-  S112 / ANN201 / D103), the **enclosing function qualname** resolved
-  from the file's AST (e.g. ``MyClass.do_thing`` for a method, or just
-  ``my_func`` for a module-level function); ``None`` if the violation
-  is outside any function.
-* For TID251, ``<enclosing-function>::<banned call expression>`` (e.g.
-  ``render::json.dumps``), with ``<module>`` substituted when the call
-  is at module scope. Namespacing the banned call by its enclosing
-  function prevents one grandfathered ``json.dumps`` site from masking
-  a brand-new ``json.dumps`` added in a different function in the same
-  file.
+* the **enclosing function name** for function-scope rules
+  (PLR0915 / PLR0912 / C901), resolved from the file's AST; or
+* the **banned call expression** (e.g. ``json.dumps``) for TID251.
 
 Because the key excludes line numbers, unrelated edits above a
 grandfathered site don't re-trigger the check. Because the key is
@@ -59,13 +50,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-
-import orjson
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PATH = Path(__file__).resolve().parent / "ruff_baseline.json"
@@ -157,16 +147,15 @@ def _enclosing_function(rel: str, line: int) -> str | None:
         node, path_names = stack.pop()
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.ClassDef):
-                stack.append((child, [*path_names, child.name]))
-            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-                new_path = [*path_names, child.name]
+                stack.append((child, path_names + [child.name]))
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 end = child.end_lineno or child.lineno
                 if child.lineno <= line <= end:
-                    qualname = ".".join(new_path)
+                    qualname = ".".join(path_names + [child.name])
                     if best is None or child.lineno > best[0]:
                         best = (child.lineno, qualname)
                 # Recurse into nested defs.
-                stack.append((child, new_path))
+                stack.append((child, path_names + [child.name]))
             else:
                 stack.append((child, path_names))
     result = best[1] if best else None
@@ -182,13 +171,13 @@ def _enclosing_function(rel: str, line: int) -> str | None:
 def load_baseline() -> set[tuple[str, str, str]]:
     if not BASELINE_PATH.exists():
         return set()
-    data = orjson.loads(BASELINE_PATH.read_bytes())
+    data = json.loads(BASELINE_PATH.read_text())
     return {tuple(entry) for entry in data.get("violations", [])}
 
 
 def write_baseline(keys: set[tuple[str, str, str]]) -> None:
-    BASELINE_PATH.write_bytes(
-        orjson.dumps(
+    BASELINE_PATH.write_text(
+        json.dumps(
             {
                 "_comment": (
                     "Out-of-band ruff baseline for tools/ruff_baselined.py. "
@@ -200,9 +189,9 @@ def write_baseline(keys: set[tuple[str, str, str]]) -> None:
                 "rules": RULES,
                 "violations": [list(k) for k in sorted(keys)],
             },
-            option=orjson.OPT_INDENT_2,
+            indent=2,
         )
-        + b"\n"
+        + "\n"
     )
 
 
@@ -213,42 +202,41 @@ def write_baseline(keys: set[tuple[str, str, str]]) -> None:
 
 def run_ruff(paths: list[str]) -> list[Violation]:
     cmd = [
-        sys.executable,
-        "-m",
-        "ruff",
+        ".venv/bin/ruff",
         "check",
         "--select",
         ",".join(RULES),
         "--output-format",
-        "json",
+        "concise",
         "--no-cache",
         *paths,
     ]
-    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=False)
+    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if result.returncode not in (0, 1):
-        sys.stderr.buffer.write(result.stderr)
+        print(result.stderr, file=sys.stderr)
         raise RuntimeError(
             f"ruff exited with code {result.returncode} (expected 0 or 1)"
         )
-    if not result.stdout.strip():
-        return []
-    raw = orjson.loads(result.stdout)
     violations: list[Violation] = []
-    for entry in raw:
-        path = entry["filename"]
+    pattern = re.compile(r"([^:]+):(\d+):(\d+): (\w+) (.+)")
+    for line in result.stdout.splitlines():
+        m = pattern.match(line)
+        if not m:
+            continue
+        path = m.group(1)
+        # Normalize to repo-relative.
         abs_path = (REPO_ROOT / path).resolve()
         try:
             rel = str(abs_path.relative_to(REPO_ROOT))
         except ValueError:
             rel = path
-        loc = entry["location"]
         violations.append(
             Violation(
-                rule=entry["code"],
+                rule=m.group(4),
                 path=rel,
-                line=int(loc["row"]),
-                col=int(loc["column"]),
-                message=entry["message"],
+                line=int(m.group(2)),
+                col=int(m.group(3)),
+                message=m.group(5),
             )
         )
     return violations

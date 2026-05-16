@@ -37,15 +37,25 @@ import re
 import sys
 from pathlib import Path
 
-# Files intentionally excluded from the index (relative to docs/)
+# Files intentionally excluded from the index (relative to docs/).
+# Literal paths and prefix-allowlist (entries ending in "/" match every
+# descendant — used for entire historical-doc subtrees that aren't part
+# of the user-facing Fern site).
 ALLOWLIST = {
     "accuracy/accuracy_stubs.md",
 }
+ALLOWLIST_PREFIXES = (
+    # superpowers/{plans,specs}/* are internal design / planning docs,
+    # not part of the user-facing Fern site.
+    "superpowers/",
+)
 
-# Path prefixes (relative to docs/) whose contents are intentionally excluded
-# from the Fern site. Used for working artifacts like implementation plans
-# and design specs that live alongside docs/ but are not user-facing.
-ALLOWLIST_PREFIXES = ("superpowers/",)
+
+def is_allowlisted(rel_path: str) -> bool:
+    """True if rel_path is excluded from the index check."""
+    if rel_path in ALLOWLIST:
+        return True
+    return any(rel_path.startswith(prefix) for prefix in ALLOWLIST_PREFIXES)
 
 
 def get_indexed_paths(index_path: Path) -> set[str]:
@@ -83,8 +93,7 @@ def main() -> None:
 
     all_docs = get_all_docs(args.docs_dir)
     indexed = get_indexed_paths(args.index)
-    allowlisted_by_prefix = {f for f in all_docs if f.startswith(ALLOWLIST_PREFIXES)}
-    missing = sorted(all_docs - indexed - ALLOWLIST - allowlisted_by_prefix)
+    missing = sorted(p for p in (all_docs - indexed) if not is_allowlisted(p))
 
     if missing:
         print(
@@ -98,7 +107,7 @@ def main() -> None:
         sys.exit(1)
 
     print(
-        f"OK: all {len(all_docs) - len(ALLOWLIST) - len(allowlisted_by_prefix)} docs files are listed in {args.index}"
+        f"OK: all {len(all_docs) - len(ALLOWLIST)} docs files are listed in {args.index}"
     )
 
 

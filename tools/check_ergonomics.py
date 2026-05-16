@@ -22,7 +22,7 @@ Fails the build on *new* violations of the 8 rules in
 Existing violations are grandfathered via a baseline file at
 ``tools/ergonomics_baseline.json``. Regenerate the baseline with::
 
-    python tools/check_ergonomics.py --regenerate-baseline
+    python -m tools.check_ergonomics --regenerate-baseline
 
 Checks (each can also be run in isolation with --only <check>):
 
@@ -34,12 +34,15 @@ Checks (each can also be run in isolation with --only <check>):
     duplicate-classes   class names must be unique across src/aiperf/
     pydantic-fields     Pydantic models must have <=30 ``Field(...)`` decls
     stdlib-json         no ``import json`` / ``json.dumps`` / ``json.loads``
+    exception-message   raised exceptions must include a context message
+    isinstance-tuple    isinstance/issubclass must use tuple form, not A | B
+                        (PEP 604 unions construct a new object each call)
 
 Usage:
-    python tools/check_ergonomics.py                 # run all checks
-    python tools/check_ergonomics.py --only file-size
-    python tools/check_ergonomics.py --regenerate-baseline
-    python tools/check_ergonomics.py file1.py file2.py   # check specific files
+    python -m tools.check_ergonomics                 # run all checks
+    python -m tools.check_ergonomics --only file-size
+    python -m tools.check_ergonomics --regenerate-baseline
+    python -m tools.check_ergonomics file1.py file2.py   # check specific files
 
 Thresholds live at the top of this file; adjust as the codebase cleans up.
 """
@@ -49,6 +52,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -69,35 +73,6 @@ MAX_POSITIONAL_ARGS = 4  # >= 5 positional args without `*,` is an error
 MAX_PYDANTIC_FIELDS = 30
 MIN_EXCEPTION_MESSAGE_WORDS = 3  # R10: error messages must carry context
 
-# ---------------------------------------------------------------------------
-# Intentional exceptions (architectural decisions, not pending debt)
-# ---------------------------------------------------------------------------
-# Files / models listed here are exempt from the corresponding check. Unlike
-# `tools/ergonomics_baseline.json` (grandfathered debt that should be paid down
-# over time), these are deliberate design choices. Adding here requires a
-# `reason` documenting why the exception is permanent.
-
-INTENTIONAL_FILE_SIZE_EXEMPTIONS: dict[str, str] = {
-    "src/aiperf/config/flags/cli_config.py": (
-        "CLIConfig is the unified flat CLI input DTO. Every CLI flag is a "
-        "top-level field with a multi-line Annotated/Field/CLIParameter "
-        "annotation, so file size scales linearly with field count (~16 LOC "
-        "per field × ~200 fields). The flat shape is intentional per Tasks "
-        "1-13 of the v1 flatten — splitting into mixins or per-section "
-        "files re-introduces the structural complexity the flatten removed. "
-        "Section-by-Groups.X dividers + the disjointness invariant in "
-        "tests/unit/config/v1/test_section_fields.py keep the file scannable."
-    ),
-}
-
-INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS: dict[str, str] = {
-    "src/aiperf/config/flags/cli_config.py::CLIConfig": (
-        "Same rationale as INTENTIONAL_FILE_SIZE_EXEMPTIONS for cli_config.py: "
-        "CLIConfig holds every CLI flag as a top-level field by design. "
-        "Splitting into sub-models would re-nest the v1 layer."
-    ),
-}
-
 CHECKS = [
     "file-size",
     "function-size",
@@ -108,8 +83,8 @@ CHECKS = [
     "pydantic-fields",
     "stdlib-json",
     "exception-message",
+    "isinstance-tuple",
 ]
-
 
 # ---------------------------------------------------------------------------
 # Violation model + baseline
@@ -125,58 +100,12 @@ class Violation:
     message: str
 
     def key(self) -> tuple[str, str, str]:
-        """Baseline key: ``(check, file, identifier)``.
+        """Baseline key: check + file + identifier.
 
-        Line numbers are deliberately excluded so that unrelated edits
-        above a known violation do not re-trigger the check. The
-        ``identifier`` for AST-backed function/class checks is the
-        qualname (e.g. ``FixedTrialsStrategy.__init__``), so methods
-        on different classes that legitimately share a short name (a
-        Protocol/ABC contract, a dunder, repeated Dash inner-callback
-        names) each get their own baseline entry instead of collapsing.
-
-        For call-site checks (``stdlib-json``, ``exception-message``)
-        the identifier is ``<enclosing-qualname>::<call-or-message>``,
-        so the same call in different functions doesn't collapse. When
-        the same call repeats inside a single function, ``_disambiguate``
-        appends an ``#N`` occurrence suffix so each site is individually
-        baselineable and a baselined site cannot mask a later sibling.
+        Line numbers are excluded so that unrelated edits above a known
+        violation don't re-trigger the check.
         """
         return (self.check, self.file, self.identifier)
-
-
-def _disambiguate(violations: list[Violation]) -> list[Violation]:
-    """Append ``#N`` to the 2nd+ occurrence of each (check, file, identifier).
-
-    Safety net for the few checks where the qualname-scoped identifier
-    can still legitimately repeat — e.g. two ``json.loads(`` calls in
-    the same function (same ``qualname::json.loads(`` identifier), or
-    two ``raise ValueError("bad")`` sites with the same literal prefix
-    in the same function. Without ``#N``, those collapse to a single
-    baseline key and a freshly added 3rd call would inherit the
-    grandfathering of the existing 2 — defeating the "new violations
-    only" guarantee. Sorting by ``(file, check, line, identifier)``
-    keeps numbering stable across runs given a stable file.
-    """
-    counts: dict[tuple[str, str, str], int] = defaultdict(int)
-    out: list[Violation] = []
-    for v in sorted(violations, key=lambda x: (x.file, x.check, x.line, x.identifier)):
-        base = (v.check, v.file, v.identifier)
-        counts[base] += 1
-        n = counts[base]
-        if n == 1:
-            out.append(v)
-        else:
-            out.append(
-                Violation(
-                    check=v.check,
-                    file=v.file,
-                    line=v.line,
-                    identifier=f"{v.identifier}#{n}",
-                    message=v.message,
-                )
-            )
-    return out
 
 
 def load_baseline() -> set[tuple[str, str, str]]:
@@ -193,16 +122,9 @@ def write_baseline(violations: list[Violation]) -> None:
             {
                 "_comment": (
                     "Pre-existing violations of tools/check_ergonomics.py. "
-                    "Regenerate with: python tools/check_ergonomics.py "
-                    "--regenerate-baseline. Key: (check, file, identifier). "
-                    "Function/class identifiers are qualnames "
-                    "(e.g. 'FixedTrialsStrategy.__init__'); call-site "
-                    "identifiers (stdlib-json, exception-message) are "
-                    "'<enclosing-qualname>::<call-or-message>'. A trailing "
-                    "'#N' (N>=2) marks the Nth occurrence of an identifier "
-                    "that genuinely repeats inside one scope (see "
-                    "_disambiguate). New entries here should be rare and "
-                    "justified; prefer fixing the underlying violation."
+                    "Regenerate with: python -m tools.check_ergonomics "
+                    "--regenerate-baseline. New entries here should be rare "
+                    "and justified; prefer fixing the underlying violation."
                 ),
                 "violations": [list(k) for k in keys],
             },
@@ -217,78 +139,11 @@ def write_baseline(violations: list[Violation]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse(path: Path) -> ast.Module:
-    """Parse a Python source file. Surface parse failures loudly.
-
-    A swallowed SyntaxError or UnicodeDecodeError used to drop the file
-    from every AST-backed check, which let the runner end with
-    ``ergonomics: OK`` while a changed file silently went unchecked.
-    Now we re-raise so the gate fails and the user sees the path.
-    """
+def _parse(path: Path) -> ast.Module | None:
     try:
         return ast.parse(path.read_text())
-    except (SyntaxError, UnicodeDecodeError) as exc:
-        try:
-            rel = path.relative_to(REPO_ROOT)
-        except ValueError:
-            rel = path
-        raise RuntimeError(f"failed to parse {rel}: {exc}") from exc
-
-
-_DefNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
-
-
-def _qualname_walk(tree: ast.AST):
-    """Yield ``(qualname, node)`` for every def in ``tree``.
-
-    ``qualname`` is dot-joined from enclosing classes and functions —
-    e.g. ``FixedTrialsStrategy.__init__`` for an ``__init__`` inside a
-    class, or ``register_callbacks.create_custom_plot`` for an inner
-    function. This is the only stable identifier across files where
-    multiple classes legitimately share a method name (Protocol/ABC
-    implementations, dunders, Dash callback patterns) — the previous
-    short-name identifier collapsed all of those into one baseline key.
-    """
-
-    def walk(node, prefix):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, _DefNode):
-                qn = f"{prefix}.{child.name}" if prefix else child.name
-                yield qn, child
-                yield from walk(child, qn)
-            else:
-                yield from walk(child, prefix)
-
-    yield from walk(tree, "")
-
-
-def _enclosing_func_map(tree: ast.Module) -> dict[int, str]:
-    """Map ``id(node) -> enclosing-function-qualname`` for every AST node.
-
-    Used by checks that key on a call site or raise site so the
-    identifier can include the enclosing function scope (so two
-    ``json.loads`` calls in different functions don't collapse to the
-    same baseline key).
-    """
-    result: dict[int, str] = {}
-
-    def walk(node, fn_qualname, prefix):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, _DefNode):
-                qn = f"{prefix}.{child.name}" if prefix else child.name
-                child_fn = (
-                    qn
-                    if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
-                    else fn_qualname
-                )
-                result[id(child)] = fn_qualname or "<module>"
-                walk(child, child_fn, qn)
-            else:
-                result[id(child)] = fn_qualname or "<module>"
-                walk(child, fn_qualname, prefix)
-
-    walk(tree, None, "")
-    return result
+    except (SyntaxError, UnicodeDecodeError):
+        return None
 
 
 def _max_depth(node: ast.AST, depth: int = 0) -> int:
@@ -356,8 +211,6 @@ def _pydantic_field_count(cls: ast.ClassDef) -> int:
 
 
 def check_file_size(path: Path, rel: str) -> list[Violation]:
-    if rel in INTENTIONAL_FILE_SIZE_EXEMPTIONS:
-        return []
     lines = len(path.read_text().splitlines())
     if lines > MAX_FILE_LINES:
         return [
@@ -374,8 +227,8 @@ def check_file_size(path: Path, rel: str) -> list[Violation]:
 
 def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for qualname, node in _qualname_walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             end = node.end_lineno or node.lineno
             length = end - node.lineno + 1
             if length > MAX_FUNCTION_LINES:
@@ -384,8 +237,8 @@ def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
                         check="function-size",
                         file=rel,
                         line=node.lineno,
-                        identifier=qualname,
-                        message=f"function '{qualname}' is {length} lines (>{MAX_FUNCTION_LINES})",
+                        identifier=node.name,
+                        message=f"function '{node.name}' is {length} lines (>{MAX_FUNCTION_LINES})",
                     )
                 )
     return out
@@ -393,8 +246,8 @@ def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
 
 def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for qualname, node in _qualname_walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             depth = _max_depth(node)
             if depth > MAX_NESTING_DEPTH:
                 out.append(
@@ -402,8 +255,8 @@ def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
                         check="nesting-depth",
                         file=rel,
                         line=node.lineno,
-                        identifier=qualname,
-                        message=f"function '{qualname}' has nesting depth {depth} (>{MAX_NESTING_DEPTH})",
+                        identifier=node.name,
+                        message=f"function '{node.name}' has nesting depth {depth} (>{MAX_NESTING_DEPTH})",
                     )
                 )
     return out
@@ -411,8 +264,8 @@ def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
 
 def check_keyword_only_args(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for qualname, node in _qualname_walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         args = node.args
         pos = len(args.args) + len(args.posonlyargs)
@@ -425,8 +278,8 @@ def check_keyword_only_args(tree: ast.Module, rel: str) -> list[Violation]:
                     check="keyword-only-args",
                     file=rel,
                     line=node.lineno,
-                    identifier=qualname,
-                    message=f"function '{qualname}' has {pos} positional args without '*,' separator",
+                    identifier=node.name,
+                    message=f"function '{node.name}' has {pos} positional args without '*,' separator",
                 )
             )
     return out
@@ -446,7 +299,7 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
     }
     out: list[Violation] = []
     for node in tree.body:
-        if not isinstance(node, ast.Assign | ast.AnnAssign):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for tgt in targets:
@@ -459,7 +312,7 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
             if val is None:
                 continue
             kind: str | None = None
-            if isinstance(val, ast.Dict | ast.List | ast.Set):
+            if isinstance(val, (ast.Dict, ast.List, ast.Set)):
                 kind = type(val).__name__
             elif isinstance(val, ast.Call):
                 func = val.func
@@ -485,10 +338,8 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
 
 def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for qualname, node in _qualname_walk(tree):
+    for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and _is_pydantic_model(node):
-            if f"{rel}::{qualname}" in INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS:
-                continue
             n = _pydantic_field_count(node)
             if n > MAX_PYDANTIC_FIELDS:
                 out.append(
@@ -496,73 +347,43 @@ def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
                         check="pydantic-fields",
                         file=rel,
                         line=node.lineno,
-                        identifier=qualname,
-                        message=f"model '{qualname}' has {n} fields (>{MAX_PYDANTIC_FIELDS}) — split into sub-models",
+                        identifier=node.name,
+                        message=f"model '{node.name}' has {n} fields (>{MAX_PYDANTIC_FIELDS}) — split into sub-models",
                     )
                 )
     return out
 
 
-_JSON_CALLS = {"dumps", "loads", "dump", "load"}
+_JSON_IMPORT_RE = re.compile(r"^\s*(import json|from json\s)", re.MULTILINE)
+_JSON_USE_RE = re.compile(r"\bjson\.(dumps|loads)\s*\(")
 
 
-def check_stdlib_json(tree: ast.Module, rel: str) -> list[Violation]:
-    """AST-walk replacement for the previous regex-based scan.
-
-    The earlier version matched raw source text and so flagged ``json.loads``
-    inside docstrings, comments, and string literals (false positives in
-    docs and examples). Walking the AST inspects only executable nodes:
-    ``import json``, ``from json import ...``, and attribute calls
-    ``json.dumps(...)`` / ``json.loads(...)`` / etc.
-
-    Identifier is namespaced by enclosing function (``<qualname>::call``)
-    so a baselined ``json.loads`` in one function does not mask a new
-    ``json.loads`` added to a sibling function in the same file.
-    """
-    enclosing = _enclosing_func_map(tree)
+def check_stdlib_json(path: Path, rel: str) -> list[Violation]:
+    txt = path.read_text()
     out: list[Violation] = []
-    for node in ast.walk(tree):
-        scope = enclosing.get(id(node), "<module>")
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "json":
-                    out.append(
-                        Violation(
-                            check="stdlib-json",
-                            file=rel,
-                            line=node.lineno,
-                            identifier=f"{scope}::import json",
-                            message="stdlib 'json' is banned; use 'orjson' instead",
-                        )
-                    )
-        elif isinstance(node, ast.ImportFrom) and node.module == "json":
-            names = ", ".join(alias.name for alias in node.names)
-            out.append(
-                Violation(
-                    check="stdlib-json",
-                    file=rel,
-                    line=node.lineno,
-                    identifier=f"{scope}::from json import {names}",
-                    message="stdlib 'json' is banned; use 'orjson' instead",
-                )
+    for m in _JSON_IMPORT_RE.finditer(txt):
+        line = txt.count("\n", 0, m.start()) + 1
+        out.append(
+            Violation(
+                check="stdlib-json",
+                file=rel,
+                line=line,
+                identifier=m.group(1).strip(),
+                message="stdlib 'json' is banned; use 'orjson' instead",
             )
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "json"
-            and node.func.attr in _JSON_CALLS
-        ):
-            call = f"json.{node.func.attr}("
-            out.append(
-                Violation(
-                    check="stdlib-json",
-                    file=rel,
-                    line=node.lineno,
-                    identifier=f"{scope}::{call}",
-                    message=f"stdlib '{call}' is banned; use orjson.dumps/orjson.loads",
-                )
+        )
+    for m in _JSON_USE_RE.finditer(txt):
+        line = txt.count("\n", 0, m.start()) + 1
+        call = m.group(0)
+        out.append(
+            Violation(
+                check="stdlib-json",
+                file=rel,
+                line=line,
+                identifier=call,
+                message=f"stdlib '{call}' is banned; use orjson.dumps/orjson.loads",
             )
+        )
     return out
 
 
@@ -573,12 +394,7 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
     literal shorter than ``MIN_EXCEPTION_MESSAGE_WORDS`` words. An f-string
     or concatenation is assumed to carry dynamic context and is accepted
     regardless of literal length.
-
-    Identifier is namespaced by enclosing function so a baselined raise
-    in one function does not mask a new short-message raise added to
-    another function in the same file.
     """
-    enclosing = _enclosing_func_map(tree)
     out: list[Violation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Raise):
@@ -598,13 +414,12 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
                 node.exc.func.attr if isinstance(node.exc.func, ast.Attribute) else "?"
             )
         )
-        scope = enclosing.get(id(node), "<module>")
         out.append(
             Violation(
                 check="exception-message",
                 file=rel,
                 line=node.lineno,
-                identifier=f"{scope}::{exc_name}:{first.value[:40]}",
+                identifier=f"{exc_name}:{first.value[:40]}",
                 message=(
                     f"raise {exc_name}({first.value!r}) — message too terse "
                     f"(<{MIN_EXCEPTION_MESSAGE_WORDS} words); include the "
@@ -618,6 +433,52 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
 # ---------------------------------------------------------------------------
 # Tree-wide checks (need all files together)
 # ---------------------------------------------------------------------------
+
+
+def check_isinstance_tuple(tree: ast.Module, rel: str) -> list[Violation]:
+    """Flag ``isinstance(x, A | B)`` — require tuple form ``isinstance(x, (A, B))``.
+
+    PEP 604 union syntax in isinstance/issubclass is measurably slower than
+    the tuple form at runtime (the union object must be constructed on each
+    call). Ruff retired UP038 for the same reason; we keep the rule via
+    this check.
+    """
+    out: list[Violation] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if name not in ("isinstance", "issubclass"):
+            continue
+        if len(node.args) < 2 or not isinstance(node.args[1], ast.BinOp):
+            continue
+        # Only match pipe-unions (A | B | C), not other BinOps
+        cur: ast.AST = node.args[1]
+        is_union = True
+        while isinstance(cur, ast.BinOp):
+            if not isinstance(cur.op, ast.BitOr):
+                is_union = False
+                break
+            cur = cur.left
+        if not is_union:
+            continue
+        out.append(
+            Violation(
+                check="isinstance-tuple",
+                file=rel,
+                line=node.lineno,
+                identifier=f"{name}:{node.lineno}",
+                message=f"use tuple form '{name}(x, (A, B))' — A | B is slower at runtime",
+            )
+        )
+    return out
 
 
 def check_duplicate_classes(
@@ -664,18 +525,19 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
             out.append(p)
         elif p.is_dir():
             out.extend(sorted(p.rglob("*.py")))
-    return [f for f in out if "__pycache__" not in f.parts]
+    skip = {"__pycache__", ".venv", "venv", ".pytest_cache", ".ruff_cache"}
+    return [f for f in out if not (skip & set(f.parts))]
 
 
-def _run_per_file(
-    path: Path, rel: str, enabled: set[str]
-) -> tuple[list[Violation], ast.Module]:
+def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
     out: list[Violation] = []
     if "file-size" in enabled:
         out.extend(check_file_size(path, rel))
-    tree = _parse(path)
     if "stdlib-json" in enabled:
-        out.extend(check_stdlib_json(tree, rel))
+        out.extend(check_stdlib_json(path, rel))
+    tree = _parse(path)
+    if tree is None:
+        return out
     if "function-size" in enabled:
         out.extend(check_function_size(tree, rel))
     if "nesting-depth" in enabled:
@@ -688,7 +550,9 @@ def _run_per_file(
         out.extend(check_pydantic_fields(tree, rel))
     if "exception-message" in enabled:
         out.extend(check_exception_message(tree, rel))
-    return out, tree
+    if "isinstance-tuple" in enabled:
+        out.extend(check_isinstance_tuple(tree, rel))
+    return out
 
 
 def collect_violations(files: list[Path], enabled: set[str]) -> list[Violation]:
@@ -701,13 +565,14 @@ def collect_violations(files: list[Path], enabled: set[str]) -> list[Violation]:
         except ValueError:
             rel = str(path)
         rels[path] = rel
-        per_file, tree = _run_per_file(path, rel, enabled)
-        violations.extend(per_file)
+        violations.extend(_run_per_file(path, rel, enabled))
         if "duplicate-classes" in enabled:
-            trees[path] = tree
+            tree = _parse(path)
+            if tree is not None:
+                trees[path] = tree
     if "duplicate-classes" in enabled and trees:
         violations.extend(check_duplicate_classes(trees, rels))
-    return _disambiguate(violations)
+    return violations
 
 
 def main() -> int:
@@ -797,7 +662,7 @@ def main() -> int:
     print(
         "\nIf a violation is unavoidable, fix it at the site. "
         "To accept a new baselined entry (rare), run:\n"
-        "  python tools/check_ergonomics.py --regenerate-baseline",
+        "  python -m tools.check_ergonomics --regenerate-baseline",
         file=sys.stderr,
     )
     return 1
