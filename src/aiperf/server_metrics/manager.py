@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import CommAddress, CommandType
@@ -64,6 +64,18 @@ class ServerMetricsManager(BaseComponentService):
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
         self._server_metrics_disabled = not self.run.cfg.server_metrics.enabled
+
+        # Local-accumulation path (decoupled from records-manager):
+        # processors are fed records via _on_server_metrics_records, and the
+        # designated accumulator is exported on PROFILE_COMPLETE into a
+        # ProcessServerMetricsResultMessage. Empty list / None when the
+        # records-manager-side processing is in charge instead.
+        from aiperf.common.models import ErrorTrackingState
+
+        self._processors: list[Any] = []
+        self._accumulator: Any | None = None
+        self._result_published: bool = False
+        self._error_state: ErrorTrackingState = ErrorTrackingState()
 
         # Collect metrics from all endpoint URLs (for multi-URL load balancing)
         self._server_metrics_endpoints: list[str] = []
@@ -242,6 +254,7 @@ class ServerMetricsManager(BaseComponentService):
             message: Profile complete command from RecordsManager signaling that
                     all client request records have been processed
         """
+        await self._maybe_publish_result(message)
         # Idempotent check - skip if already stopped or no collectors
         if not self._collectors:
             self.debug("Server Metrics: Already stopped, skipping final scrape")
@@ -263,6 +276,48 @@ class ServerMetricsManager(BaseComponentService):
 
         # Stop all collectors after final scrape
         await self._stop_all_collectors()
+
+    async def _maybe_publish_result(self, message: ProfileCompleteCommand) -> None:
+        """Publish a single ProcessServerMetricsResultMessage on PROFILE_COMPLETE.
+
+        Idempotent via ``self._result_published``. Pulls the time window
+        from the command payload (``{"start_ns": ..., "end_ns": ...}``);
+        absent/invalid payloads fall back to ``time.time_ns()`` snapshots
+        captured inside ``publish_server_metrics_result``.
+
+        With no accumulator wired the published message carries
+        ``results=None`` so downstream consumers always see exactly one
+        message per benchmark.
+        """
+        if self._result_published:
+            return
+        self._result_published = True
+
+        import orjson
+
+        from aiperf.server_metrics.result_publisher import publish_server_metrics_result
+
+        start_ns: int | None = None
+        end_ns: int | None = None
+        payload = getattr(message, "payload", None)
+        if isinstance(payload, str | bytes) and payload:
+            try:
+                decoded = orjson.loads(payload)
+                if isinstance(decoded, dict):
+                    start_ns = decoded.get("start_ns")
+                    end_ns = decoded.get("end_ns")
+            except orjson.JSONDecodeError:
+                self.warning(
+                    f"Server Metrics: Failed to parse PROFILE_COMPLETE payload: {payload!r}"
+                )
+
+        await publish_server_metrics_result(
+            publisher=self,
+            accumulator=self._accumulator,
+            error_state=self._error_state,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(
@@ -328,7 +383,10 @@ class ServerMetricsManager(BaseComponentService):
 
         Called by ServerMetricsDataCollector instances when they successfully
         collect metrics. Forwards records to RecordsManager via ZMQ push socket,
-        preserving all metadata for hierarchical storage and processing.
+        preserving all metadata for hierarchical storage and processing. Also
+        fans out to any in-process processors registered on
+        ``self._processors`` (local-accumulation path, post records-manager
+        decoupling).
 
         Handles errors gracefully by sending error messages to RecordsManager
         instead of raising exceptions, ensuring collector continues operation
@@ -342,6 +400,20 @@ class ServerMetricsManager(BaseComponentService):
         """
         if not records:
             return
+
+        # Local fan-out: deliver every record to every registered processor
+        # before the ZMQ push, so in-process accumulators see the same
+        # ordering as the records-manager-side processors.
+        for proc in getattr(self, "_processors", ()) or ():
+            for record in records:
+                try:
+                    await proc.process_server_metrics_record(record)
+                except Exception as e:  # noqa: BLE001 - processor error boundary
+                    self.error(
+                        f"server-metrics processor {proc!r} raised on "
+                        f"record from {collector_id}: {e!r}"
+                    )
+                    self._error_state.record_error(ErrorDetails.from_exception(e))
 
         for record in records:
             try:

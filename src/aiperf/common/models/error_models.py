@@ -148,3 +148,7 @@ class ErrorTrackingState:
         default_factory=lambda: defaultdict(int)
     )
     """Mapping of error details to their occurrence count."""
+
+    def record_error(self, error: ErrorDetails) -> None:
+        """Increment the occurrence count for ``error``."""
+        self.error_counts[error] += 1
