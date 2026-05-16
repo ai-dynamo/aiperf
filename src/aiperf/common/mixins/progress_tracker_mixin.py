@@ -34,36 +34,15 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
-@dataclass(slots=True, kw_only=True, frozen=True)
 class CombinedPhaseStats(BasePhaseStats):
     """Combined progress for a single phase: requests + records + computed rates.
 
-    Slotted dataclass — the flattened shape is a shared type usable in both
-    msgspec contexts (if ever embedded in a Message) and Pydantic
-    (``JobProgress.phases`` — FastAPI operator API response) without a
-    compat shim.
+    Pydantic subclass: ``BasePhaseStats`` is Pydantic so this stays Pydantic.
+    The ``ConfigDict(extra="forbid")`` mirrors the previous ``__pydantic_config__``
+    semantic while playing nicely with Pydantic's inheritance machinery.
     """
 
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-
-    # Credit progress fields (mirror CreditPhaseStats)
-    requests_sent: int = 0
-    requests_completed: int = 0
-    requests_cancelled: int = 0
-    request_errors: int = 0
-    sent_sessions: int = 0
-    completed_sessions: int = 0
-    cancelled_sessions: int = 0
-    total_session_turns: int = 0
-
-    # Records progress fields (mirror PhaseRecordsStats)
-    records_end_ns: int | None = None
-    success_records: int = 0
-    error_records: int = 0
-
-    # Computed fields
-    requests_per_second: float | None = None
-    records_per_second: float | None = None
+    model_config = ConfigDict(extra="forbid")
 
     # Credit progress fields (mirror CreditPhaseStats)
     requests_sent: int = 0

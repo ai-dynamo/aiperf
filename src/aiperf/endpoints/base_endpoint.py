@@ -114,11 +114,27 @@ def _model_endpoint_from_run(run: Any) -> ModelEndpointInfo:
             use_legacy_max_tokens=getattr(
                 endpoint_cfg, "use_legacy_max_tokens", False
             ),
-            headers=getattr(endpoint_cfg, "headers", None),
+            headers=_to_pair_list(getattr(endpoint_cfg, "headers", None)),
             api_key=getattr(endpoint_cfg, "api_key", None),
-            url_params=getattr(endpoint_cfg, "url_params", None),
+            url_params=_to_pair_list(getattr(endpoint_cfg, "url_params", None)),
         ),
     )
+
+
+def _to_pair_list(value: Any) -> Any:
+    """Normalize ``dict|list|None`` shapes to a list of ``(key, value)`` pairs.
+
+    ``BenchmarkConfig.endpoint.headers`` / ``.url_params`` are dicts; the
+    pre-existing ``EndpointInfo`` Pydantic model carries them as
+    ``list[tuple[str, str]]``. The mismatch surfaces when synthesizing a
+    ``ModelEndpointInfo`` from a ``BenchmarkRun`` (e.g. inputs_json
+    generation pre-flight). Pass-through for ``None`` / lists.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return list(value.items())
+    return list(value)
 
 
 class BaseEndpoint(AIPerfLoggerMixin, ABC):
