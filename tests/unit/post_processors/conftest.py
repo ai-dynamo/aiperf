@@ -342,6 +342,44 @@ def mock_cfg() -> "BenchmarkConfig":
 
 
 @pytest.fixture
+def mock_user_config():
+    """Native v2 ``AIPerfConfig`` envelope for post-processor tests.
+
+    Mirrors ``mock_cfg`` but wraps the body in an AIPerfConfig envelope so
+    tests that consume the full envelope (e.g. accumulator/run-builder
+    fixtures using ``_make_run``) get an envelope-shaped input.
+    """
+    from aiperf.config import AIPerfConfig
+
+    return AIPerfConfig(
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/completions"],
+                "type": EndpointType.COMPLETIONS,
+                "streaming": False,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
+    )
+
+
+@pytest.fixture
 def mock_run(mock_cfg):
     """v2 ``BenchmarkRun`` wrapping ``mock_cfg`` (native BenchmarkConfig).
 

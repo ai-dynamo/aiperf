@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aiperf.cli_runner._callbacks import CompletedRun, OnComplete
-from aiperf.cli_runner._multi_run import _run_multi_benchmark
+from aiperf.cli_runner._multi_run import (
+    _reject_in_process_sweep_under_operator,
+    _run_multi_benchmark,
+)
 from aiperf.cli_runner._preflight import (
     _preflight_artifact_dir,
     _preflight_endpoint_ready,
@@ -30,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CompletedRun",
     "OnComplete",
+    "_reject_in_process_sweep_under_operator",
     "run_benchmark",
 ]
 

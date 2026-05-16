@@ -37,7 +37,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self,
         output_file: Path,
         batch_size: int,
-        flush_interval: float,
+        flush_interval: float | None = None,
         **kwargs,
     ):
         """Initialize the buffered JSONL writer.
@@ -45,8 +45,14 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Args:
             output_file: Path to the JSONL output file
             batch_size: Number of records to buffer before auto-flushing
+            flush_interval: Seconds between periodic flushes. Falls back to
+                ``Environment.RECORD.EXPORT_FLUSH_INTERVAL`` when ``None`` so
+                callers that have no domain-specific knob still flush on a
+                time boundary (no silent zero-interval / busy-spin).
             **kwargs: Additional arguments passed to parent class
         """
+        if flush_interval is None:
+            flush_interval = Environment.RECORD.EXPORT_FLUSH_INTERVAL
         super().__init__(**kwargs)
         self.output_file = output_file
         self.lines_written = 0

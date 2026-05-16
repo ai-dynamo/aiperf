@@ -216,6 +216,19 @@ class ArtifactsConfig(BaseConfig):
         ),
     ]
 
+    per_chunk_data: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "Include list-valued per-chunk record metrics (e.g. inter-chunk "
+                "latencies, per-chunk token counts) in the records JSONL/CSV exports. "
+                "Off by default to keep export size bounded; enable when downstream "
+                "analysis needs the full per-chunk trace per request."
+            ),
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_artifacts(self) -> ArtifactsConfig:
         """Validate artifact configuration."""
