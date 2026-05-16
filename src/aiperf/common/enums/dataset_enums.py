@@ -51,22 +51,6 @@ CreditPhase = str
 """Type alias for credit phase names. Phases are arbitrary strings (e.g. 'warmup', 'main', 'cooldown')."""
 
 
-class DatasetFormat(CaseInsensitiveStrEnum):
-    """Defines the format of file-based datasets."""
-
-    SINGLE_TURN = "single_turn"
-    """Simple prompt-response pairs."""
-
-    MULTI_TURN = "multi_turn"
-    """Conversational data with multiple turns."""
-
-    MOONCAKE_TRACE = "mooncake_trace"
-    """Mooncake production trace format."""
-
-    RANDOM_POOL = "random_pool"
-    """Treat file as a pool for random sampling."""
-
-
 class DatasetType(CaseInsensitiveStrEnum):
     """Defines the source type for benchmark datasets."""
 
