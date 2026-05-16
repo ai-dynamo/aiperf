@@ -824,12 +824,16 @@ def create_exporter_config(
 ):
     """Helper to create ExporterConfig with common defaults.
 
-    Accepts either a v1 ``CLIConfig`` (legacy) or a v2 ``BenchmarkConfig``
-    directly. v1 inputs are converted via ``make_cfg_from_v1``.
+    Accepts either a v1 ``CLIConfig`` (legacy), a v2 ``BenchmarkConfig``
+    directly, or a v2 ``AIPerfConfig`` envelope (unwrap to its ``.benchmark``).
+    v1 inputs are converted via ``make_cfg_from_v1``.
     """
+    from aiperf.config import AIPerfConfig
     from aiperf.config.config import BenchmarkConfig
 
-    if isinstance(cli_config, BenchmarkConfig):
+    if isinstance(cli_config, AIPerfConfig):
+        cfg = cli_config.benchmark
+    elif isinstance(cli_config, BenchmarkConfig):
         cfg = cli_config
     else:
         cli_with_verbose = cli_config.model_copy(update={"verbose": verbose})
