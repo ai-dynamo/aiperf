@@ -70,6 +70,13 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
         default=None,
         description="Path to zstd-compressed index file for HTTP transfer (K8s only).",
     )
+    compressed: bool = Field(
+        default=False,
+        description="True when the on-disk data/index files are pre-compressed "
+        "(zstd) and should be served with Content-Encoding=zstd. The dataset "
+        "router checks this flag to decide whether to add the encoding header "
+        "and (for older clients) whether to fall back to gzip on-the-fly.",
+    )
     compressed_size_bytes: int = Field(
         default=0,
         ge=0,

@@ -34,7 +34,7 @@ def _write_grid_sweep(tmp_path: Path) -> Path:
     yaml_str = (
         "sweep:\n"
         "  type: grid\n"
-        "  parameters:\n"
+        "  variables:\n"
         "    phases.profiling.concurrency: [1, 2, 4]\n" + _VALID_BENCHMARK
     )
     path = tmp_path / "sweep.yaml"

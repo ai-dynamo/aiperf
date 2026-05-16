@@ -27,6 +27,7 @@ from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.config import BenchmarkRun
+from aiperf.plugin import plugins
 
 # Default max_tokens when a benchmark omits generation_size from metadata.
 # MMLU sets 5 (single-letter answer); long-form benchmarks should set
@@ -70,6 +71,23 @@ class AccuracyDatasetLoader:
         session_gen = SessionIDGenerator(seed=seed)
         acc_cfg = self.run.cfg.accuracy
         system_prompt = acc_cfg.system_prompt if acc_cfg is not None else None
+        # When the user hasn't supplied --accuracy-system-prompt, fall back to
+        # the benchmark plugin's ``default_system_prompt`` metadata (so MMLU
+        # /humaneval/etc. get their idiomatic instruction injected). Empty
+        # strings count as "no default" so a plugin can opt out explicitly.
+        if not system_prompt and acc_cfg is not None:
+            from aiperf.plugin.enums import PluginType
+
+            try:
+                meta = plugins.get_metadata(
+                    PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
+                )
+            except Exception:
+                meta = None
+            if meta:
+                default = meta.get("default_system_prompt") if isinstance(meta, dict) else None
+                if isinstance(default, str) and default:
+                    system_prompt = default
         conversations: list[Conversation] = []
 
         for problem in problems:
