@@ -1,69 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections import namedtuple
+
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, NamedTuple
 
-from pydantic import ConfigDict, Field
-
-from aiperf.common.models.base_models import AIPerfBaseModel
-
-# TODO: These can be potentially different for each platform. (below is linux)
-IOCounters = namedtuple(
-    "IOCounters",
-    [
-        "read_count",  # system calls io read
-        "write_count",  # system calls io write
-        "read_bytes",  # bytes read (disk io)
-        "write_bytes",  # bytes written (disk io)
-        "read_chars",  # io read bytes (system calls)
-        "write_chars",  # io write bytes (system calls)
-    ],
-)
-
-CPUTimes = namedtuple(
-    "CPUTimes",
-    ["user", "system", "iowait"],
-)
-
-CtxSwitches = namedtuple("CtxSwitches", ["voluntary", "involuntary"])
-
-
-class ProcessHealth(AIPerfBaseModel):
-    """Model for process health data."""
-
-    pid: int | None = Field(
-        default=None,
-        ge=0,
-        description="The PID of the process",
-    )
-    create_time: float = Field(
-        ..., ge=0, description="The creation time of the process in seconds"
-    )
-    uptime: float = Field(..., ge=0, description="The uptime of the process in seconds")
-    cpu_usage: float = Field(
-        ..., ge=0, description="The current CPU usage of the process in %"
-    )
-    memory_usage: int = Field(
-        ..., ge=0, description="The current memory usage of the process in bytes (rss)"
-    )
-    io_counters: IOCounters | tuple | None = Field(
-        default=None,
-        description="The current I/O counters of the process (read_count, write_count, read_bytes, write_bytes, read_chars, write_chars)",
-    )
-    cpu_times: CPUTimes | tuple | None = Field(
-        default=None,
-        description="The current CPU times of the process (user, system, iowait)",
-    )
-    num_ctx_switches: CtxSwitches | tuple | None = Field(
-        default=None,
-        description="The current number of context switches (voluntary, involuntary)",
-    )
-    num_threads: int | None = Field(
-        default=None,
-        ge=0,
-        description="The current number of threads",
-    )
+from pydantic import ConfigDict
 
 
 @dataclass(slots=True, kw_only=True)
@@ -116,3 +57,45 @@ class ProcessHealthAggregates:
     cpu_time_user: NumericAggregate = field(default_factory=NumericAggregate)
     cpu_time_system: NumericAggregate = field(default_factory=NumericAggregate)
     cpu_time_iowait: NumericAggregate = field(default_factory=NumericAggregate)
+
+
+# IO / CPU / ctx-switch tuples mirror the psutil namedtuple surface so both
+# indexed (``io_counters[4]``) and attribute (``io_counters.read_chars``)
+# access keep working. msgspec encodes/decodes ``typing.NamedTuple`` as an
+# array natively, so these ride on the wire without custom hooks.
+class IOCounters(NamedTuple):
+    read_count: int
+    write_count: int
+    read_bytes: int
+    write_bytes: int
+    read_chars: int
+    write_chars: int
+
+
+class CPUTimes(NamedTuple):
+    user: float
+    system: float
+    iowait: float
+
+
+class CtxSwitches(NamedTuple):
+    voluntary: int
+    involuntary: int
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ProcessHealth:
+    """Immutable snapshot of process health for a single tick."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    pid: int | None = None
+    create_time: float
+    uptime: float
+    cpu_usage: float
+    memory_usage: int
+    pss_memory: int | None = None
+    io_counters: IOCounters | None = None
+    cpu_times: CPUTimes | None = None
+    num_ctx_switches: CtxSwitches | None = None
+    num_threads: int | None = None
