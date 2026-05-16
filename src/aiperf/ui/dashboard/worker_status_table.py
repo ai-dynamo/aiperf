@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from rich.text import Text
@@ -7,8 +7,8 @@ from textual.widget import Widget
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import WorkerStatus
-from aiperf.common.models import WorkerStats
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
+from aiperf.common.models import WorkerGroupStats
 from aiperf.ui.dashboard.custom_widgets import NonFocusableDataTable
 from aiperf.ui.utils import format_bytes
 
@@ -34,12 +34,12 @@ class WorkerStatusTable(Widget):
     }
     """
 
-    COLUMNS = ["Worker ID", "Status", "In-flight", "Completed", "Failed", "CPU", "Memory", "Total Read", "Total Write"]  # fmt: skip
+    COLUMNS = ["Group ID", "Status", "Ready", "In-flight", "Completed", "Failed", "CPU%", "Memory"]  # fmt: skip
 
     def __init__(self) -> None:
         super().__init__()
         self.data_table: NonFocusableDataTable | None = None
-        self._worker_row_keys: dict[str, RowKey] = {}
+        self._group_row_keys: dict[str, RowKey] = {}
         self._columns_initialized = False
         self._column_keys: dict[str, ColumnKey] = {}
 
@@ -61,18 +61,18 @@ class WorkerStatusTable(Widget):
             )
         self._columns_initialized = True
 
-    def update_single_worker(self, worker_stats: WorkerStats) -> None:
-        """Update a single worker's row."""
+    def update_group(self, group_id: str, group: WorkerGroupStats) -> None:
+        """Update a single worker-group's row."""
         if not self.data_table or not self.data_table.is_mounted:
             return
 
         if not self._columns_initialized:
             self._initialize_columns()
 
-        row_cells = self._format_worker_row(worker_stats)
+        row_cells = self._format_group_row(group_id, group)
 
-        if worker_stats.worker_id in self._worker_row_keys:
-            row_key = self._worker_row_keys[worker_stats.worker_id]
+        if group_id in self._group_row_keys:
+            row_key = self._group_row_keys[group_id]
             try:
                 _ = self.data_table.get_row_index(row_key)
                 self._update_single_row(row_cells, row_key)
@@ -81,9 +81,8 @@ class WorkerStatusTable(Widget):
                 # Row doesn't exist, fall through to add as new
                 pass
 
-        # Add new worker row
         row_key = self.data_table.add_row(*row_cells)
-        self._worker_row_keys[worker_stats.worker_id] = row_key
+        self._group_row_keys[group_id] = row_key
 
     def _update_single_row(self, row_cells: list[Text], row_key: RowKey) -> None:
         """Update a single row's cells."""
@@ -92,7 +91,7 @@ class WorkerStatusTable(Widget):
                 self.data_table.update_cell(  # type: ignore
                     row_key, self._column_keys[col_name], cell_value, update_width=True
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort UI cell update; any textual/rich error is logged and skipped
                 _logger.warning(
                     f"Error updating cell {col_name} with value {cell_value}: {e!r}"
                 )
@@ -107,41 +106,34 @@ class WorkerStatusTable(Widget):
         """Format CPU usage percentage."""
         return f"{cpu_usage:5.01f}%" if cpu_usage is not None else "N/A"
 
-    def _format_worker_row(self, worker_stats: WorkerStats) -> list[Text]:
-        """Format worker data into table row cells."""
-        row_data = [
-            Text(worker_stats.worker_id, style="bold cyan", justify="right"),
+    def _format_group_row(self, group_id: str, group: WorkerGroupStats) -> list[Text]:
+        """Format worker-group data into table row cells."""
+        status_text = group.status.replace("_", " ").title()
+        if (
+            group.startup_state is not None
+            and group.startup_state != WorkerStartupState.READY
+        ):
+            startup_text = group.startup_state.replace("_", " ").title()
+            status_text = f"{status_text} ({startup_text})"
+
+        denom = group.declared_workers or len(group.workers) or "?"
+        ready_text = f"{group.ready_workers}/{denom}"
+
+        health = group.health
+        cpu_text = self._format_cpu(health.cpu_usage) if health else "N/A"
+        mem_text = self._format_memory(health.memory_usage) if health else "N/A"
+
+        return [
+            Text(group_id, style="bold cyan", justify="right"),
             Text(
-                worker_stats.status.replace("_", " ").title(),
-                style=WORKER_STATUS_STYLES[worker_stats.status],
+                status_text,
+                style=WORKER_STATUS_STYLES.get(group.status, ""),
                 justify="right",
             ),
-            Text(f"{worker_stats.task_stats.in_progress:,}", justify="right"),
-            Text(f"{worker_stats.task_stats.completed:,}", justify="right"),
-            Text(f"{worker_stats.task_stats.failed:,}", justify="right"),
+            Text(ready_text, justify="right"),
+            Text(f"{group.task_stats.in_progress:,}", justify="right"),
+            Text(f"{group.task_stats.completed:,}", justify="right"),
+            Text(f"{group.task_stats.failed:,}", justify="right"),
+            Text(cpu_text, justify="right"),
+            Text(mem_text, justify="right"),
         ]
-
-        health = worker_stats.health
-
-        if health:
-            row_data.extend([
-                Text(self._format_cpu(health.cpu_usage), justify="right"),
-                Text(self._format_memory(health.memory_usage), justify="right"),
-            ])  # fmt: skip
-        else:
-            row_data.extend([
-                Text("N/A", justify="right"),
-                Text("N/A", justify="right"),
-            ])  # fmt: skip
-
-        if health and health.io_counters:
-            row_data.extend([
-                Text(format_bytes(health.io_counters.read_chars), justify="right"),
-                Text(format_bytes(health.io_counters.write_chars), justify="right"),
-            ])  # fmt: skip
-        else:
-            row_data.extend([
-                Text("N/A", justify="right"),
-                Text("N/A", justify="right"),
-            ])  # fmt: skip
-        return row_data

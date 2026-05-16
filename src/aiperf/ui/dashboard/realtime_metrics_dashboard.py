@@ -1,12 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
 import sys
 from contextlib import suppress
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -16,14 +14,12 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.models.record_models import MetricResult
+from aiperf.config import BenchmarkRun
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
-
-if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
 
@@ -38,7 +34,7 @@ class RealtimeMetricsTable(Widget):
     }
     """
 
-    STATS_FIELDS = ["avg", "min", "max", "p99", "p90", "p50", "std"]
+    STATS_FIELDS: list[str] = ["avg", "min", "max", "p99", "p90", "p50", "std"]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
     def __init__(self, run: BenchmarkRun, **kwargs) -> None:
@@ -66,13 +62,13 @@ class RealtimeMetricsTable(Widget):
         """Determine if a metric should be skipped.
 
         INTERNAL and EXPERIMENTAL metrics are already filtered upstream by
-        summarize(), so only ERROR_ONLY and console_group=NONE need filtering here.
+        summarize(), so only ERROR_ONLY and NO_CONSOLE need filtering here.
         """
         metric_class = MetricRegistry.get_class(metric.tag)
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
-            metric_class.console_group == MetricConsoleGroup.NONE
+            metric_class.has_flags(MetricFlags.NO_CONSOLE)
             and not Environment.DEV.SHOW_INTERNAL_METRICS
         )
 
@@ -127,7 +123,7 @@ class RealtimeMetricsTable(Widget):
                 self.data_table.update_cell(  # type: ignore
                     row_key, self._column_keys[col_name], cell_value, update_width=True
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort UI cell update; any textual/rich error is logged and skipped
                 _logger.warning(
                     f"Error updating cell {col_name} with value {cell_value}: {e!r}"
                 )
@@ -166,7 +162,7 @@ class RealtimeMetricsTable(Widget):
 
         if isinstance(value, datetime):
             value_str = value.strftime("%Y-%m-%d %H:%M:%S")
-        elif isinstance(value, int | float):
+        elif isinstance(value, (int, float)):
             value_str = f"{value:,.2f}"
         else:
             value_str = str(value)

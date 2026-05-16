@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -10,14 +9,13 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
+from aiperf.config import BenchmarkRun
 from aiperf.ui.base_ui import BaseAIPerfUI
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
 if TYPE_CHECKING:
-    import multiprocessing
-
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.common.logging import LogQueue
     from aiperf.controller.system_controller import SystemController
 
 
@@ -37,7 +35,7 @@ class AIPerfDashboardUI(BaseAIPerfUI):
 
     def __init__(
         self,
-        log_queue: multiprocessing.Queue,
+        log_queue: LogQueue,
         run: BenchmarkRun,
         controller: SystemController,
         **kwargs,
@@ -56,11 +54,11 @@ class AIPerfDashboardUI(BaseAIPerfUI):
 
         # Attach the hooks directly to the function on the app, to avoid the extra function call overhead
         self.attach_hook(AIPerfHook.ON_RECORDS_PROGRESS, self.app.on_records_progress)
-        self.attach_hook(
-            AIPerfHook.ON_PROFILING_PROGRESS, self.app.on_profiling_progress
-        )
-        self.attach_hook(AIPerfHook.ON_WARMUP_PROGRESS, self.app.on_warmup_progress)
+        self.attach_hook(AIPerfHook.ON_PHASE_PROGRESS, self.app.on_phase_progress)
         self.attach_hook(AIPerfHook.ON_WORKER_UPDATE, self.app.on_worker_update)
+        self.attach_hook(
+            AIPerfHook.ON_WORKER_GROUP_UPDATE, self.app.on_worker_group_update
+        )
         self.attach_hook(
             AIPerfHook.ON_WORKER_STATUS_SUMMARY, self.app.on_worker_status_summary
         )

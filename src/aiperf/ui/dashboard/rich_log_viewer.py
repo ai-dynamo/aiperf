@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import multiprocessing
+from __future__ import annotations
+
 from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ from textual.widgets import Static
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
+from aiperf.common.logging import LogQueue
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.utils import yield_to_event_loop
 
@@ -88,78 +90,107 @@ class SelectableRichLog(ScrollableContainer):
             lineno = log_data.get("lineno", "")
             message = log_data["msg"][: self.MAX_LOG_MESSAGE_LENGTH]
 
-            level_style = self.LOG_LEVEL_STYLES.get(levelname_raw, "white")
             log_suffix = f"({filename}:{lineno})" if lineno else f"({filename})"
-
-            # Calculate widths
-            console_width = (
-                max(self.size.width - 4, 40)
-                if self.size.width > 0
-                else self.DEFAULT_WIDTH
-            )
-            target_width = console_width - 2
-
-            prefix = f"[{timestamp}] {levelname_raw:<8} "
-            prefix_len = len(prefix)
-            content_width = target_width - prefix_len
-
-            # Combine message and suffix for character-level wrapping
             full_content = f"{message} {log_suffix}"
             suffix_start_pos = len(message) + 1
 
-            # Only indent continuation lines on wide displays (90+)
+            console_width, target_width, prefix_len = self._compute_widths(timestamp, levelname_raw)  # fmt: skip
+            content_width = target_width - prefix_len
             indent_continuations = console_width >= self.INDENT_WIDTH_THRESHOLD
             continuation_width = content_width if indent_continuations else target_width
 
-            # Manual character-level wrapping
-            lines = []
-            remaining = full_content
-            is_first_line = True
-            while remaining:
-                line_width = content_width if is_first_line else continuation_width
-                if len(remaining) <= line_width:
-                    lines.append(remaining)
-                    break
-                lines.append(remaining[:line_width])
-                remaining = remaining[line_width:]
-                is_first_line = False
+            lines = self._wrap_content(full_content, content_width, continuation_width)
+            parts = self._build_styled_parts(
+                lines,
+                timestamp=timestamp,
+                levelname_raw=levelname_raw,
+                prefix_len=prefix_len,
+                suffix_start_pos=suffix_start_pos,
+                indent_continuations=indent_continuations,
+            )
 
-            # Build output with proper styling
-            parts = []
-            char_pos = 0
-            for i, line in enumerate(lines):
-                if i > 0:
-                    parts.append(Text("\n"))
-                    if indent_continuations:
-                        parts.append(Text(" " * prefix_len))
-                else:
-                    parts.append(Text(f"[{timestamp}] ", style="log.time"))
-                    parts.append(Text(f"{levelname_raw:<8} ", style=level_style))
-
-                line_end_pos = char_pos + len(line)
-
-                # Apply styling: message gets highlighting, suffix gets dim italic
-                if char_pos >= suffix_start_pos:
-                    # Entire line is suffix
-                    parts.append(Text(line, style="dim italic"))
-                elif line_end_pos <= suffix_start_pos:
-                    # Entire line is message
-                    parts.append(self.highlighter(Text(line)))
-                else:
-                    # Line contains both message and suffix
-                    msg_chars = suffix_start_pos - char_pos
-                    parts.append(self.highlighter(Text(line[:msg_chars])))
-                    parts.append(Text(line[msg_chars:], style="dim italic"))
-
-                char_pos = line_end_pos
-
-            formatted_log = Text.assemble(*parts)
-            self._log_lines.append(formatted_log)
+            self._log_lines.append(Text.assemble(*parts))
             self._update_display()
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort log formatting; fall back to plain error line
             self._log_lines.append(Text(f"ERROR formatting log: {e}"))
             self._update_display()
+
+    def _compute_widths(
+        self, timestamp: str, levelname_raw: str
+    ) -> tuple[int, int, int]:
+        """Compute console/target widths and the prefix length for a log line."""
+        console_width = (
+            max(self.size.width - 4, 40) if self.size.width > 0 else self.DEFAULT_WIDTH
+        )
+        target_width = console_width - 2
+        prefix_len = len(f"[{timestamp}] {levelname_raw:<8} ")
+        return console_width, target_width, prefix_len
+
+    @staticmethod
+    def _wrap_content(
+        full_content: str, content_width: int, continuation_width: int
+    ) -> list[str]:
+        """Manually wrap text at character boundaries using per-line widths."""
+        lines: list[str] = []
+        remaining = full_content
+        is_first_line = True
+        while remaining:
+            line_width = content_width if is_first_line else continuation_width
+            if len(remaining) <= line_width:
+                lines.append(remaining)
+                break
+            lines.append(remaining[:line_width])
+            remaining = remaining[line_width:]
+            is_first_line = False
+        return lines
+
+    def _build_styled_parts(
+        self,
+        lines: list[str],
+        *,
+        timestamp: str,
+        levelname_raw: str,
+        prefix_len: int,
+        suffix_start_pos: int,
+        indent_continuations: bool,
+    ) -> list[Text]:
+        """Assemble styled Text segments for the wrapped log lines."""
+        level_style = self.LOG_LEVEL_STYLES.get(levelname_raw, "white")
+        parts: list[Text] = []
+        char_pos = 0
+        for i, line in enumerate(lines):
+            if i > 0:
+                parts.append(Text("\n"))
+                if indent_continuations:
+                    parts.append(Text(" " * prefix_len))
+            else:
+                parts.append(Text(f"[{timestamp}] ", style="log.time"))
+                parts.append(Text(f"{levelname_raw:<8} ", style=level_style))
+
+            line_end_pos = char_pos + len(line)
+            if char_pos >= suffix_start_pos:
+                parts.append(Text(line, style="dim italic"))
+            elif line_end_pos <= suffix_start_pos:
+                parts.append(self.highlighter(Text(line)))
+            else:
+                msg_chars = suffix_start_pos - char_pos
+                parts.append(self.highlighter(Text(line[:msg_chars])))
+                parts.append(Text(line[msg_chars:], style="dim italic"))
+            char_pos = line_end_pos
+        return parts
+
+    def write_line(self, text: str) -> None:
+        """Write a plain text line to the log viewer.
+
+        This is a simpler alternative to display_log_record for when you just
+        want to append a line of text without the full log record formatting.
+
+        Args:
+            text: The text to append to the log viewer.
+        """
+        self._log_lines.append(Text(text))
+        self._update_display()
 
     def _update_display(self) -> None:
         """Update the display with all log lines."""
@@ -222,9 +253,7 @@ class LogConsumer(AIPerfLifecycleMixin):
     """LogConsumer is a class that consumes log records from the shared log queue
     and displays them in the RichLogViewer."""
 
-    def __init__(
-        self, log_queue: multiprocessing.Queue, app: "AIPerfTextualApp", **kwargs
-    ) -> None:
+    def __init__(self, log_queue: LogQueue, app: AIPerfTextualApp, **kwargs) -> None:
         super().__init__(**kwargs)
         self.log_queue = log_queue
         self.app = app
@@ -245,6 +274,6 @@ class LogConsumer(AIPerfLifecycleMixin):
                 log_data = self.log_queue.get_nowait()
                 self.app.log_viewer.display_log_record(log_data)
                 await yield_to_event_loop()
-            except Exception:
+            except Exception:  # noqa: BLE001 - queue.Empty races and display errors must not crash the log pump
                 # Silently ignore queue errors to avoid recursion
                 break

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
@@ -9,8 +9,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches, WrongType
 from textual.widgets import Label
 
-from aiperf.common.enums import WorkerStatus
-from aiperf.common.models import WorkerStats
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
+from aiperf.common.models import WorkerGroupStats, WorkerStats
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget
 from aiperf.ui.dashboard.worker_status_table import WorkerStatusTable
 
@@ -49,7 +49,7 @@ class WorkerDashboard(Container, MaximizableWidget):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.worker_stats: dict[str, WorkerStats] = {}
+        self.worker_groups: dict[str, WorkerGroupStats] = {}
         self.table_widget: WorkerStatusTable | None = None
         self.border_title = "Worker Status"
 
@@ -70,21 +70,42 @@ class WorkerDashboard(Container, MaximizableWidget):
                 self.table_widget = WorkerStatusTable()
                 yield self.table_widget
 
-    def on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
-        """Handle individual worker updates."""
-        self.worker_stats[worker_id] = worker_stats
-        if self.table_widget:
-            self.table_widget.update_single_worker(worker_stats)
-
-    def on_worker_status_summary(
-        self, worker_status_summary: dict[str, WorkerStatus]
+    def on_worker_group_update(
+        self, group_id: str, group_stats: WorkerGroupStats
     ) -> None:
-        """Handle worker status summary updates."""
-        summary = Counter(worker_status_summary.values())
+        """Handle a worker-group rolled-up snapshot."""
+        self.worker_groups[group_id] = group_stats
+        if self.table_widget:
+            self.table_widget.update_group(group_id, group_stats)
 
-        # For each status type, update the label with the count of workers in that status
+        # Recompute the per-worker-status counts across all known groups so
+        # the summary chips stay in sync with whatever the WGM is reporting.
+        statuses: list[WorkerStatus] = []
+        for group in self.worker_groups.values():
+            for child in group.workers.values():
+                statuses.append(child.status)
+        summary = Counter(statuses)
         for status in WorkerStatus:
             with contextlib.suppress(WrongType, NoMatches):
                 self.query_one(
                     f"#{status.replace('_', '-').lower()}-count", Label
                 ).update(f"{summary[status]} {status.replace('_', ' ')}")
+
+    def on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
+        """Legacy ON_WORKER_UPDATE bridge — superseded by on_worker_group_update.
+
+        Kept as a no-op so the fake-in-process WorkerTrackerMixin path that still
+        emits ``ON_WORKER_UPDATE`` for external listeners does not crash here.
+        """
+        return
+
+    def on_worker_status_summary(
+        self,
+        worker_status_summary: dict[str, WorkerStatus],
+        worker_startup_states: dict[str, WorkerStartupState] | None = None,
+    ) -> None:
+        """Legacy ON_WORKER_STATUS_SUMMARY bridge — superseded by on_worker_group_update.
+
+        Kept as a no-op for symmetry with on_worker_update.
+        """
+        return

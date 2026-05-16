@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 from __future__ import annotations
 
 import os
@@ -14,11 +13,11 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
-from aiperf.common.enums import GPUTelemetryMode, WorkerStatus
+from aiperf.common.enums import GPUTelemetryMode, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
-from aiperf.common.messages import StartRealtimeTelemetryCommand
 from aiperf.common.mixins import CombinedPhaseStats
-from aiperf.common.models import MetricResult, WorkerStats
+from aiperf.common.models import MetricResult, WorkerGroupStats, WorkerStats
+from aiperf.config import BenchmarkRun
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
 from aiperf.ui.dashboard.progress_header import ProgressHeader
@@ -28,7 +27,6 @@ from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.controller.system_controller import SystemController
 
 
@@ -106,8 +104,7 @@ class AIPerfTextualApp(App):
         self.profile_results: list[RenderableType] = []
         self.run = run
         self.controller: SystemController = controller
-        self._warmup_stats: CombinedPhaseStats | None = None
-        self._profiling_stats: CombinedPhaseStats | None = None
+        self._phase_stats: dict[str, CombinedPhaseStats] = {}
         self._records_stats: CombinedPhaseStats | None = None
         self._has_result_data = False
 
@@ -202,10 +199,10 @@ class AIPerfTextualApp(App):
     async def action_toggle_maximize_telemetry(self) -> None:
         """Toggle the maximize state of the telemetry panel and enable realtime GPU telemetry if needed."""
         if (
-            self.controller.run.cfg.gpu_telemetry_mode
+            self.controller.run.resolved.gpu_telemetry_mode
             != GPUTelemetryMode.REALTIME_DASHBOARD
         ):
-            self.controller.run.cfg.gpu_telemetry_mode = (
+            self.controller.run.resolved.gpu_telemetry_mode = (
                 GPUTelemetryMode.REALTIME_DASHBOARD
             )
             if self.realtime_telemetry_dashboard:
@@ -213,11 +210,7 @@ class AIPerfTextualApp(App):
                     "Enabling live GPU telemetry..."
                 )
 
-            await self.controller.publish(
-                StartRealtimeTelemetryCommand(
-                    service_id=self.controller.service_id,
-                )
-            )
+            await self.controller.start_realtime_telemetry()
 
         await self.action_toggle_maximize("telemetry")
 
@@ -234,65 +227,34 @@ class AIPerfTextualApp(App):
             else:
                 self.notify("No logs to copy", severity="warning")
 
-    async def on_warmup_progress(self, warmup_stats: CombinedPhaseStats) -> None:
-        """Forward warmup progress updates to the Textual App."""
+    async def on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
+        """Forward phase progress updates to the Textual App."""
         if not self._has_result_data:
             self._on_first_result_data()
-        self._warmup_stats = warmup_stats
+        self._phase_stats[phase_stats.phase] = phase_stats
 
         if self.progress_dashboard:
             async with self.progress_dashboard.batch():
-                self.progress_dashboard.on_warmup_progress(warmup_stats)
+                self.progress_dashboard.on_phase_progress(phase_stats)
 
         if self.progress_header:
-            # During grace period, show progress as completed+cancelled out of sent
-            if warmup_stats.timeout_triggered:
-                total = warmup_stats.requests_sent
+            label = phase_stats.phase.title()
+            if phase_stats.timeout_triggered:
+                total = phase_stats.requests_sent
                 completed = (
-                    warmup_stats.requests_completed + warmup_stats.requests_cancelled
+                    phase_stats.requests_completed + phase_stats.requests_cancelled
                 )
                 progress = (completed / total * 100) if total > 0 else 0
                 self.progress_header.update_progress(
-                    header="Warmup Grace",
+                    header=f"{label} Grace",
                     progress=progress,
                     total=100,
                 )
             else:
-                progress = warmup_stats.requests_progress_percent
+                progress = phase_stats.requests_progress_percent
                 if progress is not None:
                     self.progress_header.update_progress(
-                        header="Warmup",
-                        progress=progress,
-                        total=100,
-                    )
-
-    async def on_profiling_progress(self, profiling_stats: CombinedPhaseStats) -> None:
-        """Forward requests phase progress updates to the Textual App."""
-        if not self._has_result_data:
-            self._on_first_result_data()
-        self._profiling_stats = profiling_stats
-        if self.progress_dashboard:
-            async with self.progress_dashboard.batch():
-                self.progress_dashboard.on_profiling_progress(profiling_stats)
-        if self.progress_header:
-            # During grace period, show progress as completed+cancelled out of sent
-            if profiling_stats.timeout_triggered:
-                total = profiling_stats.requests_sent
-                completed = (
-                    profiling_stats.requests_completed
-                    + profiling_stats.requests_cancelled
-                )
-                progress = (completed / total * 100) if total > 0 else 0
-                self.progress_header.update_progress(
-                    header="Grace Period",
-                    progress=progress,
-                    total=100,
-                )
-            else:
-                progress = profiling_stats.requests_progress_percent
-                if progress is not None:
-                    self.progress_header.update_progress(
-                        header="Profiling",
+                        header=label,
                         progress=progress,
                         total=100,
                     )
@@ -305,30 +267,44 @@ class AIPerfTextualApp(App):
                 self.progress_dashboard.on_records_progress(records_stats)
 
         pct = records_stats.records_progress_percent
-        if (
-            self._profiling_stats
-            and self._profiling_stats.is_requests_complete
-            and self.progress_header
-            and pct is not None
-            and pct > 0
-        ):
+        # Show records header progress when any non-excluded phase is requests-complete
+        results_complete = any(
+            s.is_requests_complete
+            for s in self._phase_stats.values()
+            if not s.exclude_from_results
+        )
+        if results_complete and self.progress_header and pct is not None and pct > 0:
             self.progress_header.update_progress(
                 header="Records",
                 progress=records_stats.records_progress_percent,
                 total=100,
             )
 
-    async def on_worker_update(self, worker_id: str, worker_stats: WorkerStats):
+    async def on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
         """Forward worker updates to the Textual App."""
         if self.worker_dashboard:
             async with self.worker_dashboard.batch():
                 self.worker_dashboard.on_worker_update(worker_id, worker_stats)
 
-    async def on_worker_status_summary(self, worker_status_summary: dict[str, WorkerStatus]) -> None:  # fmt: skip
+    async def on_worker_group_update(
+        self, group_id: str, group_stats: WorkerGroupStats
+    ) -> None:
+        """Forward worker-group rolled-up snapshots to the Textual App."""
+        if self.worker_dashboard:
+            async with self.worker_dashboard.batch():
+                self.worker_dashboard.on_worker_group_update(group_id, group_stats)
+
+    async def on_worker_status_summary(
+        self,
+        worker_status_summary: dict[str, WorkerStatus],
+        worker_startup_states: dict[str, WorkerStartupState] | None = None,
+    ) -> None:
         """Forward worker status summary updates to the Textual App."""
         if self.worker_dashboard:
             async with self.worker_dashboard.batch():
-                self.worker_dashboard.on_worker_status_summary(worker_status_summary)
+                self.worker_dashboard.on_worker_status_summary(
+                    worker_status_summary, worker_startup_states or {}
+                )
 
     async def on_realtime_metrics(self, metrics: list[MetricResult]) -> None:
         """Forward real-time metrics updates to the Textual App."""
