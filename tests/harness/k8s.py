@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from aiperf.config.benchmark import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -241,7 +241,7 @@ def build_sample_run(config: AIPerfConfig | None = None) -> BenchmarkRun:
     """Create a minimal BenchmarkRun for testing."""
     from pathlib import Path
 
-    from aiperf.config.benchmark import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
     if config is None:
         config = build_sample_config()

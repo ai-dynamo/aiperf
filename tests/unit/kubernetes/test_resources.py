@@ -973,7 +973,7 @@ class TestConfigMapSpecFromBenchmarkRun:
     def _make_benchmark_run(self):
         from pathlib import Path
 
-        from aiperf.config.benchmark import BenchmarkRun
+        from aiperf.config import BenchmarkRun
         from aiperf.config.config import BenchmarkConfig
 
         cfg = BenchmarkConfig.model_validate(
