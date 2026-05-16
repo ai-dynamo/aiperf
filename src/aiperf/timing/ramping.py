@@ -485,3 +485,9 @@ class PoissonStrategy(BaseRampStrategy):
         # Binary search: find first event AFTER elapsed_sec
         idx = bisect.bisect_right(self._event_times, elapsed_sec)
         return self._values[idx]
+
+
+# Branch-only alias for the ramp configuration model. Existing branch-side
+# code (ramper_builder.py) referenced TimingRampConfig; main consolidated on
+# RamperConfig. Keep the alias to unblock orphan-module importability.
+TimingRampConfig = RamperConfig

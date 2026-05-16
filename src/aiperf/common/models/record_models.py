@@ -1241,3 +1241,43 @@ class RawRecordInfo(AIPerfBaseModel):
         default=None,
         description="The error details if the request failed.",
     )
+
+
+def decode_metric_record_info_json(data: str | bytes) -> "MetricRecordInfo":
+    """Decode a JSON-encoded ``MetricRecordInfo`` (as written by the JSONL exporter)."""
+    import msgspec
+
+    from aiperf.common.metric_records_wire import metric_record_metadata_from_model
+    from aiperf.common.models.trace_models import TraceDataExport
+
+    payload = orjson.loads(data)
+    trace_data = payload.get("trace_data")
+    return MetricRecordInfo(
+        metadata=metric_record_metadata_from_model(payload["metadata"]),
+        metrics={
+            key: MetricValue(**value) for key, value in payload["metrics"].items()
+        },
+        trace_data=TraceDataExport.model_validate(trace_data) if trace_data else None,
+        error=msgspec.convert(payload["error"], ErrorDetails)
+        if payload.get("error")
+        else None,
+    )
+
+
+def decode_raw_record_info_json(data: str | bytes) -> "RawRecordInfo":
+    """Decode a JSON-encoded ``RawRecordInfo`` (as written by the raw-record JSONL exporter)."""
+    from aiperf.common.metric_records_wire import metric_record_metadata_from_model
+
+    payload = orjson.loads(data)
+    return RawRecordInfo(
+        metadata=metric_record_metadata_from_model(payload["metadata"]),
+        start_perf_ns=payload["start_perf_ns"],
+        payload=payload["payload"],
+        request_headers=payload.get("request_headers"),
+        status=payload.get("status"),
+        response_headers=payload.get("response_headers"),
+        responses=payload["responses"],
+        error=ErrorDetails.model_validate(payload["error"])
+        if payload.get("error")
+        else None,
+    )

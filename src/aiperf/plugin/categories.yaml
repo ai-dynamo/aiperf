@@ -400,3 +400,13 @@ stream_exporter:
     Stream exporters write each record to an external sink (e.g. JSONL files) as it
     arrives. No summarization dependencies. Finalized after all records are processed.
     One-to-many mapping: multiple exporters loaded simultaneously.
+
+analyzer:
+  protocol: aiperf.common.accumulator_protocols:AnalyzerProtocol
+  enum: AnalyzerType
+  description: |
+    Single-input analyzers that derive results from one accumulator at
+    summarization time, running in records-manager. Cross-input analysis
+    (correlating data from multiple accumulators that live in separate
+    processes — GPU telemetry, server metrics, inference) runs
+    controller-side as plain functions, not analyzer plugins.

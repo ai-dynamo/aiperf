@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
@@ -21,6 +22,61 @@ from aiperf.common.types import MetricTagT
 if TYPE_CHECKING:
     from aiperf.metrics.base_metric import BaseMetric
     from aiperf.metrics.metric_registry import MetricRegistry
+
+
+_PERCENTILE_QS = np.array([1, 5, 10, 25, 50, 75, 90, 95, 99], dtype=np.float64)
+
+
+def metric_result_from_array(
+    tag: MetricTagT,
+    header: str,
+    unit: str,
+    clean: NDArray[np.float64],
+    arr_sum: float,
+    *,
+    ddof: int = 0,
+) -> MetricResult:
+    """Compute MetricResult directly from a clean (no-NaN) numpy array.
+
+    Sorts ``clean`` in-place (safe — callers always pass a fresh copy from fancy indexing).
+    Extracts min/max from sorted endpoints, avg from arr_sum / n, std from np.std.
+    Vectorized linear interpolation for 9 percentiles.
+
+    Args:
+        ddof: Delta degrees of freedom for std. 0 = population (inference metrics),
+              1 = sample with Bessel's correction (telemetry time-series).
+    """
+    n = len(clean)
+    clean.sort()
+
+    virtual_idx = _PERCENTILE_QS / 100.0 * (n - 1)
+    lo = virtual_idx.astype(int)
+    hi = np.minimum(lo + 1, n - 1)
+    frac = virtual_idx - lo
+    pcts = clean[lo] + frac * (clean[hi] - clean[lo])
+
+    std = float(np.std(clean, ddof=ddof)) if n > ddof else 0.0
+
+    return MetricResult(
+        tag=tag,
+        header=header,
+        unit=unit,
+        min=clean[0],
+        max=clean[-1],
+        avg=arr_sum / n,
+        sum=arr_sum,
+        std=std,
+        p1=pcts[0],
+        p5=pcts[1],
+        p10=pcts[2],
+        p25=pcts[3],
+        p50=pcts[4],
+        p75=pcts[5],
+        p90=pcts[6],
+        p95=pcts[7],
+        p99=pcts[8],
+        count=n,
+    )
 
 
 @runtime_checkable

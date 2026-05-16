@@ -156,6 +156,60 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
     credit_ids: set[int]
 
 
+# Time synchronization messages (pre-flight RTT measurement on the credit
+# channel). Branch-only — used by aiperf.workers.clock_offset_tracker.
+
+
+class TimePing(Struct, frozen=True, kw_only=True, tag_field="t", tag="tp"):
+    """Worker requests RTT measurement from router.
+
+    Sent during startup before the worker becomes dispatchable. Router echoes
+    back as TimePong so the worker can measure round-trip time on the credit
+    channel.
+    """
+
+    sequence: int
+    """Probe sequence number."""
+
+    sent_at_ns: int
+    """Worker perf_counter timestamp when ping was sent (time.perf_counter_ns)."""
+
+
+class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
+    """Router echoes back a TimePing as TimePong."""
+
+    sequence: int
+    """Probe sequence number (echoed from TimePing)."""
+
+    sent_at_ns: int
+    """Original worker send timestamp (echoed from TimePing)."""
+
+
+class InFlightReconciliation(
+    Struct, frozen=True, kw_only=True, tag_field="t", tag="ifr"
+):
+    """Router sends its view of in-flight credits for a worker.
+
+    Sent periodically on the credit channel. The worker compares against
+    its own state and responds with an InFlightReport on the return channel.
+    Credits missing from the worker's report for two consecutive cycles
+    are treated as orphaned.
+    """
+
+    credit_ids: frozenset[int]
+    """Credit IDs the router believes are in-flight for this worker."""
+
+
+class InFlightReport(Struct, frozen=True, kw_only=True, tag_field="t", tag="ifp"):
+    """Worker reports which credits it actually has in-flight.
+
+    Sent on the return channel in response to InFlightReconciliation.
+    """
+
+    credit_ids: frozenset[int]
+    """Credit IDs the worker actually has in flight."""
+
+
 # Union type for decoding router -> worker messages
 # Credit is sent directly (no wrapper), CancelCredits for cancellation
 RouterToWorkerMessage: TypeAlias = Credit | CancelCredits
