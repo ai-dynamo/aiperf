@@ -194,12 +194,11 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         list[DatasetConfig],
         Field(
             min_length=1,
-            max_length=1,
-            description="Dataset configuration as a single-element list. The list "
-            "shape exists to share the schema between YAML and the AIPerfSweep CRD; "
-            "the runtime currently loads exactly one dataset. Singular `dataset:` "
-            "shorthand at the BenchmarkConfig top level is normalized to a one-entry "
-            "list with name='default'.",
+            description="Named dataset configurations. Each entry must have a unique 'name' "
+            "(e.g. 'main', 'eval'). Phases reference datasets by name via "
+            "``phase.dataset``; when omitted the first defined dataset is used. "
+            "Singular `dataset:` shorthand at the BenchmarkConfig top level is "
+            "normalized to a one-entry list with name='default'.",
         ),
     ]
 

@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: DeepSeek-V4-Pro (vLLM, aggregated)
+# Mirrors recipes/deepseek-v4-pro/vllm/agg/vllm-dgd.yaml: 1 replica x 8 B200, TP=8 + EP.
+#
+# Day-0 caveat (per recipes/deepseek-v4-pro/README.md): thinking modes produce
+# corrupted output on this engine, so we send chat_template_kwargs.thinking=false.
+# Flash is unaffected; remove this for Pro once the upstream sparse-attention
+# fix lands.
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: dsv4-pro-agg-bench
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  connectionsPerWorker: 252
+  benchmark:
+    variables:
+      concurrency_per_gpu: 30
+      deployment_gpu_count: 8
+      total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+      isl: 1024
+      osl: 1024
+
+    random_seed: 100
+    models:
+      - deepseek-ai/DeepSeek-V4-Pro
+    tokenizer:
+      name: deepseek-ai/DeepSeek-V4-Pro
+    endpoint:
+      urls:
+        - http://dsv4-pro-agg-frontend:8000
+      type: chat
+      path: /v1/chat/completions
+      streaming: true
+      headers:
+        Authorization: "Bearer NOT USED"
+        Accept: "text/event-stream"
+      extra:
+        max_tokens: "{{ osl }}"
+        min_tokens: "{{ osl }}"
+        ignore_eos: true
+        nvext:
+          ignore_eos: true
+        repetition_penalty: 1.0
+        temperature: 0.0
+        chat_template_kwargs:
+          thinking: false
+    datasets:
+      - name: main
+        type: synthetic
+        entries: 12800
+        prompts:
+          isl: {mean: "{{ isl }}", stddev: 0}
+          osl: {mean: "{{ osl }}", stddev: 0}
+    phases:
+      - name: warmup
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency }}"
+        exclude_from_results: true
+      - name: profiling
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency * 10 }}"
+        seamless: true
+    artifacts:
+      user_files:
+        - path: input_config.json
+          content:
+            gpu_count: "{{ deployment_gpu_count }}"
+            concurrency_per_gpu: "{{ concurrency_per_gpu }}"
+            total_concurrency: "{{ total_concurrency }}"
+            mode: agg
+            isl: "{{ isl }}"
+            osl: "{{ osl }}"
+            endpoint: "{{ endpoint_url }}"
+            model: "{{ model }}"
+    runtime:
+      ui: simple
+      record_processors: 32
+  podTemplate:
+    imagePullSecrets:
+      - {name: nvcrimagepullsecret}
+    env:
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "252"
+      - name: HF_HOME
+        value: /model-cache
+      - name: HF_HUB_OFFLINE
+        value: "1"
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-cache

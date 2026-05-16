@@ -239,11 +239,9 @@ async def test_handle_writes_max_iterations_for_adaptive_search(monkeypatch):
                 "kind": "int",
             }
         ],
-        "objective": {
-            "metric": "output_token_throughput",
+        "objectives": [{ "metric": "output_token_throughput",
             "stat": "avg",
-            "direction": "maximize",
-        },
+            "direction": "maximize", }],
         "max_iterations": 10,
     }
     patch = kopf.Patch()
@@ -277,11 +275,9 @@ async def test_handle_adaptive_search_without_trials_defaults_to_one(monkeypatch
                 "kind": "int",
             }
         ],
-        "objective": {
-            "metric": "output_token_throughput",
+        "objectives": [{ "metric": "output_token_throughput",
             "stat": "avg",
-            "direction": "maximize",
-        },
+            "direction": "maximize", }],
         "max_iterations": 7,
     }
     patch = kopf.Patch()

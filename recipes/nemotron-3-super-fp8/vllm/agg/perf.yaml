@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: Nemotron-3-Super-120B-A12B-FP8 (vLLM, aggregated)
+# Mirrors recipes/nemotron-3-super-fp8/vllm/agg/deploy.yaml: TP=4 on 4x H100/H200,
+# approximate KV-aware routing.
+#
+# Nemotron-H reasoning model: chat_template_kwargs.enable_thinking=false keeps
+# output bound to OSL without <think>...</think> overhead. The deployment uses
+# --dyn-reasoning-parser nemotron_nano which honors this flag (deepseek_r1 in
+# 0.9.1 does not — see the recipe README).
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: nemotron-super-vllm-agg-bench
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  connectionsPerWorker: 252
+  benchmark:
+    variables:
+      concurrency_per_gpu: 30
+      deployment_gpu_count: 4
+      total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+      isl: 1024
+      osl: 1024
+
+    random_seed: 100
+    models:
+      - nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+    tokenizer:
+      name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+    endpoint:
+      urls:
+        - http://nemotron-super-fp8-vllm-agg-frontend:8000
+      type: chat
+      path: /v1/chat/completions
+      streaming: true
+      headers:
+        Authorization: "Bearer NOT USED"
+        Accept: "text/event-stream"
+      extra:
+        max_tokens: "{{ osl }}"
+        min_tokens: "{{ osl }}"
+        ignore_eos: true
+        repetition_penalty: 1.0
+        temperature: 0.0
+        chat_template_kwargs:
+          enable_thinking: false
+    datasets:
+      - name: main
+        type: synthetic
+        entries: 12800
+        prompts:
+          isl: {mean: "{{ isl }}", stddev: 0}
+          osl: {mean: "{{ osl }}", stddev: 0}
+    phases:
+      - name: warmup
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency }}"
+        exclude_from_results: true
+      - name: profiling
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency * 10 }}"
+        seamless: true
+    runtime:
+      ui: simple
+      record_processors: 32
+  podTemplate:
+    imagePullSecrets:
+      - {name: nvcrimagepullsecret}
+    env:
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "252"
+      - name: HF_HOME
+        value: /model-cache
+      - name: HF_HUB_OFFLINE
+        value: "1"
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-cache

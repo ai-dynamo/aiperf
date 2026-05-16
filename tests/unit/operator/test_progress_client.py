@@ -559,8 +559,9 @@ class TestProgressClientParseResponse:
             }
         )
 
-        # CreditPhase is str, so all phases are valid - "invalid_phase" is kept
-        assert "invalid_phase" in progress.phases
+        # Branch convention: unknown phase names are dropped with a warning
+        # (CreditPhase rejects non-canonical values); the valid phase remains.
+        assert "invalid_phase" not in progress.phases
         assert "profiling" in progress.phases
 
     def test_parse_empty_phases_current_phase_is_none(self) -> None:

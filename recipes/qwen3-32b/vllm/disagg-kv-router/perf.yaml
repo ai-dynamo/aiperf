@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: Qwen3-32B (vLLM, disaggregated w/ KV-router, 6P/2D)
+# Mooncake trace replay with goodput SLOs (TTFT <= 2s, ITL <= 25ms).
+#
+# Trace file must be staged on the perf-cache PVC at:
+#   /perf-cache/traces/conversation_trace.jsonl
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: disagg-router-6p-2d-benchmark
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  benchmark:
+    models:
+      - Qwen/Qwen3-32B
+    endpoint:
+      urls:
+        - http://disagg-router-6p-2d-frontend:8000
+      streaming: true
+    datasets:
+      - name: main
+        type: file
+        path: /perf-cache/traces/conversation_trace.jsonl
+        format: mooncake_trace
+    phases:
+      - name: replay
+        type: fixed_schedule
+        auto_offset: true
+    slos:
+      time_to_first_token: 2000
+      inter_token_latency: 25
+  podTemplate:
+    env:
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+      - name: perf-cache
+        persistentVolumeClaim:
+          claimName: perf-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /root/.cache/huggingface
+      - name: perf-cache
+        mountPath: /perf-cache

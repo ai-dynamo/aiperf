@@ -31,7 +31,7 @@ def _create_zst_run(base: Path, namespace: str, job_id: str) -> Path:
                 "request_end_ns": 2000000000,
                 "worker_id": "worker-0",
                 "record_processor_id": "rp-0",
-                "benchmark_phase": "main",
+                "benchmark_phase": "profiling",
             },
             "metrics": {
                 "ttft": {"value": 0.1, "unit": "s"},

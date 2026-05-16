@@ -473,26 +473,27 @@ class TestSingleDatasetConstraint:
         cfg = BenchmarkConfig(**_base_config())
         assert len(cfg.datasets) == 1
 
-    def test_multiple_datasets_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="at most 1 item"):
-            BenchmarkConfig(
-                **_base_config(
-                    datasets=[
-                        {
-                            "name": "train",
-                            "type": "synthetic",
-                            "entries": 100,
-                            "prompts": {"isl": 128},
-                        },
-                        {
-                            "name": "eval",
-                            "type": "synthetic",
-                            "entries": 50,
-                            "prompts": {"isl": 256},
-                        },
-                    ],
-                )
+    def test_multiple_datasets_accepted(self) -> None:
+        cfg = BenchmarkConfig(
+            **_base_config(
+                datasets=[
+                    {
+                        "name": "train",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128},
+                    },
+                    {
+                        "name": "eval",
+                        "type": "synthetic",
+                        "entries": 50,
+                        "prompts": {"isl": 256},
+                    },
+                ],
             )
+        )
+        assert len(cfg.datasets) == 2
+        assert [d.name for d in cfg.datasets] == ["train", "eval"]
 
 
 # ============================================================

@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: DeepSeek-V3.2-NVFP4 (TRT-LLM, aggregated w/ round-robin)
+# Trace replay benchmark with a short synthetic warmup and goodput SLOs.
+#
+# Prerequisites:
+#   - DGD deployed and in normal/successful state
+#   - model-cache PVC exists and the trace file is staged at:
+#     /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
+#
+# SLOs: TTFT <= 20s, ITL <= 50 ms.
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: agg-round-robin-dsv32-nvfp4-bench
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  connectionsPerWorker: 200
+  benchmark:
+    random_seed: 42
+    models:
+      - nvidia/DeepSeek-V3.2-NVFP4
+    tokenizer:
+      name: nvidia/DeepSeek-V3.2-NVFP4
+    endpoint:
+      urls:
+        - http://agg-round-robin-dsv32-nvfp4-frontend:8000
+      streaming: true
+      timeout: 1000.0
+    datasets:
+      - name: warmup
+        type: synthetic
+        entries: 10
+        prompts:
+          isl: {mean: 10000, stddev: 0}
+          osl: {mean: 200, stddev: 0}
+      - name: trace
+        type: file
+        path:
+          /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
+        format: mooncake_trace
+    phases:
+      - name: warmup
+        type: concurrency
+        dataset: warmup
+        concurrency: 4
+        requests: 10
+        exclude_from_results: true
+      - name: replay
+        type: fixed_schedule
+        dataset: trace
+        auto_offset: true
+        seamless: true
+    slos:
+      time_to_first_token: 20000
+      inter_token_latency: 50
+    server_metrics:
+      enabled: true
+      urls:
+        - http://agg-round-robin-dsv32-nvfp4-dec-0-dec-wkr:9090/metrics
+        - http://agg-round-robin-dsv32-nvfp4-prefill-0:9090/metrics
+    artifacts:
+      records: [jsonl, csv]
+    runtime:
+      record_processors: 8
+  podTemplate:
+    env:
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "200"
+      - name: AIPERF_HTTP_SO_RCVTIMEO
+        value: "120"
+      - name: HF_HOME
+        value: /model-cache
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-cache

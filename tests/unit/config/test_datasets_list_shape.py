@@ -57,15 +57,15 @@ def test_datasets_rejects_empty_list():
         _cfg([])
 
 
-def test_datasets_rejects_more_than_one_entry():
-    """Runtime only loads the first dataset; reject multi-dataset configs."""
-    with pytest.raises(ValueError, match="at most 1 item"):
-        _cfg(
-            [
-                {"name": "a", "type": "synthetic"},
-                {"name": "b", "type": "synthetic"},
-            ]
-        )
+def test_datasets_accepts_multiple_entries():
+    """Branch supports multi-dataset configs; phases reference a dataset by name."""
+    cfg = _cfg(
+        [
+            {"name": "warmup", "type": "synthetic"},
+            {"name": "main", "type": "synthetic"},
+        ]
+    )
+    assert [d.name for d in cfg.datasets] == ["warmup", "main"]
 
 
 def test_public_dataset_uses_dataset_field_not_name():

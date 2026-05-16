@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: GLM-5-NVFP4 (SGLang, disaggregated)
+# Default concurrency = 32 req/GPU * 16 decode GPUs (4 nodes x 4 GPUs)
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: glm5-disagg-bench
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  benchmark:
+    variables:
+      concurrency_per_gpu: 32
+      deployment_gpu_count: 16
+      total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+      isl: 1000
+      osl: 8192
+
+    random_seed: 100
+    models:
+      - nvidia/GLM-5-NVFP4
+    tokenizer:
+      name: nvidia/GLM-5-NVFP4
+      trust_remote_code: true
+    endpoint:
+      urls:
+        - http://glm5-sglang-frontend:8000
+      type: chat
+      path: /v1/chat/completions
+      streaming: true
+      extra:
+        max_tokens: "{{ osl }}"
+        min_tokens: "{{ osl }}"
+        ignore_eos: true
+    datasets:
+      - name: main
+        type: synthetic
+        entries: 12800
+        prompts:
+          isl: {mean: "{{ isl }}", stddev: 0}
+          osl: {mean: "{{ osl }}", stddev: 0}
+    phases:
+      - name: warmup
+        type: concurrency
+        concurrency: 16
+        requests: 16
+        exclude_from_results: true
+      - name: profiling
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency * 3 }}"
+        seamless: true
+    runtime:
+      ui: simple
+  podTemplate:
+    env:
+      - name: HF_HOME
+        value: /model-store
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-store
