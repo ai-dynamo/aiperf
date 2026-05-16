@@ -479,13 +479,22 @@ class _PluginRegistry:
     def list_categories(self, *, include_internal: bool = True) -> list[CategoryT]:
         """List all registered category names (sorted alphabetically).
 
+        Includes yaml-declared categories that currently have no plugin
+        entries (stub categories), so PluginType enum generation captures
+        them even before any concrete plugin ships.
+
         Args:
             include_internal: If False, exclude internal categories (default: True).
 
         Returns:
             Sorted list of category names (e.g., ['endpoint', 'transport', ...]).
         """
-        categories = sorted(self._types.keys())
+        names = set(self._types.keys())
+        if self._category_metadata is None:
+            self._load_category_metadata()
+        if self._category_metadata is not None:
+            names.update(self._category_metadata.keys())
+        categories = sorted(names)
         if not include_internal:
             categories = [c for c in categories if not self.is_internal_category(c)]
         return categories
@@ -589,20 +598,19 @@ class _PluginRegistry:
         """
         from aiperf.plugin.extensible_enums import create_enum as _create_enum
 
-        # Get entries without loading the plugin classes to avoid circular imports
+        # Get entries without loading the plugin classes to avoid circular imports.
+        # Stub categories with no concrete plugins yet (e.g. branch-only
+        # accumulator / stream_exporter while the orphan modules await wiring)
+        # still produce an empty enum so import-time access succeeds.
         category = _normalize_category(category)
-        if category not in self._types or not self._types[category]:
-            available = "\n".join(f"  • {c}" for c in self.list_categories())
-            raise KeyError(
-                f"No types registered for category '{category}'.\n"
-                f"Available categories:\n{available}"
-            )
-
-        # Create members dict: UPPER_SNAKE_CASE name -> string value (using original names)
-        members = {
-            entry.name.replace("-", "_").upper(): entry.name
-            for entry in self._types[category].values()
-        }
+        members = (
+            {
+                entry.name.replace("-", "_").upper(): entry.name
+                for entry in self._types[category].values()
+            }
+            if category in self._types
+            else {}
+        )
 
         enum_cls = _create_enum(enum_name, members, module=module)
 
@@ -929,6 +937,7 @@ if TYPE_CHECKING:
     # ruff: noqa: I001
     from aiperf.accuracy.protocols import AccuracyBenchmarkProtocol, AccuracyGraderProtocol
     from aiperf.api.routers.base_router import BaseRouter
+    from aiperf.common.accumulator_protocols import AccumulatorProtocol, StreamExporterProtocol
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -939,7 +948,7 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, GPUTelemetryProcessorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServerMetricsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, GPUTelemetryProcessorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServerMetricsProcessorType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.search_recipes._base import SearchRecipe
@@ -1086,6 +1095,14 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.SEARCH_PLANNER, "search_planner"], name_or_class_path: SearchPlannerType | str) -> type[SearchPlanner]: ...
     @overload
     def iter_all(category: Literal[PluginType.SEARCH_PLANNER, "search_planner"]) -> Iterator[tuple[PluginEntry, type[SearchPlanner]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.ACCUMULATOR, "accumulator"], name_or_class_path: AccumulatorType | str) -> type[AccumulatorProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.ACCUMULATOR, "accumulator"]) -> Iterator[tuple[PluginEntry, type[AccumulatorProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.STREAM_EXPORTER, "stream_exporter"], name_or_class_path: StreamExporterType | str) -> type[StreamExporterProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.STREAM_EXPORTER, "stream_exporter"]) -> Iterator[tuple[PluginEntry, type[StreamExporterProtocol]]]: ...
     @overload
     def get_class(category: PluginType | PluginTypeStr, name_or_class_path: str) -> type: ...
     # fmt: on

@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections import namedtuple
+from dataclasses import dataclass, field
+from typing import ClassVar
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 
@@ -62,3 +64,55 @@ class ProcessHealth(AIPerfBaseModel):
         ge=0,
         description="The current number of threads",
     )
+
+
+@dataclass(slots=True, kw_only=True)
+class NumericAggregate:
+    """Aggregates for a single numeric value over time.
+
+    Mutable slotted dataclass: ``update()`` rewrites ``min``/``max``/``sum``/``count``
+    in place, so this type intentionally is not frozen.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    min: float | None = None
+    max: float | None = None
+    sum: float = 0.0
+    count: int = 0
+
+    @property
+    def avg(self) -> float | None:
+        """Average of all observed values."""
+        return self.sum / self.count if self.count > 0 else None
+
+    def update(self, value: float | int | None) -> None:
+        """Update aggregates with a new observed value."""
+        if value is None:
+            return
+        val = float(value)
+        self.min = val if self.min is None else min(self.min, val)
+        self.max = val if self.max is None else max(self.max, val)
+        self.sum += val
+        self.count += 1
+
+
+@dataclass(slots=True, kw_only=True)
+class ProcessHealthAggregates:
+    """Aggregated statistics for process health metrics over time.
+
+    Holds mutable ``NumericAggregate`` sub-fields updated in place each tick.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    memory_usage: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_usage: NumericAggregate = field(default_factory=NumericAggregate)
+    num_threads: NumericAggregate = field(default_factory=NumericAggregate)
+    voluntary_ctx_switches: NumericAggregate = field(default_factory=NumericAggregate)
+    involuntary_ctx_switches: NumericAggregate = field(default_factory=NumericAggregate)
+    io_read_bytes: NumericAggregate = field(default_factory=NumericAggregate)
+    io_write_bytes: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_time_user: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_time_system: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_time_iowait: NumericAggregate = field(default_factory=NumericAggregate)

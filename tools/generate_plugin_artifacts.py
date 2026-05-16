@@ -282,10 +282,13 @@ def generate_enums_py() -> str:
     categories = load_categories()
     plugins = load_plugins()
 
-    # Find categories with enums and plugins
+    # Find categories with enums; include even those without plugin entries
+    # so stub categories (no concrete plugins yet) still emit an empty enum
+    # that orphan modules can import.
     enum_data = []
     for name, spec in categories.items():
-        if (enum_name := spec.get("enum")) and (cat_plugins := plugins.get(name, {})):
+        if enum_name := spec.get("enum"):
+            cat_plugins = plugins.get(name, {})
             enum_data.append((name, enum_name, sorted(cat_plugins.keys())))
 
     if not enum_data:
@@ -330,12 +333,16 @@ def generate_enums_py() -> str:
             if len(plugin_names) >= 3
             else plugin_names
         )
-        examples = ", ".join(f"{enum_name}.{to_enum_member(n)}" for n in sample)
+        if sample:
+            examples = ", ".join(f"{enum_name}.{to_enum_member(n)}" for n in sample)
+            example_str = f". Example: {examples}"
+        else:
+            example_str = " (no concrete plugins registered)"
         lines.extend(
             [
                 f"{enum_name}Str: TypeAlias = str",
                 f'{enum_name} = plugins.create_enum(PluginType.{member}, "{enum_name}", module=__name__)',
-                f'"""Dynamic enum for {name.replace("_", " ")}. Example: {examples}"""',
+                f'"""Dynamic enum for {name.replace("_", " ")}{example_str}"""',
                 "",
             ]
         )

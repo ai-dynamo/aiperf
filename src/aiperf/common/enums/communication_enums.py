@@ -42,30 +42,6 @@ class CommAddress(CaseInsensitiveStrEnum):
     """Address for group-local DEALER/ROUTER lifecycle coordination owned by WorkerGroupManager."""
 
 
-class CommandType(CaseInsensitiveStrEnum):
-    PROCESS_RECORDS = "process_records"
-    PROFILE_CANCEL = "profile_cancel"
-    PROFILE_COMPLETE = "profile_complete"
-    PROFILE_CONFIGURE = "profile_configure"
-    PROFILE_START = "profile_start"
-    REALTIME_METRICS = "realtime_metrics"
-    REPORT_WORKER_STATUS_SUMMARY = "report_worker_status_summary"
-    GET_POD_STATES = "get_pod_states"
-    """Service → controller request: return the controller's authoritative
-    snapshot of ``_pod_states`` and ``_worker_startup_states``. Lets the
-    FastAPI sidecar serve ``/api/progress.workers`` and ``/api/debug/*``
-    from the controller's view instead of its own bus-fed mirror."""
-    SHUTDOWN = "shutdown"
-    SHUTDOWN_WORKERS = "shutdown_workers"
-    SPAWN_WORKERS = "spawn_workers"
-    START_REALTIME_TELEMETRY = "start_realtime_telemetry"
-    ABORT = "abort"
-    """Signal sibling pod peers (workers/record-processors) to exit the process
-    with a non-zero status so kubelet restarts them. Used by WorkerGroupManager
-    when its own lifecycle failed — a clean SHUTDOWN would let siblings exit 0
-    and leave the pod permanently half-dead at 1/13 Ready."""
-
-
 class CommunicationType(CaseInsensitiveStrEnum):
     """Type of inter-process communication transport."""
 

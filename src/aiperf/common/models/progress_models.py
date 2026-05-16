@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Models for tracking the progress of the benchmark suite."""
 
-from pydantic import Field
+from dataclasses import dataclass, field
+from typing import ClassVar
 
-from aiperf.common.enums import WorkerStatus
+from pydantic import ConfigDict, Field
+
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import ProcessingStats
 from aiperf.common.models.health_models import ProcessHealth
@@ -54,3 +57,27 @@ class WorkerStats(AIPerfBaseModel):
         default=None,
         description="The last time the worker was updated in nanoseconds",
     )
+
+
+@dataclass(slots=True, kw_only=True)
+class WorkerGroupStats:
+    """Aggregate stats for one worker-group (one WorkerGroupManager).
+
+    Mutable slotted dataclass, shared between msgspec (HTTP /api/workers
+    payload encoded via msgspec) and Pydantic (``WorkersResponse``).
+
+    ``workers`` is the per-child WorkerStats map, used by the local web UI
+    when there is exactly one group (expandable dropdown).
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    group_id: str
+    status: WorkerStatus = WorkerStatus.IDLE
+    startup_state: WorkerStartupState | None = None
+    declared_workers: int = 0
+    ready_workers: int = 0
+    health: ProcessHealth | None = None
+    task_stats: WorkerTaskStats = field(default_factory=WorkerTaskStats)
+    workers: dict[str, WorkerStats] = field(default_factory=dict)
+    last_update_ns: int | None = None

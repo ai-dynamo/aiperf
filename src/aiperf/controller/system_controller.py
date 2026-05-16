@@ -59,6 +59,11 @@ from aiperf.config.artifacts import OutputDefaults
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.controller.system_controller_models import (
+    AggregateWorkerStatus,
+    K8sServiceTopology,
+    build_aggregate_worker_status,
+)
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import create_enum
 
-__all__ = ["APIRouterType", "APIRouterTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "ConvergenceCriterionType", "ConvergenceCriterionTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetFormat", "DatasetFormatStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "GPUTelemetryProcessorType", "GPUTelemetryProcessorTypeStr", "PhaseType", "PhaseTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "SearchPlannerType", "SearchPlannerTypeStr", "SearchRecipePostProcessType", "SearchRecipePostProcessTypeStr", "SearchRecipeType", "SearchRecipeTypeStr", "ServerMetricsProcessorType", "ServerMetricsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
+__all__ = ["APIRouterType", "APIRouterTypeStr", "AccumulatorType", "AccumulatorTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "ConvergenceCriterionType", "ConvergenceCriterionTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetFormat", "DatasetFormatStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "GPUTelemetryProcessorType", "GPUTelemetryProcessorTypeStr", "PhaseType", "PhaseTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "SearchPlannerType", "SearchPlannerTypeStr", "SearchRecipePostProcessType", "SearchRecipePostProcessTypeStr", "SearchRecipeType", "SearchRecipeTypeStr", "ServerMetricsProcessorType", "ServerMetricsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "StreamExporterType", "StreamExporterTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
 
 # Plugin Protocol Categories
 if TYPE_CHECKING:
@@ -156,6 +156,14 @@ ConvergenceCriterionType = plugins.create_enum(PluginType.CONVERGENCE_CRITERION,
 SearchPlannerTypeStr: TypeAlias = str
 SearchPlannerType = plugins.create_enum(PluginType.SEARCH_PLANNER, "SearchPlannerType", module=__name__)
 """Dynamic enum for search planner. Example: SearchPlannerType.BAYESIAN, SearchPlannerType.OPTUNA, SearchPlannerType.SMOOTH_ISOTONIC"""
+
+AccumulatorTypeStr: TypeAlias = str
+AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType", module=__name__)
+"""Dynamic enum for accumulator (no concrete plugins registered)"""
+
+StreamExporterTypeStr: TypeAlias = str
+StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExporterType", module=__name__)
+"""Dynamic enum for stream exporter (no concrete plugins registered)"""
 
 # =============================================================================
 # Composite Enums (merged from multiple categories)

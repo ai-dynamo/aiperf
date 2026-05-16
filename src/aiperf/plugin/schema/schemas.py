@@ -327,6 +327,28 @@ class PlotMetadata(BaseModel):
     )
 
 
+class RecordRoutingMetadata(BaseModel):
+    """Metadata schema for record routing in accumulator and stream exporter plugins.
+
+    Defines which record types an accumulator or stream exporter accepts. Used by
+    RecordsManager to build a routing table: incoming records are dispatched to all
+    accumulators and stream exporters whose record_types include the matching type.
+    The role (accumulator vs stream_exporter) is determined by the plugin category.
+
+    Referenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class
+    Used in: plugins.yaml accumulator and stream_exporter entries
+    """
+
+    record_types: list[str] = Field(
+        description=(
+            "Record type identifiers this accumulator or stream exporter accepts for routing. "
+            "RecordsManager dispatches incoming records to all accumulators and stream exporters "
+            "whose record_types include the matching type. "
+            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+        ),
+    )
+
+
 class CustomDatasetLoaderMetadata(BaseModel):
     """Metadata schema for custom dataset loader plugins.
 
