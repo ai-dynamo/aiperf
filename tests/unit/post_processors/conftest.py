@@ -858,3 +858,42 @@ def make_telemetry_record(
             power_violation=power_violation,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Branch-test helpers (ported wholesale from refs/backup/ajc-k8s-new-pre-reset).
+# Adapted to v2 AIPerfConfig / BenchmarkRun shape.
+# ---------------------------------------------------------------------------
+
+
+def _make_run(config, artifact_dir=None):
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing.
+
+    Accepts either AIPerfConfig or BenchmarkConfig; AIPerfConfig is
+    dereferenced via ``.benchmark`` to get the body half.
+    """
+    from pathlib import Path as _Path
+
+    from aiperf.config import AIPerfConfig, BenchmarkRun
+
+    cfg = config.benchmark if isinstance(config, AIPerfConfig) else config
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=cfg,
+        artifact_dir=artifact_dir or _Path("/tmp/test"),
+    )
+
+
+def create_accumulator_with_metrics(config, *metrics):
+    """Build a ``MetricsAccumulator`` pre-loaded with the given metric classes."""
+    from aiperf.metrics.accumulator import MetricsAccumulator
+
+    accumulator = MetricsAccumulator(run=_make_run(config))
+    accumulator._tags_to_types = {metric.tag: metric.type for metric in metrics}
+    accumulator._metric_classes = {metric.tag: metric for metric in metrics}
+    accumulator._aggregation_kinds = {
+        metric.tag: metric.aggregation_kind
+        for metric in metrics
+        if hasattr(metric, "aggregation_kind")
+    }
+    return accumulator

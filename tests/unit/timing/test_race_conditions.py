@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 from aiperf.credit.structs import Credit, TurnToSend
@@ -16,6 +15,7 @@ from aiperf.timing.phase.credit_counter import CreditCounter
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
+from tests.unit.credit.conftest import stub_credit
 
 
 def _turn(cid="c1", tidx=0, nt=1, xcid=None):
@@ -27,7 +27,7 @@ def _turn(cid="c1", tidx=0, nt=1, xcid=None):
     )
 
 
-def _credit(ph=CreditPhase.PROFILING, cid=1, conv="c1", tidx=0, nt=1):
+def _credit(ph="profiling", cid=1, conv="c1", tidx=0, nt=1):
     return Credit(
         id=cid,
         phase=ph,
@@ -46,9 +46,7 @@ def _components(cfg):
     return lc, pr, sc
 
 
-def _cfg(
-    ph=CreditPhase.PROFILING, req=None, dur=None, grace=None, sess=None, seamless=False
-):
+def _cfg(ph="profiling", req=None, dur=None, grace=None, sess=None, seamless=False):
     return CreditPhaseConfig(
         phase=ph,
         timing_mode=TimingMode.REQUEST_RATE,
@@ -138,63 +136,53 @@ class TestRecordsManagerRace:
         if records_first:
             rt.update_phase_info(
                 CreditPhaseStats(
-                    phase=CreditPhase.PROFILING,
+                    phase="profiling",
                     total_expected_requests=5,
                     start_ns=1000,
                 )
             )
             for _ in range(5):
-                rt._get_phase_tracker(CreditPhase.PROFILING).increment_success_records()
-            assert not rt.check_and_set_all_records_received_for_phase(
-                CreditPhase.PROFILING
-            )
+                rt._get_phase_tracker("profiling").increment_success_records()
+            assert not rt.check_and_set_all_records_received_for_phase("profiling")
             rt.update_phase_info(
                 CreditPhaseStats(
-                    phase=CreditPhase.PROFILING,
+                    phase="profiling",
                     final_requests_completed=5,
                     start_ns=1000,
                     requests_end_ns=2000,
                 )
             )
-            assert rt.check_and_set_all_records_received_for_phase(
-                CreditPhase.PROFILING
-            )
+            assert rt.check_and_set_all_records_received_for_phase("profiling")
         else:
             rt.update_phase_info(
                 CreditPhaseStats(
-                    phase=CreditPhase.PROFILING,
+                    phase="profiling",
                     final_requests_completed=3,
                     start_ns=1000,
                     requests_end_ns=2000,
                 )
             )
-            assert not rt.check_and_set_all_records_received_for_phase(
-                CreditPhase.PROFILING
-            )
+            assert not rt.check_and_set_all_records_received_for_phase("profiling")
             for _ in range(3):
-                rt._get_phase_tracker(CreditPhase.PROFILING).increment_success_records()
-            assert rt.check_and_set_all_records_received_for_phase(
-                CreditPhase.PROFILING
-            )
+                rt._get_phase_tracker("profiling").increment_success_records()
+            assert rt.check_and_set_all_records_received_for_phase("profiling")
 
     def test_duplicate_completion_returns_false(self):
         rt = RecordsTracker()
         rt.update_phase_info(
             CreditPhaseStats(
-                phase=CreditPhase.PROFILING, final_requests_completed=1, start_ns=1000
+                phase="profiling", final_requests_completed=1, start_ns=1000
             )
         )
-        rt._get_phase_tracker(CreditPhase.PROFILING).increment_success_records()
-        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
-        assert not rt.check_and_set_all_records_received_for_phase(
-            CreditPhase.PROFILING
-        )
+        rt._get_phase_tracker("profiling").increment_success_records()
+        assert rt.check_and_set_all_records_received_for_phase("profiling")
+        assert not rt.check_and_set_all_records_received_for_phase("profiling")
 
 
 @pytest.mark.asyncio
 class TestStickyRouterWorkerRace:
-    async def test_credit_to_unregistered_worker(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
+    async def test_credit_to_unregistered_worker(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
         r._workers = {"w1": WorkerLoad(worker_id="w1", in_flight_credits=5)}
         r._workers["w1"].active_credit_ids = set(range(5))
         r._workers_cache = list(r._workers.values())
@@ -202,8 +190,8 @@ class TestStickyRouterWorkerRace:
         r._unregister_worker("w1")
         r._track_credit_returned("w1", 0, cancelled=True, error_reported=False)
 
-    async def test_worker_registration_during_routing(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
+    async def test_worker_registration_during_routing(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
         r._register_worker("w1")
         assert len(r._workers) == 1
         r._register_worker("w2")
@@ -212,8 +200,8 @@ class TestStickyRouterWorkerRace:
             "w2",
         }
 
-    async def test_worker_unregister_clears_cache(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
+    async def test_worker_unregister_clears_cache(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
         r._register_worker("w1")
         r._register_worker("w2")
         r._unregister_worker("w1")
@@ -311,7 +299,7 @@ class TestDeadlockPrevention:
         lc, pr, _ = _components(cfg)
         lc.start()
         for i in range(3):
-            _, final = pr.increment_sent(_turn(f"c{i}"))
+            _, _, final = pr.increment_sent(_turn(f"c{i}"))
             if final:
                 lc.mark_sending_complete()
                 pr.freeze_sent_counts()
@@ -344,16 +332,16 @@ class TestDeadlockPrevention:
 
 @pytest.mark.asyncio
 class TestStickySessionRace:
-    async def test_session_eviction_before_turn_completes(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
-        r._router_client.send_to = AsyncMock()
+    async def test_session_eviction_before_turn_completes(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
+        r._credit_router_client.send_to = AsyncMock()
         r._register_worker("w1")
         xcid = "multi"
         for tidx in range(3):
             await r.send_credit(
                 Credit(
                     id=tidx,
-                    phase=CreditPhase.PROFILING,
+                    phase="profiling",
                     conversation_id="c1",
                     x_correlation_id=xcid,
                     turn_index=tidx,
@@ -370,9 +358,9 @@ class TestStickySessionRace:
             and r._workers["w1"].total_completed_credits == 3
         )
 
-    async def test_worker_unregisters_mid_session(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
-        r._router_client.send_to = AsyncMock()
+    async def test_worker_unregisters_mid_session(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
+        r._credit_router_client.send_to = AsyncMock()
         r._register_worker("w1")
         r._register_worker("w2")
         xcid = "reassign"
@@ -382,7 +370,7 @@ class TestStickySessionRace:
         await r.send_credit(
             Credit(
                 id=0,
-                phase=CreditPhase.PROFILING,
+                phase="profiling",
                 conversation_id="c1",
                 x_correlation_id=xcid,
                 turn_index=0,
@@ -390,7 +378,7 @@ class TestStickySessionRace:
                 issued_at_ns=time.time_ns(),
             )
         )
-        w0 = r._router_client.send_to.call_args[0][0]
+        w0 = r._credit_router_client.send_to.call_args[0][0]
         assert r._sticky_sessions[xcid] == w0
         r._cancellation_pending = True
         r._unregister_worker(w0)
@@ -400,7 +388,7 @@ class TestStickySessionRace:
         await r.send_credit(
             Credit(
                 id=1,
-                phase=CreditPhase.PROFILING,
+                phase="profiling",
                 conversation_id="c1",
                 x_correlation_id=xcid,
                 turn_index=1,
@@ -408,7 +396,7 @@ class TestStickySessionRace:
                 issued_at_ns=time.time_ns(),
             )
         )
-        assert r._router_client.send_to.call_args[0][0] == "w2"
+        assert r._credit_router_client.send_to.call_args[0][0] == "w2"
 
 
 @pytest.mark.asyncio
@@ -434,7 +422,7 @@ class TestMultiTurnCreditRace:
                 conversation_id="cA", x_correlation_id="x-cA", turn_index=2, num_turns=3
             )
         )
-        _, final = pr.increment_sent(
+        _, _, final = pr.increment_sent(
             TurnToSend(
                 conversation_id="cB", x_correlation_id="x-cB", turn_index=2, num_turns=3
             )
@@ -546,19 +534,17 @@ class TestRecordsTrackerPhase:
         rt = RecordsTracker()
         rt.update_phase_info(
             CreditPhaseStats(
-                phase=CreditPhase.PROFILING, total_expected_requests=100, start_ns=1000
+                phase="profiling", total_expected_requests=100, start_ns=1000
             )
         )
-        ph = rt._get_phase_tracker(CreditPhase.PROFILING)
+        ph = rt._get_phase_tracker("profiling")
         assert ph._start_ns == 1000 and ph._final_requests_completed is None
         rt.update_phase_info(
-            CreditPhaseStats(
-                phase=CreditPhase.PROFILING, final_requests_sent=95, start_ns=1000
-            )
+            CreditPhaseStats(phase="profiling", final_requests_sent=95, start_ns=1000)
         )
         rt.update_phase_info(
             CreditPhaseStats(
-                phase=CreditPhase.PROFILING,
+                phase="profiling",
                 final_requests_completed=90,
                 requests_end_ns=2000,
                 start_ns=1000,
@@ -570,16 +556,16 @@ class TestRecordsTrackerPhase:
         rt = RecordsTracker()
         rt.update_phase_info(
             CreditPhaseStats(
-                phase=CreditPhase.PROFILING, final_requests_completed=30, start_ns=1000
+                phase="profiling", final_requests_completed=30, start_ns=1000
             )
         )
-        ph = rt._get_phase_tracker(CreditPhase.PROFILING)
+        ph = rt._get_phase_tracker("profiling")
         for _ in range(28):
             ph.increment_success_records()
         for _ in range(2):
             ph.increment_error_records()
-        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
-        st = rt.create_stats_for_phase(CreditPhase.PROFILING)
+        assert rt.check_and_set_all_records_received_for_phase("profiling")
+        st = rt.create_stats_for_phase("profiling")
         assert (
             st.success_records == 28
             and st.error_records == 2
@@ -590,8 +576,8 @@ class TestRecordsTrackerPhase:
 @pytest.mark.asyncio
 class TestWarmupToProfilingTransition:
     async def test_independent_counters(self):
-        wcfg = _cfg(ph=CreditPhase.WARMUP, req=5, seamless=True)
-        pcfg = _cfg(ph=CreditPhase.PROFILING, req=10)
+        wcfg = _cfg(ph="warmup", req=5, seamless=True)
+        pcfg = _cfg(ph="profiling", req=10)
         wlc, wpr, _ = _components(wcfg)
         plc, ppr, _ = _components(pcfg)
         wlc.start()
@@ -607,7 +593,7 @@ class TestWarmupToProfilingTransition:
         wpr.increment_returned(
             Credit(
                 id=0,
-                phase=CreditPhase.WARMUP,
+                phase="warmup",
                 conversation_id="w0",
                 x_correlation_id="x-w0",
                 turn_index=0,
@@ -619,7 +605,7 @@ class TestWarmupToProfilingTransition:
         ppr.increment_returned(
             Credit(
                 id=0,
-                phase=CreditPhase.PROFILING,
+                phase="profiling",
                 conversation_id="p0",
                 x_correlation_id="x-p0",
                 turn_index=0,
@@ -635,9 +621,9 @@ class TestWarmupToProfilingTransition:
 
 @pytest.mark.asyncio
 class TestRouterLoadBalancing:
-    async def test_tie_selection(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
-        r._router_client.send_to = AsyncMock()
+    async def test_tie_selection(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
+        r._credit_router_client.send_to = AsyncMock()
         for w in ["w1", "w2", "w3"]:
             r._register_worker(w)
             r._workers[w].in_flight_credits = 5
@@ -647,12 +633,12 @@ class TestRouterLoadBalancing:
         sel = set()
         for i in range(10):
             await r.send_credit(_credit(cid=i, conv=f"c{i}"))
-            sel.add(r._router_client.send_to.call_args[0][0])
+            sel.add(r._credit_router_client.send_to.call_args[0][0])
         assert all(w in {"w1", "w2", "w3"} for w in sel)
 
-    async def test_prefers_lower_load(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
-        r._router_client.send_to = AsyncMock()
+    async def test_prefers_lower_load(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
+        r._credit_router_client.send_to = AsyncMock()
         for w in ["w1", "w2", "w3"]:
             r._register_worker(w)
         for w in ["w1", "w2", "w3"]:
@@ -668,14 +654,14 @@ class TestRouterLoadBalancing:
         r._min_load = 1
         for i in range(5):
             await r.send_credit(_credit(cid=i, conv=f"c{i}"))
-            assert r._router_client.send_to.call_args[0][0] == "w2"
+            assert r._credit_router_client.send_to.call_args[0][0] == "w2"
 
-    async def test_atomic_load_updates(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
+    async def test_atomic_load_updates(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
         r._register_worker("w1")
         w = r._workers["w1"]
         for i in range(100):
-            r._track_credit_sent("w1", i)
+            r._track_credit_sent("w1", stub_credit(i))
             assert w.in_flight_credits == i + 1
         for i in range(100):
             r._track_credit_returned("w1", i, cancelled=False, error_reported=False)
@@ -689,10 +675,10 @@ class TestRouterLoadBalancing:
 
 @pytest.mark.asyncio
 class TestCancellation:
-    async def test_cancel_snapshots_state(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
-        r._router_client = MagicMock()
-        r._router_client.send_to = AsyncMock()
+    async def test_cancel_snapshots_state(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
+        r._credit_router_client = MagicMock()
+        r._credit_router_client.send_to = AsyncMock()
         r._workers = {
             "w1": WorkerLoad(worker_id="w1", in_flight_credits=3),
             "w2": WorkerLoad(worker_id="w2", in_flight_credits=2),
@@ -701,17 +687,17 @@ class TestCancellation:
         r._workers["w2"].active_credit_ids = {4, 5}
         r._workers_cache = list(r._workers.values())
         await r.cancel_all_credits()
-        assert r._router_client.send_to.call_count == 2
+        assert r._credit_router_client.send_to.call_count == 2
         calls = {
             c[0][0]: set(c[0][1].credit_ids)
-            for c in r._router_client.send_to.call_args_list
+            for c in r._credit_router_client.send_to.call_args_list
         }
         assert calls["w1"] == {1, 2, 3} and calls["w2"] == {4, 5}
 
-    async def test_cancel_skips_no_inflight(self, benchmark_run):
-        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
-        r._router_client = MagicMock()
-        r._router_client.send_to = AsyncMock()
+    async def test_cancel_skips_no_inflight(self, run):
+        r = StickyCreditRouter(run=run, service_id="tr")
+        r._credit_router_client = MagicMock()
+        r._credit_router_client.send_to = AsyncMock()
         r._workers = {
             "w1": WorkerLoad(worker_id="w1", in_flight_credits=0),
             "w2": WorkerLoad(worker_id="w2", in_flight_credits=5),
@@ -720,8 +706,8 @@ class TestCancellation:
         r._workers_cache = list(r._workers.values())
         await r.cancel_all_credits()
         assert (
-            r._router_client.send_to.call_count == 1
-            and r._router_client.send_to.call_args[0][0] == "w2"
+            r._credit_router_client.send_to.call_count == 1
+            and r._credit_router_client.send_to.call_args[0][0] == "w2"
         )
 
 
@@ -780,7 +766,7 @@ class TestHighVolume:
             for t in range(5):
                 cr = Credit(
                     id=s * 5 + t,
-                    phase=CreditPhase.PROFILING,
+                    phase="profiling",
                     conversation_id=f"s{s}",
                     x_correlation_id=f"x-s{s}",
                     turn_index=t,

@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import TimingConfig
@@ -131,13 +130,13 @@ class TestPhaseConfig:
     async def test_warmup_and_profiling_phases_in_order(self) -> None:
         """When both warmup and profiling are configured, they execute in order."""
         warmup = make_phase_config(
-            CreditPhase.WARMUP,
+            "warmup",
             TimingMode.REQUEST_RATE,
             request_count=5,
             request_rate=10.0,
         )
         profiling = make_phase_config(
-            CreditPhase.PROFILING,
+            "profiling",
             TimingMode.REQUEST_RATE,
             request_count=10,
             request_rate=10.0,
@@ -151,7 +150,7 @@ class TestPhaseConfig:
         )
         await orch.initialize()
         phases = [pc.phase for pc in orch._ordered_phase_configs]
-        assert phases == [CreditPhase.WARMUP, CreditPhase.PROFILING]
+        assert phases == ["warmup", "profiling"]
 
     async def test_profiling_only_excludes_warmup(self) -> None:
         """When only profiling is configured, warmup phase is not present."""
@@ -166,5 +165,5 @@ class TestPhaseConfig:
         )
         await orch.initialize()
         phases = [pc.phase for pc in orch._ordered_phase_configs]
-        assert CreditPhase.PROFILING in phases
-        assert CreditPhase.WARMUP not in phases
+        assert "profiling" in phases
+        assert "warmup" not in phases

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from aiperf.cli_runner import _reject_in_process_sweep_under_operator
 from aiperf.common.enums import OptimizationDirection
-from aiperf.config.adaptive_search import SearchSpaceDimension
-from aiperf.config.benchmark import BenchmarkPlan
+from aiperf.config.sweep.adaptive import SearchSpaceDimension
+from aiperf.config import BenchmarkPlan
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import (
     AdaptiveObjective,

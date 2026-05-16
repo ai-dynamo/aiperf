@@ -17,7 +17,7 @@ skopt = pytest.importorskip("skopt")
 # Imports below depend on skopt being importable. pytest.importorskip must
 # precede them so the whole module is skipped when the `bo` extra is absent.
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
-from aiperf.config.adaptive_search import SearchSpaceDimension  # noqa: E402
+from aiperf.config.sweep.adaptive import SearchSpaceDimension  # noqa: E402
 from aiperf.config.config import BenchmarkConfig  # noqa: E402
 from aiperf.config.sweep import (  # noqa: E402
     AdaptiveObjective,

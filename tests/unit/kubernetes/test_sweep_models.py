@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.config.multi_run import MultiRunConfig
+from aiperf.config.sweep.multi_run import MultiRunConfig
 from aiperf.kubernetes.sweep_models import (
     ConvergenceConfig,
     FailurePolicy,

@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -49,7 +48,7 @@ def mock_credit_manager() -> MagicMock:
 @pytest.fixture
 def sample_phase_config() -> CreditPhaseConfig:
     return CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=100,
     )
@@ -58,7 +57,7 @@ def sample_phase_config() -> CreditPhaseConfig:
 @pytest.fixture
 def sample_phase_stats() -> CreditPhaseStats:
     return CreditPhaseStats(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         requests_sent=50,
         requests_completed=30,
         requests_cancelled=2,

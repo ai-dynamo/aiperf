@@ -27,7 +27,7 @@ def credit_factory():
 
     def _create(
         credit_id: int = 1,
-        phase: CreditPhase = CreditPhase.PROFILING,
+        phase: CreditPhase = "profiling",
         turn_index: int = 0,
         num_turns: int = 1,
         conversation_id: str = "conv-1",
@@ -82,9 +82,7 @@ class TestFirstTokenValidation:
 
     def test_first_token_serialization_roundtrip(self):
         """FirstToken serializes/deserializes correctly via msgspec."""
-        original = FirstToken(
-            credit_id=99, phase=CreditPhase.WARMUP, ttft_ns=250_000_000
-        )
+        original = FirstToken(credit_id=99, phase="warmup", ttft_ns=250_000_000)
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(original), type=FirstToken
         )
@@ -95,9 +93,7 @@ class TestFirstTokenValidation:
 
     def test_first_token_in_union_type(self):
         """FirstToken can be decoded as part of WorkerToRouterMessage union."""
-        first_token = FirstToken(
-            credit_id=42, phase=CreditPhase.PROFILING, ttft_ns=150_000_000
-        )
+        first_token = FirstToken(credit_id=42, phase="profiling", ttft_ns=150_000_000)
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(first_token), type=WorkerToRouterMessage
         )
@@ -115,11 +111,15 @@ class TestCreditReturnValidation:
     """Test CreditReturn struct, including first_token_sent for deadlock prevention."""
 
     @pytest.mark.parametrize(
-        "first_token_sent,cancelled,error",
-        [(True, False, None), (False, True, None)],  # Sample: normal and cancelled
+        "first_token_sent,cancelled,error,worker_detached",
+        [
+            (True, False, None, False),
+            (False, True, None, False),
+            (True, False, None, True),
+        ],  # Sample: normal, cancelled, and detached completion
     )  # fmt: skip
     def test_credit_return_scenarios(
-        self, sample_credit, first_token_sent, cancelled, error
+        self, sample_credit, first_token_sent, cancelled, error, worker_detached
     ):
         """CreditReturn handles various completion scenarios."""
         credit_return = CreditReturn(
@@ -127,11 +127,13 @@ class TestCreditReturnValidation:
             first_token_sent=first_token_sent,
             cancelled=cancelled,
             error=error,
+            worker_detached=worker_detached,
         )
 
         assert credit_return.first_token_sent is first_token_sent
         assert credit_return.cancelled is cancelled
         assert credit_return.error == error
+        assert credit_return.worker_detached is worker_detached
 
     def test_credit_return_serialization_roundtrip(self, sample_credit):
         """CreditReturn preserves all fields through msgpack serialization."""
@@ -144,6 +146,7 @@ class TestCreditReturnValidation:
 
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
+        assert decoded.worker_detached is False
 
 
 # =============================================================================

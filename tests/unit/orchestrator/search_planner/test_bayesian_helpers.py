@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.config.adaptive_search import SearchSpaceDimension, SLAFilter
+from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.search_planner._bayesian_helpers import (
     NO_DATA_SENTINEL_LOSS,
     PENALTY_WEIGHT_MULTIPLIER,

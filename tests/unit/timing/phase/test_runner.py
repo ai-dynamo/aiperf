@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import dataclasses
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,11 +42,22 @@ def make_dataset_metadata(conversations: list[tuple[str, int]]) -> DatasetMetada
 
 @dataclass
 class MockStrategy:
+    """Mock timing strategy that records setup/execute calls."""
+
     setup_called: bool = False
+    """Whether setup_phase was invoked."""
+
     execute_called: bool = False
+    """Whether execute_phase was invoked."""
+
     handle_credit_return_calls: list[Credit] = field(default_factory=list)
+    """Credits passed to handle_credit_return."""
+
     execute_delay: float = 0.0
+    """Artificial delay in seconds during execute_phase."""
+
     _execute_event: asyncio.Event = field(default_factory=asyncio.Event)
+    """Event set when execute_phase completes."""
 
     async def setup_phase(self) -> None:
         self.setup_called = True
@@ -85,7 +97,7 @@ def mock_callback() -> MagicMock:
 
 
 def cfg(
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     mode: TimingMode = TimingMode.REQUEST_RATE,
     reqs: int | None = 10,
     dur: float | None = None,
@@ -240,7 +252,7 @@ class TestPhaseRunnerLifecycle:
             r._progress.all_credits_returned_event.set()
             await r.run(is_final_phase=True)
             cb.register_phase.assert_called_once()
-            assert cb.register_phase.call_args.kwargs["phase"] == CreditPhase.PROFILING
+            assert cb.register_phase.call_args.kwargs["phase"] == "profiling"
 
     async def test_run_configures_concurrency_manager(
         self,
@@ -301,10 +313,7 @@ class TestPhaseRunnerLifecycle:
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
             result = await r.run(is_final_phase=True)
-            assert (
-                isinstance(result, CreditPhaseStats)
-                and result.phase == CreditPhase.PROFILING
-            )
+            assert isinstance(result, CreditPhaseStats) and result.phase == "profiling"
 
 
 class TestRamperCreation:
@@ -517,7 +526,7 @@ class TestStuckSlotsRelease:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         r._release_stuck_slots()
-        conc.release_stuck_slots.assert_called_once_with(CreditPhase.PROFILING)
+        conc.release_stuck_slots.assert_called_once_with("profiling")
 
 
 class TestProgressReporting:
@@ -582,11 +591,11 @@ class TestSeamlessMode:
 
 class TestComponentOwnership:
     def test_phase_property_returns_configured_phase(self, runner: PhaseRunner) -> None:
-        assert runner.phase == CreditPhase.PROFILING
+        assert runner.phase == "profiling"
 
 
 class TestPhaseTypes:
-    @pytest.mark.parametrize("phase", [CreditPhase.WARMUP, CreditPhase.PROFILING])
+    @pytest.mark.parametrize("phase", ["warmup", "profiling"])
     async def test_runner_works_with_both_phases(
         self,
         conv_src: MagicMock,
@@ -666,7 +675,7 @@ class TestFixedScheduleConfigCorrection:
         """FIXED_SCHEDULE should use dataset metadata size, not config values."""
         # Config says 100 requests/sessions, but dataset only has 2 conversations
         config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=100)
-        config = config.model_copy(update={"expected_num_sessions": 100})
+        config = dataclasses.replace(config, expected_num_sessions=100)
 
         conv_src = MagicMock()
         conv_src.dataset_metadata = make_dataset_metadata([("c1", 3), ("c2", 2)])
@@ -745,7 +754,7 @@ class TestFixedScheduleConfigCorrection:
         """Simulates start/end offset filtering that reduces dataset size."""
         # Original file had 1000 conversations, config reflects that
         config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=1000)
-        config = config.model_copy(update={"expected_num_sessions": 1000})
+        config = dataclasses.replace(config, expected_num_sessions=1000)
 
         # But filtering reduced to just 2 conversations
         conv_src = MagicMock()

@@ -115,3 +115,47 @@ def mock_transport_plugin():
     with patch("aiperf.plugin.plugins.get_class") as mock:
         mock.return_value = MagicMock
         yield mock
+
+
+def create_config(
+    endpoint_type=None,
+    model_name: str = "test-model",
+    streaming: bool = False,
+    base_url: str = "http://localhost:8000",
+    extra=None,
+    use_legacy_max_tokens: bool = False,
+    template=None,
+    **endpoint_overrides,
+):
+    """Branch-shape compat helper.
+
+    Returns a v2 ``BenchmarkConfig`` with the given endpoint shape.
+    """
+    from aiperf.common.enums import EndpointType
+    from aiperf.config import BenchmarkConfig
+
+    endpoint = {
+        "type": endpoint_type or EndpointType.CHAT,
+        "urls": [base_url],
+        "streaming": streaming,
+        "extra": extra or {},
+        "use_legacy_max_tokens": use_legacy_max_tokens,
+        **endpoint_overrides,
+    }
+    if template is not None:
+        endpoint["template"] = template
+
+    return BenchmarkConfig.model_validate(
+        {
+            "models": [model_name],
+            "endpoint": endpoint,
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 1,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+        }
+    )

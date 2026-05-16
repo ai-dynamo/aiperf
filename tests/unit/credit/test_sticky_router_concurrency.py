@@ -11,6 +11,7 @@ Note: router_with_worker fixture is provided by conftest.py.
 """
 
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
+from tests.unit.credit.conftest import stub_credit
 
 
 class TestConcurrentCreditTracking:
@@ -25,7 +26,7 @@ class TestConcurrentCreditTracking:
 
         # Send all credits
         for credit_num in credit_nums:
-            router._track_credit_sent("worker-1", credit_num)
+            router._track_credit_sent("worker-1", stub_credit(credit_num))
 
         # Verify all credits are in-flight
         worker_load = router._workers["worker-1"]
@@ -63,8 +64,8 @@ class TestConcurrentCreditTracking:
         # Interleave sends and returns
         for i in range(50):
             # Send two credits
-            router._track_credit_sent("worker-1", i * 2)
-            router._track_credit_sent("worker-1", i * 2 + 1)
+            router._track_credit_sent("worker-1", stub_credit(i * 2))
+            router._track_credit_sent("worker-1", stub_credit(i * 2 + 1))
 
             # Return one credit
             router._track_credit_returned(
@@ -92,7 +93,7 @@ class TestConcurrentCreditTracking:
         assert len(worker_load.active_credit_ids) == 0
 
         # Send a credit
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
 
         # All counters should be updated
         assert worker_load.total_sent_credits == 1
@@ -105,7 +106,7 @@ class TestConcurrentCreditTracking:
         worker_load = router._workers["worker-1"]
 
         # Send and return a credit
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
         router._track_credit_returned(
             "worker-1", 1, cancelled=False, error_reported=False
         )
@@ -124,7 +125,7 @@ class TestConcurrentCreditTracking:
         worker_load = router._workers["worker-1"]
 
         # Send and cancel a credit
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
         router._track_credit_returned(
             "worker-1", 1, cancelled=True, error_reported=False
         )
@@ -146,7 +147,7 @@ class TestWorkerLoadInvariants:
 
         # Test invariant through various operations
         for i in range(10):
-            router._track_credit_sent("worker-1", i)
+            router._track_credit_sent("worker-1", stub_credit(i))
             assert worker_load.in_flight_credits == len(worker_load.active_credit_ids)
 
         for i in range(5):
@@ -170,7 +171,7 @@ class TestWorkerLoadInvariants:
 
         # Send 20 credits
         for i in range(20):
-            router._track_credit_sent("worker-1", i)
+            router._track_credit_sent("worker-1", stub_credit(i))
 
         # Return 10, cancel 5, leave 5 in-flight
         for i in range(10):
@@ -198,9 +199,9 @@ class TestWorkerLoadInvariants:
 class TestMultipleWorkerConcurrency:
     """Test concurrent operations across multiple workers."""
 
-    async def test_multiple_workers_independent_tracking(self, benchmark_run):
+    async def test_multiple_workers_independent_tracking(self, run):
         """Test that multiple workers maintain independent state correctly."""
-        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router = StickyCreditRouter(run=run, service_id="test-router")
 
         # Register three workers
         router._workers = {
@@ -211,9 +212,9 @@ class TestMultipleWorkerConcurrency:
 
         # Send credits to each worker (use offset ranges to avoid collisions)
         for i in range(10):
-            router._track_credit_sent("worker-1", i)
-            router._track_credit_sent("worker-2", 100 + i)
-            router._track_credit_sent("worker-3", 200 + i)
+            router._track_credit_sent("worker-1", stub_credit(i))
+            router._track_credit_sent("worker-2", stub_credit(100 + i))
+            router._track_credit_sent("worker-3", stub_credit(200 + i))
 
         # Verify each worker has correct state
         for worker_id in ["worker-1", "worker-2", "worker-3"]:
@@ -239,9 +240,9 @@ class TestMultipleWorkerConcurrency:
         assert router._workers["worker-3"].in_flight_credits == 10
         assert router._workers["worker-3"].total_completed_credits == 0
 
-    async def test_concurrent_operations_different_workers(self, benchmark_run):
+    async def test_concurrent_operations_different_workers(self, run):
         """Test that operations on different workers don't interfere."""
-        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router = StickyCreditRouter(run=run, service_id="test-router")
 
         router._workers = {
             "worker-1": WorkerLoad(worker_id="worker-1", in_flight_credits=0),
@@ -250,8 +251,8 @@ class TestMultipleWorkerConcurrency:
 
         # Interleave operations across workers (use offset ranges)
         for i in range(50):
-            router._track_credit_sent("worker-1", i)
-            router._track_credit_sent("worker-2", 100 + i)
+            router._track_credit_sent("worker-1", stub_credit(i))
+            router._track_credit_sent("worker-2", stub_credit(100 + i))
 
             if i > 0:
                 router._track_credit_returned(

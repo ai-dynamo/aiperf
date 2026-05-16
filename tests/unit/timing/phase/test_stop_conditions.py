@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.credit_counter import CreditCounter
@@ -22,7 +21,7 @@ def cfg(
     reqs: int | None = None, sessions: int | None = None, dur: float | None = None
 ) -> CreditPhaseConfig:
     return CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=reqs,
         expected_num_sessions=sessions,
@@ -40,18 +39,9 @@ def lc(
     return m
 
 
-def ctr(
-    sent: int = 0,
-    sessions: int = 0,
-    turns: int = 0,
-    root_sent: int | None = None,
-) -> MagicMock:
+def ctr(sent: int = 0, sessions: int = 0, turns: int = 0) -> MagicMock:
     m = MagicMock(spec=CreditCounter)
     m.requests_sent = sent
-    # Non-DAG default: root_requests_sent mirrors requests_sent (no children
-    # to diverge them). Tests covering DAG scenarios pass an explicit
-    # ``root_sent`` to model the divergence.
-    m.root_requests_sent = sent if root_sent is None else root_sent
     m.sent_sessions = sessions
     m.total_session_turns = turns
     return m

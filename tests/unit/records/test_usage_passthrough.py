@@ -6,10 +6,12 @@ The parser should NOT aggregate or modify usage data - it should pass through
 the raw responses as-is, letting the metrics layer handle extraction.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ParsedResponse,
     RequestRecord,
@@ -18,7 +20,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.records.inference_result_parser import InferenceResultParser
 from tests.unit.records.conftest import create_test_request_info
 
@@ -34,13 +36,9 @@ def mock_tokenizer():
 @pytest.fixture
 def parser():
     """Create a parser with mocked endpoint."""
-    from tests.unit.conftest import make_run_from_cli
-
     mock_endpoint = MagicMock()
 
     def mock_communication_init(self, run, **kwargs):
-        from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
-
         AIPerfLifecycleMixin.__init__(self, **kwargs)
         self.run = run
         for method in [
@@ -53,8 +51,27 @@ def parser():
         ]:
             setattr(self, method, MagicMock())
 
-    cli_config = CLIConfig(
-        model_names=["test-model"],
+    config = AIPerfConfig(
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
     with (
@@ -67,7 +84,12 @@ def parser():
         ),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
-        parser = InferenceResultParser(run=make_run_from_cli(cli_config))
+        run = BenchmarkRun(
+            benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+        )
+        parser = InferenceResultParser(
+            run=run,
+        )
         parser.endpoint = mock_endpoint
         return parser
 

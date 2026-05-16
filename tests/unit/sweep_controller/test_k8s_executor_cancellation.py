@@ -15,9 +15,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.config.benchmark import BenchmarkRun
-from aiperf.config.config import BenchmarkConfig
-from aiperf.config.sweep import SweepVariation
+from aiperf.config import BenchmarkRun
+from aiperf.config import BenchmarkConfig
+from aiperf.config import SweepVariation
 from aiperf.sweep_controller.k8s_executor import K8sChildJobExecutor
 
 

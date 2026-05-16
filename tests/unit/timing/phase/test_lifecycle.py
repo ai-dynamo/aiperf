@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.lifecycle import PhaseLifecycle, PhaseState
@@ -10,7 +9,7 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle, PhaseState
 
 def cfg(dur: float | None = None, grace: float | None = None) -> CreditPhaseConfig:
     return CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.REQUEST_RATE,
         request_rate=10.0,
         expected_duration_sec=dur,
