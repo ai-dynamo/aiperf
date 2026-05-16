@@ -65,6 +65,17 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
         """Return ``"profile_export_aiperf_sweep.csv"``."""
         return "profile_export_aiperf_sweep.csv"
 
+    @staticmethod
+    def _format_number(value: float | int | None, decimals: int = 2) -> str:
+        """Format a number for CSV output.
+
+        NaN, +inf, -inf, and None all render as empty string so non-finite
+        values land as blank cells in the CSV (mirrors the JSON ``null``
+        treatment via ``scrub_non_finite``). Numpy scalars are unwrapped
+        via ``.item()``.
+        """
+        return _format_number(value, decimals)
+
     def _generate_content(self) -> str:
         """Generate the multi-section CSV content."""
         buf = io.StringIO()
@@ -103,11 +114,21 @@ def _write_per_combination_section(
     per_combination_metrics: list[dict[str, Any]],
     param_names: list[str],
 ) -> None:
-    """Section 1: param-cols + per-metric ``mean/std/min/max/cv`` columns."""
+    """Section 1: param-cols + per-metric ``mean/std/min/max/cv`` columns.
+
+    Header is the UNION of metric keys across every combo, not just the
+    first one's keys — sweeps frequently produce combos where later cells
+    surface metrics absent from the first cell (e.g. accuracy metrics
+    that only appear in evaluation-mode rows).
+    """
     if not per_combination_metrics:
         return
 
-    metric_names = sorted(per_combination_metrics[0].get("metrics", {}).keys())
+    seen: set[str] = set()
+    for combo_entry in per_combination_metrics:
+        for k in combo_entry.get("metrics", {}).keys():
+            seen.add(k)
+    metric_names = sorted(seen)
     header = list(param_names)
     for metric_name in metric_names:
         header.extend(
@@ -199,15 +220,19 @@ def _write_metadata_section(
 
 
 def _format_number(value: float | int | None, decimals: int = 2) -> str:
-    """Format a number for CSV output; numpy scalars unwrapped via ``.item()``."""
+    """Format a number for CSV output; numpy scalars unwrapped via ``.item()``.
+
+    Non-finite values (NaN, +inf, -inf) and None all render as empty string
+    so CSV cells stay blank rather than carrying spec-incompatible literals.
+    """
+    import math
+
     if value is None:
         return ""
     if hasattr(value, "item"):
         value = value.item()
     if isinstance(value, float):
-        if value == float("inf"):
-            return "inf"
-        if value == float("-inf"):
-            return "-inf"
+        if not math.isfinite(value):
+            return ""
         return f"{value:.{decimals}f}"
     return str(value)

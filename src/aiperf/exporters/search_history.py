@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from aiperf.common.finite import scrub_non_finite
 from aiperf.orchestrator.search_planner._sla_helpers import first_failing_filter
 
 if TYPE_CHECKING:
@@ -100,7 +101,7 @@ def write_search_history(
         "convergence_reason": convergence_reason,
     }
     out = base_dir / "search_history.json"
-    out.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
+    out.write_bytes(orjson.dumps(scrub_non_finite(payload), option=orjson.OPT_INDENT_2))
 
 
 def _compute_best_payload(

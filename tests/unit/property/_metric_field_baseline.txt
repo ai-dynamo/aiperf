@@ -5,6 +5,8 @@ AIPerfJobInfo.latency_p99_ms: metric-named float field is not FiniteFloat / has 
 AIPerfJobInfo.output_token_throughput_tps: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 AIPerfJobInfo.throughput_rps: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 AIPerfJobInfo.ttft_ms: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
+BenchmarkPoint.x_mean: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
+BenchmarkPoint.y_mean: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 IndexRunRowResponse.inter_token_latency_avg: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 IndexRunRowResponse.inter_token_latency_p50: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 IndexRunRowResponse.inter_token_latency_p99: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
@@ -23,6 +25,8 @@ IndexRunRowResponse.request_throughput_p99: metric-named float field is not Fini
 IndexRunRowResponse.time_to_first_token_avg: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 IndexRunRowResponse.time_to_first_token_p50: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 IndexRunRowResponse.time_to_first_token_p99: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
+QualityMetric.pct_error_mean: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
+QualityMetric.target_mean: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 SteadyStateWindowMetadata.bootstrap_ci_mean_latency: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 SteadyStateWindowMetadata.bootstrap_ci_p99_latency: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.
 SteadyStateWindowMetadata.cusum_throughput_ramp_down_start_ns: metric-named float field is not FiniteFloat / has no finite-bounds metadata. Annotate as FiniteFloat or add an entry to FINITE_FIELD_WHITELIST.

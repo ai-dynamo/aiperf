@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import orjson
 
+from aiperf.common.finite import scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
@@ -94,6 +95,6 @@ class AggregateSweepJsonExporter(AggregateBaseExporter):
             "pareto_optimal": self._result.metadata.get("pareto_optimal", []),
         }
         return orjson.dumps(
-            output,
+            scrub_non_finite(output),
             option=orjson.OPT_INDENT_2 | orjson.OPT_SERIALIZE_NUMPY,
         ).decode("utf-8")

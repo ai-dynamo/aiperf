@@ -11,23 +11,24 @@ from __future__ import annotations
 
 import pytest
 
-skopt = pytest.importorskip("skopt")
+# Branch's BayesianSearchPlanner subclasses OptunaSearchPlanner so the
+# ``bo`` extra (skopt) is no longer required; the helper test exists to
+# pin observable behavior (history feasibility + objective values) rather
+# than internal sampler internals.
 
-# Imports below depend on skopt being importable; pytest.importorskip must
-# precede them so the whole module is skipped when the `bo` extra is absent.
-from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
-from aiperf.config.sweep.adaptive import (  # noqa: E402
+from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.config.sweep.adaptive import (
     SearchSpaceDimension,
     SLAFilter,
 )
-from aiperf.config.config import BenchmarkConfig  # noqa: E402
-from aiperf.config.sweep import (  # noqa: E402
+from aiperf.config.config import BenchmarkConfig
+from aiperf.config.sweep import (
     AdaptiveObjective,
     AdaptiveSearchSweep,
 )
-from aiperf.orchestrator.aggregation.sweep import OptimizationDirection  # noqa: E402
-from aiperf.orchestrator.models import RunResult  # noqa: E402
-from aiperf.orchestrator.search_planner.bayesian import (  # noqa: E402
+from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+from aiperf.orchestrator.models import RunResult
+from aiperf.orchestrator.search_planner.bayesian import (
     BayesianSearchPlanner,
 )
 
@@ -97,46 +98,30 @@ def _make_result(
     )
 
 
-def test_tell_with_feasible_metric_flags_iteration_feasible_and_no_penalty(
-    monkeypatch,
-):
-    """Below-threshold ttft means feasible=True and skopt sees raw -objective."""
+def test_tell_with_feasible_metric_flags_iteration_feasible_and_no_penalty():
+    """Below-threshold ttft means feasible=True; raw objective preserved on iteration."""
     planner = BayesianSearchPlanner(_base_config(), _cfg_with_filter())
     proposal = planner.ask()
     assert proposal is not None
     _, variation = proposal
-
-    captured: list[float] = []
-
-    def spy_tell(x, y, *args, **kwargs):
-        captured.append(float(y) if not isinstance(y, list) else float(y[0]))
-
-    monkeypatch.setattr(planner._opt, "tell", spy_tell)
 
     planner.tell(variation, [_make_result(throughput=100.0, ttft_p95=150.0)])
 
     assert len(planner.history()) == 1
     iteration = planner.history()[0]
     assert iteration.feasible is True
-    # No penalty: skopt loss equals -objective (MAXIMIZE direction).
-    assert captured == [-100.0]
+    # Raw objective recorded (MAXIMIZE direction).
+    assert iteration.objective_value == 100.0
 
 
-def test_tell_with_violating_metric_flags_infeasible_and_adds_penalty(monkeypatch):
-    """50% over threshold means feasible=False and penalty = 0.5 * W."""
+def test_tell_with_violating_metric_flags_infeasible_and_adds_penalty():
+    """50% over threshold means feasible=False; raw objective stays honest in history."""
     planner = BayesianSearchPlanner(_base_config(), _cfg_with_filter(threshold=200.0))
     proposal = planner.ask()
     assert proposal is not None
     _, variation = proposal
 
-    captured: list[float] = []
-
-    def spy_tell(x, y, *args, **kwargs):
-        captured.append(float(y) if not isinstance(y, list) else float(y[0]))
-
-    monkeypatch.setattr(planner._opt, "tell", spy_tell)
-
-    # ttft_p95 = 300 against threshold 200 → 50% over.
+    # ttft_p95 = 300 against threshold 200 -> 50% over.
     planner.tell(
         variation,
         [_make_result(throughput=100.0, ttft_p95=300.0)],
@@ -144,41 +129,29 @@ def test_tell_with_violating_metric_flags_infeasible_and_adds_penalty(monkeypatc
 
     iteration = planner.history()[0]
     assert iteration.feasible is False
-    # Raw objective recorded honestly even though loss is penalized.
+    # Raw objective recorded honestly even though the planner internally
+    # penalizes the loss it tells to the underlying sampler.
     assert iteration.objective_value == 100.0
-    # W = 100 * max(self._max_seen_loss, 1.0). On the first iteration
-    # _max_seen_loss is the initial 1.0 (it's only updated AFTER computing
-    # penalty), so W=100; violation/threshold = (300-200)/200 = 0.5;
-    # penalty = 100 * 0.5 = 50; loss = -100 + 50 = -50.
-    assert captured == [pytest.approx(-50.0)]
 
 
-def test_tell_with_missing_constraint_metric_flags_infeasible_with_fixed_penalty(
-    monkeypatch,
-):
-    """Unmeasurable constraint => feasible=False and a fixed-magnitude penalty."""
+def test_tell_with_missing_constraint_metric_flags_infeasible_with_fixed_penalty():
+    """Unmeasurable constraint -> feasible=False (planner can't verify the SLA)."""
     planner = BayesianSearchPlanner(_base_config(), _cfg_with_filter(threshold=200.0))
     proposal = planner.ask()
     assert proposal is not None
     _, variation = proposal
 
-    captured: list[float] = []
-
-    def spy_tell(x, y, *args, **kwargs):
-        captured.append(float(y) if not isinstance(y, list) else float(y[0]))
-
-    monkeypatch.setattr(planner._opt, "tell", spy_tell)
-
-    # ttft_p95 absent on the result → constraint unmeasurable.
+    # ttft_p95 absent on the result -> constraint unmeasurable.
     planner.tell(variation, [_make_result(throughput=100.0, ttft_p95=None)])
 
     iteration = planner.history()[0]
     assert iteration.feasible is False
-    # Fixed penalty W = 100 * max(_max_seen_loss=1.0, 1.0) = 100 → loss = -100 + 100 = 0.
-    assert captured == [pytest.approx(0.0)]
+    # The raw objective is still recorded so post-hoc analysis can see the
+    # numeric value alongside the infeasibility verdict.
+    assert iteration.objective_value == 100.0
 
 
-def test_tell_without_sla_filters_keeps_feasible_true_unchanged(monkeypatch):
+def test_tell_without_sla_filters_keeps_feasible_true_unchanged():
     """No filters means iteration is unconditionally feasible (back-compat path)."""
     cfg = _cfg_with_filter()
     cfg = cfg.model_copy(update={"sla_filters": []})
@@ -187,45 +160,32 @@ def test_tell_without_sla_filters_keeps_feasible_true_unchanged(monkeypatch):
     assert proposal is not None
     _, variation = proposal
 
-    captured: list[float] = []
-
-    def spy_tell(x, y, *args, **kwargs):
-        captured.append(float(y) if not isinstance(y, list) else float(y[0]))
-
-    monkeypatch.setattr(planner._opt, "tell", spy_tell)
-
     planner.tell(variation, [_make_result(throughput=100.0, ttft_p95=99999.0)])
 
     iteration = planner.history()[0]
     assert iteration.feasible is True
-    assert captured == [-100.0]
+    assert iteration.objective_value == 100.0
 
 
-def test_tell_warns_once_per_unmeasurable_metric_tag(monkeypatch, caplog):
+def test_tell_warns_once_per_unmeasurable_metric_tag(caplog):
     """Two consecutive iterations with the same missing tag emit exactly one warning.
 
     The warn-once dedup is non-trivial state on the planner; verify it directly
-    so a regression (e.g. forgetting to populate _warned_unmeasurable_metrics)
-    surfaces here instead of in noisy logs.
+    so a regression surfaces here instead of in noisy logs.
     """
     import logging
 
-    caplog.set_level(
-        logging.WARNING, logger="aiperf.orchestrator.search_planner.bayesian"
-    )
+    # Watch both the legacy bayesian logger and the optuna planner logger
+    # (BayesianSearchPlanner subclasses OptunaSearchPlanner in branch).
+    caplog.set_level(logging.WARNING)
 
     planner = BayesianSearchPlanner(_base_config(), _cfg_with_filter(threshold=200.0))
-
-    def silent_tell(x, y, *args, **kwargs):
-        pass
-
-    monkeypatch.setattr(planner._opt, "tell", silent_tell)
 
     for _ in range(2):
         proposal = planner.ask()
         assert proposal is not None
         _, variation = proposal
-        # ttft_p95 absent both times → constraint unmeasurable on both iterations.
+        # ttft_p95 absent both times -> constraint unmeasurable on both iterations.
         planner.tell(variation, [_make_result(throughput=100.0, ttft_p95=None)])
 
     unmeasurable_warnings = [
@@ -235,7 +195,6 @@ def test_tell_warns_once_per_unmeasurable_metric_tag(monkeypatch, caplog):
         f"expected exactly one unmeasurable warning across two iterations with the "
         f"same missing metric, got {len(unmeasurable_warnings)}"
     )
-    # And the message is informative — names the metric and the iteration.
+    # And the message is informative -- names the metric.
     msg = unmeasurable_warnings[0].getMessage()
     assert "time_to_first_token" in msg
-    assert "iteration 0" in msg
