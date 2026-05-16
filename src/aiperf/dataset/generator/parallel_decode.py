@@ -36,10 +36,8 @@ def _init_worker(
     starts. It loads the tokenizer so subsequent decode calls don't need to reload it.
 
     Args:
-        tokenizer_name: Pre-resolved model name or local path. Must not be an
-            unresolved alias — callers (e.g. BaseTraceLoader) are expected to
-            resolve aliases before passing this value, because
-            ``resolve_alias=False`` is used to avoid network calls in workers.
+        tokenizer_name: Pre-resolved model name or local path (alias resolution
+            is skipped; callers must resolve aliases beforehand).
         trust_remote_code: Whether to trust remote code when loading.
         revision: The specific model version to use.
     """
