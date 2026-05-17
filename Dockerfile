@@ -166,9 +166,9 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
     && chmod -R 755 /app
 
-# Install only the dependencies using uv
+# Install only runtime dependencies using uv
 COPY pyproject.toml .
-RUN uv sync --active --no-install-project
+RUN uv sync --active --no-install-project --no-dev
 
 # Copy the rest of the application
 COPY --from=wheel-builder /dist /dist
