@@ -41,6 +41,8 @@ navigation:
       path: tutorials/nim-image-retrieval.md
     - page: SGLang Image Generation
       path: tutorials/image-generation.md
+    - page: Profile Image Edit Models with AIPerf
+      path: tutorials/sglang-image-edit.md
     - page: SGLang Video Generation
       path: tutorials/sglang-video-generation.md
     - page: Synthetic Video Generation
@@ -52,6 +54,12 @@ navigation:
     contents:
     - page: Custom Dataset Guide
       path: tutorials/custom-dataset.md
+    - page: Inline Datasets
+      path: tutorials/inline-datasets.md
+    - page: Raw Payload Replay
+      path: tutorials/raw-payload-replay.md
+    - page: Inputs JSON Replay
+      path: tutorials/inputs-json-replay.md
     - page: Custom Prompt Benchmarking
       path: tutorials/custom-prompt-benchmarking.md
     - page: Profile with ShareGPT Dataset
@@ -134,6 +142,8 @@ navigation:
       path: sweeping/find-max-passing-concurrency.md
     - page: Adaptive Search Tutorial
       path: tutorials/adaptive-search.md
+    - page: Space-filling Sweeps
+      path: sweeping/space-filling.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
     - page: HTTP Trace Metrics Guide
@@ -142,10 +152,14 @@ navigation:
       path: tutorials/working-with-profile-exports.md
     - page: Visualization and Plotting with AIPerf
       path: tutorials/plot.md
+    - page: Auto-Plot After Profile Runs
+      path: tutorials/auto-plot.md
     - page: User-Centric Timing for KV Cache Benchmarking
       path: tutorials/user-centric-timing.md
     - page: GPU Telemetry with AIPerf
       path: tutorials/gpu-telemetry.md
+    - page: OTel and MLflow Telemetry
+      path: tutorials/otel-mlflow.md
   - section: Configuration
     collapsed: true
     contents:
@@ -247,6 +261,8 @@ navigation:
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
     path: reference/tokenizer-auto-detection.md
+  - page: Vendor Usage Field Reference
+    path: reference/vendor-usage-fields.md
   - page: Conversation Context Mode
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
@@ -295,16 +311,24 @@ navigation:
     path: architecture.md
   - page: Kubernetes Flow
     path: dev/kubernetes-flow.md
+  - page: CRD Generator Refactor Design
+    path: superpowers/specs/2026-05-16-crd-generator-refactor-design.md
   - page: Sweep Architecture Overview
     path: dev/sweep-architecture-overview.md
   - page: Sweep Orchestrator Flow
     path: dev/sweep-orchestrator-flow.md
+  - page: Sweep + Orchestrator Developer Reference
+    path: dev/sweep-orchestrator.md
   - page: Metrics Flow
     path: diagrams/metrics-flow.md
   - page: Mixins
     path: diagrams/mixins.md
   - page: AIPerf Code Patterns
     path: dev/patterns.md
+  - page: Global Property-Test Invariants
+    path: dev/global-invariants.md
+  - page: YAML Config Future Goals
+    path: dev/yaml-config-future-goals.md
   - page: "Research-Grade Algorithms: Gap Analysis"
     path: dev/gap-analysis-research-grade-algorithms.md
   - page: "Proposal: Statistical Foundations"
