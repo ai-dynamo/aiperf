@@ -240,6 +240,7 @@ class TestCreateControlPlaneContainers:
         )
         port_names = {p["name"] for p in api.ports}
         assert "api" in port_names
+        assert "health" not in port_names
 
     def test_control_plane_realtime_metrics_env(self) -> None:
         """Every controller-pod container must enable realtime metrics.

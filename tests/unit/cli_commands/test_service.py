@@ -14,6 +14,7 @@ import pytest
 from aiperf.cli_commands.service import app, service
 from aiperf.common.environment import Environment
 from aiperf.kubernetes.jobset_helpers import build_container_args
+from aiperf.plugin.enums import ServiceType
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -176,3 +177,17 @@ class TestServiceCommand:
 
         call_kwargs = mock_bootstrap.call_args.kwargs
         assert call_kwargs["health_port"] == 8080
+
+    def test_api_without_health_port_disables_lightweight_health_server(
+        self,
+        mock_bootstrap: MagicMock,
+    ) -> None:
+        Environment.SERVICE.HEALTH_ENABLED = True
+        Environment.SERVICE.HEALTH_PORT = 8080
+
+        service(service_type=ServiceType.API, api_port=9090)
+
+        assert Environment.SERVICE.HEALTH_ENABLED is False
+        call_kwargs = mock_bootstrap.call_args.kwargs
+        assert call_kwargs["health_port"] is None
+        assert call_kwargs["api_port"] == 9090

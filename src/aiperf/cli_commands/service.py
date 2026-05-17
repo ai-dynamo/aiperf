@@ -91,6 +91,8 @@ def service(
             # CLI argument takes precedence over environment variable
             Environment.SERVICE.HEALTH_ENABLED = True
             Environment.SERVICE.HEALTH_PORT = health_port
+        elif service_type == ServiceType.API:
+            Environment.SERVICE.HEALTH_ENABLED = False
 
         bootstrap_and_run_service(
             service_type=service_type,
