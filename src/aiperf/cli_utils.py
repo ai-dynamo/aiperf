@@ -99,7 +99,7 @@ class exit_on_error(AbstractContextManager):
 
         if (
             not self.exceptions
-            and not isinstance(exc_value, (SystemExit | KeyboardInterrupt))
+            and not isinstance(exc_value, (SystemExit, KeyboardInterrupt))
         ) or issubclass(exc_type, self.exceptions):
             # Only show full traceback if requested AND the exception is not
             # in the quiet_for allowlist (expected errors render a clean panel only).

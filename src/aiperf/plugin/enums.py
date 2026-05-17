@@ -79,7 +79,7 @@ RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordPr
 
 ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
-"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.OTEL_METRICS_STREAMER, ResultsProcessorType.TIMESLICE"""
+"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.METRIC_RESULTS, ResultsProcessorType.SERVER_METRICS_JSONL_WRITER"""
 
 GPUTelemetryProcessorTypeStr: TypeAlias = str
 GPUTelemetryProcessorType = plugins.create_enum(PluginType.GPU_TELEMETRY_PROCESSOR, "GPUTelemetryProcessorType", module=__name__)
@@ -199,4 +199,4 @@ def _build_datasetformat_members() -> dict[str, str]:
             members[alias.upper()] = alias
     return members
 DatasetFormat = create_enum("DatasetFormat", _build_datasetformat_members(), module=__name__)
-"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because ``--custom-dataset-type`` resolves into ``benchmark.datasets[].file.format``. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BURST_GPT_TRACE, DatasetFormat.DAG_JSONL"""
+"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because --custom-dataset-type resolves into benchmark.datasets[].file.format. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BURST_GPT_TRACE, DatasetFormat.DAG_JSONL"""

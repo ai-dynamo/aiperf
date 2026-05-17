@@ -15,6 +15,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.config.base import BaseConfig
+from aiperf.config.tokenizer import TokenizerConfig as TokenizerConfig
 
 
 class TokenizerOverride(BaseConfig):
@@ -149,59 +150,3 @@ Example:
       inter_token_latency: 15    # max 15ms between tokens
       tokens_per_second: 50      # min 50 tokens/second
 """
-
-
-class TokenizerConfig(BaseConfig):
-    """
-    Tokenizer configuration for token counting and prompt generation.
-
-    AIPerf uses a HuggingFace tokenizer for accurate token counting,
-    which is essential for ISL/OSL enforcement and metrics calculation.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="HuggingFace tokenizer identifier, local filesystem path, or `builtin` "
-            "for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). "
-            "Should match the model's tokenizer for accurate token counts. "
-            "If `--tokenizer` is not set and the model name looks like an obvious placeholder "
-            "(e.g. `mock-model`, `test-model`, `fake-model`), AIPerf substitutes `builtin` automatically "
-            "and emits a warning. "
-            "Example: 'meta-llama/Llama-3.1-8B-Instruct'",
-        ),
-    ]
-
-    revision: Annotated[
-        str,
-        Field(
-            default="main",
-            description="Model revision to use: branch name, tag, or commit hash. "
-            "Use for version pinning to ensure reproducibility.",
-        ),
-    ]
-
-    trust_remote_code: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="Allow execution of custom tokenizer code from the repository. "
-            "Required for some models but poses security risk. "
-            "Only enable for trusted sources.",
-        ),
-    ]
-
-    resolved_names: Annotated[
-        dict[str, str] | None,
-        Field(
-            default=None,
-            exclude=True,
-            description="Pre-resolved tokenizer names from alias resolution. "
-            "[runtime-only; populated by the CLI or WorkerGroupManager after "
-            "tokenizer validation. Excluded from JSON/YAML serialization. Do not "
-            "set in a CR spec — any user value is ignored.]",
-        ),
-    ]

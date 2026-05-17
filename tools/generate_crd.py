@@ -71,6 +71,25 @@ _MAX_DEPTH = 16
 # =============================================================================
 
 
+class CRDSchemaSource:
+    """Load raw Pydantic schemas used as CRD roots."""
+
+    def config_schema(self) -> dict[str, Any]:
+        from aiperf.config.config import AIPerfConfig
+
+        return AIPerfConfig.model_json_schema()
+
+    def job_schema(self) -> dict[str, Any]:
+        from aiperf.operator.models import AIPerfJobSpec
+
+        return AIPerfJobSpec.model_json_schema(mode="validation", by_alias=True)
+
+    def sweep_schema(self) -> dict[str, Any]:
+        from aiperf.operator.models import AIPerfSweepSpec
+
+        return AIPerfSweepSpec.model_json_schema(mode="validation", by_alias=True)
+
+
 def _resolve_ref(ref: str, defs: dict[str, Any]) -> dict[str, Any]:
     """Resolve a $ref string to its definition."""
     name = ref.rsplit("/", 1)[-1]
@@ -407,6 +426,23 @@ def convert_aiperf_config_fields(
     return result
 
 
+class KubernetesSchemaConverter:
+    """Convert Pydantic JSON Schema nodes into Kubernetes OpenAPI nodes."""
+
+    def schema_node(
+        self,
+        schema: dict[str, Any],
+        defs: dict[str, Any],
+        depth: int = 0,
+    ) -> dict[str, Any]:
+        return _convert_schema(schema, defs, depth)
+
+    def aiperf_config_fields(
+        self, schema: dict[str, Any], *, verbose: bool = False
+    ) -> dict[str, Any]:
+        return convert_aiperf_config_fields(schema, verbose=verbose)
+
+
 def _add_validation_rules(node: dict[str, Any], rules: tuple[dict, ...]) -> None:
     """Append ``rules`` to ``node['x-kubernetes-validations']`` (de-duped by rule text)."""
     bag = node.setdefault("x-kubernetes-validations", [])
@@ -712,6 +748,19 @@ def _walk_dict_apply(node: Any, fn: Any) -> None:
             _walk_dict_apply(item, fn)
 
 
+class CRDSchemaEnhancer:
+    """Apply AIPerf-specific CRD schema decorations."""
+
+    def decorate_all(self, node: dict[str, Any]) -> None:
+        _decorate_all(node)
+
+    def ensure_type_on_preserve_unknown(self, node: dict[str, Any]) -> None:
+        _ensure_type_on_preserve_unknown(node)
+
+    def strip_internal_sentinels(self, node: dict[str, Any]) -> None:
+        _strip_mixed_union_sentinels(node)
+
+
 def _status_schema() -> dict[str, Any]:
     """Return the status sub-schema."""
     return {
@@ -947,6 +996,19 @@ def _printer_columns() -> list[dict[str, Any]]:
 # =============================================================================
 
 
+def _aiperf_job_spec_properties_from_schema(
+    schema: dict[str, Any],
+    converter: KubernetesSchemaConverter,
+) -> dict[str, Any]:
+    defs = schema.get("$defs", {})
+    properties = schema.get("properties", {})
+
+    return {
+        name: converter.schema_node(prop_schema, defs, depth=0)
+        for name, prop_schema in properties.items()
+    }
+
+
 def _aiperf_job_spec_properties() -> dict[str, Any]:
     """Generate ``.spec.*`` fields from ``AIPerfJobSpec`` (the validation model).
 
@@ -958,27 +1020,23 @@ def _aiperf_job_spec_properties() -> dict[str, Any]:
     ``benchmark``. This mirrors what the AIPerfSweep CRD already does via
     ``AIPerfSweepSpec.template.spec`` (which embeds AIPerfJobSpec).
     """
-    from aiperf.operator.models import AIPerfJobSpec
-
-    schema = AIPerfJobSpec.model_json_schema(mode="validation", by_alias=True)
-    defs = schema.get("$defs", {})
-    properties = schema.get("properties", {})
-
-    return {
-        name: _convert_schema(prop_schema, defs, depth=0)
-        for name, prop_schema in properties.items()
-    }
+    return _aiperf_job_spec_properties_from_schema(
+        CRDSchemaSource().job_schema(),
+        KubernetesSchemaConverter(),
+    )
 
 
-def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
-    """Assemble the full CRD document."""
+def _build_crd_from_job_spec_properties(
+    job_spec_properties: dict[str, Any],
+    enhancer: CRDSchemaEnhancer,
+) -> dict[str, Any]:
     spec_properties: dict[str, Any] = {}
 
     # AIPerfJobSpec is the operator's `.spec` validation model — see
     # handlers/create.py. Walking it gives every deployment field plus
     # skip_endpoint_check and benchmark with the descriptions and constraints
     # the operator actually enforces.
-    operator = _aiperf_job_spec_properties()
+    operator = copy.deepcopy(job_spec_properties)
 
     # Pop benchmark for separate handling (description override + decorator
     # walk). The AIPerfConfig sub-tree is reached via $ref from AIPerfJobSpec.
@@ -1014,9 +1072,9 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     # target node by its property shape, so they fire on AIPerfJob's
     # spec.benchmark and on AIPerfSweep's spec.template.spec.benchmark from
     # the same call. See _decorate_all and the individual _decorate_* helpers.
-    _walk_dict_apply(benchmark_walked, _ensure_type_on_preserve_unknown)
-    _walk_dict_apply(benchmark_walked, _decorate_all)
-    _walk_dict_apply(benchmark_walked, _strip_mixed_union_sentinels)
+    _walk_dict_apply(benchmark_walked, enhancer.ensure_type_on_preserve_unknown)
+    _walk_dict_apply(benchmark_walked, enhancer.decorate_all)
+    _walk_dict_apply(benchmark_walked, enhancer.strip_internal_sentinels)
 
     # Tier 3N — scheduling.queueName is immutable after admission. Kueue's
     # own contract treats queueName as immutable, so mirror that at the
@@ -1116,6 +1174,14 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
             ],
         },
     }
+
+
+def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the full CRD document."""
+    return _build_crd_from_job_spec_properties(
+        _aiperf_job_spec_properties(),
+        CRDSchemaEnhancer(),
+    )
 
 
 # =============================================================================
@@ -1221,27 +1287,21 @@ def _aiperfsweep_printer_columns() -> list[dict[str, Any]]:
     ]
 
 
-def build_aiperfsweep_crd() -> dict[str, Any]:
-    """Build the CRD dict for ``aiperfsweeps.aiperf.nvidia.com``.
-
-    Derives ``spec`` from ``AIPerfSweepSpec.model_json_schema(by_alias=True)``
-    so the CRD field names follow K8s camelCase conventions, then attaches CEL
-    immutability rules to the orchestration-critical top-level spec fields
-    (``sweep``, ``multiRun``).
-    """
-    from aiperf.operator.models import AIPerfSweepSpec
-
-    raw_schema = AIPerfSweepSpec.model_json_schema(mode="validation", by_alias=True)
+def _build_aiperfsweep_crd_from_schema(
+    raw_schema: dict[str, Any],
+    converter: KubernetesSchemaConverter,
+    enhancer: CRDSchemaEnhancer,
+) -> dict[str, Any]:
     defs = raw_schema.get("$defs") or {}
-    spec_schema = _convert_schema(raw_schema, defs)
+    spec_schema = converter.schema_node(raw_schema, defs)
 
     # AIPerfSweepSpec wraps AIPerfJobSpec.benchmark (an AIPerfConfig). Walk the
     # whole spec tree so every shape-detected node (benchmark, endpoint,
     # runtime, multiRun, artifacts) picks up the same CEL invariants that the
     # AIPerfJob CRD does.
-    _walk_dict_apply(spec_schema, _ensure_type_on_preserve_unknown)
-    _walk_dict_apply(spec_schema, _decorate_all)
-    _walk_dict_apply(spec_schema, _strip_mixed_union_sentinels)
+    _walk_dict_apply(spec_schema, enhancer.ensure_type_on_preserve_unknown)
+    _walk_dict_apply(spec_schema, enhancer.decorate_all)
+    _walk_dict_apply(spec_schema, enhancer.strip_internal_sentinels)
 
     properties = spec_schema.setdefault("properties", {})
 
@@ -1323,6 +1383,48 @@ def build_aiperfsweep_crd() -> dict[str, Any]:
             ],
         },
     }
+
+
+def build_aiperfsweep_crd() -> dict[str, Any]:
+    """Build the CRD dict for ``aiperfsweeps.aiperf.nvidia.com``.
+
+    Derives ``spec`` from ``AIPerfSweepSpec.model_json_schema(by_alias=True)``
+    so the CRD field names follow K8s camelCase conventions, then attaches CEL
+    immutability rules to the orchestration-critical top-level spec fields
+    (``sweep``, ``multiRun``).
+    """
+    return _build_aiperfsweep_crd_from_schema(
+        CRDSchemaSource().sweep_schema(),
+        KubernetesSchemaConverter(),
+        CRDSchemaEnhancer(),
+    )
+
+
+class CRDDocumentBuilder:
+    """Build complete Kubernetes CRD documents."""
+
+    def __init__(
+        self,
+        *,
+        converter: KubernetesSchemaConverter | None = None,
+        enhancer: CRDSchemaEnhancer | None = None,
+    ) -> None:
+        self.converter = converter or KubernetesSchemaConverter()
+        self.enhancer = enhancer or CRDSchemaEnhancer()
+
+    def aiperfjob_crd(self, job_schema: dict[str, Any]) -> dict[str, Any]:
+        job_spec_properties = _aiperf_job_spec_properties_from_schema(
+            job_schema,
+            self.converter,
+        )
+        return _build_crd_from_job_spec_properties(job_spec_properties, self.enhancer)
+
+    def aiperfsweep_crd(self, sweep_schema: dict[str, Any]) -> dict[str, Any]:
+        return _build_aiperfsweep_crd_from_schema(
+            sweep_schema,
+            self.converter,
+            self.enhancer,
+        )
 
 
 # =============================================================================
@@ -1463,6 +1565,16 @@ def render_helm_sweep_crd_yaml(crd: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+class CRDYAMLRenderer:
+    """Render CRD documents into Helm-safe YAML."""
+
+    def aiperfjob_yaml(self, crd: dict[str, Any]) -> str:
+        return render_helm_crd_yaml(crd)
+
+    def aiperfsweep_yaml(self, crd: dict[str, Any]) -> str:
+        return render_helm_sweep_crd_yaml(crd)
+
+
 # =============================================================================
 # Generator
 # =============================================================================
@@ -1499,24 +1611,30 @@ class CRDGenerator(Generator):
 
     def generate(self) -> GeneratorResult:
         sys.path.insert(0, "src")
-        from aiperf.config.config import AIPerfConfig
+        source = CRDSchemaSource()
+        converter = KubernetesSchemaConverter()
+        enhancer = CRDSchemaEnhancer()
+        builder = CRDDocumentBuilder(converter=converter, enhancer=enhancer)
+        renderer = CRDYAMLRenderer()
 
-        schema = AIPerfConfig.model_json_schema()
+        config_schema = source.config_schema()
         if self.verbose:
-            defs = schema.get("$defs", {})
-            props = schema.get("properties", {})
+            defs = config_schema.get("$defs", {})
+            props = config_schema.get("properties", {})
             print_step(
                 f"JSON Schema: {len(defs)} definitions, {len(props)} top-level properties"
             )
 
-        config_properties = convert_aiperf_config_fields(schema, verbose=self.verbose)
+        config_properties = converter.aiperf_config_fields(
+            config_schema,
+            verbose=self.verbose,
+        )
 
-        crd = _build_crd(config_properties)
+        crd = builder.aiperfjob_crd(source.job_schema())
+        helm_yaml = renderer.aiperfjob_yaml(crd)
 
-        helm_yaml = render_helm_crd_yaml(crd)
-
-        sweep_crd = build_aiperfsweep_crd()
-        helm_sweep_yaml = render_helm_sweep_crd_yaml(sweep_crd)
+        sweep_crd = builder.aiperfsweep_crd(source.sweep_schema())
+        helm_sweep_yaml = renderer.aiperfsweep_yaml(sweep_crd)
 
         version = _get_project_version()
         chart_yaml = _sync_chart_app_version(version)

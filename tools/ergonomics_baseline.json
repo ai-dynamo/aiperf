@@ -158,6 +158,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/accuracy/graders/math.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/analysis/analyze_profile_export.py",
       ""
     ],
@@ -178,6 +183,51 @@
     ],
     [
       "file-size",
+      "src/aiperf/cli_runner/_sweep_aggregate.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/enums/enums.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/enums/metric_enums.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/environment.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/hooks.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/mixins/base_metrics_collector_mixin.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/models/trace_models.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/tokenizer.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/common/tokenizer_validator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/artifacts.py",
       ""
     ],
@@ -193,12 +243,47 @@
     ],
     [
       "file-size",
+      "src/aiperf/config/dataset/config.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/distributions.py",
       ""
     ],
     [
       "file-size",
+      "src/aiperf/config/endpoint.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/flags/_converter_dataset.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/flags/cli_config.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/flags/converter.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/loader/core.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/sweep/config.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/sweep/expand.py",
       ""
     ],
     [
@@ -229,6 +314,36 @@
     [
       "file-size",
       "src/aiperf/dataset/dataset_manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/endpoints/base_endpoint.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/endpoints/openai_chat.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/gpu_telemetry/amdsmi_collector.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/gpu_telemetry/manager.py",
       ""
     ],
     [
@@ -293,6 +408,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/orchestrator/search_planner/_optuna_helpers.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/orchestrator/search_planner/optuna_planner.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/plot/core/plot_generator.py",
       ""
     ],
@@ -313,7 +438,42 @@
     ],
     [
       "file-size",
+      "src/aiperf/plugin/schema/schemas.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/post_processors/otel_metrics_results_processor.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/records_manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/search_recipes/builtins.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/server_metrics/export_stats.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/server_metrics/manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/server_metrics/parquet_exporter.py",
       ""
     ],
     [
@@ -328,6 +488,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/timing/phase/runner.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/workers/worker.py",
       ""
     ],
@@ -335,6 +505,11 @@
       "file-size",
       "src/aiperf/workers/worker_pod_manager.py",
       ""
+    ],
+    [
+      "function-size",
+      "src/aiperf/accuracy/graders/_math_strip.py",
+      "strip_string"
     ],
     [
       "function-size",
@@ -423,6 +598,26 @@
     ],
     [
       "function-size",
+      "src/aiperf/cli_commands/service.py",
+      "service"
+    ],
+    [
+      "function-size",
+      "src/aiperf/cli_runner/_sweep_aggregate.py",
+      "aggregate_sweep_and_export"
+    ],
+    [
+      "function-size",
+      "src/aiperf/common/logging.py",
+      "render"
+    ],
+    [
+      "function-size",
+      "src/aiperf/common/tokenizer_validator.py",
+      "preload_tokenizers"
+    ],
+    [
+      "function-size",
       "src/aiperf/common/tokenizer_validator.py",
       "validate_tokenizer_early"
     ],
@@ -435,6 +630,31 @@
       "function-size",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "_apply_multipliers"
+    ],
+    [
+      "function-size",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "benchmark_run_from_model_endpoint"
+    ],
+    [
+      "function-size",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "_export_sync"
+    ],
+    [
+      "function-size",
+      "src/aiperf/gpu_telemetry/accumulator.py",
+      "export_results"
+    ],
+    [
+      "function-size",
+      "src/aiperf/gpu_telemetry/dcgm_collector.py",
+      "_parse_metrics_to_records"
+    ],
+    [
+      "function-size",
+      "src/aiperf/gpu_telemetry/pynvml_collector.py",
+      "_collect_gpu_metrics"
     ],
     [
       "function-size",
@@ -510,6 +730,16 @@
       "function-size",
       "src/aiperf/operator/runs_index.py",
       "bootstrap"
+    ],
+    [
+      "function-size",
+      "src/aiperf/orchestrator/search_planner/_optuna_helpers.py",
+      "build_qnehvi_candidates_func"
+    ],
+    [
+      "function-size",
+      "src/aiperf/orchestrator/search_planner/_optuna_helpers.py",
+      "build_sampler"
     ],
     [
       "function-size",
@@ -685,6 +915,86 @@
       "function-size",
       "src/aiperf/plot/metric_names.py",
       "_format_server_metric_name"
+    ],
+    [
+      "function-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "function-size",
+      "src/aiperf/search_recipes/_itl_surface_fit.py",
+      "_extract_2d_points"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/accumulator.py",
+      "_compute_endpoint_summaries"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/csv_exporter.py",
+      "_write_section"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/data_collector.py",
+      "_parse_metrics_to_records"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_counter_stats"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_counter_timeslices"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_gauge_timeslices"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_stats"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_timeslices"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/json_exporter.py",
+      "_build_hybrid_metrics"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/manager.py",
+      "_profile_configure_command"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/parquet_exporter.py",
+      "_build_parquet_metadata"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/parquet_exporter.py",
+      "_collect_histogram_rows"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/parquet_exporter.py",
+      "_collect_scalar_rows"
+    ],
+    [
+      "function-size",
+      "src/aiperf/server_metrics/parquet_exporter.py",
+      "export"
     ],
     [
       "function-size",
@@ -873,6 +1183,16 @@
     ],
     [
       "nesting-depth",
+      "src/aiperf/plugin/types.py",
+      "validate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
+    ],
+    [
+      "nesting-depth",
       "src/aiperf/workers/worker_pod_tokenizer_download.py",
       "download_tokenizer"
     ],
@@ -880,6 +1200,11 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
+    ],
+    [
+      "pydantic-fields",
+      "src/aiperf/config/flags/cli_config.py",
+      "CLIConfig"
     ],
     [
       "pydantic-fields",

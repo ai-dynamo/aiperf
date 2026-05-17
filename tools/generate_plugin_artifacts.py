@@ -92,6 +92,18 @@ COMPOSITE_ENUMS = {
             },
         ],
     },
+    "DatasetFormat": {
+        "description": (
+            "Format of file-based datasets. Mirrors the custom_dataset_loader "
+            "plugin registry: every loader name surfaces here, because "
+            "--custom-dataset-type resolves into benchmark.datasets[].file.format."
+        ),
+        "sources": [
+            {
+                "category": "custom_dataset_loader",
+            },
+        ],
+    },
 }
 
 GENERATED_HEADER = (

@@ -65,13 +65,18 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         """Run a task in the background, in a loop until cancelled."""
         self.execute_async(
             self._background_task_loop(
-                method, interval, immediate, stop_on_error, stop_event
+                method,
+                interval=interval,
+                immediate=immediate,
+                stop_on_error=stop_on_error,
+                stop_event=stop_event,
             )
         )
 
     async def _background_task_loop(
         self,
         method: Callable,
+        *,
         interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,

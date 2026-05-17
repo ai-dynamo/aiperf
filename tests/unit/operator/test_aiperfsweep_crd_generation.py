@@ -469,3 +469,34 @@ def test_array_item_internal_rules_are_intentionally_absent():
             f"rule containing '{forbidden}' would not compile against opaque "
             f"array items; keep this enforcement in the Pydantic validator"
         )
+
+
+def test_crd_document_builder_matches_legacy_job_builder() -> None:
+    from aiperf.config.config import AIPerfConfig
+    from tools.generate_crd import (
+        CRDDocumentBuilder,
+        CRDSchemaSource,
+        _build_crd,
+        convert_aiperf_config_fields,
+    )
+
+    source = CRDSchemaSource()
+    legacy = _build_crd(convert_aiperf_config_fields(AIPerfConfig.model_json_schema()))
+    refactored = CRDDocumentBuilder().aiperfjob_crd(source.job_schema())
+
+    assert refactored == legacy
+
+
+def test_crd_document_builder_matches_legacy_sweep_builder() -> None:
+    from tools.generate_crd import (
+        CRDDocumentBuilder,
+        CRDSchemaSource,
+        build_aiperfsweep_crd,
+    )
+
+    source = CRDSchemaSource()
+
+    assert (
+        CRDDocumentBuilder().aiperfsweep_crd(source.sweep_schema())
+        == build_aiperfsweep_crd()
+    )

@@ -503,13 +503,13 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         """Convert metric value to numeric values suitable for histograms."""
         if isinstance(metric_value, bool):
             return []
-        if isinstance(metric_value, int | float):
+        if isinstance(metric_value, (int, float)):
             return [float(metric_value)]
         if isinstance(metric_value, list):
             numeric_values = [
                 float(value)
                 for value in metric_value
-                if isinstance(value, int | float) and not isinstance(value, bool)
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
             ]
             if not numeric_values:
                 return []

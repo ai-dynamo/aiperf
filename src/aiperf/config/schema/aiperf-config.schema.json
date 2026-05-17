@@ -607,7 +607,10 @@
           "anyOf": [
             {
               "items": {
-                "const": "jsonl",
+                "enum": [
+                  "jsonl",
+                  "csv"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -617,7 +620,7 @@
               "type": "boolean"
             }
           ],
-          "description": "Per-request records export formats. Only 'jsonl' is wired up today. Set to false to disable the per-record JSONL file.",
+          "description": "Per-request records export formats. Supports 'jsonl' and 'csv' (branch wins; CSV exporter ported from the K8s branch). Set to false to disable per-record export.",
           "title": "Records"
         },
         "raw": {
@@ -662,6 +665,11 @@
           "title": "Showtracetiming",
           "type": "boolean"
         },
+        "benchmarkId": {
+          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]",
+          "title": "Benchmarkid",
+          "type": "string"
+        },
         "userFiles": {
           "description": "User-defined templated files materialized into the run directory before the benchmark begins.",
           "items": {
@@ -669,6 +677,10 @@
           },
           "title": "Userfiles",
           "type": "array"
+        },
+        "steadyState": {
+          "$ref": "#/$defs/SteadyStateConfig",
+          "description": "Steady-state windowed-metrics configuration. When enabled, AIPerf detects the steady-state region of the run and re-computes metrics only over that window."
         },
         "autoPlot": {
           "default": false,
@@ -686,6 +698,12 @@
           "default": false,
           "description": "Export generated response text to outputs.json after the run.",
           "title": "Exportoutputsjson",
+          "type": "boolean"
+        },
+        "perChunkData": {
+          "default": false,
+          "description": "Include list-valued per-chunk record metrics (e.g. inter-chunk latencies, per-chunk token counts) in the records JSONL/CSV exports. Off by default to keep export size bounded; enable when downstream analysis needs the full per-chunk trace per request.",
+          "title": "Perchunkdata",
           "type": "boolean"
         }
       },
@@ -842,7 +860,7 @@
           "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
         },
         "datasets": {
-          "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+          "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name via ``phase.dataset``; when omitted the first defined dataset is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
           "items": {
             "discriminator": {
               "propertyName": "type",
@@ -864,7 +882,6 @@
               }
             ]
           },
-          "maxItems": 1,
           "minItems": 1,
           "title": "Datasets",
           "type": "array"
@@ -918,11 +935,8 @@
                   "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
                   "properties": {
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                      "minLength": 1,
                       "title": "Name",
                       "type": "string"
                     },
@@ -931,6 +945,19 @@
                       "description": "Concurrency-controlled immediate dispatch.",
                       "title": "Type",
                       "type": "string"
+                    },
+                    "dataset": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "title": "Dataset"
                     },
                     "excludeFromResults": {
                       "default": false,
@@ -1074,11 +1101,8 @@
                   "description": "Poisson-distributed request arrivals at the target rate.",
                   "properties": {
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                      "minLength": 1,
                       "title": "Name",
                       "type": "string"
                     },
@@ -1087,6 +1111,19 @@
                       "description": "Poisson-distributed rate-controlled arrivals.",
                       "title": "Type",
                       "type": "string"
+                    },
+                    "dataset": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "title": "Dataset"
                     },
                     "excludeFromResults": {
                       "default": false,
@@ -1256,11 +1293,8 @@
                   "description": "Gamma-distributed request arrivals with configurable smoothness.",
                   "properties": {
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                      "minLength": 1,
                       "title": "Name",
                       "type": "string"
                     },
@@ -1269,6 +1303,19 @@
                       "description": "Gamma-distributed rate-controlled arrivals.",
                       "title": "Type",
                       "type": "string"
+                    },
+                    "dataset": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "title": "Dataset"
                     },
                     "excludeFromResults": {
                       "default": false,
@@ -1452,11 +1499,8 @@
                   "description": "Constant-rate request arrivals (fixed inter-arrival time).",
                   "properties": {
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                      "minLength": 1,
                       "title": "Name",
                       "type": "string"
                     },
@@ -1465,6 +1509,19 @@
                       "description": "Constant rate-controlled arrivals.",
                       "title": "Type",
                       "type": "string"
+                    },
+                    "dataset": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "title": "Dataset"
                     },
                     "excludeFromResults": {
                       "default": false,
@@ -1634,11 +1691,8 @@
                   "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
                   "properties": {
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                      "minLength": 1,
                       "title": "Name",
                       "type": "string"
                     },
@@ -1647,6 +1701,19 @@
                       "description": "N users sharing a global request rate.",
                       "title": "Type",
                       "type": "string"
+                    },
+                    "dataset": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "title": "Dataset"
                     },
                     "excludeFromResults": {
                       "default": false,
@@ -1823,11 +1890,8 @@
                   "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
                   "properties": {
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                      "minLength": 1,
                       "title": "Name",
                       "type": "string"
                     },
@@ -1836,6 +1900,19 @@
                       "description": "Replay requests at trace timestamps.",
                       "title": "Type",
                       "type": "string"
+                    },
+                    "dataset": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "title": "Dataset"
                     },
                     "excludeFromResults": {
                       "default": false,
@@ -2620,11 +2697,8 @@
               "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -2633,6 +2707,19 @@
                   "description": "Concurrency-controlled immediate dispatch.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -2776,11 +2863,8 @@
               "description": "Poisson-distributed request arrivals at the target rate.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -2789,6 +2873,19 @@
                   "description": "Poisson-distributed rate-controlled arrivals.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -2958,11 +3055,8 @@
               "description": "Gamma-distributed request arrivals with configurable smoothness.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -2971,6 +3065,19 @@
                   "description": "Gamma-distributed rate-controlled arrivals.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -3154,11 +3261,8 @@
               "description": "Constant-rate request arrivals (fixed inter-arrival time).",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -3167,6 +3271,19 @@
                   "description": "Constant rate-controlled arrivals.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -3336,11 +3453,8 @@
               "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -3349,6 +3463,19 @@
                   "description": "N users sharing a global request rate.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -3525,11 +3652,8 @@
               "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -3538,6 +3662,19 @@
                   "description": "Replay requests at trace timestamps.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -3738,11 +3875,8 @@
               "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -3751,6 +3885,19 @@
                   "description": "Concurrency-controlled immediate dispatch.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -3894,11 +4041,8 @@
               "description": "Poisson-distributed request arrivals at the target rate.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -3907,6 +4051,19 @@
                   "description": "Poisson-distributed rate-controlled arrivals.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -4076,11 +4233,8 @@
               "description": "Gamma-distributed request arrivals with configurable smoothness.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -4089,6 +4243,19 @@
                   "description": "Gamma-distributed rate-controlled arrivals.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -4272,11 +4439,8 @@
               "description": "Constant-rate request arrivals (fixed inter-arrival time).",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -4285,6 +4449,19 @@
                   "description": "Constant rate-controlled arrivals.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -4454,11 +4631,8 @@
               "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -4467,6 +4641,19 @@
                   "description": "N users sharing a global request rate.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -4643,11 +4830,8 @@
               "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
               "properties": {
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+                  "minLength": 1,
                   "title": "Name",
                   "type": "string"
                 },
@@ -4656,6 +4840,19 @@
                   "description": "Replay requests at trace timestamps.",
                   "title": "Type",
                   "type": "string"
+                },
+                "dataset": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "title": "Dataset"
                 },
                 "excludeFromResults": {
                   "default": false,
@@ -4965,11 +5162,8 @@
       "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
       "properties": {
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -4978,6 +5172,19 @@
           "description": "Concurrency-controlled immediate dispatch.",
           "title": "Type",
           "type": "string"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
         },
         "excludeFromResults": {
           "default": false,
@@ -5227,11 +5434,8 @@
       "description": "Constant-rate request arrivals (fixed inter-arrival time).",
       "properties": {
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -5240,6 +5444,19 @@
           "description": "Constant rate-controlled arrivals.",
           "title": "Type",
           "type": "string"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
         },
         "excludeFromResults": {
           "default": false,
@@ -6460,11 +6677,8 @@
       "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
       "properties": {
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -6473,6 +6687,19 @@
           "description": "Replay requests at trace timestamps.",
           "title": "Type",
           "type": "string"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
         },
         "excludeFromResults": {
           "default": false,
@@ -6786,11 +7013,8 @@
       "description": "Gamma-distributed request arrivals with configurable smoothness.",
       "properties": {
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -6799,6 +7023,19 @@
           "description": "Gamma-distributed rate-controlled arrivals.",
           "title": "Type",
           "type": "string"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
         },
         "excludeFromResults": {
           "default": false,
@@ -7258,19 +7495,19 @@
           "title": "Type",
           "type": "string"
         },
-        "parameters": {
+        "variables": {
           "additionalProperties": {
             "items": {},
             "type": "array"
           },
-          "description": "Parameters to sweep: dot-notation path -> list of values.",
+          "description": "Variables to sweep: dot-notation path -> list of values.",
           "minProperties": 1,
-          "title": "Parameters",
+          "title": "Variables",
           "type": "object"
         }
       },
       "required": [
-        "parameters"
+        "variables"
       ],
       "title": "GridSweep",
       "type": "object"
@@ -7839,7 +8076,6 @@
       "properties": {
         "name": {
           "description": "Model name or identifier as known to the inference server.",
-          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -7865,7 +8101,7 @@
             }
           ],
           "default": null,
-          "description": "Selection weight for weighted strategy (0.0-1.0). Weights must sum to 1.0 (+/-0.01) across all models; they are validated, not auto-normalized. Example: weight=0.7 means ~70%% of requests to this model.",
+          "description": "Selection weight for weighted strategy (0.0-1.0). Weights are normalized across all models. Example: weight=0.7 means ~70%% of requests to this model.",
           "title": "Weight",
           "x-jinja2-supported": true
         },
@@ -7895,7 +8131,7 @@
             }
           ],
           "default": null,
-          "description": "List of input modalities this model supports. [Currently a no-op: no selection strategy consumes this field. Accepted for forward-compatibility / declarative documentation.]",
+          "description": "List of input modalities this model supports. Used with modality_aware selection strategy. Valid values: 'text', 'image', 'audio', 'video'.",
           "title": "Modalities"
         },
         "tokenizer": {
@@ -7929,12 +8165,12 @@
     },
     "ModelsAdvanced": {
       "additionalProperties": false,
-      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nor per-model tokenizer overrides.",
+      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nmodality-aware selection, or per-model tokenizer overrides.",
       "properties": {
         "strategy": {
           "$ref": "#/$defs/ModelSelectionStrategy",
           "default": "round_robin",
-          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights."
+          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights, modality_aware routes by input type."
         },
         "items": {
           "description": "List of model configurations. At least one model required.",
@@ -8767,11 +9003,8 @@
       "description": "Poisson-distributed request arrivals at the target rate.",
       "properties": {
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -8780,6 +9013,19 @@
           "description": "Poisson-distributed rate-controlled arrivals.",
           "title": "Type",
           "type": "string"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
         },
         "excludeFromResults": {
           "default": false,
@@ -10507,6 +10753,7 @@
     },
     "ServiceRunType": {
       "enum": [
+        "kubernetes",
         "multiprocessing"
       ],
       "title": "ServiceRunType",
@@ -10672,6 +10919,122 @@
         "dimensions"
       ],
       "title": "SobolSweep",
+      "type": "object"
+    },
+    "SteadyStateConfig": {
+      "description": "Configuration for steady-state detection and windowed metric computation.\n\nWhen enabled, AIPerf detects the steady-state region of a benchmark run by\nanalyzing concurrency curves, then re-computes metrics only over that window.\nThis excludes ramp-up and ramp-down artifacts from the results.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "startPct": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.",
+          "title": "Startpct",
+          "x-jinja2-supported": true
+        },
+        "endPct": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 100.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.",
+          "title": "Endpct",
+          "x-jinja2-supported": true
+        },
+        "minWindowPct": {
+          "default": 10.0,
+          "description": "Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.",
+          "title": "Minwindowpct",
+          "oneOf": [
+            {
+              "default": 10.0,
+              "description": "Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.",
+              "exclusiveMinimum": 0.0,
+              "maximum": 100.0,
+              "title": "Minwindowpct",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "bootstrapIterations": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.",
+          "title": "Bootstrapiterations",
+          "x-jinja2-supported": true
+        }
+      },
+      "title": "SteadyStateConfig",
       "type": "object"
     },
     "SweepMode": {
@@ -11378,7 +11741,8 @@
     },
     "TransportType": {
       "enum": [
-        "http"
+        "http",
+        "http2"
       ],
       "title": "TransportType",
       "type": "string"
@@ -11404,11 +11768,8 @@
       "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
       "properties": {
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -11417,6 +11778,19 @@
           "description": "N users sharing a global request rate.",
           "title": "Type",
           "type": "string"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
         },
         "excludeFromResults": {
           "default": false,
@@ -12053,7 +12427,7 @@
     },
     "ZipSweep": {
       "additionalProperties": false,
-      "description": "Zip sweep — parameters paired element-wise (lockstep).\n\nLike ``GridSweep`` but uses ``zip(strict=True)`` instead of Cartesian\nproduct. All parameter lists must have identical length. Use when you\nwant N runs each setting a coordinated tuple of fields, without the\nNxM blow-up of grid. Canonical use case: paired ISL/OSL.",
+      "description": "Zip sweep — parameters paired element-wise (lockstep).\n\nLike ``GridSweep`` but uses ``zip(strict=True)`` instead of Cartesian\nproduct. All variable lists must have identical length. Use when you\nwant N runs each setting a coordinated tuple of fields, without the\nNxM blow-up of grid. Canonical use case: paired ISL/OSL.",
       "properties": {
         "cooldownSeconds": {
           "default": 0.0,
@@ -12131,19 +12505,19 @@
           "title": "Type",
           "type": "string"
         },
-        "parameters": {
+        "variables": {
           "additionalProperties": {
             "items": {},
             "type": "array"
           },
-          "description": "Parameters to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
+          "description": "Variables to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
           "minProperties": 1,
-          "title": "Parameters",
+          "title": "Variables",
           "type": "object"
         }
       },
       "required": [
-        "parameters"
+        "variables"
       ],
       "title": "ZipSweep",
       "type": "object"

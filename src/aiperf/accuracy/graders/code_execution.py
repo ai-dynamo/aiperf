@@ -269,7 +269,7 @@ def _parse_test_cases(raw: Any) -> list[dict[str, Any]]:
     """Accept a JSON-string payload or an already-deserialized list."""
     if not raw:
         return []
-    if isinstance(raw, str | bytes | bytearray):
+    if isinstance(raw, (str, bytes, bytearray)):
         return orjson.loads(raw)
     if isinstance(raw, list):
         return raw

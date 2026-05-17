@@ -311,8 +311,6 @@ navigation:
     path: architecture.md
   - page: Kubernetes Flow
     path: dev/kubernetes-flow.md
-  - page: CRD Generator Refactor Design
-    path: superpowers/specs/2026-05-16-crd-generator-refactor-design.md
   - page: Sweep Architecture Overview
     path: dev/sweep-architecture-overview.md
   - page: Sweep Orchestrator Flow

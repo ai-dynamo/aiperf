@@ -815,12 +815,6 @@ results_processor:
       with periodic export.
       Enabled when --otel-url is configured.
 
-  record_export:
-    class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
-    description: |
-      Record export processor that writes per-record metrics to JSONL files with
-      display unit conversion and filtering. Enabled when export_level is RECORDS.
-
   server_metrics_accumulator:
     class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
     description: |
@@ -832,13 +826,6 @@ results_processor:
     description: |
       Server metrics JSONL writer that exports per-record server metrics data to
       JSONL files in slim format.
-
-  timeslice:
-    class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
-    description: |
-      Timeslice results processor that computes metrics for user-configurable
-      time slices, enabling time-series analysis of benchmark performance.
-      Enabled when timeslice config is set.
 
   accuracy_results:
     class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor

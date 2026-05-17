@@ -414,7 +414,7 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         if isinstance(value, numbers.Integral):
             return f"{int(value)}"
         # Real numbers and Decimal
-        if isinstance(value, numbers.Real | Decimal):
+        if isinstance(value, (numbers.Real, Decimal)):
             return f"{float(value):.4f}"
         return str(value)
 

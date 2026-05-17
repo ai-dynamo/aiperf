@@ -29,11 +29,28 @@ from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.mixins.health_check_mixin import HealthCheckMixin
 
-# Process-level registry of active health servers to prevent duplicate binds.
-# Maps (host, port) -> service_id that owns it. When multiple services run in
-# the same process (component-integration tests, Kubernetes controller pod),
-# only the first service to initialize starts the health server.
-_active_health_servers: dict[tuple[str, int], str] = {}
+
+class _HealthServerRegistry:
+    """Process-level registry of active health servers to prevent duplicate binds."""
+
+    def __init__(self) -> None:
+        self._owners_by_bind: dict[tuple[str, int], str] = {}
+
+    def owner_for(self, bind_key: tuple[str, int]) -> str | None:
+        """Return the service ID that owns a health-server bind, if any."""
+        return self._owners_by_bind.get(bind_key)
+
+    def register(self, bind_key: tuple[str, int], service_id: str) -> None:
+        """Record the service ID that owns a health-server bind."""
+        self._owners_by_bind[bind_key] = service_id
+
+    def unregister(self, bind_key: tuple[str, int] | None) -> None:
+        """Forget the service ID that owns a health-server bind."""
+        if bind_key is not None:
+            self._owners_by_bind.pop(bind_key, None)
+
+
+_health_server_registry = _HealthServerRegistry()
 
 
 def _make_response(
@@ -95,8 +112,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
         # Check if another service already owns this port in this process
         service_id = getattr(self, "id", str(id(self)))
-        if bind_key in _active_health_servers:
-            owner = _active_health_servers[bind_key]
+        if owner := _health_server_registry.owner_for(bind_key):
             self.debug(
                 f"Health server already running on {host}:{port} (owned by {owner}). "
                 "Skipping duplicate bind."
@@ -116,7 +132,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
                 "Set AIPERF_SERVICE_HEALTH_ENABLED=false to disable health server."
             )
             raise
-        _active_health_servers[bind_key] = service_id
+        _health_server_registry.register(bind_key, service_id)
         self._health_server_bind_key = bind_key
         self.info(f"Health server started on {host}:{port}")
 
@@ -131,10 +147,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
         health_server = self._health_server
         self._health_server = None
 
-        # Unregister from process-level registry
-        bind_key = self._health_server_bind_key
-        if bind_key in _active_health_servers:
-            del _active_health_servers[bind_key]
+        _health_server_registry.unregister(self._health_server_bind_key)
 
         health_server.close()
         await health_server.wait_closed()

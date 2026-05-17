@@ -32,7 +32,9 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 
 
-def benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> BenchmarkRun:
+def benchmark_run_from_model_endpoint(
+    model_endpoint: ModelEndpointInfo,
+) -> BenchmarkRun:
     """Build a ``BenchmarkRun`` from a ``ModelEndpointInfo``.
 
     ``InferenceClient`` is the production entry point and always has a real
@@ -77,9 +79,7 @@ def benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Benc
             "download_video_content": getattr(
                 endpoint_cfg, "download_video_content", False
             ),
-            "request_content_type": getattr(
-                endpoint_cfg, "request_content_type", None
-            ),
+            "request_content_type": getattr(endpoint_cfg, "request_content_type", None),
         },
         "datasets": [{"name": "default", "type": "synthetic"}],
         "phases": [
@@ -103,9 +103,9 @@ def benchmark_run_from_model_endpoint(model_endpoint: ModelEndpointInfo) -> Benc
     if (path := getattr(endpoint_cfg, "custom_endpoint", None)) is not None:
         payload["endpoint"]["path"] = path
     if (template := getattr(endpoint_cfg, "template", None)) is not None:
-        payload["endpoint"]["template"] = template.model_dump() if hasattr(
-            template, "model_dump"
-        ) else template
+        payload["endpoint"]["template"] = (
+            template.model_dump() if hasattr(template, "model_dump") else template
+        )
     else:
         # Some pre-branch tests stash a Jinja template body under
         # ``extra["payload_template"]`` rather than the dedicated
@@ -487,7 +487,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             value = json_obj.get(field)
             if not (isinstance(value, list) and value):
                 continue
-            if isinstance(value[0], int | float):
+            if isinstance(value[0], (int, float)):
                 return EmbeddingResponseData(embeddings=[value])
             if isinstance(value[0], list):
                 return EmbeddingResponseData(embeddings=value)
@@ -573,9 +573,9 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
         if isinstance(value, list) and value:
             first = value[0]
-            if isinstance(first, list) and first and isinstance(first[0], int | float):
+            if isinstance(first, list) and first and isinstance(first[0], (int, float)):
                 return EmbeddingResponseData(embeddings=value)
-            if isinstance(first, int | float):
+            if isinstance(first, (int, float)):
                 return EmbeddingResponseData(embeddings=[value])
             if isinstance(first, dict):
                 return RankingsResponseData(rankings=value)

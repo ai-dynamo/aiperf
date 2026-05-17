@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-class ConfigurationError(Exception):
+class LoaderConfigurationError(Exception):
     """
     Exception raised for configuration loading errors.
 
@@ -35,6 +35,9 @@ class ConfigurationError(Exception):
             parts.append(f"Context: {context}")
 
         super().__init__("\n".join(parts))
+
+
+ConfigurationError = LoaderConfigurationError
 
 
 class MissingEnvironmentVariableError(ConfigurationError):

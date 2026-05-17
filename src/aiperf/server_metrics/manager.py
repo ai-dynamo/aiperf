@@ -300,7 +300,7 @@ class ServerMetricsManager(BaseComponentService):
         start_ns: int | None = None
         end_ns: int | None = None
         payload = getattr(message, "payload", None)
-        if isinstance(payload, str | bytes) and payload:
+        if isinstance(payload, (str, bytes)) and payload:
             try:
                 decoded = orjson.loads(payload)
                 if isinstance(decoded, dict):

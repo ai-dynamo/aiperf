@@ -70,7 +70,7 @@ class TimingResultsStrategy(OTelResultsStrategyProtocol):
             raw_value = getattr(record_data, field_name)
             if isinstance(raw_value, bool):
                 current_value = 1.0 if raw_value else 0.0
-            elif isinstance(raw_value, int | float):
+            elif isinstance(raw_value, (int, float)):
                 current_value = float(raw_value)
             else:
                 continue

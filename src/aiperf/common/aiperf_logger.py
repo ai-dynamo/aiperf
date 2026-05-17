@@ -239,8 +239,22 @@ class AIPerfLogger:
             self._log(_DEBUG, debug_msg)
 
 
+class _IgnoredFiles:
+    """Process-level set of files skipped while finding logger callers."""
+
+    def __init__(self, files: tuple[str | None, ...]) -> None:
+        self._files = set(files)
+
+    def __contains__(self, filename: str) -> bool:
+        return filename in self._files
+
+    def append(self, filename: str) -> None:
+        """Register a file to skip while finding logger callers."""
+        self._files.add(filename)
+
+
 # Setup the list of files that should be ignored when finding the caller (built-in logging, this file)
 # This is required to avoid it appearing as all logs are coming from this file.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLogger.find_caller.__code__.co_filename)
-_ignored_files = [logging._srcfile, _srcfile]
+_ignored_files = _IgnoredFiles((logging._srcfile, _srcfile))
