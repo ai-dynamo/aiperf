@@ -197,15 +197,21 @@ class TestMooncakeTraceIntegration:
     async def test_mooncake_trace_with_per_row_headers(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        mock_server_factory,
         tmp_path: Path,
     ):
-        """Trace rows carrying a `headers` dict run end-to-end without errors.
+        """End-to-end wire fidelity for per-row trace headers.
 
-        Header-on-wire fidelity is covered by unit tests on
-        `BaseEndpoint.get_endpoint_headers`; this is a pipeline-regression smoke
-        test that the new field does not break dataset loading, Turn
-        construction, payload formatting, or the request loop.
+        Asserts that the `headers` dict on each trace row reaches the
+        inference server as actual HTTP headers, exercising the full
+        loader -> Turn -> endpoint merge -> aiohttp transport chain.
+        Catches regressions in any step that could drop or rewrite the
+        trace-supplied headers.
+
+        Uses a single-worker mock server because the header recorder is
+        per-process module state; multi-worker uvicorn would partition
+        recorded requests across worker pids and the test would see only a
+        subset.
         """
         traces = [
             {"timestamp": 0, "text_input": "hello", "output_length": 10, "headers": {"x-session-token": "tok-A"}},
@@ -215,23 +221,46 @@ class TestMooncakeTraceIntegration:
         trace_file = create_mooncake_trace_file(tmp_path, traces)
         request_count = len(traces)
 
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
-                --endpoint-type chat \
-                --input-file {trace_file} \
-                --custom-dataset-type mooncake_trace \
-                --request-count {request_count} \
-                --fixed-schedule \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """
-        )
+        async with mock_server_factory(fast=True, workers=1) as server:
+            server.clear_recorded_headers()
+            result = await cli.run(
+                f"""
+                aiperf profile \
+                    --model {defaults.model} \
+                    --url {server.url} \
+                    --endpoint-type chat \
+                    --input-file {trace_file} \
+                    --custom-dataset-type mooncake_trace \
+                    --request-count {request_count} \
+                    --fixed-schedule \
+                    --workers-max {defaults.workers_max} \
+                    --ui {defaults.ui}
+                """
+            )
 
-        assert result.request_count == request_count
-        assert result.has_all_outputs
+            assert result.request_count == request_count
+            assert result.has_all_outputs
+
+            # On-wire assertion: every trace row's `headers` dict appears
+            # verbatim on the inbound request the mock server received.
+            # Headers are captured with lowercased names. Order is governed
+            # by the fixed schedule (sorted by timestamp), so we compare on
+            # sets to keep the test robust against arrival-order jitter.
+            recorded = server.recorded_headers()
+            assert len(recorded) == request_count, (
+                f"expected {request_count} recorded requests, got "
+                f"{len(recorded)}: {recorded!r}"
+            )
+            session_tokens = {r["headers"].get("x-session-token") for r in recorded}
+            baggage_values = {r["headers"].get("baggage") for r in recorded}
+            assert session_tokens == {"tok-A", "tok-B", None}, (
+                f"x-session-token values mismatch: {session_tokens}"
+            )
+            assert baggage_values == {
+                None,
+                "userId=alice,sessionId=tok-B",
+                "userId=bob",
+            }, f"baggage values mismatch: {baggage_values}"
 
     async def test_mooncake_trace_text_input_with_synthesis_speedup(
         self,
