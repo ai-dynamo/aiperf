@@ -6,6 +6,12 @@ from aiperf.common.enums.base_enums import (
     BasePydanticEnumInfo,
     CaseInsensitiveStrEnum,
 )
+from aiperf.common.enums.baseline_enums import (
+    BaselineKind,
+    ServiceCapability,
+    make_result_producer_capability,
+    parse_result_producer_capability,
+)
 from aiperf.common.enums.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -86,6 +92,7 @@ __all__ = [
     "BaseMetricUnitInfo",
     "BasePydanticBackedStrEnum",
     "BasePydanticEnumInfo",
+    "BaselineKind",
     "CaseInsensitiveStrEnum",
     "CommAddress",
     "CommandResponseStatus",
@@ -141,6 +148,7 @@ __all__ = [
     "SSEFieldType",
     "ServerMetricsDiscoveryMode",
     "ServerMetricsFormat",
+    "ServiceCapability",
     "ServiceRegistrationStatus",
     "SweepMode",
     "SystemState",
@@ -151,4 +159,6 @@ __all__ = [
     "VideoJobStatus",
     "VideoSynthType",
     "WorkerStatus",
+    "make_result_producer_capability",
+    "parse_result_producer_capability",
 ]

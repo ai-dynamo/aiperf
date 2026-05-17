@@ -6,6 +6,10 @@ from aiperf.common.messages.base_messages import (
     Message,
     RequiresRequestNSMixin,
 )
+from aiperf.common.messages.baseline_messages import (
+    PhaseBaselineAckMessage,
+    PhaseBaselineRequestMessage,
+)
 from aiperf.common.messages.command_messages import (
     CommandAcknowledgedResponse,
     CommandErrorResponse,
@@ -14,6 +18,9 @@ from aiperf.common.messages.command_messages import (
     CommandSuccessResponse,
     CommandUnhandledResponse,
     ConnectionProbeMessage,
+    PhaseEndGateCommand,
+    PhaseGateGrantedResponse,
+    PhaseStartGateCommand,
     ProcessRecordsCommand,
     ProcessRecordsResponse,
     ProfileCancelCommand,
@@ -96,6 +103,11 @@ __all__ = [
     "Message",
     "MetricRecordsData",
     "MetricRecordsMessage",
+    "PhaseBaselineAckMessage",
+    "PhaseBaselineRequestMessage",
+    "PhaseEndGateCommand",
+    "PhaseGateGrantedResponse",
+    "PhaseStartGateCommand",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
     "ProcessRecordsResultMessage",

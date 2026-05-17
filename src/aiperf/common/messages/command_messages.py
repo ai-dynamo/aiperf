@@ -261,10 +261,7 @@ class ProfileStartCommand(CommandMessage):
 
 
 class ProfileCompleteCommand(CommandMessage):
-    """Command message sent when all records are received and profiling is complete.
-
-    Triggers final scrape of server metrics to capture end state.
-    """
+    """Command message sent when all records are received and profiling is complete."""
 
     command: CommandTypeT = CommandType.PROFILE_COMPLETE
 
@@ -291,6 +288,14 @@ class RegisterServiceCommand(CommandMessage):
         ..., description="The type of the service to register"
     )
     state: LifecycleState = Field(..., description="The current state of the service")
+    capabilities: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Capability tags advertised by this service. SystemController dispatches "
+            "based on membership; e.g., 'baseline_collector' joins the "
+            "BaselineCoordinator's registered set. Unknown tags are ignored."
+        ),
+    )
 
 
 class ProcessRecordsResponse(CommandSuccessResponse):
@@ -308,3 +313,27 @@ class ConnectionProbeMessage(TargetedServiceMessage):
     """Message containing a connection probe from a service. This is used to probe the connection to the service."""
 
     message_type: MessageTypeT = MessageType.CONNECTION_PROBE
+
+
+class PhaseStartGateCommand(CommandMessage):
+    """PhaseRunner -> SystemController: hold before issuing first credit of a phase."""
+
+    command: CommandTypeT = CommandType.PHASE_START_GATE
+
+    phase_id: str = Field(..., description="UUID of the phase being gated.")
+    phase_name: str = Field(..., description="Phase name for diagnostics.")
+
+
+class PhaseEndGateCommand(CommandMessage):
+    """PhaseRunner -> SystemController: hold after credits drain, before next phase."""
+
+    command: CommandTypeT = CommandType.PHASE_END_GATE
+
+    phase_id: str = Field(..., description="UUID of the phase being gated.")
+    phase_name: str = Field(..., description="Phase name for diagnostics.")
+
+
+class PhaseGateGrantedResponse(CommandSuccessResponse):
+    """Response from BaselineCoordinator releasing a phase gate."""
+
+    phase_id: str = Field(..., description="Phase ID matching the gate command.")

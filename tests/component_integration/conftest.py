@@ -36,7 +36,6 @@ import pytest
 
 from aiperf.cli import app
 from aiperf.common import random_generator as rng
-from aiperf.common.environment import Environment
 from aiperf.plugin.enums import CommClientType
 
 # Import fakes for test harness
@@ -144,15 +143,6 @@ def mock_os_kill_sigkill():
 
     with patch("os.kill", safe_os_kill):
         yield
-
-
-@pytest.fixture(autouse=True, scope="package")
-def no_server_metrics_flush_period():
-    """Fixture to disable server metrics flush period."""
-    original_flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-    Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0
-    yield
-    Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush_period
 
 
 @pytest.fixture(autouse=True, scope="package")

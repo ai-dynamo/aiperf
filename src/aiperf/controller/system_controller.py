@@ -16,10 +16,13 @@ from aiperf.cli_utils import (
 )
 from aiperf.common.base_service import BaseService
 from aiperf.common.enums import (
+    BaselineKind,
     CommandResponseStatus,
     CommandType,
     MessageType,
+    ServiceCapability,
     ServiceRegistrationStatus,
+    parse_result_producer_capability,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
@@ -31,6 +34,10 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
+    PhaseBaselineAckMessage,
+    PhaseEndGateCommand,
+    PhaseGateGrantedResponse,
+    PhaseStartGateCommand,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
@@ -56,9 +63,11 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
+from aiperf.controller.baseline_coordinator import BaselineCoordinator
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.controller.result_join_coordinator import ResultJoinCoordinator
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
@@ -157,9 +166,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._exit_errors: list[ExitErrorInfo] = []
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
-        self._profile_results_received = False
-        self._should_wait_for_telemetry = False
-        self._should_wait_for_server_metrics = False
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
@@ -167,6 +173,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
         self._server_metrics_endpoints_reachable: list[str] = []
+        self._baseline_coordinator = BaselineCoordinator(
+            publish=self.publish,
+            gate_timeout_s=Environment.BASELINE.GATE_TIMEOUT_S,
+        )
+        self._result_join_coordinator = ResultJoinCoordinator()
         self.debug("System Controller created")
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
@@ -249,14 +260,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self.service_manager.run_service(ServiceType.GPU_TELEMETRY_MANAGER)
         else:
             self.info("GPU telemetry disabled via --no-gpu-telemetry")
-            self._should_wait_for_telemetry = False
 
         if self.run.cfg.server_metrics.enabled:
             self.debug("Starting optional ServerMetricsManager service")
             await self.service_manager.run_service(ServiceType.SERVER_METRICS_MANAGER)
         else:
             self.info("Server metrics disabled via --no-server-metrics")
-            self._should_wait_for_server_metrics = False
 
         # Start AIPerf API if enabled
         api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
@@ -377,11 +386,51 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.service_manager.service_map[message.service_type] = []
         self.service_manager.service_map[message.service_type].append(service_info)
 
+        if ServiceCapability.BASELINE_COLLECTOR in message.capabilities:
+            self._baseline_coordinator.register(message.service_id)
+
+        for capability in message.capabilities:
+            domain = parse_result_producer_capability(capability)
+            if domain is not None:
+                self._result_join_coordinator.register(domain, message.service_id)
+
         try:
             type_name = ServiceType(message.service_type).name.title().replace("_", " ")
         except (TypeError, ValueError):
             type_name = message.service_type
         self.info(lambda: f"Registered {type_name} (id: '{message.service_id}')")
+
+    @on_command(CommandType.PHASE_START_GATE)
+    async def _on_phase_start_gate(
+        self, message: PhaseStartGateCommand
+    ) -> PhaseGateGrantedResponse:
+        await self._baseline_coordinator.gate_phase(
+            message.phase_id, message.phase_name, BaselineKind.START
+        )
+        return PhaseGateGrantedResponse(
+            command_id=message.command_id,
+            service_id=self.service_id,
+            command=message.command,
+            phase_id=message.phase_id,
+        )
+
+    @on_command(CommandType.PHASE_END_GATE)
+    async def _on_phase_end_gate(
+        self, message: PhaseEndGateCommand
+    ) -> PhaseGateGrantedResponse:
+        await self._baseline_coordinator.gate_phase(
+            message.phase_id, message.phase_name, BaselineKind.END
+        )
+        return PhaseGateGrantedResponse(
+            command_id=message.command_id,
+            service_id=self.service_id,
+            command=message.command,
+            phase_id=message.phase_id,
+        )
+
+    @on_message(MessageType.PHASE_BASELINE_ACK)
+    async def _on_phase_baseline_ack(self, message: PhaseBaselineAckMessage) -> None:
+        self._baseline_coordinator.handle_ack(message)
 
     @on_message(MessageType.HEARTBEAT)
     async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:
@@ -442,6 +491,8 @@ class SystemController(SignalHandlerMixin, BaseService):
                 service_id=message.service_id,
             )
         )
+        self._result_join_coordinator.unregister_service(message.service_id)
+        await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
@@ -491,9 +542,9 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._telemetry_endpoints_configured = message.endpoints_configured
         self._telemetry_endpoints_reachable = message.endpoints_reachable
-        self._should_wait_for_telemetry = message.enabled
 
         if not message.enabled:
+            self._result_join_coordinator.unregister("telemetry", message.service_id)
             reason_msg = f": {message.reason}" if message.reason else ""
             self.info(f"DCGM telemetry skipped{reason_msg}")
         else:
@@ -515,9 +566,11 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._server_metrics_endpoints_configured = message.endpoints_configured
         self._server_metrics_endpoints_reachable = message.endpoints_reachable
-        self._should_wait_for_server_metrics = message.enabled
 
         if not message.enabled:
+            self._result_join_coordinator.unregister(
+                "server_metrics", message.service_id
+            )
             reason_msg = f" - {message.reason}" if message.reason else ""
             self.info(f"Server metrics disabled{reason_msg}")
         else:
@@ -608,8 +661,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Received process records result message with no records: {message.results.results}"
             )
 
-        self._profile_results_received = True
-        # Coordinate with telemetry results before shutdown
+        self._result_join_coordinator.complete_domain("profile")
         await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_TELEMETRY_RESULT)
@@ -643,7 +695,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         except Exception as e:
             self.exception(f"Error processing telemetry results message: {e!r}")
         finally:
-            self._should_wait_for_telemetry = False
+            self._result_join_coordinator.complete_domain("telemetry")
             await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_SERVER_METRICS_RESULT)
@@ -683,30 +735,23 @@ class SystemController(SignalHandlerMixin, BaseService):
         except Exception as e:
             self.exception(f"Error processing server metrics results message: {e!r}")
         finally:
-            self._should_wait_for_server_metrics = False
+            self._result_join_coordinator.complete_domain("server_metrics")
             await self._check_and_trigger_shutdown()
 
     async def _check_and_trigger_shutdown(self) -> None:
-        """Check if all required results are received and trigger unified export + shutdown.
+        """Check if all registered result producers are complete and trigger shutdown.
 
-        Coordination logic:
-        1. Always wait for profile results (ProcessRecordsResultMessage)
-        2. If telemetry disabled OR telemetry results received → proceed
-        3. If server metrics disabled OR server metrics results received → proceed
-        4. Otherwise → wait (results arrive nearly simultaneously and will call this method again)
-
-        Thread safety:
-        Uses self._shutdown_lock to prevent race conditions when ProcessRecordsResultMessage,
-        ProcessTelemetryResultMessage, and ProcessServerMetricsResultMessage arrive concurrently.
-        The lock ensures atomic check-and-set of _shutdown_triggered, preventing double-triggering of stop().
+        Uses self._shutdown_lock to prevent races when result messages arrive
+        concurrently. The lock ensures atomic check-and-set of _shutdown_triggered,
+        preventing double-triggering of stop().
         """
         self.debug(
-            f"_check_and_trigger_shutdown: profile_received={self._profile_results_received}, "
-            f"wait_telemetry={self._should_wait_for_telemetry}, telemetry_results={self._telemetry_results is not None}, "
-            f"wait_server_metrics={self._should_wait_for_server_metrics}, server_metrics_results={self._server_metrics_results is not None}, "
-            f"shutdown_triggered={self._shutdown_triggered}"
+            lambda: (
+                "_check_and_trigger_shutdown: "
+                f"pending_domains={self._result_join_coordinator.pending_domains}, "
+                f"shutdown_triggered={self._shutdown_triggered}"
+            )
         )
-        # Check if we should trigger shutdown (with lock protection)
         should_shutdown = False
         async with self._shutdown_lock:
             if self._shutdown_triggered:
@@ -715,31 +760,15 @@ class SystemController(SignalHandlerMixin, BaseService):
                 )
                 return
 
-            if not self._profile_results_received:
-                self.debug(
-                    "_check_and_trigger_shutdown: profile results not received yet"
-                )
-                return
-
-            telemetry_ready_for_shutdown = (
-                not self._should_wait_for_telemetry
-                or self._telemetry_results is not None
-            )
-
-            server_metrics_ready_for_shutdown = (
-                not self._should_wait_for_server_metrics
-                or self._server_metrics_results is not None
-            )
-
-            if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
+            if self._result_join_coordinator.ready:
                 self._shutdown_triggered = True
                 should_shutdown = True
                 self.info("All results received, initiating shutdown")
-            else:
-                if not telemetry_ready_for_shutdown:
-                    self.info("Waiting for telemetry results...")
-                if not server_metrics_ready_for_shutdown:
-                    self.info("Waiting for server metrics results...")
+            elif (
+                pending_domains
+                := self._result_join_coordinator.pending_domains_changed()
+            ) is not None:
+                self.info(f"Waiting for result domains: {', '.join(pending_domains)}")
 
         # Call stop() OUTSIDE the lock to prevent deadlock
         if should_shutdown:
@@ -885,7 +914,6 @@ class SystemController(SignalHandlerMixin, BaseService):
                         )
                     )
                     self._profile_results = response.data
-                    self._profile_results_received = True
                     break
         except Exception as e:
             # Catch ANY exception during cancellation - we must always proceed to stop().

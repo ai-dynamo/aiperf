@@ -343,9 +343,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
     async def collect_and_process_metrics(self) -> None:
         """Public alias for one-shot scrape.
 
-        ``GPUTelemetryManager`` calls this name during baseline and final-state
-        capture (``manager.py`` :func:`_capture_collector_baseline` and
-        :func:`_handle_profile_complete_command`).
+        ``GPUTelemetryManager`` calls this name during phase baseline capture.
         """
         await self._collect_and_process_metrics()
 

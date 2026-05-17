@@ -6,15 +6,15 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     CreditPhase,
     MessageType,
+    make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -107,6 +107,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     many records before finalizing results.
     """
 
+    extra_capabilities: ClassVar[tuple[str, ...]] = (
+        make_result_producer_capability("profile"),
+    )
+
     def __init__(
         self,
         run: BenchmarkRun,
@@ -151,6 +155,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # warmup vs profiling separation.
         self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
         self._complete_credit_phases: set[CreditPhase] = set()
+        self._credits_complete_received = False
+        self._credits_complete_fallback_task: asyncio.Task[None] | None = None
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -237,13 +243,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
         phase = record_data.metadata.benchmark_phase
-        if (
-            phase in self._complete_credit_phases
-            and self._records_tracker.check_and_set_all_records_received_for_phase(
-                phase
-            )
-        ):
-            await self._handle_all_records_received(phase)
+        await self._maybe_handle_all_records_received(phase)
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
@@ -285,6 +285,50 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             if message.error:
                 self._server_metrics_state.error_counts[message.error] += 1
 
+    async def _maybe_handle_all_records_received(self, phase: CreditPhase) -> None:
+        if phase not in self._complete_credit_phases:
+            return
+        if phase == CreditPhase.PROFILING and not self._credits_complete_received:
+            self._maybe_schedule_credits_complete_fallback(phase)
+            return
+        if self._records_tracker.check_and_set_all_records_received_for_phase(phase):
+            self._cancel_credits_complete_fallback()
+            await self._handle_all_records_received(phase)
+
+    def _maybe_schedule_credits_complete_fallback(self, phase: CreditPhase) -> None:
+        if self._credits_complete_fallback_task is not None:
+            return
+        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        if phase_stats.final_requests_completed is None:
+            return
+        if phase_stats.total_records < phase_stats.final_requests_completed:
+            return
+        timeout = Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT
+        self.warning(
+            f"All profiling records arrived before CreditsComplete; waiting up to {timeout:.1f}s before finalizing defensively"
+        )
+        self._credits_complete_fallback_task = self.execute_async(
+            self._finalize_without_credits_complete_after_timeout(phase)
+        )
+
+    def _cancel_credits_complete_fallback(self) -> None:
+        if self._credits_complete_fallback_task is None:
+            return
+        self._credits_complete_fallback_task.cancel()
+        self._credits_complete_fallback_task = None
+
+    async def _finalize_without_credits_complete_after_timeout(
+        self, phase: CreditPhase
+    ) -> None:
+        await asyncio.sleep(Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT)
+        if self._credits_complete_received:
+            return
+        self.warning(
+            "CreditsComplete was not received after all profiling records arrived; finalizing records defensively"
+        )
+        if self._records_tracker.check_and_set_all_records_received_for_phase(phase):
+            await self._handle_all_records_received(phase)
+
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
         """Handle the case where all records have been received."""
         if phase != CreditPhase.PROFILING:
@@ -325,35 +369,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         )
 
-        # Trigger final server metrics scrape and wait for completion
-        # This ensures final metrics are pushed before we export results
         response = await self.send_command_and_wait_for_response(
             ProfileCompleteCommand(service_id=self.service_id), timeout=10.0
         )
 
         if isinstance(response, ErrorDetails):
-            self.warning(f"Server metrics final scrape timed out or failed: {response}")
+            self.warning(f"Server metrics completion timed out or failed: {response}")
         else:
-            self.debug("Server metrics final scrape completed")
+            self.debug("Server metrics completion acknowledged")
 
-        self.debug("Waiting for server metrics flush period...")
-        # Wait for server metrics flush period to allow final metrics to be collected
-        # This ensures metrics that are still being processed by the server are captured
-        flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
-        flush_end_ns = (phase_stats.requests_end_ns or time.time_ns()) + (
-            (flush_period or 0) * NANOS_PER_SECOND
-        )
-        sleep_dur_sec = (flush_end_ns - time.time_ns()) / NANOS_PER_SECOND
-        if sleep_dur_sec > 0:
-            self.info(
-                f"Waiting {sleep_dur_sec:.1f}s for server metrics flush period..."
-            )
-            await asyncio.sleep(sleep_dur_sec)
-
-        self.debug("Server metrics flush period complete, processing now...")
         await self._process_results(phase=phase, cancelled=cancelled)
         self.info("_finalize_and_process_results completed")
 
@@ -566,12 +590,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
             )
 
-        # This check is to prevent a race condition where the records manager processes
-        # all records before the timing manager has sent the final completed count.
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            message.stats.phase
-        ):
-            await self._handle_all_records_received(message.stats.phase)
+        await self._maybe_handle_all_records_received(message.stats.phase)
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
         """Return the orchestrator-published BranchStats for ``phase``.
@@ -588,13 +607,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.info(
             "All credits complete, please wait for the results to be processed..."
         )
-        if (
-            CreditPhase.PROFILING in self._complete_credit_phases
-            and self._records_tracker.check_and_set_all_records_received_for_phase(
-                CreditPhase.PROFILING
-            )
-        ):
-            await self._handle_all_records_received(CreditPhase.PROFILING)
+        self._credits_complete_received = True
+        self._cancel_credits_complete_fallback()
+        await self._maybe_handle_all_records_received(CreditPhase.PROFILING)
 
     @background_task(
         interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False

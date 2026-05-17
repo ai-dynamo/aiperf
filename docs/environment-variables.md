@@ -41,6 +41,15 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_CORS_ORIGINS` | `[]` | — | List of CORS origins to allow (empty = no CORS, ['*'] = all origins) |
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
 
+## BASELINE
+
+Phase baseline handshake settings. Controls the gate that blocks TimingManager between phases until registered baseline collectors finish their point-in-time scrape.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_BASELINE_GATE_TIMEOUT_S` | `5.0` | > 0.0 | Per-gate timeout (seconds). If registered baseline collectors do not all ack within this window, the gate releases with a warning and the phase proceeds without waiting for stragglers. |
+| `AIPERF_BASELINE_GATE_ENABLED` | `True` | — | Master switch for the phase baseline handshake. When False, PhaseGateClient short-circuits to no-op and PhaseRunner does not wait between phases. Useful for replay/debug runs. |
+
 ## COMPRESSION
 
 Compression settings for streaming file transfers. Controls chunk size and compression levels for zstd and gzip encodings used in dataset and results file transfers.
@@ -161,6 +170,7 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
+| `AIPERF_RECORD_CREDITS_COMPLETE_FALLBACK_TIMEOUT` | `10.0` | ≥ 0.0, ≤ 300.0 | Maximum seconds RecordsManager waits for CreditsComplete after all profiling records are ready before finalizing defensively |
 
 ## SEARCHPLANNER
 
@@ -180,7 +190,6 @@ Server metrics collection configuration. Controls server metrics collection freq
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | `2.0` | ≥ 0.0, ≤ 30.0 | Time in seconds to continue collecting metrics after profiling completes, allowing server-side metrics to flush/finalize before shutting down (default: 2.0s) |
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | `0.333` | ≥ 0.001, ≤ 300.0 | Server metrics collection interval in seconds (default: 333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |

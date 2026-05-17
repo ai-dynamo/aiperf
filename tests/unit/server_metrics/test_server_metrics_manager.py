@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import BaselineKind, CommandType
 from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import ErrorDetails
@@ -139,6 +139,7 @@ class TestProfileConfigureCommand:
             )
 
             assert len(manager._collectors) > 0
+            assert mock_collector.initialize.await_count == len(manager._collectors)
 
     @pytest.mark.asyncio
     async def test_configure_with_unreachable_endpoints(
@@ -462,12 +463,11 @@ class TestExceptionHandling:
             assert len(manager._collectors) == 0
 
     @pytest.mark.asyncio
-    async def test_exception_during_baseline_capture(
+    async def test_configure_does_not_capture_baseline(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that exceptions during baseline capture are logged but don't fail configuration."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -477,10 +477,6 @@ class TestExceptionHandling:
         ) as mock_collector_class:
             mock_collector = AsyncMock()
             mock_collector.is_url_reachable = AsyncMock(return_value=True)
-            mock_collector.initialize = AsyncMock()
-            mock_collector.collect_and_process_metrics.side_effect = Exception(
-                "Baseline failed"
-            )
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
@@ -491,8 +487,8 @@ class TestExceptionHandling:
                 )
             )
 
-            # Collector should still be added despite baseline failure
             assert len(manager._collectors) > 0
+            mock_collector.collect_and_process_metrics.assert_not_called()
 
 
 class TestPartialStartup:
@@ -536,12 +532,11 @@ class TestProfileCompleteAndCancel:
     """Test profile completion and cancellation scenarios."""
 
     @pytest.mark.asyncio
-    async def test_profile_complete_triggers_final_scrape(
+    async def test_profile_complete_stops_without_final_scrape(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that profile complete triggers final metrics scrape."""
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
@@ -557,38 +552,30 @@ class TestProfileCompleteAndCancel:
             )
         )
 
-        # Should call final scrape
-        mock_collector.collect_and_process_metrics.assert_called_once()
-        # Should stop collector after final scrape
+        mock_collector.collect_and_process_metrics.assert_not_called()
         mock_collector.stop.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_profile_complete_handles_final_scrape_failure(
+    async def test_collect_baseline_reports_scrape_failures(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that profile complete handles final scrape failures gracefully."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
+        manager.info = MagicMock()
+        manager.warning = MagicMock()
+        manager.debug = MagicMock()
 
         mock_collector = AsyncMock()
-        mock_collector.collect_and_process_metrics.side_effect = Exception(
-            "Final scrape failed"
+        mock_collector.collect_and_process_metrics.side_effect = RuntimeError(
+            "baseline failed"
         )
         manager._collectors = {"endpoint1": mock_collector}
 
-        await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
-        )
-
-        # Should still stop collector even if final scrape fails
-        mock_collector.stop.assert_called_once()
+        with pytest.raises(RuntimeError, match="baseline failed"):
+            await manager.collect_baseline(BaselineKind.START, "phase-1", "profiling")
 
     @pytest.mark.asyncio
     async def test_profile_complete_when_already_stopped(

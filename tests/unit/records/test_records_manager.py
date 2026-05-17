@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, make_result_producer_capability
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
@@ -16,6 +18,7 @@ from aiperf.common.models import (
     BranchStats,
     CreditPhaseStats,
     MetricResult,
+    PhaseRecordsStats,
     ProcessRecordsResult,
     ProfileResults,
 )
@@ -33,6 +36,12 @@ from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 from tests.harness import mock_plugin
+
+
+def test_records_manager_advertises_profile_result_producer() -> None:
+    assert (
+        make_result_producer_capability("profile") in RecordsManager.extra_capabilities
+    )
 
 
 # Helper functions
@@ -321,16 +330,25 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._complete_credit_phases = set()
     manager._phase_branch_stats = {}
     manager._latest_branch_stats = None
+    manager._credits_complete_received = False
+    manager._credits_complete_fallback_task = None
     manager._timing_results_processors = []
     manager._send_timing_to_results_processors = AsyncMock()
     manager._send_results_to_results_processors = AsyncMock()
     manager.info = MagicMock()
     manager.notice = MagicMock()
+    manager.warning = MagicMock()
     manager.debug = MagicMock()
     manager.trace = MagicMock()
     manager.exception = MagicMock()
     manager.is_enabled_for = MagicMock(return_value=False)
     manager._handle_all_records_received = AsyncMock()
+
+    def close_background_task(coro):
+        coro.close()
+        return MagicMock()
+
+    manager.execute_async = MagicMock(side_effect=close_background_task)
     return manager
 
 
@@ -445,6 +463,13 @@ class TestRecordsManagerTimingDispatch:
             )
         )
 
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
+
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
         )
@@ -524,6 +549,13 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
 
         await manager._on_metric_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
 
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
@@ -605,8 +637,75 @@ class TestRecordsManagerTimingDispatch:
         release_timing_fanout.set()
         await phase_complete_task
 
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
+
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
+    async def test_finalization_falls_back_when_credits_complete_never_arrives(
+        self,
+    ) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        manager.execute_async = lambda coro: asyncio.create_task(coro)
+
+        original_timeout = Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT
+        Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT = 0.0
+        try:
+            await manager._on_credit_phase_complete(
+                CreditPhaseCompleteMessage(
+                    service_id="timing-manager",
+                    stats=_create_credit_phase_stats().model_copy(
+                        update={"final_requests_completed": 1}
+                    ),
+                )
+            )
+            await manager._on_metric_records(_metric_records_message())
+            await manager._credits_complete_fallback_task
+        finally:
+            Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT = original_timeout
+
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+        manager.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_finalize_processes_results_without_server_metrics_flush_wait(
+        self,
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        stats = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            start_ns=1_000_000_000,
+            requests_end_ns=time.time_ns(),
+        )
+        manager.service_id = "records-manager"
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.create_stats_for_phase.return_value = stats
+        manager.publish = AsyncMock()
+        manager.send_command_and_wait_for_response = AsyncMock(return_value=object())
+        manager._process_results = AsyncMock()
+        manager.debug = MagicMock()
+        manager.warning = MagicMock()
+        manager.info = MagicMock()
+
+        with patch(
+            "aiperf.records.records_manager.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            await manager._finalize_and_process_results(
+                CreditPhase.PROFILING, cancelled=False
+            )
+
+        mock_sleep.assert_not_awaited()
+        manager._process_results.assert_awaited_once_with(
+            phase=CreditPhase.PROFILING, cancelled=False
         )
 
     @pytest.mark.asyncio

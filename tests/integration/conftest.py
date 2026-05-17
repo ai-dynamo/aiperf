@@ -193,8 +193,6 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
     host = "127.0.0.1"
     url = f"http://{host}:{port}"
 
-    os.environ["AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD"] = "0"
-
     process: SpawnProcess = mp_ctx.Process(
         target=aiperf_mock_server_serve,
         kwargs={

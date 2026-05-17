@@ -27,6 +27,7 @@ from aiperf.common.messages import (
 from aiperf.common.models import DatasetMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.timing.config import TimingConfig
+from aiperf.timing.phase.phase_gate import PhaseGateClient
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 
@@ -133,11 +134,18 @@ class TimingManager(BaseComponentService):
         self.debug(f"Configuring phase orchestrator for {self.service_id}")
 
         # Create orchestrator that executes phases
+        gate = PhaseGateClient(
+            sender=self,
+            service_id=self.service_id,
+            enabled=Environment.BASELINE.GATE_ENABLED,
+            timeout_s=Environment.BASELINE.GATE_TIMEOUT_S,
+        )
         self._phase_orchestrator = PhaseOrchestrator(
             config=self.config,
             phase_publisher=self.phase_publisher,
             credit_router=self.sticky_router,
             dataset_metadata=self._dataset_metadata,
+            phase_gate=gate,
         )
         await self._phase_orchestrator.initialize()
 
