@@ -173,10 +173,6 @@ api_router:
     class: aiperf.api.routers.static:StaticRouter
     description: Static HTML file serving for dashboard and index pages.
 
-  tokenizer:
-    class: aiperf.api.routers.tokenizer:TokenizerRouter
-    description: Tokenizer bundle download endpoint for distributed workers.
-
   websocket:
     class: aiperf.api.routers.websocket:WebSocketRouter
     description: WebSocket endpoint for real-time ZMQ message streaming.

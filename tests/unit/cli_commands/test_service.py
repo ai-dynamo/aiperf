@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
+import inspect
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.cli_commands.service import service
+from aiperf.cli_commands.service import app, service
 from aiperf.common.environment import Environment
-from aiperf.config.flags import CLIConfig
+from aiperf.kubernetes.jobset_helpers import build_container_args
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -26,42 +28,9 @@ def mock_bootstrap() -> Generator[MagicMock, None, None]:
 
 
 @pytest.fixture
-def mock_loaders() -> Generator[MagicMock, None, None]:
-    """Mock the v1->v2 conversion + plan-building path."""
-    with (
-        # Patched at source; works because service() uses lazy imports inside the function body.
-        patch("aiperf.config.flags.resolver.resolve_config"),
-        patch("aiperf.config.loader.build_benchmark_plan") as mock_plan,
-        patch("aiperf.cli_runner._make_benchmark_run"),
-    ):
-        # build_benchmark_plan returns an object with .configs[0], .variations[0],
-        # and .variation_seeds; service.py uses resolve_run_seed which
-        # reads variation.index, plan.variation_seeds, plan.random_seed, and
-        # plan.multi_run.vary_seed_per_trial.
-        from aiperf.config.sweep import SweepVariation
-
-        mock_multi_run = MagicMock()
-        mock_multi_run.vary_seed_per_trial = False
-        mock_plan.return_value = MagicMock(
-            configs=[MagicMock()],
-            variations=[SweepVariation(index=0, label="base", values={})],
-            variation_seeds=[42],
-            random_seed=42,
-            multi_run=mock_multi_run,
-        )
-        yield mock_plan
-
-
-@pytest.fixture
 def service_type() -> MagicMock:
     """Create a mock ServiceType."""
     return MagicMock()
-
-
-@pytest.fixture
-def cli_config() -> CLIConfig:
-    """Construct a default CLIConfig (cyclopts would normally produce this)."""
-    return CLIConfig()
 
 
 @pytest.fixture(autouse=True)
@@ -79,48 +48,74 @@ def _reset_health_settings() -> Generator[None, None, None]:
 class TestServiceCommand:
     """Tests for service() CLI function."""
 
-    def test_forwards_all_arguments(
+    def test_service_command_has_no_cli_config_parameter(self) -> None:
+        assert "cli_config" not in inspect.signature(service).parameters
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--type", "worker", "--benchmark-run", "/etc/aiperf/run_config.json"],
+            build_container_args("worker", None, None, None)[1:],
+            build_container_args("api", 8081, 9090, "api")[1:],
+        ],
+    )
+    def test_sidecar_command_parses_without_cli_config(self, args: list[str]) -> None:
+        command, _bound, _ignored = app.parse_args(args)
+
+        assert command is service
+
+    def test_forwards_benchmark_run_and_service_id(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
-        """Test that service_id is forwarded to bootstrap."""
-        service(
-            service_type=service_type,
-            cli_config=cli_config,
-            service_id="worker-1",
-        )
+        run_file = Path("/path/to/run.json")
+        mock_run = MagicMock()
 
-        mock_bootstrap.assert_called_once()
-        call_kwargs = mock_bootstrap.call_args.kwargs
-        assert call_kwargs["service_type"] is service_type
-        assert call_kwargs["service_id"] == "worker-1"
-        assert "run" in call_kwargs
+        with (
+            patch.object(Path, "read_bytes", return_value=b'{"cfg": {}}'),
+            patch("orjson.loads", return_value={"cfg": {}}) as mock_loads,
+            patch(
+                "aiperf.config.resolution.plan.BenchmarkRun.model_validate",
+                return_value=mock_run,
+            ) as mock_validate,
+        ):
+            service(
+                service_type=service_type,
+                benchmark_run_file=run_file,
+                service_id="worker-1",
+            )
+
+        mock_loads.assert_called_once()
+        mock_validate.assert_called_once_with({"cfg": {}})
+        mock_bootstrap.assert_called_once_with(
+            service_type=service_type,
+            run=mock_run,
+            config=None,
+            service_id="worker-1",
+            health_port=None,
+            api_port=None,
+        )
 
     def test_default_optional_arguments(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
         """Test that optional arguments default to None."""
-        service(service_type=service_type, cli_config=cli_config)
+        service(service_type=service_type)
 
         call_kwargs = mock_bootstrap.call_args.kwargs
         assert call_kwargs["service_id"] is None
+        assert call_kwargs["config"] is None
 
     def test_health_port_sets_environment(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
         """Test that health_port sets Environment.SERVICE health settings."""
-        service(service_type=service_type, cli_config=cli_config, health_port=9090)
+        service(service_type=service_type, health_port=9090)
 
         assert Environment.SERVICE.HEALTH_ENABLED is True
         assert Environment.SERVICE.HEALTH_PORT == 9090
@@ -128,12 +123,10 @@ class TestServiceCommand:
     def test_health_host_sets_environment(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
         """Test that health_host sets Environment.SERVICE health settings."""
-        service(service_type=service_type, cli_config=cli_config, health_host="0.0.0.0")
+        service(service_type=service_type, health_host="0.0.0.0")
 
         assert Environment.SERVICE.HEALTH_ENABLED is True
         assert Environment.SERVICE.HEALTH_HOST == "0.0.0.0"
@@ -141,14 +134,11 @@ class TestServiceCommand:
     def test_health_host_and_port_set_environment(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
         """Test that both health_host and health_port set Environment.SERVICE health settings."""
         service(
             service_type=service_type,
-            cli_config=cli_config,
             health_host="0.0.0.0",
             health_port=8081,
         )
@@ -160,9 +150,7 @@ class TestServiceCommand:
     def test_none_health_args_do_not_modify_environment(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
         """Test that None health args leave Environment.SERVICE unchanged."""
         original_enabled = Environment.SERVICE.HEALTH_ENABLED
@@ -171,7 +159,6 @@ class TestServiceCommand:
 
         service(
             service_type=service_type,
-            cli_config=cli_config,
             health_host=None,
             health_port=None,
         )
@@ -180,21 +167,12 @@ class TestServiceCommand:
         assert original_host == Environment.SERVICE.HEALTH_HOST
         assert original_port == Environment.SERVICE.HEALTH_PORT
 
-    def test_health_args_not_passed_to_bootstrap(
+    def test_health_port_is_forwarded_to_bootstrap(
         self,
         mock_bootstrap: MagicMock,
-        mock_loaders: MagicMock,
         service_type: MagicMock,
-        cli_config: CLIConfig,
     ) -> None:
-        """Test that health args are not forwarded to bootstrap_and_run_service."""
-        service(
-            service_type=service_type,
-            cli_config=cli_config,
-            health_host="0.0.0.0",
-            health_port=8080,
-        )
+        service(service_type=service_type, health_port=8080)
 
         call_kwargs = mock_bootstrap.call_args.kwargs
-        assert "health_host" not in call_kwargs
-        assert "health_port" not in call_kwargs
+        assert call_kwargs["health_port"] == 8080

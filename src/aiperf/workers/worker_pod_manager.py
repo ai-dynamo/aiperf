@@ -338,9 +338,7 @@ class WorkerGroupManagerBase(BaseComponentService):
         # Tokenizer downloads kick off at WGM startup before the controller
         # pod's api container has finished booting and warming the shared HF
         # cache. Use a generous retry budget so the natural api-startup
-        # window doesn't fail the pull. Dataset downloads happen later (after
-        # the dataset-configured notification) so they keep the smaller
-        # default.
+        # window doesn't fail the pull.
         tokenizer_max_retries = max(20, Environment.DATASET.DOWNLOAD_MAX_RETRIES)
         try:
             results = await asyncio.gather(

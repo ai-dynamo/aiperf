@@ -82,7 +82,7 @@ async def download_dataset(
     index_path = local_dir / "index.dat"
     logger.info(f"Saving dataset to {local_dir}")
 
-    max_retries = Environment.DATASET.DOWNLOAD_MAX_RETRIES
+    max_retries = max(20, Environment.DATASET.DOWNLOAD_MAX_RETRIES)
     retry_delay = Environment.DATASET.DOWNLOAD_RETRY_DELAY
     last_error: Exception | None = None
 

@@ -1381,6 +1381,28 @@ class TestFastAPIServiceInit:
     def test_init_loads_routers(self, mock_fastapi_service: FastAPIService) -> None:
         assert len(mock_fastapi_service._routers) > 0
 
+    @pytest.mark.asyncio
+    async def test_initialize_does_not_attach_tokenizer_router_as_lifecycle_child(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        await mock_fastapi_service.initialize()
+        await mock_fastapi_service.stop()
+
+    def test_init_uses_constructor_api_port(
+        self, mock_zmq: None, api_run: BenchmarkRun, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api_run.cfg.runtime.api_port = None
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.API_SERVER",
+            type("_Fake", (), {"HOST": "0.0.0.0", "PORT": None, "CORS_ORIGINS": []})(),
+        )
+        service = FastAPIService(
+            run=api_run,
+            service_id="api-custom-port",
+            api_port=9090,
+        )
+        assert service.api_port == 9090
+
     def test_init_with_custom_host(
         self, mock_zmq: None, api_run: BenchmarkRun, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -589,6 +589,40 @@ class TestDatasetHandling:
         assert index_path.stat().st_size == 256
 
     @pytest.mark.asyncio
+    async def test_download_dataset_uses_controller_startup_retry_budget(
+        self, worker_group_manager: WorkerGroupManager, tmp_path: Path, monkeypatch
+    ) -> None:
+        manager = worker_group_manager
+        manager.run.cfg.runtime.dataset_api_base_url = "http://controller/api/dataset"
+        monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
+        monkeypatch.setattr(Environment.DATASET, "DOWNLOAD_MAX_RETRIES", 3)
+        failures = {"count": 0}
+
+        async def download_file(_session, url: str, dest_path: Path) -> None:
+            if url.endswith("/index") and failures["count"] < 4:
+                failures["count"] += 1
+                raise RuntimeError("controller api not listening")
+            dest_path.write_bytes(b"x" * (1024 if url.endswith("/data") else 256))
+
+        manager._download_file = AsyncMock(side_effect=download_file)
+
+        with (
+            patch("aiohttp.ClientSession") as mock_session_cls,
+            patch("asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_session = AsyncMock()
+            mock_session.__aenter__.return_value = mock_session
+            mock_session.__aexit__.return_value = False
+            mock_session_cls.return_value = mock_session
+
+            data_path, index_path = await manager._download_dataset()
+
+        assert mock_sleep.await_count == 4
+        assert manager._download_file.await_count == 10
+        assert data_path.stat().st_size == 1024
+        assert index_path.stat().st_size == 256
+
+    @pytest.mark.asyncio
     async def test_missing_dataset_api_url_raises_error(
         self, worker_group_manager: WorkerGroupManager
     ) -> None:

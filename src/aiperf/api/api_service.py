@@ -61,7 +61,9 @@ class FastAPIService(BaseComponentService):
         )
 
         self.api_host = run.cfg.runtime.api_host or Environment.API_SERVER.HOST
-        self.api_port = run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        self.api_port = (
+            self._api_port or run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        )
         self.cors_origins = Environment.API_SERVER.CORS_ORIGINS
 
         self._server: uvicorn.Server | None = None
