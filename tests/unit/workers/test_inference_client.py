@@ -511,3 +511,46 @@ class TestInferenceClient:
         assert not pydantic_warnings, (
             f"Unexpected Pydantic serialization warnings for {base_url!r}: {pydantic_warnings}"
         )
+
+    def test_finalize_request_record_redacts_sensitive_per_turn_headers(
+        self, inference_client
+    ):
+        """Sensitive per-turn headers (e.g. Authorization) carried by trace
+        rows must be redacted on `record.turns[*].headers` so they don't
+        leak into serialised ZMQ records.
+        """
+        original_turn = Turn(
+            texts=[Text(contents=["hello"])],
+            role="user",
+            headers={"Authorization": "Bearer secret", "x-app-id": "app-1"},
+        )
+        # Hold a reference so we can assert the original (session-owned) Turn
+        # is not mutated by the enrichment pass.
+        original_turn_headers_before = dict(original_turn.headers)
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[original_turn],
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="rid",
+            x_correlation_id="cid",
+            conversation_id="conv",
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=request_info
+        )
+
+        # Original session-owned Turn is untouched.
+        assert original_turn.headers == original_turn_headers_before
+        # record.turns carries scrubbed copies (Authorization redacted,
+        # non-sensitive header preserved).
+        assert result.turns[0].headers["Authorization"] != "Bearer secret"
+        assert result.turns[0].headers["x-app-id"] == "app-1"
