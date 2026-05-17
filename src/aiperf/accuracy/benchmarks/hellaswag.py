@@ -1,31 +1,251 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+"""HellaSwag benchmark loader, aligned with the trt-llm DeepEval reference.
+
+The trt-llm benchmark recipe routes ``hellaswag`` through DeepEval's
+``deepeval.benchmarks.HellaSwag`` class
+(``trt-llm-benchmark-recipe/src/tools/acc_benchmark.py:319-336``). This
+loader produces prompts byte-equal to what DeepEval's
+``HellaSwagTemplate.generate_output`` produces, by importing and calling
+that template directly. Pair with ``ExactMatchGrader`` for the
+recipe's ``Scorer.exact_match_score`` semantics (strict
+``pred.strip() == gold.strip()``).
+
+DeepEval's prompt format (verbatim):
+
+    The following are multiple choice questions (with answers) are
+    sentence completion problems about <activity_label>.
+
+    <ctx_with_choices_and_answer>
+
+    <ctx_with_choices_and_answer>
+    ... (n_shots times, drawn one per unique activity_label from train)
+
+    <test_ctx>
+    A. <ending_0>
+    B. <ending_1>
+    C. <ending_2>
+    D. <ending_3>
+    Answer:
+
+The grammar in line 1 ("questions (with answers) are sentence
+completion") is verbatim from DeepEval — we don't fix it; reproducing
+the bug is part of reference parity.
+
+Reference:
+    deepeval/benchmarks/hellaswag/hellaswag.py
+    deepeval/benchmarks/hellaswag/template.py
+    trt-llm-benchmark-recipe/src/tools/acc_benchmark.py:319
+"""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+from typing import TYPE_CHECKING, Any
 
-from aiperf.accuracy.models import BenchmarkProblem
+from datasets import DatasetDict, load_dataset
+
+from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.mixins import AIPerfLoggerMixin
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
+try:
+    from deepeval.benchmarks.hellaswag.task import HellaSwagTask
+    from deepeval.benchmarks.hellaswag.template import HellaSwagTemplate
+
+    _HAS_DEEPEVAL = True
+except ImportError:  # pragma: no cover - exercised only without optional dep
+    _HAS_DEEPEVAL = False
+    HellaSwagTask = None  # type: ignore[assignment]
+    HellaSwagTemplate = None  # type: ignore[assignment]
+
+
+_MISSING_DEEPEVAL_HINT = (
+    "deepeval is not installed; HellaSwag's prompt template (the "
+    "trt-llm reference) cannot be rendered. Install with: "
+    "uv pip install 'aiperf[accuracy]'."
+)
+
+DATASET_NAME = "Rowan/hellaswag"
+TASK_NAME = "hellaswag"
+
+# DeepEval's HellaSwag default is ``n_shots=10`` (capped at 15). We
+# mirror both bounds so the loader's defaults match the recipe.
+DEFAULT_N_SHOTS = 10
+MAX_N_SHOTS = 15
+
+# A bare A/B/C/D answer fits in a handful of tokens; matches DeepEval's
+# expectation that the model emits just the letter.
+DEFAULT_GENERATION_SIZE = 5
+
+# DeepEval's ``Rowan/hellaswag`` schema: ``activity_label`` selects the
+# subtask, ``label`` is the integer gold index 0..3.
+ACTIVITY_LABEL_FIELD = "activity_label"
+LABEL_FIELD = "label"
+
+
+def _build_unique_activity_label_shots_set(train_set: Any) -> list[dict[str, Any]]:
+    """Mirror DeepEval's ``shots_dataset`` construction.
+
+    DeepEval iterates the train split and collects the FIRST row for
+    each unique ``activity_label`` value
+    (``hellaswag.py:255-261``). We reproduce that exactly.
+    """
+    shots_set: list[dict[str, Any]] = []
+    categories_seen: set[str] = set()
+    for data in train_set:
+        category = data[ACTIVITY_LABEL_FIELD]
+        if category not in categories_seen:
+            categories_seen.add(category)
+            shots_set.append(data)
+    return shots_set
+
+
+def _resolve_tasks(tasks: list[str] | None) -> list[Any]:
+    """Convert ``--accuracy-tasks`` CLI strings to ``HellaSwagTask`` enums.
+
+    DeepEval evaluates one task at a time (see
+    ``HellaSwag.evaluate``). Aiperf accepts either:
+      - ``None`` / empty / ``["all"]`` → every HellaSwagTask enum.
+      - A list of activity_label strings (case-insensitive,
+        space-separated as in the dataset, e.g. ``"Applying sunscreen"``
+        or ``"applying sunscreen"``).
+
+    Unknown tasks raise ``ValueError`` listing the valid set so typos
+    fail loudly.
+    """
+    if not tasks or "all" in {t.lower() for t in tasks}:
+        return list(HellaSwagTask)
+    # Build a lowercased-value lookup so the docstring's promise of
+    # case-insensitive activity_label matching is actually honoured —
+    # the previous ``name in {t.value for t in HellaSwagTask}`` check
+    # was case-sensitive and rejected ``"applying sunscreen"``.
+    lower_value_map: dict[str, Any] = {t.value.lower(): t for t in HellaSwagTask}
+    resolved: list[Any] = []
+    unknown: list[str] = []
+    for name in tasks:
+        member = lower_value_map.get(name.lower())
+        if member is not None:
+            resolved.append(member)
+            continue
+        # Fall back to upper-snake-case enum name, matching the recipe's
+        # ``getattr(HellaSwagTask, task_name.upper(), None)`` lookup.
+        enum_member = getattr(HellaSwagTask, name.upper(), None)
+        if enum_member is not None:
+            resolved.append(enum_member)
+        else:
+            unknown.append(name)
+    if unknown:
+        valid_values = sorted(t.value for t in HellaSwagTask)
+        raise ValueError(
+            f"Unknown HellaSwag task(s): {unknown}. Valid task values "
+            f"include {valid_values[:5]}... ({len(valid_values)} total). "
+            "Pass space-separated activity_label values "
+            "(e.g. 'Applying sunscreen') or upper-snake-case enum "
+            "names (e.g. 'APPLYING_SUNSCREEN')."
+        )
+    return resolved
+
 
 class HellaSwagBenchmark(AIPerfLoggerMixin):
-    """Registered placeholder for a future HellaSwag loader.
+    """HellaSwag benchmark loader, byte-equal to DeepEval's prompts.
 
-    `load_problems()` intentionally raises NotImplementedError in this release;
-    use the MMLU benchmark when a working accuracy loader is required.
+    Loads ``Rowan/hellaswag`` (validation split, filtered per-task by
+    ``activity_label``). Few-shot examples drawn from the train split
+    using DeepEval's "one per unique activity_label" rule. Pair with
+    ``ExactMatchGrader`` (strict equality) for grading parity.
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        if not _HAS_DEEPEVAL:
+            raise RuntimeError(_MISSING_DEEPEVAL_HINT)
         self.run = run
 
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool
     ) -> list[BenchmarkProblem]:
-        raise NotImplementedError(
-            "hellaswag benchmark is not yet implemented; only 'mmlu' is available in this release."
+        """Load HellaSwag problems and format them DeepEval-style.
+
+        Args:
+            tasks: Activity-label strings (case-sensitive against the
+                ``HellaSwagTask`` enum's ``value``) or upper-snake-case
+                enum names. ``None`` / ``["all"]`` selects every
+                category. Unknown names raise ``ValueError``.
+            n_shots: Few-shot count, capped at ``MAX_N_SHOTS`` (15).
+                The recipe's ``DeepEval.HellaSwag`` default is 10.
+            enable_cot: Ignored — DeepEval's HellaSwag has no
+                chain-of-thought variant. Accepting the parameter
+                keeps the protocol uniform across benchmarks.
+
+        Returns:
+            One ``BenchmarkProblem`` per labeled validation row across
+            the selected tasks. ``ground_truth`` is a bare ``A``/``B``/
+            ``C``/``D`` letter (DeepEval's convention).
+        """
+        if n_shots > MAX_N_SHOTS:
+            raise ValueError(
+                f"HellaSwag supports at most {MAX_N_SHOTS} few-shot "
+                f"examples (got {n_shots}); DeepEval asserts "
+                "``n_shots <= 15``."
+            )
+        ds: DatasetDict = await asyncio.to_thread(load_dataset, DATASET_NAME)
+        selected_tasks = _resolve_tasks(tasks)
+        return await asyncio.to_thread(
+            self._build_problems, ds, selected_tasks, n_shots
         )
+
+    def _build_problems(
+        self, ds: DatasetDict, tasks: list[Any], n_shots: int
+    ) -> list[BenchmarkProblem]:
+        train_set = ds["train"]
+        shots_set = _build_unique_activity_label_shots_set(train_set)
+        val_set = ds["validation"]
+        problems: list[BenchmarkProblem] = []
+        choices = ["A", "B", "C", "D"]
+        for task in tasks:
+            for row in val_set:
+                if row.get(ACTIVITY_LABEL_FIELD) != task.value:
+                    continue
+                label_raw = row.get(LABEL_FIELD)
+                if label_raw == "" or label_raw is None:
+                    continue
+                # DeepEval renders the question via the template's
+                # ``format_question(include_answer=False)`` to feed
+                # ``generate_output`` as ``input``.
+                input_text = HellaSwagTemplate.format_question(
+                    row, include_answer=False
+                )
+                prompt = HellaSwagTemplate.generate_output(
+                    input=input_text,
+                    train_set=shots_set,
+                    task=task,
+                    n_shots=n_shots,
+                )
+                gold_letter = choices[int(label_raw)]
+                problems.append(
+                    BenchmarkProblem(
+                        prompt=prompt,
+                        ground_truth=gold_letter,
+                        # Per-row task is the activity_label so the
+                        # accuracy CSV breaks down per category.
+                        task=task.value,
+                        metadata={
+                            ACTIVITY_LABEL_FIELD: task.value,
+                            "generation_size": DEFAULT_GENERATION_SIZE,
+                        },
+                        raw_messages=self._build_chat_messages(prompt),
+                    )
+                )
+        return problems
+
+    @staticmethod
+    def _build_chat_messages(prompt: str) -> list[AccuracyChatMessage]:
+        """DeepEval sends the full prompt as a single string, no
+        multi-turn chat. Mirror that for both completions and chat
+        endpoints by emitting a single user message with the rendered
+        prompt."""
+        return [{"role": "user", "content": prompt}]

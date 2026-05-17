@@ -1145,10 +1145,9 @@ accuracy_grader:
   exact_match:
     class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
     description: |
-      Exact match grader that compares extracted answers against ground truth
-      using exact string matching. Suitable for factual Q&A and classification tasks.
-    metadata:
-      is_implemented: false
+      Strict ``pred.strip() == gold.strip()`` grader matching DeepEval's
+      ``Scorer.exact_match_score``. Used by HellaSwag and BigBench-Hard for
+      trt-llm reference parity (case-sensitive, no normalization).
 
   math:
     class: aiperf.accuracy.graders.math:MathGrader
@@ -1228,11 +1227,15 @@ accuracy_benchmark:
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
     description: |
-      HellaSwag commonsense reasoning benchmark for sentence completion tasks.
+      HellaSwag commonsense reasoning benchmark, aligned with the trt-llm
+      benchmark recipe's DeepEval-backed configuration. Prompts are byte-equal
+      to ``deepeval.benchmarks.HellaSwag`` (n_shots=10, one few-shot per unique
+      activity_label). Pairs with ``exact_match`` for the recipe's strict
+      ``Scorer.exact_match_score`` semantics. Requires the ``[accuracy]``
+      install (deepeval ships the prompt template).
     metadata:
-      default_grader: multiple_choice
-      default_n_shots: 0
-      is_implemented: false
+      default_grader: exact_match
+      default_n_shots: 10
 
   bigbench:
     class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
