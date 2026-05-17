@@ -164,6 +164,33 @@ class TestBaseEndpoint:
 
         assert headers["x-session-token"] == "tok-B"
 
+    def test_get_endpoint_headers_per_turn_overrides_endpoint_case_insensitively(
+        self, endpoint, model_endpoint
+    ):
+        """A per-turn header with different casing replaces the endpoint-config
+        header rather than producing two duplicate wire headers (HTTP header
+        names are case-insensitive per RFC 7230).
+        """
+        model_endpoint.endpoint.api_key = "secret"
+        model_endpoint.endpoint.headers = [("Baggage", "from-config")]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[
+                Turn(headers={"baggage": "from-trace", "authorization": "Bearer t"})
+            ],
+        )
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        # Only one entry per case-insensitive key, and the trace value/casing wins.
+        keys_lower = [k.lower() for k in headers]
+        assert keys_lower.count("baggage") == 1
+        assert keys_lower.count("authorization") == 1
+        assert headers["baggage"] == "from-trace"
+        assert headers["authorization"] == "Bearer t"
+        assert "Baggage" not in headers
+        assert "Authorization" not in headers
+
     @pytest.mark.parametrize(
         "url_params,expected_params",
         [

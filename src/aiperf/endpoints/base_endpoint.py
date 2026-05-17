@@ -45,6 +45,10 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         headers from the current turn. Per-turn headers come from trace dataset
         loaders (e.g., MooncakeTrace) and let traces drive request-affinity
         headers like `x-session-token` or W3C `baggage`.
+
+        Header names are matched case-insensitively per RFC 7230: a per-turn
+        `authorization` replaces an endpoint-config `Authorization` rather than
+        producing two duplicate wire headers.
         """
         cfg = self.model_endpoint.endpoint
         headers = dict(cfg.headers) if cfg.headers else {}
@@ -53,8 +57,13 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         # turns[-1] is the current turn; in DELTAS_WITHOUT_RESPONSES mode the
         # worker accumulates prior user/assistant turns in the list, so turns[0]
         # would always pick the first turn's headers.
-        if request_info.turns and request_info.turns[-1].headers:
-            headers.update(request_info.turns[-1].headers)
+        turn_headers = request_info.turns[-1].headers if request_info.turns else None
+        if turn_headers:
+            turn_keys_lower = {k.lower() for k in turn_headers}
+            headers = {
+                k: v for k, v in headers.items() if k.lower() not in turn_keys_lower
+            }
+            headers.update(turn_headers)
         return headers
 
     def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]:

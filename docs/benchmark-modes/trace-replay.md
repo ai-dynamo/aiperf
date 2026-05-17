@@ -158,6 +158,8 @@ Headers are merged on top of the endpoint-level headers configured via `--header
 
 The merge is performed at the dict level, not at the value level: if `baggage` is set both in the endpoint configuration and in a trace row, the trace row's value replaces the endpoint value entirely -- entries are not concatenated. To combine them, place the full merged string in the trace row.
 
+> **Security note:** trace `headers` are merged *after* the `Authorization` header derived from `--api-key` / endpoint config, so a trace row carrying `{"Authorization": "Bearer ..."}` will override the configured credential. Only ingest trace files you trust.
+
 ## Profile using real Mooncake Trace
 
 For real-world benchmarking, use the FAST25 production trace data from the Mooncake research paper:
