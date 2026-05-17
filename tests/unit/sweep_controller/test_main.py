@@ -13,6 +13,7 @@ from aiperf.sweep_controller.main import (
     AGGREGATE_READY_MARKER,
     _adaptive_search_log_summary,
     _load_aggregate_for_cr,
+    _mirror_strategy_aggregate_to_sweep_dir,
     aggregate_marker_exists,
     write_aggregate_marker,
 )
@@ -66,6 +67,29 @@ def test_aggregate_marker_atomic_rename(tmp_path: Path):
 def _write_json(path: Path, doc: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(orjson.dumps(doc))
+
+
+def test_mirror_strategy_aggregate_to_sweep_dir_copies_files_only(tmp_path: Path):
+    aggregate_dir = tmp_path / "aggregate"
+    aggregate_dir.mkdir()
+    (aggregate_dir / "profile_export_aiperf_aggregate.json").write_text("{}")
+    (aggregate_dir / "profile_export_aiperf_aggregate.csv").write_text("metric,value\n")
+    (aggregate_dir / "nested").mkdir()
+    (aggregate_dir / "nested" / "skip.json").write_text("{}")
+
+    _mirror_strategy_aggregate_to_sweep_dir(
+        base_dir=tmp_path,
+        aggregate_dir=aggregate_dir,
+        namespace="ns",
+        sweep_name="s",
+        sweep_run_epoch="1234",
+    )
+
+    target = tmp_path / "ns" / "sweeps" / "s" / "1234" / "sweep_aggregate"
+    assert sorted(p.name for p in target.iterdir()) == [
+        "profile_export_aiperf_aggregate.csv",
+        "profile_export_aiperf_aggregate.json",
+    ]
 
 
 def test_load_aggregate_for_cr_loads_all_three_keys(tmp_path: Path):

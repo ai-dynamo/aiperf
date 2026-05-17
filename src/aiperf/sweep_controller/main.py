@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -178,6 +179,28 @@ def _write_aggregate_manifest(
     (aggregate_dir / "manifest.json").write_bytes(
         orjson.dumps(manifest, option=orjson.OPT_INDENT_2)
     )
+
+
+def _mirror_strategy_aggregate_to_sweep_dir(
+    *,
+    base_dir: Path,
+    aggregate_dir: Path,
+    namespace: str,
+    sweep_name: str,
+    sweep_run_epoch: str,
+) -> None:
+    sweep_aggregate_dir = (
+        Path(base_dir)
+        / namespace
+        / "sweeps"
+        / sweep_name
+        / sweep_run_epoch
+        / "sweep_aggregate"
+    )
+    sweep_aggregate_dir.mkdir(parents=True, exist_ok=True)
+    for source in sorted(aggregate_dir.iterdir()):
+        if source.is_file() and not source.is_symlink():
+            shutil.copy2(source, sweep_aggregate_dir / source.name)
 
 
 def _write_sweep_parent_aggregate(
@@ -482,6 +505,13 @@ async def main() -> int:
                     logger=aiperf_logger,
                 )
                 _write_aggregate_manifest(aggregate_dir, sweep_cr, all_results, plan)
+                _mirror_strategy_aggregate_to_sweep_dir(
+                    base_dir=RESULTS_DIR,
+                    aggregate_dir=aggregate_dir,
+                    namespace=sweep_namespace,
+                    sweep_name=sweep_name,
+                    sweep_run_epoch=sweep_run_epoch,
+                )
                 _write_sweep_parent_aggregate(
                     base_dir=RESULTS_DIR,
                     sweep_cr=sweep_cr,
