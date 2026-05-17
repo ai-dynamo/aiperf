@@ -63,9 +63,14 @@ rules:
   resources: ["networkpolicies"]
   verbs: ["get", "list", "watch"]
 
-# ConfigMaps - store benchmark configuration and clean up failed preflight attempts.
+# ConfigMaps - store benchmark configuration and support per-job Role creation.
 - apiGroups: [""]
   resources: ["configmaps"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Services and endpoints - per-job controller networking.
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
   verbs: ["create", "delete", "get", "list", "watch"]
 
 # RBAC - create Roles and RoleBindings for benchmark pods
