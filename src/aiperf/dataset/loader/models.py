@@ -230,6 +230,7 @@ class MooncakeTrace(AIPerfBaseModel):
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - With per-request headers: {"text_input": "Hello", "output_length": 4, "headers": {"x-session-token": "tok-A", "baggage": "userId=alice"}}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE

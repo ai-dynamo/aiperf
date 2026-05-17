@@ -153,6 +153,8 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
         for i, synth_dict in enumerate(synth_dicts):
             trace = MooncakeTrace.model_validate(synth_dict)
             if originals:
+                # Synthesis may emit more traces than originals (e.g., speedup
+                # expansion); reuse the last original's headers for the tail.
                 original = originals[i] if i < len(originals) else originals[-1]
                 trace.headers = original.headers
             result.append(trace)
