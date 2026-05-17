@@ -73,16 +73,37 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def _extract_images(self, row: dict[str, Any], image_column: str) -> list[Image]:
         """Extract images from a dataset row column.
 
-        Handles both a single PIL Image and a list of PIL Images,
-        returning the first valid image found.
+        Accepts scalar or list-wrapped values; returns the first valid image as
+        a single-element list, or ``[]`` if none. Handles HF-decoded PIL Images
+        and undecoded ``{"bytes": ..., "path": ...}`` dicts (datasets declared
+        with ``Image(decode=False)``, e.g. VisionArena, return raw byte dicts).
+
+        Path-only dicts (``bytes is None``) aren't handled — VisionArena (the
+        dataset that motivated this fix) embeds bytes inline; we log a debug
+        message so an operator pointing aiperf at a path-only dataset can see
+        why ``inputs.json`` is text-only. Both branches are wrapped in the same
+        ``try`` so header-detection errors (``UnidentifiedImageError``) and
+        load-time errors raised when ``_pil_to_image`` re-encodes (``OSError``
+        from truncated payloads) skip the bad image instead of aborting the
+        loader.
         """
         value = row.get(image_column)
-        if isinstance(value, PILImage.Image):
-            return [self._pil_to_image(value)]
-        if isinstance(value, list):
-            pil = next((v for v in value if isinstance(v, PILImage.Image)), None)
-            if pil:
-                return [self._pil_to_image(pil)]
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            try:
+                if isinstance(item, PILImage.Image):
+                    return [self._pil_to_image(item)]
+                if not isinstance(item, dict):
+                    continue
+                if item.get("bytes"):
+                    pil = PILImage.open(io.BytesIO(item["bytes"]))
+                    return [self._pil_to_image(pil)]
+                if item.get("path"):
+                    self.debug(
+                        f"path-only HF image dict not supported: {item.get('path')}"
+                    )
+            except (OSError, PILImage.UnidentifiedImageError):
+                continue
         return []
 
     def _extract_videos(self, row: dict[str, Any], video_column: str) -> list[Video]:
@@ -90,6 +111,10 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
         Handles URL strings and dicts with raw bytes (HF video format).
         URL strings are passed through directly; bytes are base64-encoded.
+
+        Scalar-only: if a future dataset declares ``Sequence(Video(decode=False))``,
+        mirror ``_extract_images``' list-unwrap loop here to avoid the same
+        silent-empty regression that motivated this file's image fix.
         """
         value = row.get(video_column)
         if isinstance(value, str) and value:

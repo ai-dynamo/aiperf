@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
@@ -33,7 +33,8 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
     short_header = "ICL"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
-    flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.NO_CONSOLE
+    flags = MetricFlags.STREAMING_TOKENS_ONLY
+    console_group = MetricConsoleGroup.NONE
     required_metrics = None
 
     def _parse_record(

@@ -15,7 +15,7 @@ from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.models.record_models import MetricResult
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -62,13 +62,13 @@ class RealtimeMetricsTable(Widget):
         """Determine if a metric should be skipped.
 
         INTERNAL and EXPERIMENTAL metrics are already filtered upstream by
-        summarize(), so only ERROR_ONLY and NO_CONSOLE need filtering here.
+        summarize(), so only ERROR_ONLY and console_group=NONE need filtering here.
         """
         metric_class = MetricRegistry.get_class(metric.tag)
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
-            metric_class.has_flags(MetricFlags.NO_CONSOLE)
+            metric_class.console_group == MetricConsoleGroup.NONE
             and not Environment.DEV.SHOW_INTERNAL_METRICS
         )
 

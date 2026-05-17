@@ -4,7 +4,7 @@
 import pytest
 from pytest import approx
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.output_sequence_length_metric import (
@@ -95,5 +95,5 @@ class TestTotalOutputSequenceLengthMetric:
             MetricFlags.PRODUCES_TOKENS_ONLY
         )
         assert TotalOutputSequenceLengthMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
-        assert TotalOutputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert TotalOutputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
         assert TotalOutputSequenceLengthMetric.missing_flags(MetricFlags.INTERNAL)

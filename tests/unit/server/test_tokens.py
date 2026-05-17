@@ -49,7 +49,14 @@ class TestTokenizedText:
         assert usage["prompt_tokens"] == 10
         assert usage["completion_tokens"] == 3
         assert usage["total_tokens"] == 13
-        assert "completion_tokens_details" not in usage
+        # Details objects always emitted (with zero reasoning_tokens for
+        # non-reasoning models, matching the actual budget value).
+        assert "prompt_tokens_details" in usage
+        assert "cached_tokens" in usage["prompt_tokens_details"]
+        assert "audio_tokens" not in usage["prompt_tokens_details"]
+        assert "completion_tokens_details" in usage
+        assert usage["completion_tokens_details"]["reasoning_tokens"] == 0
+        assert "audio_tokens" not in usage["completion_tokens_details"]
 
     def test_create_usage_with_reasoning(self):
         tokenized = TokenizedText(
@@ -63,7 +70,32 @@ class TestTokenizedText:
         # completion_tokens includes both content (2) and reasoning (10)
         assert usage["completion_tokens"] == 12
         assert usage["total_tokens"] == 17
-        assert usage["completion_tokens_details"] == {"reasoning_tokens": 10}
+        assert usage["completion_tokens_details"]["reasoning_tokens"] == 10
+
+    def test_create_usage_deterministic_per_prompt(self):
+        """Same prompt text yields identical usage shape every call."""
+        tokenized = TokenizedText(
+            text="hello world", tokens=["a"] * 100, prompt_token_count=50
+        )
+        u1 = tokenized.create_usage()
+        u2 = tokenized.create_usage()
+        assert u1 == u2
+
+    def test_create_usage_cache_hits_proportional_to_prompt(self):
+        """cached_tokens is roughly 30-60% of prompt_tokens."""
+        tokenized = TokenizedText(
+            text="some prompt", tokens=["a"], prompt_token_count=100
+        )
+        usage = tokenized.create_usage()
+        cached = usage["prompt_tokens_details"]["cached_tokens"]
+        assert 30 <= cached <= 60
+
+    def test_create_usage_predicted_outputs_zero_when_no_completion(self):
+        tokenized = TokenizedText(text="x", tokens=[], prompt_token_count=5)
+        usage = tokenized.create_usage()
+        details = usage["completion_tokens_details"]
+        assert details["accepted_prediction_tokens"] == 0
+        assert details["rejected_prediction_tokens"] == 0
 
 
 class TestTokenizerFunctions:
