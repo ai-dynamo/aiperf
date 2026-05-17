@@ -595,7 +595,7 @@ class TestAIPerfSweepSpecChildMetadata:
         from aiperf.operator.models import AIPerfSweepSpec
 
         spec = self._sweep_spec()
-        spec["childMetadata"] = {"lables": {"team": "perf"}}  # typo
+        spec["childMetadata"] = {"unknownLabels": {"team": "perf"}}
         with pytest.raises(ValueError):
             AIPerfSweepSpec.model_validate(spec)
 

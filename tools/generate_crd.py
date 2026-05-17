@@ -1026,6 +1026,77 @@ def _aiperf_job_spec_properties() -> dict[str, Any]:
     )
 
 
+def _tighten_image_schema(properties: dict[str, Any]) -> None:
+    image = properties.get("image")
+    if isinstance(image, dict):
+        image["minLength"] = 1
+
+
+def _allow_int_or_string(node: dict[str, Any]) -> None:
+    node["x-kubernetes-int-or-string"] = True
+
+
+def _allow_bool_or_string(node: dict[str, Any]) -> None:
+    node.pop("type", None)
+    node["x-kubernetes-preserve-unknown-fields"] = True
+
+
+def _loosen_scalar_coercion_schemas(properties: dict[str, Any]) -> None:
+    for key in ("ttlSecondsAfterFinished",):
+        node = properties.get(key)
+        if isinstance(node, dict):
+            _allow_int_or_string(node)
+    for key in ("cancel", "skipEndpointCheck"):
+        node = properties.get(key)
+        if isinstance(node, dict):
+            _allow_bool_or_string(node)
+
+
+def _loosen_runtime_scalar_coercion_node(node: dict[str, Any]) -> None:
+    properties = node.get("properties")
+    if not isinstance(properties, dict):
+        return
+    if not {"workers", "apiPort"}.issubset(properties):
+        return
+    for key in ("workers", "workersMin", "apiPort"):
+        field = properties.get(key)
+        if isinstance(field, dict):
+            _allow_int_or_string(field)
+
+
+def _tighten_sweep_schema(properties: dict[str, Any]) -> None:
+    sweep = properties.get("sweep")
+    if not isinstance(sweep, dict):
+        return
+    sweep.setdefault("type", "object")
+    sweep.setdefault("x-kubernetes-preserve-unknown-fields", True)
+    sweep["required"] = ["type"]
+    sweep.setdefault("properties", {}).update(
+        {
+            "type": {
+                "type": "string",
+                "enum": [
+                    "grid",
+                    "zip",
+                    "scenarios",
+                    "sobol",
+                    "latin_hypercube",
+                    "adaptive_search",
+                ],
+            },
+            "variables": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"x-kubernetes-preserve-unknown-fields": True},
+                },
+            },
+        }
+    )
+
+
 def _build_crd_from_job_spec_properties(
     job_spec_properties: dict[str, Any],
     enhancer: CRDSchemaEnhancer,
@@ -1044,6 +1115,7 @@ def _build_crd_from_job_spec_properties(
 
     spec_properties["image"] = operator.pop("image")
     spec_properties["imagePullPolicy"] = operator.pop("imagePullPolicy")
+    _tighten_image_schema(spec_properties)
 
     benchmark_walked["description"] = (
         "Benchmark workload (BenchmarkConfig). Strictly typed via the\n"
@@ -1067,6 +1139,8 @@ def _build_crd_from_job_spec_properties(
     for key, value in operator.items():
         spec_properties[key] = value
 
+    _loosen_scalar_coercion_schemas(spec_properties)
+
     # Apply every shape-detector decorator (relaxed-required + cross-field
     # CEL invariants) across the AIPerfConfig walk. Decorators detect their
     # target node by its property shape, so they fire on AIPerfJob's
@@ -1074,6 +1148,7 @@ def _build_crd_from_job_spec_properties(
     # the same call. See _decorate_all and the individual _decorate_* helpers.
     _walk_dict_apply(benchmark_walked, enhancer.ensure_type_on_preserve_unknown)
     _walk_dict_apply(benchmark_walked, enhancer.decorate_all)
+    _walk_dict_apply(benchmark_walked, _loosen_runtime_scalar_coercion_node)
     _walk_dict_apply(benchmark_walked, enhancer.strip_internal_sentinels)
 
     # Tier 3N — scheduling.queueName is immutable after admission. Kueue's
@@ -1301,9 +1376,13 @@ def _build_aiperfsweep_crd_from_schema(
     # AIPerfJob CRD does.
     _walk_dict_apply(spec_schema, enhancer.ensure_type_on_preserve_unknown)
     _walk_dict_apply(spec_schema, enhancer.decorate_all)
+    _walk_dict_apply(spec_schema, _loosen_runtime_scalar_coercion_node)
     _walk_dict_apply(spec_schema, enhancer.strip_internal_sentinels)
 
     properties = spec_schema.setdefault("properties", {})
+    _tighten_image_schema(properties)
+    _loosen_scalar_coercion_schemas(properties)
+    _tighten_sweep_schema(properties)
 
     # Tier 1C — AIPerfSweep axis-combination rules (mirrors
     # ``_require_sweep_on_aiperfsweep`` in src/aiperf/operator/models.py).

@@ -85,6 +85,22 @@ class TestGenerateOperatorMode:
 
         assert doc["metadata"]["namespace"] == "custom-ns"
 
+    def test_cr_runtime_fields_use_crd_aliases(self) -> None:
+        result = _run_generate(
+            "--operator",
+            "--api-port",
+            "9090",
+            "--api-host",
+            "0.0.0.0",
+        )
+        doc = yaml.safe_load(result.stdout)
+        runtime = doc["spec"]["benchmark"]["runtime"]
+
+        assert runtime["apiPort"] == 9090
+        assert runtime["apiHost"] == "0.0.0.0"
+        assert "api_port" not in runtime
+        assert "api_host" not in runtime
+
 
 class TestGenerateNoOperatorMode:
     """Verify --no-operator outputs raw K8s manifests."""

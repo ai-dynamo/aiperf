@@ -63,6 +63,7 @@ spec:
                 type: string
                 description: Container image for AIPerf
                 default: nvcr.io/nvidia/aiperf:latest
+                minLength: 1
               imagePullPolicy:
                 type: string
                 description: |-
@@ -100,6 +101,7 @@ spec:
                 minimum: 0
                 description: TTL after finished (seconds)
                 default: 300
+                x-kubernetes-int-or-string: true
               resultsTtlDays:
                 type: integer
                 minimum: 1
@@ -110,9 +112,9 @@ spec:
                 description: Preserve failed JobSet pod attempts for debugging.
                 default: false
               cancel:
-                type: boolean
                 description: Set to true to cancel the job
                 default: false
+                x-kubernetes-preserve-unknown-fields: true
               podTemplate:
                 type: object
                 description: Pod template configuration
@@ -739,6 +741,7 @@ spec:
                         description: Total worker processes across the deployment (the maximum, ramped up to from `workers_min`).
                           null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out)
                           and `workers_min` (lower bound for adaptive ramp).
+                        x-kubernetes-int-or-string: true
                       recordProcessors:
                         type: integer
                         minimum: 1
@@ -762,6 +765,7 @@ spec:
                         maximum: 65535
                         description: AIPerf API server port. Enables HTTP and WebSocket endpoints for real-time metrics and
                           control.
+                        x-kubernetes-int-or-string: true
                       apiHost:
                         type: string
                         description: AIPerf API server host. Requires api_port to be set.
@@ -788,6 +792,7 @@ spec:
                         minimum: 1
                         description: Lower bound on worker processes for the adaptive ramp. Distinct from `workers` (the upper
                           bound / target total).
+                        x-kubernetes-int-or-string: true
                     x-kubernetes-validations:
                     - rule: '!has(self.apiHost) || has(self.apiPort)'
                       message: runtime.apiHost requires runtime.apiPort to be set
@@ -885,6 +890,26 @@ spec:
                 description: Sweep configuration for parameter exploration. Supports grid (Cartesian product), zip (lock-stepped
                   axes), scenarios (hand-picked), sobol / latin_hypercube (QMC sampling), and adaptive_search (Bayesian /
                   monotonic outer-loop) strategies.
+                required:
+                - type
+                properties:
+                  type:
+                    type: string
+                    enum:
+                    - grid
+                    - zip
+                    - scenarios
+                    - sobol
+                    - latin_hypercube
+                    - adaptive_search
+                  variables:
+                    type: object
+                    minProperties: 1
+                    additionalProperties:
+                      type: array
+                      minItems: 1
+                      items:
+                        x-kubernetes-preserve-unknown-fields: true
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.sweep is immutable after creation
@@ -1003,9 +1028,9 @@ spec:
                   stdout is non-interactive, when the dashboard UI is active, or for single-cell sweeps.
                 default: false
               skipEndpointCheck:
-                type: boolean
                 description: Skip the operator-side endpoint reachability probe before deploying.
                 default: false
+                x-kubernetes-preserve-unknown-fields: true
               failurePolicy:
                 type: object
                 description: Failure handling policy. On AIPerfJob this governs the single benchmark; on AIPerfSweep it governs
@@ -1034,7 +1059,7 @@ spec:
 
                   Only labels and annotations are merged into children; name/namespace/uid
                   are managed by the controller, so accepting them here would silently lose
-                  user intent. extra='forbid' surfaces typos like `lables:` at submit time.
+                  user intent. extra='forbid' surfaces unknown keys at submit time.
                 properties:
                   labels:
                     type: object

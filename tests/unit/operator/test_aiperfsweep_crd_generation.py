@@ -321,6 +321,47 @@ def test_aiperfsweep_axis_combination_rules():
     assert "has(self.sweep)" in rules
 
 
+def test_deployment_image_rejects_empty_string():
+    from tools.generate_crd import _build_crd
+
+    job_spec = _build_crd({})["spec"]["versions"][0]["schema"]["openAPIV3Schema"][
+        "properties"
+    ]["spec"]
+    for spec in (_aiperfsweep_spec_node(), job_spec):
+        assert spec["properties"]["image"]["minLength"] == 1
+
+
+def test_aiperfsweep_sweep_grid_variables_are_structurally_typed():
+    sweep = _aiperfsweep_spec_node()["properties"]["sweep"]
+    assert sweep["required"] == ["type"]
+    assert sweep["properties"]["type"]["enum"]
+    assert sweep["properties"]["variables"]["additionalProperties"]["type"] == "array"
+    assert sweep["properties"]["variables"]["additionalProperties"]["minItems"] == 1
+
+
+def test_crd_scalar_fields_accept_string_values_like_local_validation():
+    from tools.generate_crd import _build_crd
+
+    spec = _build_crd({})["spec"]["versions"][0]["schema"]["openAPIV3Schema"][
+        "properties"
+    ]["spec"]
+    runtime = spec["properties"]["benchmark"]["properties"]["runtime"]["properties"]
+
+    for node in (
+        spec["properties"]["ttlSecondsAfterFinished"],
+        runtime["workers"],
+        runtime["apiPort"],
+    ):
+        assert node["x-kubernetes-int-or-string"] is True
+
+    for node in (
+        spec["properties"]["cancel"],
+        spec["properties"]["skipEndpointCheck"],
+    ):
+        assert node["x-kubernetes-preserve-unknown-fields"] is True
+        assert "type" not in node
+
+
 def test_convergence_min_max_runs_bound():
     """Convergence config moved into multiRun (Plan A); the structural
     convergence_metric/threshold fields are now flat on multiRun. The

@@ -47,7 +47,7 @@ class ObjectMetaPartial(BaseConfig):
 
     Only labels and annotations are merged into children; name/namespace/uid
     are managed by the controller, so accepting them here would silently lose
-    user intent. extra='forbid' surfaces typos like `lables:` at submit time.
+    user intent. extra='forbid' surfaces unknown keys at submit time.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -66,4 +66,3 @@ class ObjectMetaPartial(BaseConfig):
 # operator code and ``BenchmarkPlan.failure_policy`` share the same Pydantic
 # class. Importing it at module top-level keeps the symbol available without
 # a second class definition that would fail ``isinstance``/field-type checks.
-

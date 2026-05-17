@@ -96,7 +96,9 @@ class AIPerfJobSpecConverter:
         config_dict = self._get_config_dict()
 
         config_dict = expand_config_dict(config_dict)
-        apply_k8s_runtime_config(config_dict, self.job_id or self.name, self.namespace)
+        apply_k8s_runtime_config(
+            config_dict, self.job_id or self.name, self.namespace, use_aliases=True
+        )
         # AIPerfJob.spec.benchmark may carry envelope-level keys (variables,
         # random_seed) for Jinja templating convenience — lift them out of the
         # body before validating, since BenchmarkConfig forbids them.
@@ -217,8 +219,8 @@ def build_benchmark_run(
     """
     from pathlib import Path
 
-    from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.config.config import BenchmarkConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
 
     for unsupported_key in ("sweep", "multi_run"):
         if unsupported_key in run_config:
@@ -290,7 +292,11 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
 
 
 def apply_k8s_runtime_config(
-    config_dict: dict[str, Any], job_id: str, namespace: str
+    config_dict: dict[str, Any],
+    job_id: str,
+    namespace: str,
+    *,
+    use_aliases: bool = False,
 ) -> None:
     """Apply Kubernetes runtime settings to a config dict in-place.
 
@@ -311,9 +317,21 @@ def apply_k8s_runtime_config(
     )
     dataset_api_base_url = f"http://{controller_dns}:{api_port}/api/dataset"
 
-    config_dict.setdefault("runtime", {})
-    config_dict["runtime"].update(
-        {
+    if use_aliases:
+        runtime_config: dict[str, Any] = {
+            "serviceRunType": ServiceRunType.KUBERNETES,
+            "ui": UIType.SIMPLE,
+            "apiPort": api_port,
+            "apiHost": "0.0.0.0",
+            "datasetApiBaseUrl": dataset_api_base_url,
+            "communication": {
+                "type": CommunicationType.DUAL,
+                "ipcPath": K8sEnvironment.ZMQ.IPC_PATH,
+                "tcpHost": "0.0.0.0",
+            },
+        }
+    else:
+        runtime_config = {
             "service_run_type": ServiceRunType.KUBERNETES,
             "ui": UIType.SIMPLE,
             "api_port": api_port,
@@ -325,7 +343,9 @@ def apply_k8s_runtime_config(
                 "tcp_host": "0.0.0.0",
             },
         }
-    )
+
+    config_dict.setdefault("runtime", {})
+    config_dict["runtime"].update(runtime_config)
 
     config_dict.setdefault("logging", {})
     config_dict["logging"].setdefault("level", AIPerfLogLevel.INFO)
