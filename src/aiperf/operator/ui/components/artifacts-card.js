@@ -66,6 +66,13 @@ const FORMAT_TYPES = {
 const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
 const TRUNCATE_LIMIT = 8;
 
+const defaultEmptyMessages = {
+  waiting: 'Waiting for a run epoch before showing result files.',
+  completed: 'No result files persisted for this run.',
+  running: 'No result files yet.',
+  unavailable: 'No result files available.',
+};
+
 function chipFor(filename) {
   const ext = (filename.split('.').pop() || '').toLowerCase();
   return FORMAT_TYPES[ext]
@@ -90,6 +97,11 @@ export function ArtifactsCard({
   openFile,
   api,
   fmtBytes,
+  title = 'Artifacts',
+  testIdPrefix = 'job-detail-artifacts',
+  bundleUrl = null,
+  quickExportUrl = null,
+  emptyMessages = null,
 }) {
   const [activeFilter, setActiveFilter] = useState(null);
   const [showAll, setShowAll] = useState(false);
@@ -111,16 +123,17 @@ export function ArtifactsCard({
   const truncated = filtered.length > visible.length;
   const totalBytes = files.reduce((s, f) => s + (Number(f.size_bytes) || 0), 0);
 
-  const downloadAllUrl = epoch != null ? api.resultBundleUrl(namespace, name, epoch) : null;
-  const quickExportUrl = epoch != null
+  const downloadAllUrl = bundleUrl ?? (epoch != null ? api.resultBundleUrl(namespace, name, epoch) : null);
+  const resolvedQuickExportUrl = quickExportUrl ?? (epoch != null
     ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/profile_export?format=json`
-    : null;
+    : null);
+  const messages = { ...defaultEmptyMessages, ...(emptyMessages ?? {}) };
 
   return html`
-    <div class="artifacts-card" data-testid="job-detail-artifacts">
+    <div class="artifacts-card" data-testid=${testIdPrefix}>
       <header class="artifacts-card__head">
         <div>
-          <h3 class="artifacts-card__title">Artifacts</h3>
+          <h3 class="artifacts-card__title">${title}</h3>
           <span class="artifacts-card__sub">
             ${files.length} file${files.length === 1 ? '' : 's'}${totalBytes > 0 ? ` · ${fmtBytes(totalBytes)} total` : ''}
           </span>
@@ -130,15 +143,15 @@ export function ArtifactsCard({
             <a class="btn btn--primary"
                href=${downloadAllUrl}
                download
-               data-testid="job-detail-artifacts-download-all">
+               data-testid=${`${testIdPrefix}-download-all`}>
               ⤓ Download all (.zip)
             </a>
           `}
-          ${quickExportUrl && html`
+          ${resolvedQuickExportUrl && html`
             <a class="btn btn--secondary"
-               href=${quickExportUrl}
+               href=${resolvedQuickExportUrl}
                download
-               data-testid="job-detail-artifacts-quick-export">
+               data-testid=${`${testIdPrefix}-quick-export`}>
               { } Quick export JSON
             </a>
           `}
@@ -152,12 +165,12 @@ export function ArtifactsCard({
       ${filesLoaded && files.length === 0 && html`
         <div data-testid="artifacts-empty" class="artifacts-card__empty">
           ${resolvedEpoch == null
-            ? 'Waiting for a run epoch before showing result files.'
+            ? messages.waiting
             : isCompleted
-              ? 'No result files persisted for this run.'
+              ? messages.completed
               : isRunning
-                ? 'No result files yet.'
-                : 'No result files available.'}
+                ? messages.running
+                : messages.unavailable}
         </div>
       `}
 

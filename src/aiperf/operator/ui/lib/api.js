@@ -261,6 +261,36 @@ export const api = {
     }
     return `${BASE}/results/${nsSeg}/${idSeg}.zip`;
   },
+
+  sweepArtifactListUrl(ns, sweepName, epoch) {
+    const nsSeg = encodeURIComponent(ns);
+    const sweepSeg = encodeURIComponent(sweepName);
+    const epSeg = encodeURIComponent(epoch);
+    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`;
+  },
+
+  sweepArtifactBundleUrl(ns, sweepName, epoch) {
+    const nsSeg = encodeURIComponent(ns);
+    const sweepSeg = encodeURIComponent(sweepName);
+    const epSeg = encodeURIComponent(epoch);
+    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`;
+  },
+
+  sweepArtifactFileUrl(ns, sweepName, epoch, filename) {
+    const nsSeg = encodeURIComponent(ns);
+    const sweepSeg = encodeURIComponent(sweepName);
+    const epSeg = encodeURIComponent(epoch);
+    const fileSeg = encodeURIComponent(filename);
+    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`;
+  },
+
+  sweepProfileExportUrl(ns, sweepName, epoch, format = 'json') {
+    const nsSeg = encodeURIComponent(ns);
+    const sweepSeg = encodeURIComponent(sweepName);
+    const epSeg = encodeURIComponent(epoch);
+    const formatSeg = encodeURIComponent(format);
+    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/profile_export?format=${formatSeg}`;
+  },
 };
 
 /**

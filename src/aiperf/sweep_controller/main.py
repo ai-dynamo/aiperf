@@ -18,9 +18,12 @@ import contextlib
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
+
+if TYPE_CHECKING:
+    from aiperf.config.sweep import AdaptiveSearchSweep
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +101,7 @@ def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) ->
     return "PartiallyFailed"
 
 
-def _adaptive_search_log_summary(adaptive: Any) -> str:
+def _adaptive_search_log_summary(adaptive: AdaptiveSearchSweep) -> str:
     objectives = ", ".join(
         f"{objective.metric}:{objective.stat}:{objective.direction}"
         for objective in adaptive.objectives

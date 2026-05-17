@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,14 @@ from aiperf.operator.routers.results_schemas import FileEntry, JobEntry
 
 CHUNK_SIZE = 64 * 1024
 PROFILE_EXPORT_FILENAME = "profile_export_aiperf.json"
+
+
+@dataclass(frozen=True, slots=True)
+class FileArtifact:
+    """A file under an artifact root plus its API-visible relative name."""
+
+    path: Path
+    name: str
 
 
 def _safe_resolve(base: Path, *parts: str) -> Path | None:
@@ -43,50 +52,102 @@ def _display_name(path: Path) -> str:
     return path.name
 
 
-async def _build_job_bundle(job_dir: Path) -> bytes:
-    """Build an in-memory zip of every file in ``job_dir``, transparently
-    decompressing ``.zst`` entries back to their original names.
+def _artifact_display_name(name: str) -> str:
+    """Strip .zst from an API-visible relative artifact name."""
+    path = Path(name)
+    display_leaf = _display_name(path)
+    return str(path.with_name(display_leaf))
 
-    One-shot construction (return the full bytes) rather than streaming,
-    because ``zipfile.ZipFile`` tracks its own byte offsets and doesn't
-    compose with draining the underlying ``BytesIO`` between writes — the
-    central-directory offsets get confused and readers see stray bytes.
-    For the typical benchmark bundle (a few MiB, single-digit files) the
-    whole thing fits in memory easily; streaming buys nothing.
-    """
+
+def _artifact_entry(artifact: FileArtifact) -> FileEntry:
+    return FileEntry(
+        name=_artifact_display_name(artifact.name),
+        stored_name=artifact.name,
+        size_bytes=artifact.path.stat().st_size,
+        compressed=artifact.path.suffix == ".zst",
+    )
+
+
+def _list_file_artifacts(
+    root: Path, relative_dirs: tuple[str, ...] = ()
+) -> list[FileArtifact]:
+    artifacts = [
+        FileArtifact(path=f, name=f.name)
+        for f in root.iterdir()
+        if not f.is_symlink() and f.is_file()
+    ]
+    for rel_dir in relative_dirs:
+        child = _safe_resolve(root, rel_dir)
+        if child is None or not child.is_dir():
+            continue
+        artifacts.extend(
+            FileArtifact(path=f, name=f"{rel_dir}/{f.name}")
+            for f in child.iterdir()
+            if not f.is_symlink() and f.is_file()
+        )
+    return sorted(artifacts, key=lambda item: _artifact_display_name(item.name))
+
+
+def _list_artifact_files(
+    root: Path, relative_dirs: tuple[str, ...] = ()
+) -> list[FileEntry]:
+    return [
+        _artifact_entry(artifact)
+        for artifact in _list_file_artifacts(root, relative_dirs)
+    ]
+
+
+async def _build_artifact_bundle(
+    root: Path, relative_dirs: tuple[str, ...] = ()
+) -> bytes:
+    """Build an in-memory zip of scoped artifact files."""
     import io
     import zipfile
 
     import zstandard
 
     dctx = zstandard.ZstdDecompressor()
-    files = sorted([f for f in job_dir.iterdir() if f.is_file()], key=lambda p: p.name)
+    artifacts = _list_file_artifacts(root, relative_dirs)
 
     def _build() -> bytes:
         buf = io.BytesIO()
         with zipfile.ZipFile(
             buf, "w", compression=zipfile.ZIP_STORED, allowZip64=True
         ) as zf:
-            for f in files:
-                arcname = _display_name(f)
-                if f.suffix == ".zst":
-                    with f.open("rb") as fh, dctx.stream_reader(fh) as reader:
+            for artifact in artifacts:
+                arcname = _artifact_display_name(artifact.name)
+                if artifact.path.suffix == ".zst":
+                    with (
+                        artifact.path.open("rb") as fh,
+                        dctx.stream_reader(fh) as reader,
+                    ):
                         payload = reader.read()
                 else:
-                    payload = f.read_bytes()
+                    payload = artifact.path.read_bytes()
                 zf.writestr(arcname, payload)
         return buf.getvalue()
 
     return await asyncio.to_thread(_build)
 
 
-async def _stream_job_bundle(job_dir: Path) -> AsyncIterator[bytes]:
-    """Yield a prebuilt job bundle in fixed-size chunks so the FastAPI
-    ``StreamingResponse`` can flush progressively to the client even though
-    the zip itself is constructed in one shot by :func:`_build_job_bundle`."""
-    data = await _build_job_bundle(job_dir)
+async def _build_job_bundle(job_dir: Path) -> bytes:
+    """Build an in-memory zip of every direct file in ``job_dir``."""
+    return await _build_artifact_bundle(job_dir)
+
+
+async def _stream_artifact_bundle(
+    root: Path, relative_dirs: tuple[str, ...] = ()
+) -> AsyncIterator[bytes]:
+    """Yield a prebuilt artifact bundle in fixed-size chunks."""
+    data = await _build_artifact_bundle(root, relative_dirs)
     for i in range(0, len(data), CHUNK_SIZE):
         yield data[i : i + CHUNK_SIZE]
+
+
+async def _stream_job_bundle(job_dir: Path) -> AsyncIterator[bytes]:
+    """Yield a prebuilt job bundle in fixed-size chunks."""
+    async for chunk in _stream_artifact_bundle(job_dir):
+        yield chunk
 
 
 async def _stream_zstd_raw(file_path: Path) -> AsyncIterator[bytes]:
@@ -227,7 +288,7 @@ def _extract_model_endpoint(latest_dir: Path) -> tuple[str | None, str | None]:
     index and the on-disk fallback agree on what a job's "model" is.
     Returns ``(None, None)`` for any failure — older jobs predate
     ``job_spec.json`` and we don't want to fail the entire ``/results``
-    listing if one of them is unparseable.
+    listing if one of them is unparsable.
     """
     spec_path = latest_dir / "job_spec.json"
     if not spec_path.exists():
@@ -286,19 +347,7 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
 
 def _list_job_files(job_dir: Path) -> list[FileEntry]:
     """List all regular files in a single job directory, sorted by display name."""
-    return sorted(
-        [
-            FileEntry(
-                name=_display_name(f),
-                stored_name=f.name,
-                size_bytes=f.stat().st_size,
-                compressed=f.suffix == ".zst",
-            )
-            for f in job_dir.iterdir()
-            if f.is_file()
-        ],
-        key=lambda x: x.name,
-    )
+    return _list_artifact_files(job_dir)
 
 
 def _read_profile_export_bytes(job_dir: Path) -> bytes:
@@ -324,14 +373,40 @@ def _read_profile_export_bytes(job_dir: Path) -> bytes:
     raise FileNotFoundError(PROFILE_EXPORT_FILENAME)
 
 
+def _serve_artifact_file(
+    request: Request,
+    root: Path,
+    filename: str,
+    *,
+    allowed_relative_dirs: tuple[str, ...] = (),
+) -> StreamingResponse:
+    """Serve a scoped artifact file, preferring .zst + content negotiation."""
+    zst_path = _safe_resolve(root, filename + ".zst")
+    raw_path = _safe_resolve(root, filename)
+    allowed_roots = [root.resolve()]
+    for rel_dir in allowed_relative_dirs:
+        child = _safe_resolve(root, rel_dir)
+        if child is not None:
+            allowed_roots.append(child.resolve())
+
+    def _is_allowed(path: Path | None) -> bool:
+        if path is None:
+            return False
+        resolved = path.resolve()
+        if not allowed_relative_dirs:
+            return resolved.is_relative_to(root.resolve())
+        return any(resolved.parent == allowed for allowed in allowed_roots)
+
+    display_name = Path(filename).name
+    if _is_allowed(zst_path) and zst_path is not None and zst_path.is_file():
+        return _serve_zst_file(request, zst_path, display_name)
+    if _is_allowed(raw_path) and raw_path is not None and raw_path.is_file():
+        return _serve_raw_file(request, raw_path)
+    raise HTTPException(404, f"File not found: {filename}")
+
+
 def _serve_job_file(
     request: Request, job_dir: Path, filename: str
 ) -> StreamingResponse:
     """Serve ``filename`` from ``job_dir``, preferring .zst + content negotiation."""
-    zst_path = _safe_resolve(job_dir, filename + ".zst")
-    raw_path = _safe_resolve(job_dir, filename)
-    if zst_path and zst_path.is_file():
-        return _serve_zst_file(request, zst_path, filename)
-    if raw_path and raw_path.is_file():
-        return _serve_raw_file(request, raw_path)
-    raise HTTPException(404, f"File not found: {filename}")
+    return _serve_artifact_file(request, job_dir, filename)

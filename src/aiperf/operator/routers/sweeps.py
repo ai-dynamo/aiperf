@@ -23,11 +23,13 @@ from aiperf.operator.results_layout import (
     list_sweep_epochs_async,
     resolve_sweep_dir,
 )
+from aiperf.operator.routers._sweeps_artifacts import register_sweep_artifact_routes
 from aiperf.operator.routers._sweeps_diagnostics import (
     fetch_sweep_pod_summaries,
     register_diagnostics_routes,
 )
 from aiperf.operator.routers._sweeps_live import children_manifest_from_live_aiperfjobs
+from aiperf.operator.routers._sweeps_spec import dimensions_from_sweep_model
 from aiperf.operator.routers.sweeps_models import (
     CellAggregatesResponse,
     CellEntry,
@@ -73,29 +75,23 @@ def _summary(rec: SweepRecord) -> SweepSummary:
     )
 
 
-def _dimensions_from_live_spec(spec: dict[str, Any]) -> list[DimensionInfo]:
-    sweep = spec.get("sweep") or {}
-    axes = sweep.get("axes") or sweep.get("dimensions") or []
-    out: list[DimensionInfo] = []
-    for axis in axes:
-        if not isinstance(axis, dict):
-            continue
-        nm = axis.get("name")
-        vals = axis.get("values") or []
-        if isinstance(nm, str):
-            out.append(DimensionInfo(name=nm, values=list(vals)))
-    return out
-
-
 def _spec_summary_from_record(rec: SweepRecord) -> SpecSummary:
     """Build a SpecSummary from whichever side of the union is available."""
     if rec.raw_spec:
-        sweep = rec.raw_spec.get("sweep") or {}
+        from aiperf.operator.models import AIPerfSweepSpec
+
+        spec = AIPerfSweepSpec.model_validate(rec.raw_spec)
+        multi_run = spec.multi_run.model_dump(mode="json", by_alias=True)
+        convergence = (
+            spec.multi_run.convergence.model_dump(mode="json", by_alias=True)
+            if spec.multi_run.convergence is not None
+            else None
+        )
         return SpecSummary(
-            sweep_type=str(sweep.get("type") or "grid"),  # type: ignore[arg-type]
-            dimensions=_dimensions_from_live_spec(rec.raw_spec),
-            multi_run=rec.raw_spec.get("multiRun"),
-            convergence=rec.raw_spec.get("convergence"),
+            sweep_type=spec.sweep.type,
+            dimensions=dimensions_from_sweep_model(spec.sweep),
+            multi_run=multi_run,
+            convergence=convergence,
         )
     if rec.aggregate_doc is not None:
         snap = rec.aggregate_doc.get("spec_snapshot") or {}
@@ -466,6 +462,8 @@ def create_sweeps_router(
         namespace: str, name: str
     ) -> SweepEpochsResponse:
         return await _list_sweep_epochs_impl(_base_dir, namespace, name)
+
+    register_sweep_artifact_routes(router, _base_dir)
 
     @router.get(
         "/sweeps/{namespace}/{name}/cells",

@@ -8,6 +8,7 @@ import orjson
 from aiperf.common.enums import OptimizationDirection
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension
+from aiperf.plugin.enums import SearchPlannerType
 from aiperf.sweep_controller.main import (
     AGGREGATE_READY_MARKER,
     _adaptive_search_log_summary,
@@ -19,7 +20,7 @@ from aiperf.sweep_controller.main import (
 
 def test_adaptive_search_log_summary_uses_objectives_list() -> None:
     sweep = AdaptiveSearchSweep(
-        planner="bayesian",
+        planner=SearchPlannerType.BAYESIAN,
         search_space=[
             SearchSpaceDimension(
                 path="phases.profiling.concurrency", lo=1, hi=40, kind="int"

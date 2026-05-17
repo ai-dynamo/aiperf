@@ -4,18 +4,37 @@
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from aiperf.common.enums import OptimizationDirection
+from aiperf.common.enums import OptimizationDirection, SweepType
 from aiperf.config.sweep import (
     AdaptiveSearchSweep,
     GridSweep,
+    LatinHypercubeSweep,
     Objective,  # noqa: F401  (sanity-import check)
     ScenarioSweep,
+    SobolSweep,
     SweepConfig,
+    ZipSweep,
 )
 
 
 def _adapter():
     return TypeAdapter(SweepConfig)
+
+
+def test_sweep_type_enum_matches_sweep_config_discriminators():
+    sweep_model_types = {
+        GridSweep,
+        ZipSweep,
+        ScenarioSweep,
+        AdaptiveSearchSweep,
+        SobolSweep,
+        LatinHypercubeSweep,
+    }
+    discriminator_values = {
+        model.model_fields["type"].default for model in sweep_model_types
+    }
+
+    assert {sweep_type.value for sweep_type in SweepType} == discriminator_values
 
 
 def test_grid_sweep_with_base_fields():

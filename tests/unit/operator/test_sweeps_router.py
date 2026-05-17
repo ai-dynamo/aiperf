@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aiperf.common.enums import OptimizationDirection, SweepType
 from aiperf.operator.routers.sweeps import create_sweeps_router
 from aiperf.operator.sweep_union import SweepRecord
 
@@ -19,6 +23,15 @@ def _client_with(api: object | None, base_dir: Path) -> TestClient:
     app = FastAPI()
     app.include_router(create_sweeps_router(holder, base_dir))
     return TestClient(app)
+
+
+def _seed_sweep_epoch(base_dir: Path, namespace: str, name: str, epoch: str) -> Path:
+    from aiperf.operator.results_layout import write_sweep_latest
+
+    sweep_dir = base_dir / namespace / "sweeps" / name / epoch
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    write_sweep_latest(base_dir, namespace, name, epoch)
+    return sweep_dir
 
 
 def _live_record(name: str = "s1") -> SweepRecord:
@@ -33,10 +46,22 @@ def _live_record(name: str = "s1") -> SweepRecord:
         age_seconds=10,
         model="m",
         raw_spec={
-            "template": {"spec": {"models": [{"name": "m"}]}},
+            "benchmark": {
+                "models": {"items": [{"name": "m"}]},
+                "endpoint": {"urls": ["http://x:8000/v1/chat/completions"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
+            },
             "sweep": {
-                "type": "grid",
-                "axes": [{"name": "concurrency", "values": [1, 2, 4, 8]}],
+                "type": SweepType.GRID,
+                "variables": {"phases.profiling.concurrency": [1, 2, 4, 8]},
             },
         },
         raw_status={
@@ -84,9 +109,21 @@ def test_detail_returns_adaptive_search_spec_summary_from_live(tmp_path: Path) -
     api = MagicMock()
     rec = _live_record("adaptive-search-smoke")
     rec.raw_spec = {
-        "benchmark": {"models": {"items": [{"name": "mock"}]}},
+        "benchmark": {
+            "models": {"items": [{"name": "mock"}]},
+            "endpoint": {"urls": ["http://x:8000/v1/chat/completions"]},
+            "datasets": [{"name": "main", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                }
+            ],
+        },
         "sweep": {
-            "type": "adaptive_search",
+            "type": SweepType.ADAPTIVE_SEARCH,
             "searchSpace": [
                 {
                     "path": "phases.profiling.concurrency",
@@ -99,9 +136,11 @@ def test_detail_returns_adaptive_search_spec_summary_from_live(tmp_path: Path) -
                 {
                     "metric": "output_token_throughput",
                     "stat": "avg",
-                    "direction": "maximize",
+                    "direction": OptimizationDirection.MAXIMIZE,
                 }
             ],
+            "maxIterations": 5,
+            "nInitialPoints": 2,
         },
     }
     with (
@@ -330,3 +369,184 @@ def test_cells_404_when_neither_present(tmp_path: Path) -> None:
         c = _client_with(api, tmp_path)
         r = c.get("/api/v1/sweeps/bench/nope/cells")
     assert r.status_code == 404
+
+
+def test_sweep_artifacts_list_scopes_to_epoch_root_and_aggregate_dir(
+    tmp_path: Path,
+) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    (sweep_dir / "aggregate.json").write_bytes(b'{"ok": true}')
+    (sweep_dir / "children.json").write_bytes(b'{"children": []}')
+    aggregate_dir = sweep_dir / "sweep_aggregate"
+    aggregate_dir.mkdir()
+    (aggregate_dir / "sweep_results.csv").write_bytes(b"variation,throughput\n0,10\n")
+    child_dir = sweep_dir / "s1-v00"
+    child_dir.mkdir()
+    (child_dir / "profile_export_aiperf.json").write_bytes(b'{"child": true}')
+
+    c = _client_with(api, tmp_path)
+    r = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["namespace"] == "bench"
+    assert body["job_id"] == "s1"
+    assert [f["name"] for f in body["files"]] == [
+        "aggregate.json",
+        "children.json",
+        "sweep_aggregate/sweep_results.csv",
+    ]
+
+
+def test_sweep_artifacts_zip_matches_list_scope(tmp_path: Path) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    (sweep_dir / "aggregate.json").write_bytes(b'{"ok": true}')
+    aggregate_dir = sweep_dir / "sweep_aggregate"
+    aggregate_dir.mkdir()
+    (aggregate_dir / "sweep_results.csv").write_bytes(b"variation,throughput\n0,10\n")
+    child_dir = sweep_dir / "s1-v00"
+    child_dir.mkdir()
+    (child_dir / "profile_export_aiperf.json").write_bytes(b'{"child": true}')
+
+    c = _client_with(api, tmp_path)
+    r = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts.zip")
+
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        assert sorted(zf.namelist()) == [
+            "aggregate.json",
+            "sweep_aggregate/sweep_results.csv",
+        ]
+
+
+def test_sweep_artifacts_list_and_zip_skip_symlink_escape(tmp_path: Path) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    (sweep_dir / "aggregate.json").write_bytes(b'{"ok": true}')
+    outside_file = tmp_path / "bench" / "outside.json"
+    outside_file.write_bytes(b'{"secret": true}')
+    (sweep_dir / "outside-link.json").symlink_to(outside_file)
+
+    c = _client_with(api, tmp_path)
+    list_resp = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts")
+    zip_resp = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts.zip")
+
+    assert list_resp.status_code == 200
+    assert [f["name"] for f in list_resp.json()["files"]] == ["aggregate.json"]
+    assert zip_resp.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(zip_resp.content)) as zf:
+        assert zf.namelist() == ["aggregate.json"]
+
+
+def test_sweep_artifact_download_serves_root_and_aggregate_files(
+    tmp_path: Path,
+) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    (sweep_dir / "aggregate.json").write_bytes(b'{"root": true}')
+    aggregate_dir = sweep_dir / "sweep_aggregate"
+    aggregate_dir.mkdir()
+    (aggregate_dir / "sweep_results.csv").write_bytes(b"variation,throughput\n0,10\n")
+
+    c = _client_with(api, tmp_path)
+    root = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/aggregate.json")
+    nested = c.get(
+        f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/"
+        "sweep_aggregate/sweep_results.csv"
+    )
+
+    assert root.status_code == 200
+    assert root.content == b'{"root": true}'
+    assert root.headers["x-filename"] == "aggregate.json"
+    assert nested.status_code == 200
+    assert nested.content == b"variation,throughput\n0,10\n"
+    assert nested.headers["x-filename"] == "sweep_results.csv"
+
+
+def test_sweep_artifact_download_rejects_traversal(tmp_path: Path) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    (tmp_path / "bench" / "secret.json").write_bytes(b'{"secret": true}')
+
+    c = _client_with(api, tmp_path)
+    r = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/..%2Fsecret.json")
+
+    assert r.status_code in (404, 422)
+
+
+def test_sweep_artifacts_missing_epoch_and_file_return_404(tmp_path: Path) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+
+    c = _client_with(api, tmp_path)
+    missing_epoch = c.get("/api/v1/sweeps/bench/s1/epochs/1714064523/artifacts")
+    missing_file = c.get(f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/nope.json")
+
+    assert missing_epoch.status_code == 404
+    assert missing_file.status_code == 404
+
+
+def test_sweep_artifacts_invalid_epoch_returns_422(tmp_path: Path) -> None:
+    api = MagicMock()
+    c = _client_with(api, tmp_path)
+
+    r = c.get("/api/v1/sweeps/bench/s1/epochs/not-an-epoch/artifacts")
+
+    assert r.status_code == 422
+
+
+def test_sweep_profile_export_quick_route_supports_json_and_csv(tmp_path: Path) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    aggregate_dir = sweep_dir / "sweep_aggregate"
+    aggregate_dir.mkdir()
+    (aggregate_dir / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps({"sweep": True})
+    )
+    (aggregate_dir / "profile_export_aiperf.csv").write_bytes(
+        b"metric,value\nthroughput,10\n"
+    )
+
+    c = _client_with(api, tmp_path)
+    json_resp = c.get(
+        f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/profile_export?format=json"
+    )
+    csv_resp = c.get(
+        f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/profile_export?format=csv"
+    )
+
+    assert json_resp.status_code == 200
+    assert json_resp.headers["content-type"].startswith("application/json")
+    assert orjson.loads(json_resp.content) == {"sweep": True}
+    assert csv_resp.status_code == 200
+    assert csv_resp.headers["content-type"].startswith("text/csv")
+    assert csv_resp.content == b"metric,value\nthroughput,10\n"
+
+
+def test_sweep_profile_export_quick_route_rejects_csv_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    api = MagicMock()
+    epoch = "1714150923"
+    sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
+    aggregate_dir = sweep_dir / "sweep_aggregate"
+    aggregate_dir.mkdir()
+    outside_file = tmp_path / "outside-profile.csv"
+    outside_file.write_bytes(b"secret,value\nleaked,1\n")
+    (aggregate_dir / "profile_export_aiperf.csv").symlink_to(outside_file)
+
+    c = _client_with(api, tmp_path)
+    response = c.get(
+        f"/api/v1/sweeps/bench/s1/epochs/{epoch}/artifacts/profile_export?format=csv"
+    )
+
+    assert response.status_code == 404

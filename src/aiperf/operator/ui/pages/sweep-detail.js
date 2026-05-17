@@ -8,6 +8,7 @@ import { Conditions } from '../components/conditions.js';
 import { DiagnosticsPanel } from '../components/diagnostics-panel.js';
 import { JobTable } from '../components/job-table.js';
 import { LiveVariationsCard } from '../components/live-variations-card.js';
+import { ArtifactsCard } from '../components/artifacts-card.js';
 import { CellsChart } from '../components/cells-chart.js';
 import { CellsTable } from '../components/cells-table.js';
 import { VariationsTable } from '../components/variations-table.js';
@@ -17,7 +18,7 @@ import { EpochSelector } from '../components/epoch-selector.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
-import { fmtNumber } from '../lib/format.js';
+import { fmtBytes, fmtNumber } from '../lib/format.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 
 // ``archived`` is included so polling stops for sweeps whose live CR
@@ -143,6 +144,8 @@ export function SweepDetail({ namespace, name, epoch }) {
   const [epochs, setEpochs] = useState([]);
   const [archivedChildren, setArchivedChildren] = useState(null);
   const [childSummaries, setChildSummaries] = useState({});
+  const [artifactFiles, setArtifactFiles] = useState([]);
+  const [artifactFilesLoaded, setArtifactFilesLoaded] = useState(false);
   // URL-driven view state: ?metric= and ?axis= persist the chart-metric and
   // pareto-axis selectors so deep-links and reloads keep the chosen view.
   // Default values are elided from the URL to avoid noise.
@@ -164,6 +167,11 @@ export function SweepDetail({ namespace, name, epoch }) {
   // downgrade Live → Stale without nuking the rest of the page on a
   // transient operator restart or port-forward blip.
   const [liveStale, setLiveStale] = useState(false);
+  const status = detail?.status ?? {};
+  const latestPersistedSweepEpoch = epochs.find(e => e?.isLatest)?.epoch ?? epochs[0]?.epoch;
+  const resolvedEpoch = epoch
+    ?? (status.runEpoch != null ? String(status.runEpoch) : null)
+    ?? (latestPersistedSweepEpoch != null ? String(latestPersistedSweepEpoch) : null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -211,6 +219,29 @@ export function SweepDetail({ namespace, name, epoch }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [namespace, name]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    setArtifactFiles([]);
+    if (resolvedEpoch == null) {
+      setArtifactFilesLoaded(true);
+      return () => ac.abort();
+    }
+    setArtifactFilesLoaded(false);
+    fetch(api.sweepArtifactListUrl(namespace, name, resolvedEpoch), { signal: ac.signal })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (ac.signal.aborted) return;
+        setArtifactFiles(d?.files ?? []);
+        setArtifactFilesLoaded(true);
+      })
+      .catch(() => {
+        if (ac.signal.aborted) return;
+        setArtifactFiles([]);
+        setArtifactFilesLoaded(true);
+      });
+    return () => ac.abort();
+  }, [namespace, name, resolvedEpoch]);
 
   // Fetch the children manifest from /sweeps/<ns>/<name>/children. Live
   // (sweep-controller alive, but ``status.aggregate.children`` not yet
@@ -375,6 +406,14 @@ export function SweepDetail({ namespace, name, epoch }) {
     }
   }
 
+  function openArtifactFile(fileName) {
+    if (resolvedEpoch == null) return;
+    const a = document.createElement('a');
+    a.href = api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName);
+    a.download = fileName;
+    a.click();
+  }
+
   const childRows = useMemo(() => {
     const live = detail?.children ?? [];
     if (epoch !== undefined && live.length === 0 && archivedChildren) {
@@ -399,7 +438,6 @@ export function SweepDetail({ namespace, name, epoch }) {
   }
 
   const s = detail.sweep;
-  const status = detail.status ?? {};
   const conditions = status.conditions ?? [];
   const pods = detail.pods ?? [];
   const currentCell = status.currentCell;
@@ -573,6 +611,33 @@ export function SweepDetail({ namespace, name, epoch }) {
             />
           `;
         })}
+      </div>
+
+      <div style="margin-bottom: var(--space-4)">
+        <${ArtifactsCard}
+          files=${artifactFiles}
+          filesLoaded=${artifactFilesLoaded}
+          namespace=${namespace}
+          name=${name}
+          epoch=${resolvedEpoch}
+          resolvedEpoch=${resolvedEpoch}
+          isCompleted=${isCompleted}
+          isRunning=${isRunning}
+          openFile=${openArtifactFile}
+          api=${api}
+          fmtBytes=${fmtBytes}
+          title="Aggregate Artifacts"
+          testIdPrefix="sweep-detail-aggregate-artifacts"
+          bundleUrl=${resolvedEpoch != null ? api.sweepArtifactBundleUrl(namespace, name, resolvedEpoch) : null}
+          quickExportUrl=${resolvedEpoch != null ? api.sweepProfileExportUrl(namespace, name, resolvedEpoch, 'json') : null}
+          emptyMessages=${{
+            waiting: 'Waiting for a sweep epoch before showing aggregate artifacts.',
+            completed: 'No aggregate artifacts available for this sweep epoch.',
+            running: 'No aggregate artifacts yet.',
+            available: 'No aggregate artifacts available for this sweep epoch.',
+            unavailable: 'No aggregate artifacts available for this sweep epoch.',
+          }}
+        />
       </div>
 
       <!-- Per-variation curve + table (driven by the inline aggregate manifest) -->

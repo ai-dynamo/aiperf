@@ -14,7 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from aiperf.config.sweep import SweepType
+from aiperf.common.enums import SweepType
 from aiperf.operator.routers.jobs_models import JobPodSummary
 
 
