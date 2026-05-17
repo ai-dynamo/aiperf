@@ -74,6 +74,30 @@ class AIPerfMockServer:
         """
         return [self.server_metrics_urls[t] for t in server_types]
 
+    def recorded_headers(self) -> list[dict[str, Any]]:
+        """Return the inbound headers the mock server saw on inference paths.
+
+        Each entry is `{"path": "...", "headers": {<lowercased name>: <value>}}`.
+        Useful for asserting end-to-end header fidelity through the aiohttp
+        transport. Call `clear_recorded_headers()` first to scope the result
+        to a single test (the mock server is shared across the package).
+        """
+        import urllib.request
+
+        with urllib.request.urlopen(f"{self.url}/test/recorded_headers") as resp:
+            import json
+
+            return json.loads(resp.read())
+
+    def clear_recorded_headers(self) -> None:
+        """Reset the mock server's inbound-header recorder."""
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"{self.url}/test/recorded_headers/clear", method="POST"
+        )
+        urllib.request.urlopen(req).close()
+
 
 @dataclass(frozen=True)
 class VideoDetails:

@@ -286,6 +286,40 @@ class InferenceAuthMiddleware:
         await self.app(scope, receive, send)
 
 
+# In-process record of inbound request headers, populated by
+# RequestHeaderRecorderMiddleware for inference paths. Tests can inspect this
+# via `GET /test/recorded_headers` (and clear it via `POST .../clear`) to
+# assert on-the-wire header fidelity end-to-end. Lives at module scope because
+# the mock server is run in a child process per uvicorn worker; tests use the
+# HTTP endpoints rather than the list directly.
+_RECORDED_INBOUND_HEADERS: list[dict[str, Any]] = []
+
+
+class RequestHeaderRecorderMiddleware:
+    """Records inbound HTTP headers for inference paths.
+
+    Wire-level test hook: per-request the middleware appends
+    `{"path": <path>, "headers": {<lowercased name>: <value>, ...}}` to
+    `_RECORDED_INBOUND_HEADERS`. Non-inference paths (health, metrics, the
+    `/test/*` introspection endpoints themselves) are skipped to keep the
+    list focused on requests the benchmark loop actually emits.
+    """
+
+    def __init__(self, inner_app: ASGIApp) -> None:
+        self.app = inner_app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope.get("path") in _INFERENCE_PATHS:
+            headers = {
+                name.decode("latin-1").lower(): value.decode("latin-1")
+                for name, value in scope.get("headers", [])
+            }
+            _RECORDED_INBOUND_HEADERS.append(
+                {"path": scope["path"], "headers": headers}
+            )
+        await self.app(scope, receive, send)
+
+
 class InferenceReadinessMiddleware:
     """Returns HTTP 503 on inference paths while within the configured
     startup delay. Used by readiness-probe tests to simulate a server
@@ -321,10 +355,37 @@ class InferenceReadinessMiddleware:
         await self.app(scope, receive, send)
 
 
-# Wrap FastAPI with ASGI middleware for earliest possible timing
-asgi_app = InferenceAuthMiddleware(
-    InferenceReadinessMiddleware(TimingMiddleware(app)), server_config
+# Wrap FastAPI with ASGI middleware for earliest possible timing. The header
+# recorder sits outermost so it sees the original inbound headers before any
+# transformation by downstream middleware or FastAPI itself.
+asgi_app = RequestHeaderRecorderMiddleware(
+    InferenceAuthMiddleware(
+        InferenceReadinessMiddleware(TimingMiddleware(app)), server_config
+    )
 )
+
+
+@app.get("/test/recorded_headers", response_model=None)
+async def get_recorded_headers() -> Response:
+    """Return the list of inbound headers captured on inference paths.
+
+    Tests use this to assert end-to-end header fidelity through the
+    aiohttp transport. Each entry is `{"path": "...", "headers": {...}}`
+    with lowercased header names.
+    """
+    return ORJSONResponse(list(_RECORDED_INBOUND_HEADERS))
+
+
+@app.post("/test/recorded_headers/clear", response_model=None)
+async def clear_recorded_headers() -> Response:
+    """Reset the recorded-headers buffer.
+
+    Tests call this before exercising a code path so that recorded entries
+    only reflect the requests of interest (the mock server is shared across
+    tests in the integration package).
+    """
+    _RECORDED_INBOUND_HEADERS.clear()
+    return ORJSONResponse({"cleared": True})
 
 
 # ============================================================================
