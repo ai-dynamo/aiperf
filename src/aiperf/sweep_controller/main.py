@@ -98,6 +98,17 @@ def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) ->
     return "PartiallyFailed"
 
 
+def _adaptive_search_log_summary(adaptive: Any) -> str:
+    objectives = ", ".join(
+        f"{objective.metric}:{objective.stat}:{objective.direction}"
+        for objective in adaptive.objectives
+    )
+    return (
+        f"planner={adaptive.planner}, max_iterations={adaptive.max_iterations}, "
+        f"objectives={objectives}"
+    )
+
+
 def write_aggregate_marker(base_dir: Path) -> None:
     """Atomically write the aggregation ready marker."""
     marker = base_dir / AGGREGATE_READY_MARKER
@@ -436,11 +447,8 @@ async def main() -> int:
             )
             if adaptive is not None:
                 logger.info(
-                    f"Cluster-side adaptive search active: planner={adaptive.planner}, "
-                    f"max_iterations={adaptive.max_iterations}, "
-                    f"objective={adaptive.objective.metric}:"
-                    f"{adaptive.objective.stat}:"
-                    f"{adaptive.objective.direction}"
+                    "Cluster-side adaptive search active: "
+                    f"{_adaptive_search_log_summary(adaptive)}"
                 )
         try:
             all_results = await orchestrator.execute(

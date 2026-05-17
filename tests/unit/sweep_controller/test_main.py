@@ -5,12 +5,43 @@ from pathlib import Path
 
 import orjson
 
+from aiperf.common.enums import OptimizationDirection
+from aiperf.config.sweep import AdaptiveSearchSweep, Objective
+from aiperf.config.sweep.adaptive import SearchSpaceDimension
 from aiperf.sweep_controller.main import (
     AGGREGATE_READY_MARKER,
+    _adaptive_search_log_summary,
     _load_aggregate_for_cr,
     aggregate_marker_exists,
     write_aggregate_marker,
 )
+
+
+def test_adaptive_search_log_summary_uses_objectives_list() -> None:
+    sweep = AdaptiveSearchSweep(
+        planner="bayesian",
+        search_space=[
+            SearchSpaceDimension(
+                path="phases.profiling.concurrency", lo=1, hi=40, kind="int"
+            )
+        ],
+        objectives=[
+            Objective(
+                metric="output_token_throughput",
+                stat="avg",
+                direction=OptimizationDirection.MAXIMIZE,
+            )
+        ],
+        max_iterations=5,
+        n_initial_points=2,
+    )
+
+    summary = _adaptive_search_log_summary(sweep)
+
+    assert summary == (
+        "planner=bayesian, max_iterations=5, "
+        "objectives=output_token_throughput:avg:maximize"
+    )
 
 
 def test_aggregate_marker_lifecycle(tmp_path: Path):
