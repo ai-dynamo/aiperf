@@ -1581,7 +1581,7 @@ def render_helm_crd_yaml(crd: dict[str, Any]) -> str:
     # Helm template substitutions
     yaml_str = yaml_str.replace(
         "default: nvcr.io/nvidia/aiperf:latest",
-        "default: {{ .Values.defaults.image | quote }}",
+        'default: {{ default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) .Values.defaults.image | quote }}',
     )
 
     yaml_str = yaml_str.replace(

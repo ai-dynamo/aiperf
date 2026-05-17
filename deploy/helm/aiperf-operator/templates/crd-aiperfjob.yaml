@@ -67,7 +67,7 @@ spec:
               image:
                 type: string
                 description: Container image for AIPerf
-                default: {{ .Values.defaults.image | quote }}
+                default: {{ default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) .Values.defaults.image | quote }}
                 minLength: 1
               imagePullPolicy:
                 type: string
