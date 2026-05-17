@@ -66,7 +66,8 @@ NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agree
 You should first download and prepare the dataset using the following one liner:
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py | python3 -
+SPEED_BENCH_DIR="./datasets/speed-bench"
+curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py | python3 - --output_dir $SPEED_BENCH_DIR
 ```
 
 This will download all splits into the working directory as JSONL files. Other supported options of the prepare script:
@@ -120,7 +121,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --custom-dataset-type speed_bench_coding \
-    --input-file path/to/qualitative.jsonl \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --osl 4096 \
     --extra-inputs temperature:0 \
     --concurrency 16
@@ -147,7 +148,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --custom-dataset-type speed_bench_coding \
-    --input-file path/to/qualitative.jsonl \
+    --input-file ${SPEEED_BENCH_DIR}/qualitative.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --osl 4096 \
     --extra-inputs temperature:0 \
@@ -171,7 +172,7 @@ for cat in $CATEGORIES; do
       --streaming \
       --url localhost:8000 \
       --custom-dataset-type speed_bench_${cat} \
-      --input-file path/to/qualitative.jsonl \
+      --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
       --server-metrics http://localhost:8000/metrics \
       --osl 4096 \
       --extra-inputs temperature:0 \
@@ -219,7 +220,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --custom-dataset-type speed_bench_qualitative \
-    --input-file path/to/qualitative.jsonl \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 16
 ```
@@ -237,7 +238,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --custom-dataset-type speed_bench_throughput_1k \
-    --input-file path/to/throughput_1k.jsonl \
+    --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 64 \
     --benchmark-duration 120
@@ -258,7 +259,7 @@ for tier in low_entropy mixed high_entropy; do
       --streaming \
       --url localhost:8000 \
       --custom-dataset-type "speed_bench_throughput_1k_${tier}" \
-      --input-file path/to/throughput_1k.jsonl \
+      --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
       --server-metrics http://localhost:8000/metrics \
       --concurrency 64 \
       --benchmark-duration 60
@@ -278,7 +279,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --custom-dataset-type speed_bench_qualitative \
-    --input-file path/to/qualitative.jsonl \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --no-server-metrics \
     --concurrency 16
 ```
