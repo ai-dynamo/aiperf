@@ -1,7 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""User session management for multi-turn conversation optimization."""
+"""User session management for multi-turn conversation optimization.
+
+Two session types serve two dataset formats:
+
+- ``ContentSession`` backs CONVERSATION-format datasets (synthetic, public,
+  file-based, DAG). It holds the full ``Conversation``, accumulates the
+  ``turn_list`` (including stored assistant responses), tracks the resolved
+  context mode, and participates in FORK seeding.
+- ``RawPayloadSession`` backs PAYLOAD_BYTES-format datasets (pre-encoded
+  wire bytes in mmap). It carries only ``conversation_id`` + routing
+  fields; the body lives in mmap and the records-process resolves it via
+  its own ``MemoryMapDatasetClientStore``. FORK + raw_payload is refused at
+  dataset-format selection, so fork-related fields stay on ContentSession.
+
+``UserSession`` is a union alias for either type. ``UserSessionManager``
+exposes two factory methods (``create_content_session`` /
+``create_raw_payload_session``); the worker calls the right one based on
+``self._dataset_format``.
+"""
 
 from pydantic import Field
 
@@ -13,7 +31,7 @@ from aiperf.common.models.dataset_models import Conversation, Turn
 def _compute_is_fork_parent(conversation: Conversation) -> bool:
     """True if this conversation declares any FORK-mode branch.
 
-    Stamped onto ``UserSession`` at creation rather than recomputed on
+    Stamped onto ``ContentSession`` at creation rather than recomputed on
     every read because ``conversation.branches`` is dropped on the
     PAYLOAD_BYTES context-mode wire round-trip; a lazy read after that
     would silently flip the flag to ``False``.
@@ -21,12 +39,13 @@ def _compute_is_fork_parent(conversation: Conversation) -> bool:
     return any(b.mode == ConversationBranchMode.FORK for b in conversation.branches)
 
 
-class UserSession(AIPerfBaseModel):
-    """
-    User session for multi-turn processing.
+class _BaseSession(AIPerfBaseModel):
+    """Common routing fields for both session types.
 
-    Stores full conversation data and turn list (including assistant responses) to enable building requests
-    with conversation context.
+    Subclasses add format-specific fields and advance/store-response
+    behavior. Holds nothing format-specific itself so worker-level code
+    that only cares about routing (``x_correlation_id``, ``url_index``,
+    ``turn_index``, ``num_turns``) can stay polymorphic.
     """
 
     x_correlation_id: str = Field(
@@ -38,15 +57,28 @@ class UserSession(AIPerfBaseModel):
         description="URL index for multi-URL load balancing. "
         "Set on first turn to ensure all turns in a conversation hit the same backend.",
     )
+    turn_index: int = Field(
+        default=0,
+        ge=0,
+        description="The index of the current turn in the conversation",
+    )
+
+
+class ContentSession(_BaseSession):
+    """User session backed by a fully-loaded ``Conversation``.
+
+    Used for CONVERSATION-format datasets (synthetic, public, file-based,
+    DAG). Drives the worker's request-builder via ``turn_list`` and stores
+    assistant responses live when the context mode requires it. FORK
+    seeding copies the parent's ``turn_list`` into the child here.
+    """
+
     conversation: Conversation = Field(
         ..., description="Full conversation data from DatasetManager"
     )
     turn_list: list[Turn] = Field(
         default_factory=list,
         description="Current list of turns in conversation order, including the assistant responses",
-    )
-    turn_index: int = Field(
-        default=0, ge=0, description="The index of the current turn in the conversation"
     )
     context_mode: ConversationContextMode = Field(
         default=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
@@ -57,13 +89,14 @@ class UserSession(AIPerfBaseModel):
         default=False,
         description="Whether this session declares any FORK-mode branch and "
         "must therefore be pinned in the worker's session cache until all FORK "
-        "children evict. Stamped at ``create_and_store`` time from "
+        "children evict. Stamped at ``create_content_session`` time from "
         "``conversation.branches`` so the eviction path does not depend on "
         "``conversation`` retaining its branch metadata (PAYLOAD_BYTES "
         "context-mode round-trips strip ``branches``).",
     )
     fork_refcount: int = Field(
         default=0,
+        ge=0,
         description="Refcount of pending DAG-FORK children that pin this "
         "session in the manager so its history is still resident when "
         "each child credit dispatches. Incremented at child-seed time "
@@ -122,10 +155,57 @@ class UserSession(AIPerfBaseModel):
         self.turn_list.append(response_turn)
 
 
+class RawPayloadSession(_BaseSession):
+    """User session backed by a PAYLOAD_BYTES mmap dataset.
+
+    The wire payload for each turn lives in mmap and is fetched per
+    dispatch by the worker (``DatasetClientStoreProtocol.get_payload_bytes``);
+    the records-process resolves the same bytes via its own client. There
+    is therefore no ``Conversation`` body on the worker side and no
+    ``turn_list`` to accumulate.
+
+    FORK + PAYLOAD_BYTES is refused at dataset-format selection
+    (``DatasetManager._select_mmap_format``); FORK-related fields and
+    response storage live on ``ContentSession`` only. ``advance_turn``
+    here is a pure index bump.
+    """
+
+    conversation_id: str = Field(
+        ...,
+        description="Conversation/session ID resolved against DatasetMetadata "
+        "and the records-process's mmap client. Substitutes for "
+        "``ContentSession.conversation.session_id``.",
+    )
+
+    def advance_turn(self, turn_index: int) -> None:
+        """Bump the per-session turn cursor; no turn_list to mutate.
+
+        Bound checks mirror ``ContentSession.advance_turn`` so out-of-range
+        turn indices fail loudly at the same boundary.
+        """
+        if turn_index < 0:
+            raise ValueError(f"Turn index {turn_index} is negative")
+        if turn_index >= self.num_turns:
+            raise ValueError(
+                f"Turn index {turn_index} is out of range for conversation with {self.num_turns} turns"
+            )
+        self.turn_index = turn_index
+
+
+# Polymorphic type alias for callers that don't care which session shape
+# they hold (worker storage map, manager get/store/evict). Code that
+# reads format-specific fields branches on ``isinstance`` at the use site.
+UserSession = ContentSession | RawPayloadSession
+
+
 class UserSessionManager:
     """User session manager for multi-turn processing.
 
-    Manages user sessions for multi-turn processing.
+    Holds the worker's per-correlation session cache and exposes two
+    factory methods — one per dataset format. Eviction, FORK pinning, and
+    the cache map itself are format-agnostic; only ``create_*`` and
+    ``seed_from_parent`` are format-specific (FORK seeding only fires on
+    ``ContentSession``).
     """
 
     def __init__(self) -> None:
@@ -136,15 +216,14 @@ class UserSessionManager:
         """Set the dataset-level default context mode from the loader."""
         self._default_context_mode = mode
 
-    def create_and_store(
+    def create_content_session(
         self,
         x_correlation_id: str,
         conversation: Conversation,
         num_turns: int,
         url_index: int | None = None,
-    ) -> UserSession:
-        """
-        Create and store user session.
+    ) -> ContentSession:
+        """Create and store a ``ContentSession`` for CONVERSATION-format datasets.
 
         Args:
             x_correlation_id: X-Correlation-ID header value
@@ -156,6 +235,8 @@ class UserSessionManager:
 
         Raises:
             ValueError: If num_turns exceeds the actual conversation length.
+            NotImplementedError: If the conversation declares FORK branches paired with an
+                incompatible context_mode or raw_payload turns.
         """
         if num_turns > len(conversation.turns):
             raise ValueError(
@@ -200,7 +281,7 @@ class UserSessionManager:
                 "structured turn data so the parent context can be replayed "
                 "to the child"
             )
-        user_session = UserSession(
+        session = ContentSession(
             x_correlation_id=x_correlation_id,
             num_turns=num_turns,
             url_index=url_index,
@@ -209,17 +290,65 @@ class UserSessionManager:
             context_mode=context_mode,
             is_fork_parent=is_fork_parent,
         )
-        self.store(x_correlation_id, user_session)
-        return user_session
+        self.store(x_correlation_id, session)
+        return session
+
+    def create_raw_payload_session(
+        self,
+        x_correlation_id: str,
+        conversation_id: str,
+        num_turns: int,
+        url_index: int | None = None,
+    ) -> RawPayloadSession:
+        """Create and store a ``RawPayloadSession`` for PAYLOAD_BYTES datasets.
+
+        No ``Conversation`` body is loaded — the bytes live in mmap and
+        the records-process resolves them through its own client. FORK +
+        PAYLOAD_BYTES is refused upstream at dataset-format selection, so
+        no FORK seeding hooks fire here.
+
+        Args:
+            x_correlation_id: X-Correlation-ID header value
+            conversation_id: Session ID resolved against DatasetMetadata and
+                the records-process's mmap client.
+            num_turns: Number of turns to execute (from Credit.num_turns).
+            url_index: URL index for multi-URL load balancing.
+        """
+        session = RawPayloadSession(
+            x_correlation_id=x_correlation_id,
+            num_turns=num_turns,
+            url_index=url_index,
+            conversation_id=conversation_id,
+        )
+        self.store(x_correlation_id, session)
+        return session
 
     def store(self, x_correlation_id: str, user_session: UserSession) -> None:
         """
         Store user session.
 
+        Refuses to silently replace an existing session with one of a
+        different type — that combination indicates a sticky-router
+        uniqueness violation (the same correlation id was claimed by two
+        different dataset formats / session shapes). Same-type re-stores
+        are permitted as a legitimate refresh.
+
         Args:
             x_correlation_id: X-Correlation-ID header value
             user_session: User session
+
+        Raises:
+            RuntimeError: If an existing session of a different concrete type
+                is already cached under ``x_correlation_id``.
         """
+        existing = self._cache.get(x_correlation_id)
+        if existing is not None and type(existing) is not type(user_session):
+            raise RuntimeError(
+                f"UserSessionManager: x_correlation_id '{x_correlation_id}' "
+                f"already stored as {type(existing).__name__}; refusing to "
+                f"silently replace with {type(user_session).__name__}. This "
+                f"indicates a sticky-router uniqueness violation."
+            )
         self._cache[x_correlation_id] = user_session
 
     def get(self, x_correlation_id: str) -> UserSession | None:
@@ -247,12 +376,22 @@ class UserSessionManager:
         in the cache until every FORK child has dispatched. Raises
         ``KeyError`` if the session is unknown — pinning a session that
         was already evicted is a programming error, not a soft failure.
+
+        Only ``ContentSession`` participates in FORK; PAYLOAD_BYTES
+        datasets refuse FORK at format-selection time, so this path
+        cannot legitimately be reached for a ``RawPayloadSession``.
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
             raise KeyError(
                 f"pin_for_fork_child: no session for x_correlation_id "
                 f"{x_correlation_id!r} (parent already evicted before FORK child arrived)"
+            )
+        if not isinstance(session, ContentSession):
+            raise TypeError(
+                f"pin_for_fork_child: session {x_correlation_id!r} is not a "
+                "ContentSession; FORK + PAYLOAD_BYTES is refused at dataset "
+                "format selection and should never reach this code path"
             )
         session.fork_refcount += 1
 
@@ -264,20 +403,21 @@ class UserSessionManager:
 
         FORK-mode children inherit the parent's prompt + captured response
         context. The child's ``turn_list`` starts empty at
-        ``create_and_store`` time; this copies the parent's current
+        ``create_content_session`` time; this copies the parent's current
         ``turn_list`` (a list of ``Turn`` objects, including stored
         assistant responses) into the child so that the request-builder
         prepends the full parent context before the child's own messages.
 
         No-op (with a debug-friendly silent return) if either session is
-        already evicted — the FORK-pin refcount usually keeps the parent
-        resident, but late-arriving children may race past eviction. The
-        request still goes out, just without seed context, matching the
-        pre-existing ``pin_for_fork_child`` "evicted parent" branch.
+        already evicted or either side is a ``RawPayloadSession`` — the
+        latter is a defensive guard; FORK + PAYLOAD_BYTES is refused at
+        format selection.
         """
         parent = self._cache.get(parent_x_correlation_id)
         child = self._cache.get(child_x_correlation_id)
-        if parent is None or child is None:
+        if not isinstance(parent, ContentSession) or not isinstance(
+            child, ContentSession
+        ):
             return
         child.turn_list = list(parent.turn_list)
 
@@ -294,7 +434,7 @@ class UserSessionManager:
         call — there is no other code path that will collect it.
         """
         session = self._cache.get(x_correlation_id)
-        if session is None:
+        if not isinstance(session, ContentSession):
             return
         session.fork_refcount = max(0, session.fork_refcount - 1)
         if session.fork_refcount == 0 and session.pending_fork_eviction:
@@ -305,7 +445,8 @@ class UserSessionManager:
 
         Refcount-aware sibling of ``evict``: callers on the FORK path
         use this so pinned parents stay resident until the last child
-        joins. Unknown sessions are a no-op.
+        joins. Unknown or non-``ContentSession`` sessions fall through
+        to a plain eviction (RawPayloadSession can never be FORK-pinned).
 
         Sessions with ``pending_fork_eviction = True`` ALSO stay
         resident at refcount==0 — their parent's terminal turn already
@@ -316,6 +457,9 @@ class UserSessionManager:
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
+            return
+        if not isinstance(session, ContentSession):
+            self._cache.pop(x_correlation_id, None)
             return
         if session.fork_refcount > 0:
             return

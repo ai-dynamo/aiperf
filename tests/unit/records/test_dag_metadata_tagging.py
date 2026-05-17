@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import msgspec
 import orjson
 import pytest
 
@@ -49,11 +50,11 @@ class TestMetricRecordMetadataDagFields:
             agent_depth=2,
             parent_correlation_id="parent-corr-id",
         )
-        dumped = metadata.model_dump()
+        dumped = msgspec.to_builtins(metadata)
         assert dumped["agent_depth"] == 2
         assert dumped["parent_correlation_id"] == "parent-corr-id"
 
-        restored = MetricRecordMetadata.model_validate(dumped)
+        restored = msgspec.convert(dumped, type=MetricRecordMetadata)
         assert restored.agent_depth == 2
         assert restored.parent_correlation_id == "parent-corr-id"
 
@@ -68,7 +69,7 @@ class TestMetricRecordMetadataDagFields:
             agent_depth=3,
             parent_correlation_id="p",
         )
-        as_json = orjson.loads(metadata.model_dump_json())
+        as_json = orjson.loads(msgspec.json.encode(metadata))
         assert as_json["agent_depth"] == 3
         assert as_json["parent_correlation_id"] == "p"
 
@@ -91,23 +92,38 @@ class TestRequestInfoDagFields:
         info = sample_request_info.model_copy(
             update={"agent_depth": 2, "parent_correlation_id": "p"}
         )
-        record = RequestRecord(request_info=info)
-        dumped = record.model_dump()
-        assert dumped["request_info"]["agent_depth"] == 2
-        assert dumped["request_info"]["parent_correlation_id"] == "p"
+        from aiperf.common.models import MetricInputs
+
+        mi = MetricInputs(
+            credit_num=info.credit_num,
+            credit_phase=info.credit_phase,
+            conversation_id=info.conversation_id,
+            turn_index=info.turn_index,
+            x_request_id=info.x_request_id,
+            x_correlation_id=info.x_correlation_id,
+            agent_depth=info.agent_depth,
+            parent_correlation_id=info.parent_correlation_id,
+        )
+        record = RequestRecord(metric_inputs=mi)
+        # Task 3a.4: ``RequestRecord`` is a msgspec.Struct; the embedded
+        # ``MetricInputs`` Struct round-trips through ``msgspec.json`` natively.
+        dumped = msgspec.json.decode(msgspec.json.encode(record))
+        assert dumped["metric_inputs"]["agent_depth"] == 2
+        assert dumped["metric_inputs"]["parent_correlation_id"] == "p"
 
 
 class TestMetricRecordMetadataFromRequestInfo:
-    """_create_metric_record_metadata should propagate DAG fields from RequestInfo."""
+    """_create_metric_record_metadata should propagate DAG fields from MetricInputs."""
 
     def test_propagates_dag_fields(self, sample_request_record: RequestRecord):
-        sample_request_record.request_info = (
-            sample_request_record.request_info.model_copy(
-                update={
-                    "agent_depth": 2,
-                    "parent_correlation_id": "root-corr",
-                }
-            )
+        # MetricInputs is a msgspec.Struct (Phase 3a.3); use ``msgspec.structs.replace``
+        # in place of Pydantic's ``model_copy``.
+        import msgspec
+
+        sample_request_record.metric_inputs = msgspec.structs.replace(
+            sample_request_record.metric_inputs,
+            agent_depth=2,
+            parent_correlation_id="root-corr",
         )
 
         processor = MagicMock(spec=RecordProcessor)

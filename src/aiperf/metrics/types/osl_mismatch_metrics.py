@@ -47,21 +47,14 @@ class RequestedOSLMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         """
-        Extract the requested max_tokens from the request.
+        Extract the requested max_tokens from the record's TurnMetadata.
 
         Raises:
             NoMetricValue: If max_tokens is not set in the request.
         """
-        request_info = record.request.request_info
-        if request_info is None or not request_info.turns:
-            raise NoMetricValue("Request info or turns not available in record.")
-
-        # Get max_tokens from the last turn (the one that was sent)
-        max_tokens = request_info.turns[-1].max_tokens
-        if max_tokens is None:
+        if record.turn_metadata is None or record.turn_metadata.max_tokens is None:
             raise NoMetricValue("max_tokens not set in request (--osl not used).")
-
-        return max_tokens
+        return record.turn_metadata.max_tokens
 
 
 class OSLMismatchDiffMetric(BaseRecordMetric[float]):

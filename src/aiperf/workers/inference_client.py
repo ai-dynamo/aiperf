@@ -4,22 +4,26 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import orjson
 
+from aiperf.common.enums import RequestContentType
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
+    MetricInputs,
     ModelEndpointInfo,
-    RecordContext,
     RequestInfo,
     RequestRecord,
 )
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
+
+Payload = dict[str, Any] | bytes
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -76,7 +80,35 @@ class InferenceClient(AIPerfLifecycleMixin):
             PluginType.TRANSPORT, str(self.model_endpoint.transport)
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
+        self._prepare_payload_for_transport: Callable[[Payload, RequestInfo], Payload]
+        if (
+            model_endpoint.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+        ):
+            self._prepare_payload_for_transport = self._prepare_multipart_payload
+        else:
+            self._prepare_payload_for_transport = self._prepare_json_payload
         self.attach_child_lifecycle(self.transport)
+
+    def _prepare_json_payload(
+        self, payload: Payload, request_info: RequestInfo
+    ) -> Payload:
+        if isinstance(payload, dict):
+            payload = orjson.dumps(payload)
+        request_info.payload_bytes = payload
+        return payload
+
+    def _prepare_multipart_payload(
+        self, payload: Payload, request_info: RequestInfo
+    ) -> Payload:
+        if isinstance(payload, bytes):
+            request_info.payload_bytes = payload
+        else:
+            try:
+                request_info.payload_bytes = orjson.dumps(payload)
+            except TypeError:
+                request_info.payload_bytes = None
+        return payload
 
     async def _send_request_to_transport(
         self,
@@ -102,13 +134,22 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        raw_payload = request_info.turns[-1].raw_payload
-        payload = (
-            raw_payload
-            if raw_payload is not None
-            else self.endpoint.format_payload(request_info)
-        )
-        request_info.payload_bytes = orjson.dumps(payload)
+
+        # Resolution order:
+        # 1. request_info.payload_bytes already set by the PAYLOAD_BYTES mmap fast path.
+        # 2. The current turn carries a raw_payload dict from a verbatim-payload loader.
+        # 3. Build via endpoint.format_payload for structured datasets.
+        if request_info.payload_bytes is not None:
+            payload: dict[str, Any] | bytes = request_info.payload_bytes
+        else:
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn is not None and current_turn.raw_payload is not None:
+                payload = current_turn.raw_payload
+            else:
+                payload = self.endpoint.format_payload(request_info)
+
+        payload = self._prepare_payload_for_transport(payload, request_info)
+
         return await self.transport.send_request(
             request_info,
             payload=payload,
@@ -149,7 +190,6 @@ class InferenceClient(AIPerfLifecycleMixin):
                 f"Error calling inference server API at {self.model_endpoint.endpoint.base_url}: {e!r}"
             )
             return RequestRecord(
-                request_info=request_info,
                 timestamp_ns=pre_send_timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
@@ -171,12 +211,14 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        if not request_info.turns:
+        if not request_info.turns and not request_info.payload_bytes:
             raise ValueError(
-                f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
+                f"RequestInfo has no turns and no payload_bytes "
+                f"(credit_num={request_info.credit_num}, "
                 f"conversation_id={request_info.conversation_id})"
             )
-        if self.is_trace_enabled:
+
+        if self.is_trace_enabled and request_info.turns:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         # Redact sensitive headers on the request_info now that the transport has
@@ -191,18 +233,36 @@ class InferenceClient(AIPerfLifecycleMixin):
     def _enrich_request_record(
         record: RequestRecord, request_info: RequestInfo
     ) -> RequestRecord:
-        """Attach a slim ``RecordContext`` (downcast from ``RequestInfo``) to
-        the record before the ZMQ hop to the record processor.
+        """Attach a ``MetricInputs`` to the record before the ZMQ hop to the
+        record processor.
 
-        The full ``RequestInfo`` carries transport-only extras
-        (``model_endpoint``, ``turns``, ``endpoint_headers``,
-        ``endpoint_params``, ``drop_perf_ns``, ``cancel_after_ns``, ...) that
-        the record-processor pipeline never reads; downcasting saves
-        ~500-900 bytes per record at high throughput.
+        The full ``RequestInfo`` carries transport-only extras (model_endpoint,
+        endpoint_headers, endpoint_params, drop_perf_ns, cancel_after_ns, the
+        worker-side ``turns`` list, ...) that the record-processor pipeline
+        never reads; ``MetricInputs`` is the flat wire schema carrying only
+        routing identity, DAG fields, and optional inline payload bytes.
+        When ``from_mmap`` is True the records pipeline resolves bytes via
+        its own mmap client, so wire bytes are dropped.
         """
-        ctx_field_names = set(RecordContext.model_fields.keys())
-        ri_dump = request_info.model_dump(include=ctx_field_names)
-        record.request_info = RecordContext.model_validate(ri_dump)
+        record.metric_inputs = MetricInputs(
+            credit_num=request_info.credit_num,
+            credit_phase=request_info.credit_phase,
+            conversation_id=request_info.conversation_id,
+            turn_index=request_info.turn_index,
+            x_request_id=request_info.x_request_id,
+            x_correlation_id=request_info.x_correlation_id,
+            credit_issued_ns=request_info.credit_issued_ns,
+            agent_depth=request_info.agent_depth,
+            parent_correlation_id=request_info.parent_correlation_id,
+            # ``MetricInputs.payload_bytes`` is plain ``bytes | None``; under
+            # the msgpack records-pipeline wire it rides as a length-prefixed
+            # bin span (no base64 inflation, binary-transparent). When the
+            # payload was fetched from mmap, the records process resolves it
+            # via its own client -- wire bytes are dropped.
+            payload_bytes=None
+            if request_info.from_mmap
+            else request_info.payload_bytes,
+        )
         return record
 
     def _finalize_request_record(
@@ -213,13 +273,11 @@ class InferenceClient(AIPerfLifecycleMixin):
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info."""
         record.model_name = (
-            request_info.turns[-1].model or self.model_endpoint.primary_model_name
+            (request_info.turns[-1].model or self.model_endpoint.primary_model_name)
+            if request_info.turns
+            else self.model_endpoint.primary_model_name
         )
         self._enrich_request_record(record, request_info)
-
-        # Copy turns with stripped multimodal data to avoid mutating original session
-        # and reduce memory usage (placeholders instead of large image/audio/video data)
-        record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

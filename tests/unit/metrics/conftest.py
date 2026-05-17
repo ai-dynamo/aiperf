@@ -69,7 +69,6 @@ def create_record(
     responses = responses or [start_ns + 50]  # Single response 50ns later
 
     request = RequestRecord(
-        request_info=_create_test_request_info(),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

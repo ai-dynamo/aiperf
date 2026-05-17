@@ -82,7 +82,10 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
                 line = raw_line.strip()
                 if not line:
                     continue
-                payload = orjson.loads(line)
+                try:
+                    payload = orjson.loads(line)
+                except orjson.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON in {path}:{lineno}: {e}") from e
                 _validate_payload_shape(path, lineno, payload)
                 session_id = self.session_id_generator.next()
                 data[session_id].append(RawPayload(payload=payload))
@@ -102,7 +105,12 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
                     line = raw_line.strip()
                     if not line:
                         continue
-                    payload = orjson.loads(line)
+                    try:
+                        payload = orjson.loads(line)
+                    except orjson.JSONDecodeError as e:
+                        raise ValueError(
+                            f"Invalid JSON in {jsonl_file}:{lineno}: {e}"
+                        ) from e
                     _validate_payload_shape(jsonl_file, lineno, payload)
                     payloads.append(RawPayload(payload=payload))
 

@@ -108,6 +108,54 @@ class TestSyntheticDatasetComposer:
                 assert len(turn.images) == 0  # no images
                 assert len(turn.audios) == 0  # no audio
 
+    def test_create_dataset_preformats_payload_for_single_turn(
+        self, synthetic_config, mock_tokenizer
+    ):
+        """Single-turn synthetic conversations get raw_payload stamped by the
+        composer, enabling the PAYLOAD_BYTES mmap fast path downstream."""
+        from aiperf.common.enums import MemoryMapFormat
+        from aiperf.dataset.dataset_manager import DatasetManager
+
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
+        conversations = composer.create_dataset()
+
+        # Every turn carries raw_payload now (synthetic single-turn is eligible).
+        for conversation in conversations:
+            assert len(conversation.turns) == 1
+            assert conversation.turns[0].raw_payload is not None
+
+        # And _select_mmap_format picks PAYLOAD_BYTES on the resulting list.
+        assert (
+            DatasetManager._select_mmap_format(conversations)
+            == MemoryMapFormat.PAYLOAD_BYTES
+        )
+
+    def test_create_dataset_skips_preformat_for_multiturn_default_mode(
+        self, multiturn_config, mock_tokenizer
+    ):
+        """Multi-turn synthetic under default DELTAS_WITHOUT_RESPONSES is
+        ineligible: worker captures live responses, so pre-encoding would
+        freeze the wrong wire. raw_payload stays None on every turn."""
+        from aiperf.common.enums import MemoryMapFormat
+        from aiperf.dataset.dataset_manager import DatasetManager
+
+        composer = SyntheticDatasetComposer(
+            run=make_run(multiturn_config), tokenizer=mock_tokenizer
+        )
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            assert len(conversation.turns) >= 2
+            for turn in conversation.turns:
+                assert turn.raw_payload is None
+
+        assert (
+            DatasetManager._select_mmap_format(conversations)
+            == MemoryMapFormat.CONVERSATION
+        )
+
     def test_create_dataset_with_images(self, image_config, mock_tokenizer):
         """Test dataset creation with image generation enabled."""
         composer = SyntheticDatasetComposer(

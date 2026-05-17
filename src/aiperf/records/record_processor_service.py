@@ -5,10 +5,16 @@ import traceback
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    ExportLevel,
+    MemoryMapFormat,
+    MessageType,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_message, on_pull_message
+from aiperf.common.hooks import on_command, on_message, on_pull_message, on_stop
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
@@ -17,6 +23,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    MemoryMapClientMetadata,
     MetricRecordMetadata,
     ParsedResponseRecord,
     RequestRecord,
@@ -27,6 +34,7 @@ from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
+from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -68,6 +76,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
 
         self.records_processors: list[RecordProcessorProtocol] = []
+        self._dataset_client: DatasetClientStoreProtocol | None = None
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
             try:
                 ProcessorClass = plugins.get_class(
@@ -94,9 +103,38 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     async def _on_dataset_configured(
         self, message: DatasetConfiguredNotification
     ) -> None:
+        turn_metadata_by_conversation = {
+            conv.conversation_id: tuple(conv.turns)
+            for conv in message.metadata.conversations
+        }
+
+        client_metadata = message.client_metadata
+        if (
+            isinstance(client_metadata, MemoryMapClientMetadata)
+            and client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+            and self._dataset_client is None
+        ):
+            ClientStoreClass = plugins.get_class(
+                PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
+            )
+            self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
+            await self._dataset_client.initialize()
+
+        self.inference_result_parser.on_dataset_configured(
+            turn_metadata_by_conversation=turn_metadata_by_conversation,
+            dataset_client=self._dataset_client,
+        )
+
         for processor in self.records_processors:
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
+
+    @on_stop
+    async def _stop_dataset_client(self) -> None:
+        if self._dataset_client is not None:
+            dataset_client = self._dataset_client
+            self._dataset_client = None
+            await dataset_client.stop()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -147,23 +185,24 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             start_time_ns, start_perf_ns, record.cancellation_perf_ns
         )
 
+        mi = record.metric_inputs
         return MetricRecordMetadata(
-            credit_issued_ns=record.request_info.credit_issued_ns,
+            credit_issued_ns=mi.credit_issued_ns if mi else None,
             request_start_ns=start_time_ns,
             request_ack_ns=request_ack_ns,
             request_end_ns=request_end_ns,
-            conversation_id=record.request_info.conversation_id,
-            turn_index=record.request_info.turn_index,
+            conversation_id=mi.conversation_id if mi else None,
+            turn_index=mi.turn_index if mi else None,
             record_processor_id=self.service_id,
-            benchmark_phase=record.request_info.credit_phase,
-            x_request_id=record.request_info.x_request_id,
-            x_correlation_id=record.request_info.x_correlation_id,
-            session_num=record.request_info.credit_num,
+            benchmark_phase=mi.credit_phase if mi else None,
+            x_request_id=mi.x_request_id if mi else None,
+            x_correlation_id=mi.x_correlation_id if mi else None,
+            session_num=mi.credit_num if mi else None,
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
-            agent_depth=record.request_info.agent_depth,
-            parent_correlation_id=record.request_info.parent_correlation_id,
+            agent_depth=mi.agent_depth if mi else 0,
+            parent_correlation_id=mi.parent_correlation_id if mi else None,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
@@ -178,11 +217,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         parsed_record = await self.inference_result_parser.parse_request_record(record)
 
-        # Free raw SSE messages now that parsing extracted what it needs.
-        # Skip when RAW export is active -- the raw writer needs them.
-        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
-            record.responses = None
-
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
@@ -190,24 +224,37 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         trace_data, error = self._free_record_data(record, parsed_record)
 
-        results = []
-        for result in raw_results:
-            if isinstance(result, BaseException):
-                self.error(
-                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
-                )
-            else:
-                results.append(result)
+        metrics = self._merge_metric_results(raw_results)
 
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
                 metadata=metadata,
-                results=results,
+                metrics=metrics,
                 trace_data=trace_data,
                 error=error,
             )
         )
+
+    def _merge_metric_results(
+        self, raw_results: list[MetricRecordDict | BaseException]
+    ) -> MetricRecordDict:
+        """Merge record processor metric dicts and log processor exceptions."""
+        metrics: MetricRecordDict = {}
+        for result in raw_results:
+            if isinstance(result, BaseException):
+                self.error(
+                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
+                )
+                continue
+            for tag, value in result.items():
+                if tag in metrics:
+                    self.warning(
+                        f"Duplicate metric tag '{tag}' found in results. "
+                        f"Overwriting previous value {metrics[tag]} with {value}."
+                    )
+                metrics[tag] = value
+        return metrics
 
     def _free_record_data(
         self, record: RequestRecord, parsed_record: ParsedResponseRecord
@@ -215,25 +262,28 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Free large data structures from the record after all processors have run.
 
         All metrics and post-processors consume these fields during _process_record().
-        The only data sent downstream in MetricRecordsMessage is metadata, results,
+        The only data sent downstream in MetricRecordsMessage is metadata, metrics,
         trace_data, and error -- so everything else can be released here.
 
-        We assign None to fields typed as non-optional lists (turns, responses) to let
-        the GC reclaim the underlying objects. Using .clear() would keep the empty list
-        alive, and reassigning [] would allocate a new object for no reason.
+        Drops the inline ``metric_inputs.payload_bytes`` blob (the largest per-record
+        allocation on the CONVERSATION-format path) for non-RAW exports; RAW export
+        needs nothing more from the record at this point either, but the raw writer
+        has already serialized via ``parsed_record.payload_dict`` so freeing here is
+        safe regardless.
         """
         trace_data = record.trace_data
         error = record.error
         if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             record.responses = None
-        record.turns = None
         record.trace_data = None
         record.request_headers = None
-        if record.request_info:
-            record.request_info.turns = None
-            record.request_info.system_message = None
-            record.request_info.user_context_message = None
+        if record.metric_inputs is not None:
+            # ``MetricInputs.payload_bytes`` is the largest per-record
+            # allocation; clear it once metrics have been computed and any
+            # downstream consumer (raw export) has materialized it.
+            record.metric_inputs.payload_bytes = None
         parsed_record.responses = None
+        parsed_record.payload_dict = None
         return trace_data, error
 
     async def _process_record(

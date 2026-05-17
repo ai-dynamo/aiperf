@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.models import ParsedResponse
+from aiperf.common.models import ExtractedPayload, ParsedResponse
 from aiperf.common.models.record_models import (
     ImageRetrievalResponseData,
     InferenceServerResponse,
@@ -76,3 +76,18 @@ class ImageRetrievalEndpoint(BaseEndpoint):
         return ParsedResponse(
             perf_ns=response.perf_ns, data=ImageRetrievalResponseData(data=data)
         )
+
+    def extract_payload_inputs(self, payload: dict[str, Any]) -> ExtractedPayload:
+        """Image retrieval payload is a flat ``input: [{"type": "image_url", ...}]``;
+        each entry is itself an image part (not nested in a chat-shape
+        ``content`` list), so override the default walk to count them
+        directly. Without this override, ``num_images`` reads zero and the
+        downstream image metrics (throughput, latency) silently disappear.
+        """
+        result = ExtractedPayload()
+        items = payload.get("input")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("type") == "image_url":
+                    result.image_count += 1
+        return result

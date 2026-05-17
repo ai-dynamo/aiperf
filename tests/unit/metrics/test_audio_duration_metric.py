@@ -5,7 +5,7 @@ import pytest
 
 from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import Turn
+from aiperf.common.models import TurnMetadata
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.audio_duration_metric import AudioDurationMetric
 from tests.unit.metrics.conftest import create_record
@@ -14,29 +14,29 @@ from tests.unit.metrics.conftest import create_record
 class TestAudioDurationMetric:
     def test_returns_audio_duration(self):
         record = create_record()
-        record.request.turns = [Turn(audio_duration_seconds=12.5)]
+        record.turn_metadata = TurnMetadata(audio_duration_seconds=12.5)
         metric = AudioDurationMetric()
 
         result = metric.parse_record(record, MetricRecordDict())
         assert result == pytest.approx(12.5, rel=1e-6)
 
-    def test_no_turns_raises(self):
+    def test_no_turn_metadata_raises(self):
         record = create_record()
-        record.request.turns = []
+        # Default: turn_metadata is None.
         metric = AudioDurationMetric()
-        with pytest.raises(NoMetricValue, match="No turns"):
+        with pytest.raises(NoMetricValue, match="ASR requests only"):
             metric.parse_record(record, MetricRecordDict())
 
     def test_no_audio_duration_raises(self):
         record = create_record()
-        record.request.turns = [Turn(audio_duration_seconds=None)]
+        record.turn_metadata = TurnMetadata(audio_duration_seconds=None)
         metric = AudioDurationMetric()
         with pytest.raises(NoMetricValue, match="ASR requests only"):
             metric.parse_record(record, MetricRecordDict())
 
     def test_zero_audio_duration_raises(self):
         record = create_record()
-        record.request.turns = [Turn(audio_duration_seconds=0.0)]
+        record.turn_metadata = TurnMetadata(audio_duration_seconds=0.0)
         metric = AudioDurationMetric()
         with pytest.raises(NoMetricValue, match="ASR requests only"):
             metric.parse_record(record, MetricRecordDict())

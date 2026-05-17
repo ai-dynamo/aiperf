@@ -4,20 +4,25 @@
 
 import asyncio
 from pathlib import Path
-from typing import Generic
+from typing import Any, Generic, TypeVar
 
 import aiofiles
+import msgspec
 import orjson
 
 from aiperf.common.environment import Environment
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
-from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
 
+# Pydantic ``BaseModel`` and ``msgspec.Struct`` both flow through this mixin.
+# The generic is unconstrained so concrete subclasses can pin the precise
+# record type for their own type-checker readers.
+JsonlRecordT = TypeVar("JsonlRecordT", bound=Any)
 
-class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
+
+class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[JsonlRecordT]):
     """Mixin for buffered JSONL writing with automatic flushing.
 
     This mixin provides functionality for efficiently writing Pydantic models to JSONL
@@ -25,7 +30,9 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     through the AIPerfLifecycleMixin hooks.
 
     Type Parameters:
-        BaseModelT: A Pydantic BaseModel type that will be serialized to JSON
+        JsonlRecordT: The record type written to JSONL — a Pydantic
+            ``BaseModel`` or ``msgspec.Struct``. The mixin dispatches on the
+            concrete type at write time.
 
     Attributes:
         output_file: Path to the JSONL output file
@@ -71,12 +78,16 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             # Binary mode for optimal performance with orjson
             self._file_handle = await aiofiles.open(self.output_file, mode="wb")
 
-    async def buffered_write(self, record: BaseModelT) -> None:
-        """Write a Pydantic model to the buffer with automatic flushing.
+    async def buffered_write(self, record: JsonlRecordT) -> None:
+        """Write a record to the buffer with automatic flushing.
 
-        This method serializes the provided Pydantic model to JSON bytes using orjson
-        and adds it to the internal buffer. If the buffer reaches the configured batch
-        size, it automatically flushes the buffer to disk.
+        Serializes the record to JSON bytes and adds it to the internal
+        buffer. If the buffer reaches the configured batch size, it
+        automatically flushes the buffer to disk. Dispatches by record
+        family: Pydantic ``BaseModel`` uses
+        ``model_dump(mode="json", exclude_none=True)`` then ``orjson.dumps``;
+        ``msgspec.Struct`` encodes via ``msgspec.json.encode`` so
+        ``omit_defaults=True`` applies on the Struct.
 
         Uses binary mode with orjson for optimal performance:
         - 6x faster for large records (>20KB)
@@ -84,16 +95,23 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         - Efficient for all record sizes
 
         Args:
-            record: A Pydantic BaseModel instance to write
+            record: A Pydantic ``BaseModel`` or ``msgspec.Struct`` instance.
         """
         try:
-            # Serialize to bytes using orjson (faster for large records)
-            # Use exclude_none=True to omit None fields (smaller output)
-            # scrub_non_finite enforces "null on disk = absent" across the
-            # JSONL so per-record NaN/inf doesn't masquerade as missing.
-            json_bytes = orjson.dumps(
-                scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
-            )
+            if isinstance(record, msgspec.Struct):
+                # msgspec.json.encode honors the Struct's ``omit_defaults``
+                # config, so None-defaulted fields drop from the wire shape.
+                # scrub_non_finite already enforces "null on disk = absent",
+                # but a Struct-level NaN/inf would need to be scrubbed after a
+                # decode round-trip; for the current consumers (RawRecordInfo
+                # numeric fields are integer-typed) this is a non-issue.
+                json_bytes = msgspec.json.encode(record)
+            else:
+                # ``exclude_none=True`` drops None fields for parity with the
+                # msgspec.Struct ``omit_defaults`` shape.
+                json_bytes = orjson.dumps(
+                    scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+                )
 
             buffer_to_flush = None
             self._buffer.append(json_bytes)

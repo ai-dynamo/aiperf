@@ -37,6 +37,13 @@ class MockServiceWithHealthServer(HealthServerMixin):
         return self._state
 
 
+def health_server_port(service: MockServiceWithHealthServer) -> int:
+    assert service._health_server is not None
+    sockets = service._health_server.sockets
+    assert sockets is not None
+    return sockets[0].getsockname()[1]
+
+
 async def make_http_request(port: int, path: str) -> tuple[int, str]:
     """Make a simple HTTP GET request.
 
@@ -101,7 +108,7 @@ class TestHealthServerMixin:
         """Test starting and stopping the health server."""
         service = MockServiceWithHealthServer()
 
-        with mock_env_settings(enabled=True, port=18080):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             assert service._health_server is not None
@@ -126,11 +133,13 @@ class TestHealthServerMixin:
         """Test /healthz returns 200 when service is healthy."""
         service = MockServiceWithHealthServer(LifecycleState.RUNNING)
 
-        with mock_env_settings(enabled=True, port=18081):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18081, "/healthz")
+                status, body = await make_http_request(
+                    health_server_port(service), "/healthz"
+                )
                 assert status == 200
                 assert body == "ok"
             finally:
@@ -141,11 +150,13 @@ class TestHealthServerMixin:
         """Test /healthz returns 503 when service has failed."""
         service = MockServiceWithHealthServer(LifecycleState.FAILED)
 
-        with mock_env_settings(enabled=True, port=18082):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18082, "/healthz")
+                status, body = await make_http_request(
+                    health_server_port(service), "/healthz"
+                )
                 assert status == 503
                 assert body == "unhealthy"
             finally:
@@ -156,11 +167,13 @@ class TestHealthServerMixin:
         """Test /readyz returns 200 when service is running."""
         service = MockServiceWithHealthServer(LifecycleState.RUNNING)
 
-        with mock_env_settings(enabled=True, port=18083):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18083, "/readyz")
+                status, body = await make_http_request(
+                    health_server_port(service), "/readyz"
+                )
                 assert status == 200
                 assert body == "ok"
             finally:
@@ -171,11 +184,13 @@ class TestHealthServerMixin:
         """Test /readyz returns 503 when service is not ready."""
         service = MockServiceWithHealthServer(LifecycleState.INITIALIZING)
 
-        with mock_env_settings(enabled=True, port=18084):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18084, "/readyz")
+                status, body = await make_http_request(
+                    health_server_port(service), "/readyz"
+                )
                 assert status == 503
                 assert body == "not ready"
             finally:
@@ -186,11 +201,13 @@ class TestHealthServerMixin:
         """Test unknown paths return 404."""
         service = MockServiceWithHealthServer()
 
-        with mock_env_settings(enabled=True, port=18085):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18085, "/unknown")
+                status, body = await make_http_request(
+                    health_server_port(service), "/unknown"
+                )
                 assert status == 404
                 assert body == "Not Found"
             finally:
@@ -201,12 +218,13 @@ class TestHealthServerMixin:
         """Test health server starts on custom host and port."""
         service = MockServiceWithHealthServer()
 
-        with mock_env_settings(enabled=True, host="127.0.0.1", port=18086):
+        with mock_env_settings(enabled=True, host="127.0.0.1", port=0):
             await service._health_server_start()
 
             assert service._health_server is not None
-            # Verify we can connect
-            status, body = await make_http_request(18086, "/healthz")
+            status, body = await make_http_request(
+                health_server_port(service), "/healthz"
+            )
             assert status == 200
             assert body == "ok"
 
@@ -217,19 +235,20 @@ class TestHealthServerMixin:
         """Test that changing state affects health responses."""
         service = MockServiceWithHealthServer(LifecycleState.INITIALIZING)
 
-        with mock_env_settings(enabled=True, port=18087):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
+            port = health_server_port(service)
 
             try:
                 # Initially not ready
-                status, _ = await make_http_request(18087, "/readyz")
+                status, _ = await make_http_request(port, "/readyz")
                 assert status == 503
 
                 # Change to RUNNING
                 service._state = LifecycleState.RUNNING
 
                 # Now should be ready
-                status, body = await make_http_request(18087, "/readyz")
+                status, body = await make_http_request(port, "/readyz")
                 assert status == 200
                 assert body == "ok"
             finally:

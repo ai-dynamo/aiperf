@@ -7,21 +7,43 @@ import pytest
 
 from aiperf.common.models import (
     ErrorDetails,
+    ExtractedPayload,
     ParsedResponse,
     RequestRecord,
     TextResponseData,
     Usage,
 )
-from tests.unit.records.conftest import create_invalid_record, create_test_request_info
+from tests.unit.records.conftest import (
+    create_invalid_record,
+    create_test_metric_inputs,
+)
+
+_SAMPLE_PAYLOAD_BYTES = b'{"messages":[{"role":"user","content":"sample"}]}'
+
+
+def _wire_sample_extraction(parser, *, texts: list[str] | None = None) -> None:
+    """Configure parser endpoint to extract a known list of texts from any payload.
+
+    Default mirrors sample_turn's 8 words so existing assertions hold.
+    """
+    if texts is None:
+        texts = [
+            "Hello world",
+            " Test case",
+            "Another input",
+            " Final message",
+        ]
+    parser.endpoint.extract_payload_inputs = MagicMock(
+        return_value=ExtractedPayload(texts=texts)
+    )
 
 
 @pytest.fixture
 def request_record(sample_turn):
     """Basic request record for testing with sample turn included."""
     return RequestRecord(
-        request_info=create_test_request_info(turns=[sample_turn]),
+        metric_inputs=create_test_metric_inputs(payload_bytes=_SAMPLE_PAYLOAD_BYTES),
         model_name="test-model",
-        turns=[sample_turn],
     )
 
 
@@ -100,7 +122,12 @@ class TestInvalidRecords:
         self, setup_inference_parser, sample_turn, invalid_config, expected_notes
     ):
         """Invalid records are converted to error records with appropriate notes."""
-        record = create_invalid_record(**invalid_config, turns=[sample_turn])
+        record = create_invalid_record(
+            **invalid_config,
+            turns=[sample_turn],
+            payload_bytes=_SAMPLE_PAYLOAD_BYTES,
+        )
+        _wire_sample_extraction(setup_inference_parser)
 
         result = await setup_inference_parser.parse_request_record(record)
 
@@ -122,11 +149,16 @@ class TestInvalidRecords:
         self, inference_result_parser, mock_tokenizer, sample_turn
     ):
         """Records with responses but no content are converted to error records."""
-        record = create_invalid_record(no_content_responses=True, turns=[sample_turn])
+        record = create_invalid_record(
+            no_content_responses=True,
+            turns=[sample_turn],
+            payload_bytes=_SAMPLE_PAYLOAD_BYTES,
+        )
 
         inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
         inference_result_parser.get_turn = AsyncMock(return_value=sample_turn)
         inference_result_parser.endpoint = MagicMock()
+        _wire_sample_extraction(inference_result_parser)
         setup_parser_responses(
             inference_result_parser,
             [
@@ -148,8 +180,12 @@ class TestInvalidRecords:
     ):
         """Records with existing errors are not overwritten by create_error_from_invalid."""
         record = create_invalid_record(
-            has_error=True, no_responses=True, turns=[sample_turn]
+            has_error=True,
+            no_responses=True,
+            turns=[sample_turn],
+            payload_bytes=_SAMPLE_PAYLOAD_BYTES,
         )
+        _wire_sample_extraction(setup_inference_parser)
 
         result = await setup_inference_parser.parse_request_record(record)
 
@@ -168,28 +204,35 @@ class TestInvalidRecords:
         """Input token count is computed for all error scenarios."""
         if record_type == "error":
             record = RequestRecord(
-                request_info=create_test_request_info(turns=[sample_turn]),
+                metric_inputs=create_test_metric_inputs(
+                    payload_bytes=_SAMPLE_PAYLOAD_BYTES
+                ),
                 model_name="test-model",
-                turns=[sample_turn],
                 error=ErrorDetails(
                     code=500, message="Server error", type="ServerError"
                 ),
             )
         elif record_type == "invalid":
-            record = create_invalid_record(no_responses=True, turns=[sample_turn])
+            record = create_invalid_record(
+                no_responses=True,
+                turns=[sample_turn],
+                payload_bytes=_SAMPLE_PAYLOAD_BYTES,
+            )
         else:
             record = RequestRecord(
-                request_info=create_test_request_info(turns=[sample_turn]),
+                metric_inputs=create_test_metric_inputs(
+                    payload_bytes=_SAMPLE_PAYLOAD_BYTES
+                ),
                 model_name="test-model",
-                turns=[sample_turn],
             )
 
         inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
         inference_result_parser.get_turn = AsyncMock(return_value=sample_turn)
-        inference_result_parser.extractor = MagicMock()
+        inference_result_parser.endpoint = MagicMock()
+        _wire_sample_extraction(inference_result_parser)
 
         if record_type == "processing_exception":
-            inference_result_parser.extractor.extract_response_data = AsyncMock(
+            inference_result_parser.endpoint.extract_response_data = MagicMock(
                 side_effect=ValueError("Processing failed")
             )
 
@@ -243,17 +286,17 @@ class TestAsyncTokenizerEncode:
         assert result == 1
 
     async def test_compute_token_count_called_via_compute_input(
-        self, setup_inference_parser, spy_tokenizer, sample_turn
+        self, setup_inference_parser, spy_tokenizer
     ):
-        """compute_input_token_count delegates to async _compute_token_count."""
+        """_compute_input_token_count delegates to async _compute_token_count."""
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
-        record = RequestRecord(
-            request_info=create_test_request_info(turns=[sample_turn]),
-            model_name="test-model",
-            turns=[sample_turn],
-        )
 
-        result = await setup_inference_parser.compute_input_token_count(record)
+        result = await setup_inference_parser._compute_input_token_count(
+            RequestRecord(model_name="test-model"),
+            ExtractedPayload(
+                texts=["Hello world", "Test case", "Another input", "Final message"]
+            ),
+        )
 
         assert result == 8
         assert spy_tokenizer.encode.call_count == 1
@@ -264,9 +307,8 @@ class TestAsyncTokenizerEncode:
         """_compute_client_side_token_counts calls async _compute_token_count for output/reasoning."""
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         record = RequestRecord(
-            request_info=create_test_request_info(turns=[]),
+            metric_inputs=create_test_metric_inputs(),
             model_name="test-model",
-            turns=[],
         )
 
         setup_parser_responses(
@@ -275,7 +317,7 @@ class TestAsyncTokenizerEncode:
         )
 
         result = await setup_inference_parser._compute_client_side_token_counts(
-            record, [make_parsed_response(text="output tokens here")]
+            record, [make_parsed_response(text="output tokens here")], None
         )
 
         assert result.output == 3
@@ -369,7 +411,12 @@ class TestServerTokenCount:
             ],
         )
 
-        result = await setup_inference_parser.process_valid_record(request_record)
+        result = await setup_inference_parser.process_valid_record(
+            request_record,
+            payload_inputs=ExtractedPayload(
+                texts=["Hello world", " Test case", "Another input", " Final message"]
+            ),
+        )
 
         assert result.token_counts.input == 8
         assert result.token_counts.output == 3
@@ -421,72 +468,238 @@ class TestServerTokenCount:
 
 
 @pytest.mark.asyncio
-class TestContextPromptISL:
-    """Tests for ISL computation including context prompts."""
+class TestPayloadBytesISL:
+    """Tokenizer reads from ``metric_inputs.payload_bytes`` via the parser's
+    single-extraction chokepoint.
 
-    @pytest.mark.parametrize(
-        "system_message,user_context_message,expected_tokens",
-        [
-            ("You are a helpful assistant", None, 13),
-            (None, "This is user context for session", 14),
-            ("You are a helpful assistant", "This is user context for session", 19),
-            (None, None, 8),
-            ("", "", 8),
-        ],
-        ids=[
-            "system_only",
-            "user_context_only",
-            "both_context_messages",
-            "no_context",
-            "empty_context",
-        ],
-    )  # fmt: skip
-    async def test_isl_with_context_messages(
-        self,
-        setup_inference_parser,
-        sample_turn,
-        spy_tokenizer,
-        sample_request_info,
-        system_message,
-        user_context_message,
-        expected_tokens,
+    payload_bytes is the canonical wire payload populated by
+    ``inference_client`` for every dispatched request (unless the records-side
+    mmap client will resolve it). The tokenizer reads ``payload_inputs.texts``
+    that ``_extract_payload_inputs`` produced; it does not re-extract.
+    """
+
+    async def test_compute_input_uses_payload_inputs_texts(
+        self, setup_inference_parser, spy_tokenizer
     ):
-        """ISL computation includes context prompts correctly."""
-        if system_message is not None:
-            sample_request_info.system_message = system_message
-        if user_context_message is not None:
-            sample_request_info.user_context_message = user_context_message
-        sample_request_info.turns = [sample_turn]
-
-        record = RequestRecord(
-            model_name="test-model",
-            request_info=sample_request_info,
-            turns=[sample_turn],
-        )
+        """Parser-extracted ExtractedPayload feeds the tokenizer."""
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
 
-        result = await setup_inference_parser.compute_input_token_count(record)
+        record = RequestRecord(
+            metric_inputs=create_test_metric_inputs(payload_bytes=b'{"messages":[]}'),
+            model_name="test-model",
+        )
 
-        assert result == expected_tokens
+        result = await setup_inference_parser._compute_input_token_count(
+            record, ExtractedPayload(texts=["hello world from payload"])
+        )
+
+        assert result == 4
         assert spy_tokenizer.encode.call_count == 1
 
-    async def test_isl_context_prompts_for_error_records(
-        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    async def test_compute_input_payload_inputs_none_returns_none(
+        self, setup_inference_parser, spy_tokenizer
     ):
-        """ISL computation includes context prompts even for error records."""
-        sample_request_info.system_message = "You are a helpful assistant"
-        sample_request_info.user_context_message = "This is user context for session"
-        sample_request_info.turns = [sample_turn]
+        """No payload_inputs (extraction skipped or failed) -> None."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        record = RequestRecord(model_name="test-model")
+        result = await setup_inference_parser._compute_input_token_count(record, None)
+
+        assert result is None
+        spy_tokenizer.encode.assert_not_called()
+
+    async def test_compute_input_empty_texts_returns_none(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Empty extracted texts -> None (no tokenization)."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        record = RequestRecord(model_name="test-model")
+        result = await setup_inference_parser._compute_input_token_count(
+            record, ExtractedPayload(texts=[])
+        )
+
+        assert result is None
+        spy_tokenizer.encode.assert_not_called()
+
+    async def test_compute_input_uses_pretokenised_count_without_texts(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Pre-tokenised input contributes to ISL without tokenizer calls."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        record = RequestRecord(model_name="test-model")
+        result = await setup_inference_parser._compute_input_token_count(
+            record, ExtractedPayload(pretokenised_token_count=4)
+        )
+
+        assert result == 4
+        spy_tokenizer.encode.assert_not_called()
+
+    async def test_compute_input_adds_pretokenised_count_to_text_count(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Mixed text and pre-tokenised inputs both contribute to ISL."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        record = RequestRecord(model_name="test-model")
+        result = await setup_inference_parser._compute_input_token_count(
+            record, ExtractedPayload(texts=["hello world"], pretokenised_token_count=3)
+        )
+
+        assert result == 5
+        spy_tokenizer.encode.assert_called_once_with("hello world")
+
+
+@pytest.mark.asyncio
+class TestParseRecordSingleExtraction:
+    """The parser is THE single chokepoint for payload IO + JSON decode +
+    ``extract_payload_inputs``. Every downstream metric reads stashed fields
+    off ``ParsedResponseRecord`` instead of re-resolving.
+    """
+
+    async def test_parse_record_extracts_payload_inputs_once(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """``extract_payload_inputs`` is called exactly once per record even
+        though downstream metrics + tokenizer + raw_export all need it."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        extracted = ExtractedPayload(texts=["hello world"], image_count=2)
+        setup_inference_parser.endpoint.extract_payload_inputs = MagicMock(
+            return_value=extracted
+        )
+        setup_parser_responses(
+            setup_inference_parser, [make_parsed_response(text="reply")]
+        )
+
+        record = RequestRecord(
+            metric_inputs=create_test_metric_inputs(
+                payload_bytes=b'{"messages":[{"role":"user","content":"hello world"}]}'
+            ),
+            model_name="test-model",
+        )
+
+        parsed = await setup_inference_parser.parse_request_record(record)
+
+        # Exactly one extraction call regardless of how many consumers want it.
+        setup_inference_parser.endpoint.extract_payload_inputs.assert_called_once()
+        # Stashed results visible to downstream consumers.
+        assert parsed.payload_inputs is extracted
+        assert parsed.payload_dict == {
+            "messages": [{"role": "user", "content": "hello world"}]
+        }
+
+    async def test_parse_record_looks_up_turn_metadata(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """The parser populates ``turn_metadata`` from its conversation-indexed turns."""
+        from aiperf.common.models import TurnMetadata
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_inference_parser.endpoint.extract_payload_inputs = MagicMock(
+            return_value=ExtractedPayload(texts=[])
+        )
+        setup_parser_responses(
+            setup_inference_parser, [make_parsed_response(text="reply")]
+        )
+
+        tmeta = TurnMetadata(max_tokens=42, audio_duration_seconds=3.5)
+        setup_inference_parser.on_dataset_configured(
+            turn_metadata_by_conversation={"cid": (tmeta,)},
+            dataset_client=None,
+        )
+
+        record = RequestRecord(
+            metric_inputs=create_test_metric_inputs(payload_bytes=b'{"messages":[]}'),
+            model_name="test-model",
+        )
+
+        parsed = await setup_inference_parser.parse_request_record(record)
+
+        assert parsed.turn_metadata is tmeta
+        assert parsed.turn_metadata.max_tokens == 42
+
+    async def test_parse_record_invalid_json_degrades_gracefully(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Corrupted payload bytes -> payload_inputs/payload_dict are None, no
+        crash, warning logged. The extractor must not even be called."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_inference_parser.endpoint.extract_payload_inputs = MagicMock(
+            side_effect=AssertionError("must not extract from invalid JSON")
+        )
+        setup_parser_responses(
+            setup_inference_parser, [make_parsed_response(text="reply")]
+        )
+
+        record = RequestRecord(
+            metric_inputs=create_test_metric_inputs(payload_bytes=b"{invalid json"),
+            model_name="test-model",
+        )
+
+        parsed = await setup_inference_parser.parse_request_record(record)
+
+        assert parsed.payload_inputs is None
+        assert parsed.payload_dict is None
+        setup_inference_parser.endpoint.extract_payload_inputs.assert_not_called()
+        setup_inference_parser.warning.assert_called()
+
+    async def test_parse_record_mmap_resolution_when_payload_bytes_none(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """When ``metric_inputs.payload_bytes`` is None, the parser asks its
+        dataset_client for the bytes. Used by the PAYLOAD_BYTES mmap path."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_inference_parser.endpoint.extract_payload_inputs = MagicMock(
+            return_value=ExtractedPayload(texts=["from mmap"])
+        )
+        setup_parser_responses(
+            setup_inference_parser, [make_parsed_response(text="reply")]
+        )
+
+        fake_client = MagicMock()
+        fake_client.get_payload_bytes = AsyncMock(
+            return_value=b'{"messages":[{"role":"user","content":"from mmap"}]}'
+        )
+        setup_inference_parser.on_dataset_configured(
+            turn_metadata_by_conversation={},
+            dataset_client=fake_client,
+        )
+
+        record = RequestRecord(
+            metric_inputs=create_test_metric_inputs(payload_bytes=None),
+            model_name="test-model",
+        )
+
+        parsed = await setup_inference_parser.parse_request_record(record)
+
+        fake_client.get_payload_bytes.assert_awaited_once_with("cid", 0)
+        assert parsed.payload_inputs is not None
+        assert parsed.payload_dict == {
+            "messages": [{"role": "user", "content": "from mmap"}]
+        }
+
+    async def test_parse_record_no_metric_inputs_skips_extraction(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Records with no metric_inputs (legacy / error pre-transport) get
+        ``payload_inputs=None`` cleanly, no crash."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_inference_parser.endpoint.extract_payload_inputs = MagicMock(
+            side_effect=AssertionError("must not extract without metric_inputs")
+        )
+        setup_parser_responses(
+            setup_inference_parser, [make_parsed_response(text="reply")]
+        )
 
         record = RequestRecord(
             model_name="test-model",
-            request_info=sample_request_info,
-            turns=[sample_turn],
-            error=ErrorDetails(code=500, message="Server error", type="ServerError"),
         )
-        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        # metric_inputs intentionally left None.
 
-        parsed_record = await setup_inference_parser.parse_request_record(record)
+        parsed = await setup_inference_parser.parse_request_record(record)
 
-        assert parsed_record.token_counts.input == 19
-        assert parsed_record.responses == []
+        assert parsed.payload_inputs is None
+        assert parsed.payload_dict is None
+        assert parsed.turn_metadata is None
+        setup_inference_parser.endpoint.extract_payload_inputs.assert_not_called()

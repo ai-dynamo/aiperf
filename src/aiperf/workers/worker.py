@@ -13,6 +13,7 @@ from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationBranchMode,
+    MemoryMapFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -40,6 +41,7 @@ from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
+    MetricInputs,
     ModelEndpointInfo,
     ProcessHealth,
     RequestInfo,
@@ -65,10 +67,32 @@ from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.workers.inference_client import InferenceClient
-from aiperf.workers.session_manager import UserSession, UserSessionManager
+from aiperf.workers.session_manager import (
+    ContentSession,
+    RawPayloadSession,
+    UserSession,
+    UserSessionManager,
+)
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+def _resolve_context_messages(
+    session: UserSession,
+) -> tuple[str | None, str | None]:
+    """Return (system_message, user_context_message) for the given session.
+
+    ContentSession reads them off the loaded ``Conversation``; RawPayloadSession
+    has no body on the worker side (the pre-encoded wire payload carries the
+    full request), so both are None.
+    """
+    if isinstance(session, ContentSession):
+        return (
+            session.conversation.system_message,
+            session.conversation.user_context_message,
+        )
+    return None, None
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -193,6 +217,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        # Format and metadata are captured from DatasetConfiguredNotification.
+        # In PAYLOAD_BYTES mode the worker builds a RawPayloadSession from
+        # metadata and fetches per-turn bytes from mmap at dispatch time
+        # rather than loading a full Conversation.
+        self._dataset_format: MemoryMapFormat = MemoryMapFormat.CONVERSATION
+        self._num_turns_by_conversation: dict[str, int] | None = None
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
@@ -236,10 +266,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
         await self._dataset_client.initialize()
         self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        self._num_turns_by_conversation = {
+            conv.conversation_id: len(conv.turns) for conv in msg.metadata.conversations
+        }
+        self._dataset_format = getattr(
+            msg.client_metadata, "format", MemoryMapFormat.CONVERSATION
+        )
         self._dataset_configured_event.set()
         self.debug(
             lambda: (
-                f"Dataset client initialized: type={msg.client_metadata.client_type}"
+                f"Dataset client initialized: type={msg.client_metadata.client_type}, "
+                f"format={self._dataset_format}"
             )
         )
 
@@ -460,16 +497,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         try:
             session = self.session_manager.get(x_correlation_id)
             if session is None:
-                _conversation = await self._retrieve_conversation(
-                    conversation_id=credit_context.credit.conversation_id,
+                session = await self._create_session_for_credit(
+                    x_correlation_id=x_correlation_id,
                     credit_context=credit_context,
-                )
-                # Store url_index from first turn so all turns hit the same backend
-                session = self.session_manager.create_and_store(
-                    x_correlation_id,
-                    _conversation,
-                    credit_context.credit.num_turns,
-                    url_index=credit_context.credit.url_index,
                 )
                 self._pin_parent_if_fork_child(credit, x_correlation_id)
                 self._seed_from_parent_if_fork_child(credit, x_correlation_id)
@@ -477,12 +507,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session.advance_turn(credit_context.credit.turn_index)
 
             self.task_stats.total += 1
-            request_info: RequestInfo = self._create_request_info(
+            system_message, user_context_message = _resolve_context_messages(session)
+            request_info: RequestInfo = await self._create_request_info(
                 session=session,
                 credit_context=credit_context,
                 x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
-                user_context_message=session.conversation.user_context_message,
+                system_message=system_message,
+                user_context_message=user_context_message,
             )
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
@@ -493,8 +524,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if record.error is not None:
                 credit_context.error = record.error
 
-            if session.should_store_response() and (
-                resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
+            if (
+                isinstance(session, ContentSession)
+                and session.should_store_response()
+                and (
+                    resp_turn := self.inference_client.endpoint.build_assistant_turn(
+                        record
+                    )
+                )
             ):
                 session.store_response(resp_turn)
 
@@ -572,14 +609,76 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ):
             self.session_manager.release_fork_child(credit.parent_correlation_id)
         cur_session = self.session_manager.get(x_correlation_id)
-        if cur_session is not None and cur_session.is_fork_parent:
+        if isinstance(cur_session, ContentSession) and cur_session.is_fork_parent:
             if credit.has_forks:
                 cur_session.pending_fork_eviction = True
             self.session_manager.evict_if_unpinned(x_correlation_id)
         else:
             self.session_manager.evict(x_correlation_id)
 
-    def _create_request_info(
+    async def _create_session_for_credit(
+        self,
+        *,
+        x_correlation_id: str,
+        credit_context: CreditContext,
+    ) -> UserSession:
+        """Build the per-correlation session for an incoming credit drop.
+
+        Branches on ``self._dataset_format``: CONVERSATION format loads a
+        full ``Conversation`` and builds a ``ContentSession``; PAYLOAD_BYTES
+        builds a ``RawPayloadSession`` from the ``DatasetMetadata``
+        already received via ``DatasetConfiguredNotification`` (no
+        conversation body lives on the worker side — the wire payload
+        sits in mmap and is fetched per dispatch).
+        """
+        credit = credit_context.credit
+        if self._dataset_format == MemoryMapFormat.PAYLOAD_BYTES:
+            available = self._lookup_num_turns(credit.conversation_id)
+            if credit.num_turns > available:
+                raise ValueError(
+                    f"num_turns ({credit.num_turns}) exceeds conversation "
+                    f"'{credit.conversation_id}' length ({available})"
+                )
+            return self.session_manager.create_raw_payload_session(
+                x_correlation_id=x_correlation_id,
+                conversation_id=credit.conversation_id,
+                num_turns=credit.num_turns,
+                url_index=credit.url_index,
+            )
+        conversation = await self._retrieve_conversation(
+            conversation_id=credit.conversation_id,
+            credit_context=credit_context,
+        )
+        # Store url_index from first turn so all turns hit the same backend.
+        return self.session_manager.create_content_session(
+            x_correlation_id=x_correlation_id,
+            conversation=conversation,
+            num_turns=credit.num_turns,
+            url_index=credit.url_index,
+        )
+
+    def _lookup_num_turns(self, conversation_id: str) -> int:
+        """Return the turn count for a PAYLOAD_BYTES conversation from metadata.
+
+        The records-process and worker share the same ``DatasetMetadata``;
+        the worker uses it to size session.num_turns without loading any
+        per-turn body. Raises ``RuntimeError`` if metadata hasn't arrived
+        yet (credit dispatched before ``DATASET_CONFIGURED_NOTIFICATION``)
+        and ``KeyError`` if the conversation is unknown.
+        """
+        if self._num_turns_by_conversation is None:
+            raise RuntimeError(
+                "Dataset metadata not yet received; cannot resolve "
+                f"conversation {conversation_id!r} num_turns for PAYLOAD_BYTES session"
+            )
+        try:
+            return self._num_turns_by_conversation[conversation_id]
+        except KeyError:
+            raise KeyError(
+                f"Conversation '{conversation_id}' not in dataset metadata"
+            ) from None
+
+    async def _create_request_info(
         self,
         *,
         x_request_id: str,
@@ -596,9 +695,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         - Track request timing (drop_perf_ns for credit drop latency)
         - Handle cancellation (cancel_after_ns if specified)
 
+        For PAYLOAD_BYTES sessions (``RawPayloadSession``), the worker
+        fetches the turn's pre-encoded bytes from mmap and stashes them on
+        ``request_info.payload_bytes``; inference_client then ships them
+        verbatim (no ``format_payload``, no re-encode). The ``turns`` field
+        is empty in that path — there is no structured Turn data on the
+        worker side. For CONVERSATION sessions, ``turns`` is the session's
+        accumulated turn list which feeds the endpoint's request builder.
+
         Args:
             x_request_id: Unique ID for this request (X-Request-ID header)
-            session: Session containing conversation history and current turn index
+            session: Session containing routing fields (and, for ContentSession,
+                conversation history and turn list).
             credit_context: Context with credit metadata (num, phase, timestamps)
             system_message: Optional shared system message to prepend to first turn
             user_context_message: Optional per-conversation user context message
@@ -607,16 +715,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
-        return RequestInfo(
+        if isinstance(session, ContentSession):
+            conversation_id = session.conversation.session_id
+            turns = session.turn_list
+        else:
+            conversation_id = session.conversation_id
+            turns = []
+        request_info = RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
             credit_phase=credit.phase,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
             x_correlation_id=session.x_correlation_id,
-            conversation_id=session.conversation.session_id,
+            conversation_id=conversation_id,
             turn_index=session.turn_index,
-            turns=session.turn_list,
+            turns=turns,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
@@ -627,6 +741,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
+        if isinstance(session, RawPayloadSession) and self._dataset_client is not None:
+            request_info.payload_bytes = await self._dataset_client.get_payload_bytes(
+                session.conversation_id, session.turn_index
+            )
+            request_info.from_mmap = True
+        return request_info
 
     async def _retrieve_conversation(
         self,
@@ -634,10 +754,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         conversation_id: str,
         credit_context: CreditContext,
     ) -> Conversation:
-        """Retrieve conversation from dataset client.
+        """Retrieve a full Conversation from the dataset client (CONVERSATION format only).
 
-        The dataset client is initialized via factory when DatasetConfiguredNotification
-        is received. The client type (mmap, S3, etc.) is transparent to this method.
+        PAYLOAD_BYTES sessions are built directly from ``DatasetMetadata``
+        by ``_create_session_for_credit`` and never call this method. The
+        dataset client is initialized via factory when
+        ``DatasetConfiguredNotification`` is received; the client type
+        (mmap, S3, etc.) is transparent to this method.
 
         Args:
             conversation_id: ID of conversation to retrieve (from dataset)
@@ -647,8 +770,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             Conversation object with turns and metadata
 
         Raises:
-            RuntimeError: If dataset client not initialized
-            KeyError: If conversation_id not found in dataset
+            asyncio.CancelledError: If stop_requested and no client is available.
+            KeyError: If conversation_id not found in dataset.
         """
         if self._dataset_client is not None:
             return await self._dataset_client.get_conversation(conversation_id)
@@ -680,16 +803,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             error = conversation_response.error
             await self._send_inference_result_message(
                 RequestRecord(
-                    request_info=RequestInfo(
-                        model_endpoint=self.model_endpoint,
+                    metric_inputs=MetricInputs(
                         conversation_id=conversation_id,
                         turn_index=0,
-                        turns=[],
                         credit_num=credit_context.credit.id,
                         credit_phase=credit_context.credit.phase,
                         x_request_id=str(uuid.uuid4()),
                         x_correlation_id=credit_context.credit.x_correlation_id,
-                        drop_perf_ns=credit_context.drop_perf_ns,
+                        agent_depth=credit_context.credit.agent_depth,
+                        parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
                     timestamp_ns=time.time_ns(),

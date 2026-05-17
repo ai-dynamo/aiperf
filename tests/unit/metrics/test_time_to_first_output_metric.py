@@ -33,8 +33,6 @@ def create_response_record(
         responses: List of (timestamp, reasoning, content) tuples
     """
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
@@ -244,8 +242,6 @@ def _create_record_with_responses(
 ) -> ParsedResponseRecord:
     """Helper to create test records from pre-built ParsedResponse objects."""
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

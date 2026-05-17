@@ -17,6 +17,7 @@ Flow (Kubernetes):
 """
 
 import asyncio
+import math
 import mmap
 import os
 import tempfile
@@ -27,10 +28,12 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
+import orjson
 from pydantic import Field, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.enums import MemoryMapFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     MemoryMapFileOperationError,
@@ -59,6 +62,33 @@ def _import_zstandard() -> types.ModuleType:
         ) from e
 
 
+def _find_non_finite_path(value: Any, path: str = "") -> str | None:
+    """Walk a JSON-shaped value; return the first non-finite-float path or None.
+
+    orjson silently encodes NaN/Inf/-Inf as JSON ``null`` with no option to
+    reject (no ``OPT_NON_NUMBERS_REJECT`` constant exists in orjson). The
+    project's NaN/Inf discipline forbids that silent corruption, so the
+    PAYLOAD_BYTES path explicitly screens raw_payload values before encode.
+    """
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return path or "<root>"
+        return None
+    if isinstance(value, dict):
+        for k, v in value.items():
+            sub = _find_non_finite_path(v, f"{path}.{k}" if path else str(k))
+            if sub is not None:
+                return sub
+        return None
+    if isinstance(value, list):
+        for i, v in enumerate(value):
+            sub = _find_non_finite_path(v, f"{path}[{i}]")
+            if sub is not None:
+                return sub
+        return None
+    return None
+
+
 class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     """Streams conversations to disk as they arrive (DatasetManager side).
 
@@ -82,6 +112,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self,
         benchmark_id: str | None = None,
         compress_only: bool = False,
+        format: MemoryMapFormat = MemoryMapFormat.CONVERSATION,
         **kwargs: Any,
     ) -> None:
         """Initialize memory-mapped storage.
@@ -91,11 +122,15 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             compress_only: If True, stream directly to compressed files without creating
                 uncompressed versions. Use for Kubernetes where DatasetManager doesn't need
                 local mmap access. Workers decompress after download.
+            format: Storage format. CONVERSATION (default) writes serialized Conversation
+                JSON per entry; PAYLOAD_BYTES writes pre-encoded per-turn payload bytes
+                (requires every turn to have ``raw_payload`` set).
             **kwargs: Additional configuration (unused for local mmap)
         """
         super().__init__()
         self._finalized = False
         self._compress_only = compress_only
+        self._format = format
 
         # Streaming state (one of _data_file or _stream_writer+_raw_data_file is active)
         self._data_file = None
@@ -103,6 +138,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self._stream_writer = None
         self._current_offset = 0
         self._offsets: dict[str, ConversationOffset] = {}
+        self._payload_offsets: dict[str, list[PayloadOffset]] = {}
         self._session_ids: list[str] = []  # Maintain insertion order
 
         # File paths (configurable base path for k8s mounted volumes)
@@ -142,10 +178,21 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                 f"Memory-mapped backing store initialized (streaming to {self._data_path})"
             )
 
+    async def _write_bytes(self, data: bytes) -> None:
+        """Write raw bytes to the active stream (compressed or uncompressed)."""
+        if self._compress_only:
+            self._stream_writer.write(data)
+        else:
+            await self._data_file.write(data)
+
     async def add_conversation(
         self, conversation_id: str, conversation: Conversation
     ) -> None:
         """Add a single conversation (written immediately to file).
+
+        In CONVERSATION format, one serialized Conversation JSON is written.
+        In PAYLOAD_BYTES format, one pre-encoded payload is written per turn
+        (every turn must have ``raw_payload`` set).
 
         Args:
             conversation_id: Session ID of the conversation
@@ -153,24 +200,59 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         Raises:
             RuntimeError: If already finalized
+            ValueError: If PAYLOAD_BYTES format and any turn lacks ``raw_payload``
         """
         if self._finalized:
             raise RuntimeError("Cannot add conversations after finalization")
 
-        conv_bytes = conversation.model_dump_json().encode("utf-8")
+        if conversation_id in self._offsets or conversation_id in self._payload_offsets:
+            raise ValueError(
+                f"Duplicate conversation_id '{conversation_id}' in backing "
+                f"store. Each conversation must have a unique ID; the loader "
+                f"produced two."
+            )
 
-        if self._compress_only:
-            # Write to zstd streaming compressor (sync I/O, but fast)
-            self._stream_writer.write(conv_bytes)
+        if self._format == MemoryMapFormat.PAYLOAD_BYTES:
+            turn_offsets: list[PayloadOffset] = []
+            for turn_idx, turn in enumerate(conversation.turns):
+                if turn.raw_payload is None:
+                    raise ValueError(
+                        f"PAYLOAD_BYTES format requires every turn to have raw_payload "
+                        f"set; conversation '{conversation_id}' turn at index "
+                        f"{turn_idx} is missing one."
+                    )
+                bad_path = _find_non_finite_path(turn.raw_payload)
+                if bad_path is not None:
+                    raise ValueError(
+                        f"PAYLOAD_BYTES encode failed for conversation "
+                        f"'{conversation_id}' turn {turn_idx}: non-finite float at "
+                        f"{bad_path!r}. Raw-payload values must be JSON-serializable "
+                        f"finite numbers (no NaN, Infinity, or ints > 2^63)."
+                    )
+                try:
+                    payload_bytes = orjson.dumps(turn.raw_payload)
+                except TypeError as e:
+                    raise ValueError(
+                        f"PAYLOAD_BYTES encode failed for conversation "
+                        f"'{conversation_id}' turn {turn_idx}: {e}. Raw-payload "
+                        f"values must be JSON-serializable finite numbers "
+                        f"(no NaN, Infinity, or ints > 2^63)."
+                    ) from e
+                turn_offsets.append(
+                    PayloadOffset(offset=self._current_offset, size=len(payload_bytes))
+                )
+                await self._write_bytes(payload_bytes)
+                self._current_offset += len(payload_bytes)
+            self._payload_offsets[conversation_id] = turn_offsets
         else:
-            await self._data_file.write(conv_bytes)
+            conv_bytes = conversation.model_dump_json().encode("utf-8")
+            self._offsets[conversation_id] = ConversationOffset(
+                offset=self._current_offset, size=len(conv_bytes)
+            )
+            await self._write_bytes(conv_bytes)
+            self._current_offset += len(conv_bytes)
 
-        # Track uncompressed offset (workers need this after decompression)
-        self._offsets[conversation_id] = ConversationOffset(
-            offset=self._current_offset, size=len(conv_bytes)
-        )
         self._session_ids.append(conversation_id)
-        self._current_offset += len(conv_bytes)
 
         if len(self._session_ids) % 1000 == 0:
             self.debug(
@@ -204,8 +286,10 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             )
 
         index = MemoryMapDatasetIndex(
+            format=self._format,
             conversation_ids=self._session_ids,
             offsets=self._offsets,
+            payload_offsets=self._payload_offsets,
             total_size=self._current_offset,
         )
         index_bytes = index.model_dump_json(by_alias=True).encode("utf-8")
@@ -270,6 +354,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             index_file_path=self._index_path,
             conversation_count=len(self._session_ids),
             total_size_bytes=self._current_offset,
+            format=self._format,
             compressed_data_file_path=self._compressed_data_path if self._compress_only else None,
             compressed_index_file_path=self._compressed_index_path if self._compress_only else None,
             compressed_size_bytes=self._compressed_size if self._compress_only else 0,
@@ -354,6 +439,29 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
             None, self._client.get_conversation, conversation_id
         )
 
+    async def get_payload_bytes(self, conversation_id: str, turn_index: int) -> bytes:
+        """Retrieve pre-encoded payload bytes for a single turn.
+
+        Runs in executor since mmap reads can block on page faults.
+
+        Args:
+            conversation_id: Session ID of the conversation
+            turn_index: Zero-based turn index
+
+        Returns:
+            Pre-encoded payload bytes (one orjson.dumps output, byte-for-byte).
+
+        Raises:
+            RuntimeError: If client store not initialized or format is not PAYLOAD_BYTES.
+            KeyError: If conversation_id not found.
+            IndexError: If turn_index out of range.
+        """
+        if self._client is None or self._loop is None:
+            raise RuntimeError("Client store not initialized. Call initialize() first.")
+        return await self._loop.run_in_executor(
+            None, self._client.get_payload_bytes, conversation_id, turn_index
+        )
+
     @on_stop
     async def _cleanup(self) -> None:
         """Close memory-mapped files."""
@@ -370,18 +478,36 @@ class ConversationOffset(AIPerfBaseModel):
     size: int = Field(ge=0, description="Size of the conversation data in bytes")
 
 
+class PayloadOffset(AIPerfBaseModel):
+    """Offset information for a single turn's payload in the memory-mapped file."""
+
+    offset: int = Field(ge=0, description="Byte offset where payload data starts.")
+    size: int = Field(ge=0, description="Size of the payload data in bytes.")
+
+
 class MemoryMapDatasetIndex(AIPerfBaseModel):
     """Index structure for the memory-mapped dataset.
 
     All data is stored as uncompressed JSON bytes serialized with orjson.
     """
 
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format: CONVERSATION (serialized Conversations) "
+        "or PAYLOAD_BYTES (pre-encoded per-turn payload bytes).",
+    )
     conversation_ids: list[str] = Field(
         default_factory=list, description="List of all conversation IDs in the dataset"
     )
     offsets: dict[str, ConversationOffset] = Field(
         default_factory=dict,
-        description="Mapping of conversation IDs to their byte offsets and sizes",
+        description="Mapping of conversation IDs to their byte offsets and sizes "
+        "(populated when format == CONVERSATION).",
+    )
+    payload_offsets: dict[str, list[PayloadOffset]] = Field(
+        default_factory=dict,
+        description="Per-conversation list of per-turn payload offsets "
+        "(populated when format == PAYLOAD_BYTES; empty otherwise).",
     )
     total_size: int = Field(
         default=0, ge=0, description="Total size of the serialized dataset in bytes"
@@ -533,9 +659,15 @@ class MemoryMapDatasetClient:
             Conversation object
 
         Raises:
+            RuntimeError: If the index format is PAYLOAD_BYTES (use ``get_payload_bytes``)
             KeyError: If conversation_id is not found
             MemoryMapSerializationError: If conversation data is corrupted
         """
+        if self.index.format == MemoryMapFormat.PAYLOAD_BYTES:
+            raise RuntimeError(
+                f"Cannot retrieve Conversation '{conversation_id}' in PAYLOAD_BYTES "
+                f"format. Use get_payload_bytes(conversation_id, turn_index) instead."
+            )
         if conversation_id not in self.index.offsets:
             raise KeyError(f"Conversation '{conversation_id}' not found in dataset")
 
@@ -556,6 +688,38 @@ class MemoryMapDatasetClient:
                 f"Failed to load conversation '{conversation_id}' from {self.data_file_path}: {e}"
             )
             raise
+
+    def get_payload_bytes(self, conversation_id: str, turn_index: int) -> bytes:
+        """Return pre-encoded payload bytes for a single turn.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: The zero-based turn index within the conversation
+
+        Returns:
+            Raw pre-encoded JSON bytes for the turn's payload (one orjson.dumps
+            output, byte-for-byte). Caller passes these straight to the transport.
+
+        Raises:
+            RuntimeError: If the index format is not PAYLOAD_BYTES.
+            KeyError: If ``conversation_id`` is not found.
+            IndexError: If ``turn_index`` is out of range.
+        """
+        if self.index.format != MemoryMapFormat.PAYLOAD_BYTES:
+            raise RuntimeError(
+                f"get_payload_bytes requires PAYLOAD_BYTES format, got "
+                f"{self.index.format}"
+            )
+        offsets = self.index.payload_offsets.get(conversation_id)
+        if offsets is None:
+            raise KeyError(f"Conversation '{conversation_id}' not found")
+        if turn_index < 0 or turn_index >= len(offsets):
+            raise IndexError(
+                f"Turn index {turn_index} out of range for conversation "
+                f"'{conversation_id}' ({len(offsets)} turns)"
+            )
+        off = offsets[turn_index]
+        return self.data_mmap[off.offset : off.offset + off.size]
 
     def close(self) -> None:
         """Close the memory-mapped files and associated resources.

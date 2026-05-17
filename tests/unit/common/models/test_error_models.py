@@ -3,9 +3,56 @@
 
 """Tests for ErrorDetails cause chain building."""
 
-import pytest
+from dataclasses import is_dataclass
 
-from aiperf.common.models.error_models import ErrorDetails
+import msgspec
+import pytest
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from aiperf.common.models.error_models import (
+    ErrorDetails,
+    ErrorDetailsCount,
+    ExitErrorInfo,
+)
+
+
+class ErrorDetailsContainer(msgspec.Struct, kw_only=True):
+    error: ErrorDetails | None = None
+
+
+class ErrorDetailsPydanticContainer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error: ErrorDetails
+
+
+class TestErrorDetailsModelShape:
+    def test_error_models_are_pydantic_compatible_dataclasses(self):
+        assert is_dataclass(ErrorDetails)
+        assert is_dataclass(ExitErrorInfo)
+        assert is_dataclass(ErrorDetailsCount)
+
+        model = ErrorDetailsPydanticContainer.model_validate(
+            {"error": {"message": "boom", "code": 500}}
+        )
+
+        assert model.error == ErrorDetails(message="boom", code=500)
+        with pytest.raises(ValidationError):
+            ErrorDetailsPydanticContainer.model_validate(
+                {"error": {"message": "boom", "code": 500, "unknown": "bad"}}
+            )
+
+    def test_error_details_round_trips_inside_msgspec_struct(self):
+        container = ErrorDetailsContainer(
+            error=ErrorDetails(message="boom", code=500, details={"endpoint": "x"})
+        )
+
+        decoded = msgspec.msgpack.decode(
+            msgspec.msgpack.encode(container), type=ErrorDetailsContainer
+        )
+
+        assert decoded == container
+        assert isinstance(decoded.error, ErrorDetails)
 
 
 class TestBuildCauseChain:

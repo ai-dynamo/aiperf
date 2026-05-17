@@ -1,58 +1,73 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+import msgspec
 
-from pydantic import Field, SerializeAsAny, field_validator
-
-from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import MessageType, MetricValueTypeT
-from aiperf.common.messages.service_messages import BaseServiceMessage
+from aiperf.common.enums import MessageType
+from aiperf.common.messages.wire_codec import register_msgspec_message
 from aiperf.common.models import ErrorDetails, RequestRecord
-from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
-from aiperf.common.models.trace_models import BaseTraceData
-from aiperf.common.types import MessageTypeT, MetricTagT
+from aiperf.common.models.trace_models import BaseTraceDataUnion
+from aiperf.common.types import MetricTagT
 
-_logger = AIPerfLogger(__name__)
-
-
-class InferenceResultsMessage(BaseServiceMessage):
-    """Message for a inference results."""
-
-    message_type: MessageTypeT = MessageType.INFERENCE_RESULTS
-
-    record: SerializeAsAny[RequestRecord] = Field(
-        ..., description="The inference results record"
-    )
+# msgspec rejects ``int | float | list[float] | list[int]`` (multiple list-like
+# branches in one union). ``MetricRecordsData.metrics`` and
+# ``MetricRecordsMessage.metrics`` therefore carry the runtime
+# ``MetricValueTypeT`` shape via plain ``object``; consumers downcast as needed.
+MetricValuePayload = object
 
 
-class MetricRecordsData(AIPerfBaseModel):
-    """Incoming data from the record processor service to combine metric records for the profile run."""
+class InferenceResultsMessage(
+    msgspec.Struct,
+    kw_only=True,
+    tag=str(MessageType.INFERENCE_RESULTS),
+    tag_field="message_type",
+    omit_defaults=True,
+):
+    """Message for inference results.
 
-    metadata: MetricRecordMetadata = Field(
-        ..., description="The metadata of the request record."
-    )
-    metrics: dict[MetricTagT, MetricValueTypeT] = Field(
-        ..., description="The combined metric records for this inference request."
-    )
-    trace_data: SerializeAsAny[BaseTraceData] | None = Field(
-        default=None,
-        description="Comprehensive trace data captured via a trace config. "
-        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
-        "The type of the trace data is determined by the transport and library used.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None, description="The error details if the request failed."
-    )
+    Wire-only ``msgspec.Struct`` (not part of the Pydantic ``Message`` MRO);
+    the wire codec dispatches encode/decode by family. ``tag_field`` pins the
+    ``message_type`` discriminator on the wire so the codec can route inbound
+    bytes back to this class; the property below exposes the same value to
+    in-process consumers that read ``message.message_type`` uniformly across
+    Pydantic and msgspec messages.
+    """
 
-    @field_validator("trace_data", mode="before")
-    @classmethod
-    def route_trace_data(cls, v: Any) -> BaseTraceData | None:
-        """Route nested trace_data to correct subclass based on trace_type discriminator."""
-        if isinstance(v, dict):
-            return BaseTraceData.from_json(v)
-        return v
+    service_id: str
+    record: RequestRecord
+    request_ns: int | None = None
+    request_id: str | None = None
+
+    @property
+    def message_type(self) -> str:
+        return type(self).__struct_config__.tag  # type: ignore[no-any-return]
+
+
+register_msgspec_message(MessageType.INFERENCE_RESULTS, InferenceResultsMessage)
+
+
+class MetricRecordsData(msgspec.Struct, kw_only=True, omit_defaults=True):
+    """Incoming data from the record processor service to combine metric records for the profile run.
+
+    Wire-compatible ``msgspec.Struct``. Constructed from ``MetricRecordsMessage``
+    on the records-manager side via ``MetricRecordsMessage.to_data()``.
+    """
+
+    metadata: MetricRecordMetadata
+    """The metadata of the request record."""
+
+    metrics: dict[MetricTagT, MetricValuePayload]
+    """The combined metric records for this inference request."""
+
+    trace_data: BaseTraceDataUnion | None = None
+    """Comprehensive trace data captured via a trace config. Includes detailed
+    timing for connection establishment, DNS resolution, request/response
+    events, etc. The type of the trace data is determined by the transport
+    and library used."""
+
+    error: ErrorDetails | None = None
+    """The error details if the request failed."""
 
     @property
     def valid(self) -> bool:
@@ -60,35 +75,41 @@ class MetricRecordsData(AIPerfBaseModel):
         return self.error is None
 
 
-class MetricRecordsMessage(BaseServiceMessage):
+class MetricRecordsMessage(
+    msgspec.Struct,
+    kw_only=True,
+    tag=str(MessageType.METRIC_RECORDS),
+    tag_field="message_type",
+    omit_defaults=True,
+):
     """Message from the result parser to the records manager to notify it
-    of the metric records for a single request."""
+    of the metric records for a single request.
 
-    message_type: MessageTypeT = MessageType.METRIC_RECORDS
+    Wire-only ``msgspec.Struct`` (not part of the Pydantic ``Message`` MRO);
+    the wire codec dispatches encode/decode by family.
+    """
 
-    metadata: MetricRecordMetadata = Field(
-        ..., description="The metadata of the request record."
-    )
-    results: list[dict[MetricTagT, MetricValueTypeT]] = Field(
-        ..., description="The record processor metric results"
-    )
-    trace_data: SerializeAsAny[BaseTraceData] | None = Field(
-        default=None,
-        description="Comprehensive trace data captured via a trace config. "
-        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
-        "The type of the trace data is determined by the transport and library used.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None, description="The error details if the request failed."
-    )
+    metadata: MetricRecordMetadata
+    """The metadata of the request record."""
 
-    @field_validator("trace_data", mode="before")
-    @classmethod
-    def route_trace_data(cls, v: Any) -> BaseTraceData | None:
-        """Route nested trace_data to correct subclass based on trace_type discriminator."""
-        if isinstance(v, dict):
-            return BaseTraceData.from_json(v)
-        return v
+    metrics: dict[MetricTagT, MetricValuePayload]
+    """The merged record processor metric results."""
+
+    service_id: str | None = None
+    """ID of the service sending the message."""
+
+    request_ns: int | None = None
+    request_id: str | None = None
+
+    trace_data: BaseTraceDataUnion | None = None
+    """Comprehensive trace data captured via a trace config."""
+
+    error: ErrorDetails | None = None
+    """The error details if the request failed."""
+
+    @property
+    def message_type(self) -> str:
+        return type(self).__struct_config__.tag  # type: ignore[no-any-return]
 
     @property
     def valid(self) -> bool:
@@ -96,30 +117,43 @@ class MetricRecordsMessage(BaseServiceMessage):
         return self.error is None
 
     def to_data(self) -> MetricRecordsData:
-        """Convert the metric records message to a MetricRecordsData for processing by the records manager."""
-        metrics = {}
-        for result in self.results:
-            for tag, value in result.items():
-                if tag in metrics:
-                    _logger.warning(
-                        f"Duplicate metric tag '{tag}' found in results. "
-                        f"Overwriting previous value {metrics[tag]} with {value}."
-                    )
-                metrics[tag] = value
-
+        """Convert the metric records message to MetricRecordsData for processing."""
         return MetricRecordsData(
             metadata=self.metadata,
-            metrics=metrics,
+            metrics=self.metrics,
             trace_data=self.trace_data,
             error=self.error,
         )
 
 
-class RealtimeMetricsMessage(BaseServiceMessage):
-    """Message from the records manager to show real-time metrics for the profile run."""
+register_msgspec_message(MessageType.METRIC_RECORDS, MetricRecordsMessage)
 
-    message_type: MessageTypeT = MessageType.REALTIME_METRICS
 
-    metrics: list[MetricResult] = Field(
-        ..., description="The current real-time metrics."
-    )
+class RealtimeMetricsMessage(
+    msgspec.Struct,
+    kw_only=True,
+    tag=str(MessageType.REALTIME_METRICS),
+    tag_field="message_type",
+    omit_defaults=True,
+):
+    """Message from the records manager to show real-time metrics for the profile run.
+
+    Wire-only ``msgspec.Struct`` (not part of the Pydantic ``Message`` MRO);
+    the wire codec dispatches encode/decode by family.
+    """
+
+    metrics: list[MetricResult]
+    """The current real-time metrics."""
+
+    service_id: str | None = None
+    """ID of the service sending the message."""
+
+    request_ns: int | None = None
+    request_id: str | None = None
+
+    @property
+    def message_type(self) -> str:
+        return type(self).__struct_config__.tag  # type: ignore[no-any-return]
+
+
+register_msgspec_message(MessageType.REALTIME_METRICS, RealtimeMetricsMessage)

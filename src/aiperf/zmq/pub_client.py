@@ -3,10 +3,12 @@
 
 import asyncio
 
+import msgspec
 import zmq.asyncio
 
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import Message, TargetedServiceMessage
+from aiperf.common.messages.wire_codec import encode_message
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 from aiperf.zmq.zmq_defaults import TOPIC_DELIMITER, TOPIC_END
 
@@ -64,17 +66,17 @@ class ZMQPubClient(BaseZMQClient):
         """
         super().__init__(zmq.SocketType.PUB, address, bind, socket_ops, **kwargs)
 
-    async def publish(self, message: Message) -> None:
+    async def publish(self, message: Message | msgspec.Struct) -> None:
         """Publish a message. The topic will be set automatically based on the message type.
 
         Args:
-            message: Message to publish (must be a Message object)
+            message: Message to publish (Pydantic ``Message`` or ``msgspec.Struct``)
         """
         await self._check_initialized()
 
         try:
             topic = self._determine_topic(message)
-            message_json_bytes = message.to_json_bytes()
+            message_json_bytes = encode_message(message)
 
             # Publish message
             self.trace(lambda: f"Publishing message {topic=} {message_json_bytes=}")
@@ -91,7 +93,7 @@ class ZMQPubClient(BaseZMQClient):
                 f"Failed to publish message {message.message_type}: {e}",
             ) from e
 
-    def _determine_topic(self, message: Message) -> str:
+    def _determine_topic(self, message: Message | msgspec.Struct) -> str:
         """Determine the topic based on the message."""
         # For targeted messages such as commands, we can set the topic to a specific service by id or type
         # Note that target_service_id always takes precedence over target_service_type

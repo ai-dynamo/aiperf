@@ -63,3 +63,49 @@ class TestConversationAgentDepth:
         dumped = c.model_dump()
         restored = Conversation.model_validate(dumped)
         assert restored.agent_depth == 3
+
+
+class TestTurnMetadataProjectsMaxTokensAndAudioDuration:
+    """Turn.metadata() projects ``max_tokens`` and ``audio_duration_seconds``.
+
+    These fields land on ``TurnMetadata`` so the records pipeline can read
+    per-turn caps and ASR audio duration without holding the full Turn list.
+    """
+
+    def test_max_tokens_projected_into_metadata(self):
+        t = Turn(role="user", max_tokens=5)
+        assert t.metadata().max_tokens == 5
+
+    def test_audio_duration_seconds_projected_into_metadata(self):
+        t = Turn(role="user", max_tokens=5, audio_duration_seconds=1.5)
+        meta = t.metadata()
+        assert meta.audio_duration_seconds == 1.5
+        assert meta.max_tokens == 5
+
+    def test_both_fields_none_projects_none(self):
+        t = Turn(role="user")
+        meta = t.metadata()
+        assert meta.max_tokens is None
+        assert meta.audio_duration_seconds is None
+
+    def test_conversation_metadata_projection_carries_max_tokens_and_audio(self):
+        """``Conversation.metadata()`` mirrors the same projection for both fields."""
+        c = Conversation(
+            session_id="s1",
+            turns=[
+                Turn(role="user", max_tokens=10, audio_duration_seconds=2.25),
+                Turn(role="user"),
+            ],
+        )
+        conv_meta = c.metadata()
+        assert conv_meta.turns[0].max_tokens == 10
+        assert conv_meta.turns[0].audio_duration_seconds == 2.25
+        assert conv_meta.turns[1].max_tokens is None
+        assert conv_meta.turns[1].audio_duration_seconds is None
+
+    def test_turn_metadata_round_trip_preserves_new_fields(self):
+        m = TurnMetadata(max_tokens=7, audio_duration_seconds=0.5)
+        dumped = m.model_dump()
+        restored = TurnMetadata.model_validate(dumped)
+        assert restored.max_tokens == 7
+        assert restored.audio_duration_seconds == 0.5

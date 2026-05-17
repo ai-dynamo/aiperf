@@ -9,6 +9,8 @@ import pytest
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import (
     ErrorDetails,
+    ExtractedPayload,
+    MetricInputs,
     RequestInfo,
     RequestRecord,
     SSEMessage,
@@ -52,6 +54,24 @@ def create_test_request_info(
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
+    )
+
+
+def create_test_metric_inputs(
+    *,
+    conversation_id: str = "cid",
+    turn_index: int = 0,
+    payload_bytes: bytes | None = None,
+) -> MetricInputs:
+    """Create a MetricInputs for testing."""
+    return MetricInputs(
+        credit_num=0,
+        credit_phase=CreditPhase.PROFILING,
+        conversation_id=conversation_id,
+        turn_index=turn_index,
+        x_request_id="test-request-id",
+        x_correlation_id="test-correlation-id",
+        payload_bytes=payload_bytes,
     )
 
 
@@ -105,6 +125,10 @@ def setup_inference_parser(inference_result_parser, mock_tokenizer_cls):
     tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
     inference_result_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
     inference_result_parser.endpoint = MagicMock()
+    # Default extractor returns empty texts; tests can override.
+    inference_result_parser.endpoint.extract_payload_inputs = MagicMock(
+        return_value=ExtractedPayload(texts=[])
+    )
     return inference_result_parser
 
 
@@ -117,6 +141,7 @@ def create_invalid_record(
     no_content_responses: bool = False,
     model_name: str = "test-model",
     turns: list[Turn] | None = None,
+    payload_bytes: bytes | None = None,
 ) -> RequestRecord:
     """Create an invalid RequestRecord for testing.
 
@@ -128,14 +153,14 @@ def create_invalid_record(
         no_content_responses: If True, creates responses without content (e.g., [DONE] markers)
         model_name: Model name for the record
         turns: Optional list of turns to include in the record
+        payload_bytes: Optional pre-encoded wire payload to attach via metric_inputs.
 
     Returns:
         RequestRecord with the specified invalid configuration
     """
     record = RequestRecord(
-        request_info=create_test_request_info(model_name=model_name, turns=turns),
+        metric_inputs=create_test_metric_inputs(payload_bytes=payload_bytes),
         model_name=model_name,
-        turns=turns or [],
     )
 
     if has_error:

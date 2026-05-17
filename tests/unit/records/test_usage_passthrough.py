@@ -13,14 +13,11 @@ import pytest
 from aiperf.common.models import (
     ParsedResponse,
     RequestRecord,
-    Text,
     TextResponseData,
-    Turn,
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.records.inference_result_parser import InferenceResultParser
-from tests.unit.records.conftest import create_test_request_info
 
 
 @pytest.fixture
@@ -76,9 +73,6 @@ def create_test_record() -> RequestRecord:
     """Helper to create a simple test RequestRecord."""
     return RequestRecord(
         model_name="test-model",
-        request_info=create_test_request_info(
-            turns=[Turn(role="user", texts=[Text(contents=["Test input"])])]
-        ),
     )
 
 

@@ -9,6 +9,7 @@ import zmq.asyncio
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
+from aiperf.common.messages.wire_codec import decode_message
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.timing.concurrency import DynamicConcurrencyLimit
@@ -142,9 +143,10 @@ class ZMQPullClient(BaseZMQClient):
         callback function.
         """
         try:
-            # Use AUTO-LOOKUP: parse JSON to dict, extract type, validate
-            # This is 40-60% faster for large messages (>2KB)
-            message = Message.from_json(message_json_bytes)
+            # Dispatch by encoder family: msgspec.Struct messages decode via
+            # the registered wire codec's msgpack tagged-union decoder;
+            # everything else uses the Pydantic ``AutoRoutedModel.from_json`` path.
+            message = decode_message(message_json_bytes)
             del message_json_bytes  # free raw bytes before handler runs
 
             # Call callbacks with Message object

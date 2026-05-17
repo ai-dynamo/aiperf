@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from aiperf.common.environment import Environment
+from aiperf.common.models import MetricResult
 from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import MetricAggregator, MetricArray
 
@@ -137,8 +138,19 @@ class TestTDigestListMetricAggregator:
         array_agg.extend(values.tolist())
         array_result = array_agg.to_result(tag="t", header="T", unit="ms")
 
-        # Same field set on the Pydantic model.
-        assert set(digest_result.model_fields_set) == set(array_result.model_fields_set)
+        # Same encoded field set after omitting defaults — read the Struct's
+        # declared fields and check which ones the encoders set on each.
+        digest_fields = {
+            f
+            for f in MetricResult.__struct_fields__
+            if getattr(digest_result, f) is not None
+        }
+        array_fields = {
+            f
+            for f in MetricResult.__struct_fields__
+            if getattr(array_result, f) is not None
+        }
+        assert digest_fields == array_fields
         # Bit-exact stats.
         assert digest_result.count == array_result.count
         assert digest_result.min == pytest.approx(array_result.min)

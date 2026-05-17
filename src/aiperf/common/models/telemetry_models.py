@@ -328,8 +328,8 @@ class GpuMetricTimeSeries:
 
         # NaN-aware stats: dynamic-schema collectors (e.g. AMDSMI) write NaN
         # for keys absent from a given scrape. nan* variants ignore them.
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.nanpercentile(
-            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+        p1, p5, p10, p25, p50, p75, p90, p95, p99 = (
+            float(p) for p in np.nanpercentile(arr, [1, 5, 10, 25, 50, 75, 90, 95, 99])
         )
 
         # ddof=1 needs at least 2 *non-NaN* samples; otherwise nanstd
@@ -506,8 +506,9 @@ class GpuMetricTimeSeries:
             raise NoMetricValue(
                 f"All in-range samples for metric '{metric_name}' are NaN"
             )
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.nanpercentile(
-            filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+        p1, p5, p10, p25, p50, p75, p90, p95, p99 = (
+            float(p)
+            for p in np.nanpercentile(filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99])
         )
 
         # ddof=1 needs at least 2 *non-NaN* samples; otherwise nanstd

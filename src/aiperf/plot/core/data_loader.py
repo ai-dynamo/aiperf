@@ -13,6 +13,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import numpy as np
 import orjson
 import pandas as pd
@@ -959,7 +960,7 @@ class DataLoader(AIPerfLoggerMixin):
         """
         flat = {}
 
-        flat.update(record.metadata.model_dump())
+        flat.update(msgspec.to_builtins(record.metadata))
 
         for key, metric_value in record.metrics.items():
             if key == "inter_chunk_latency" and isinstance(metric_value.value, list):
@@ -969,7 +970,7 @@ class DataLoader(AIPerfLoggerMixin):
             flat[key] = metric_value.value
 
         if record.error:
-            flat["error"] = record.error.model_dump()
+            flat["error"] = msgspec.to_builtins(record.error)
 
         return flat
 

@@ -80,7 +80,7 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 ## Adding a New Message
 
 1. Add enum value to `MessageType` in `common/enums/enums.py`
-2. Create message class in `messages/` inheriting from `Message` with `message_type` field set
+2. Create the right message class in `messages/`: Pydantic/control-plane messages inherit from `Message` with `message_type` set; records-pipeline hot-path messages use `msgspec.Struct` and `register_msgspec_message` as shown in `docs/dev/patterns.md`
 3. Add `@on_message(MessageType.X)` handler in the receiving service
 4. Auto-subscription happens during `@on_init` phase
 

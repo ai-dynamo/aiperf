@@ -3,11 +3,13 @@
 
 import asyncio
 
+import msgspec
 import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import Message
+from aiperf.common.messages.wire_codec import encode_message
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
@@ -62,14 +64,14 @@ class ZMQPushClient(BaseZMQClient):
 
     async def _push_message(
         self,
-        message: Message,
+        message: Message | msgspec.Struct,
         retry_count: int = 0,
         max_retries: int | None = None,
     ) -> None:
         """Push a message to the socket. Will retry up to max_retries times.
 
         Args:
-            message: Message to be sent must be a Message object
+            message: Message to be sent (Pydantic ``Message`` or ``msgspec.Struct``)
             retry_count: Current retry count
             max_retries: Maximum number of times to retry pushing the message (defaults to Environment.ZMQ.PUSH_MAX_RETRIES)
         """
@@ -77,10 +79,10 @@ class ZMQPushClient(BaseZMQClient):
             max_retries = Environment.ZMQ.PUSH_MAX_RETRIES
 
         try:
-            data_json_bytes = message.to_json_bytes()
-            await self.socket.send(data_json_bytes)
+            data_bytes = encode_message(message)
+            await self.socket.send(data_bytes)
             if self.is_trace_enabled:
-                self.trace(f"Pushed json data: {data_json_bytes}")
+                self.trace(f"Pushed wire data: {data_bytes}")
         except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug("Push client cancelled or context terminated")
             return
@@ -96,12 +98,12 @@ class ZMQPushClient(BaseZMQClient):
         except Exception as e:
             raise CommunicationError(f"Failed to push data: {e}") from e
 
-    async def push(self, message: Message) -> None:
+    async def push(self, message: Message | msgspec.Struct) -> None:
         """Push data to a target. The message will be routed automatically
         based on the message type.
 
         Args:
-            message: Message to be sent must be a Message object
+            message: Message to be sent (Pydantic ``Message`` or ``msgspec.Struct``)
         """
         await self._check_initialized()
 

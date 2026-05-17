@@ -48,7 +48,7 @@ def _conv_with_n_forks(n: int, session_id: str = "root") -> Conversation:
 
 class TestForkRefcount:
     def test_default_refcount_zero(self, session_manager: UserSessionManager) -> None:
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="corr-zero",
             conversation=_conv_with_n_forks(2),
             num_turns=1,
@@ -58,7 +58,7 @@ class TestForkRefcount:
     def test_increment_per_child_seed(
         self, session_manager: UserSessionManager
     ) -> None:
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="corr-inc",
             conversation=_conv_with_n_forks(3),
             num_turns=1,
@@ -68,7 +68,7 @@ class TestForkRefcount:
         assert session.fork_refcount == 3
 
     def test_decrement_on_child_join(self, session_manager: UserSessionManager) -> None:
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="corr-dec",
             conversation=_conv_with_n_forks(2),
             num_turns=1,
@@ -81,7 +81,7 @@ class TestForkRefcount:
     def test_evict_only_when_refcount_zero(
         self, session_manager: UserSessionManager
     ) -> None:
-        session_manager.create_and_store(
+        session_manager.create_content_session(
             x_correlation_id="corr-evict",
             conversation=_conv_with_n_forks(1),
             num_turns=1,
@@ -98,7 +98,7 @@ class TestForkRefcount:
         assert session_manager.get("corr-evict") is None
 
     def test_release_floor_zero(self, session_manager: UserSessionManager) -> None:
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="corr-floor",
             conversation=_conv_with_n_forks(1),
             num_turns=1,

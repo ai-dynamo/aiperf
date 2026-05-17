@@ -1,41 +1,28 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Any
+"""Error-detail data carriers."""
 
-from pydantic import Field
+from dataclasses import dataclass
+from typing import Any, ClassVar
+
+from pydantic import ConfigDict
 
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.redact import redact_string
 
 
-class ErrorDetails(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True, eq=False)
+class ErrorDetails:
     """Encapsulates details about an error."""
 
-    code: int | None = Field(
-        default=None,
-        description="The error code.",
-    )
-    type: str | None = Field(
-        default=None,
-        description="The error type.",
-    )
-    message: str = Field(
-        ...,
-        description="The error message.",
-    )
-    cause: str | None = Field(
-        default=None,
-        description="The cause of the error.",
-    )
-    cause_chain: list[str] | None = Field(
-        default=None,
-        description="List of exception type names in the __cause__ chain.",
-    )
-    details: Any | None = Field(
-        default=None,
-        description="Additional details about the error.",
-    )
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    message: str
+    code: int | None = None
+    type: str | None = None
+    cause: str | None = None
+    cause_chain: list[str] | None = None
+    details: Any | None = None
 
     @staticmethod
     def _safe_repr(value: Any, max_len: int = 4096) -> str:
@@ -91,30 +78,29 @@ class ErrorDetails(AIPerfBaseModel):
         """
         details = {k: v for k, v in kwargs.items() if v is not None} or None
 
-        error_details = cls(
+        code: int | None = None
+        if hasattr(e, "error_code") and isinstance(e.error_code, int):
+            code = e.error_code
+
+        return cls(
             type=e.__class__.__name__,
             message=cls._safe_repr(e),
             cause=cls._safe_repr(e.__cause__) if e.__cause__ else None,
             cause_chain=cls._build_cause_chain(e),
             details=details,
+            code=code,
         )
-        if hasattr(e, "error_code") and isinstance(e.error_code, int):
-            error_details.code = e.error_code
-        return error_details
 
 
-class ExitErrorInfo(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ExitErrorInfo:
     """Information about an error that should cause the process to exit."""
 
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     error_details: ErrorDetails
-    operation: str = Field(
-        ...,
-        description="The operation that caused the error.",
-    )
-    service_id: str | None = Field(
-        default=None,
-        description="The ID of the service that caused the error. If None, the error is not specific to a service.",
-    )
+    operation: str
+    service_id: str | None = None
 
     @classmethod
     def from_lifecycle_operation_error(
@@ -127,11 +113,11 @@ class ExitErrorInfo(AIPerfBaseModel):
         )
 
 
-class ErrorDetailsCount(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ErrorDetailsCount:
     """Count of error details."""
 
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     error_details: ErrorDetails
-    count: int = Field(
-        ...,
-        description="The count of the error details.",
-    )
+    count: int

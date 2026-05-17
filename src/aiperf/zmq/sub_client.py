@@ -10,6 +10,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import Message
+from aiperf.common.messages.wire_codec import decode_message
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 from aiperf.zmq.zmq_base_client import BaseZMQClient
@@ -176,9 +177,11 @@ class ZMQSubClient(BaseZMQClient):
             lambda: f"Received message from topic: '{topic}', message: {message_bytes}"
         )
 
-        # Use AUTO-LOOKUP for all messages - single parse with multi-level routing
-        # This is optimal for our workload (84% large messages in push/pull, 45% in pub/sub)
-        message = Message.from_json(message_bytes)
+        # Dispatch by encoder family: msgspec.Struct messages decode via the
+        # msgpack tagged-union wire codec; everything else uses the Pydantic
+        # ``AutoRoutedModel.from_json`` path. Optimal for our workload
+        # (84% large messages in push/pull, 45% in pub/sub).
+        message = decode_message(message_bytes)
 
         self.trace(
             lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"

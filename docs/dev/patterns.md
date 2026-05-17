@@ -156,11 +156,15 @@ class Record(AIPerfBaseModel):
 
 ## Message Pattern
 
-Messages require `message_type` field and handler decorator:
+Control-plane messages use Pydantic `Message` subclasses with a `message_type`
+field and handler decorator:
 
 ```python
-from aiperf.common.messages import Message, MessageTypeT
+from pydantic import Field
+
+from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
+from aiperf.common.messages import Message, MessageTypeT
 
 class MyMsg(Message):
     message_type: MessageTypeT = MessageType.MY_MSG
@@ -170,6 +174,34 @@ class MyMsg(Message):
 @on_message(MessageType.MY_MSG)
 async def _handle(self, msg: MyMsg) -> None:
     await self.publish(OtherMsg(data=msg.data))
+```
+
+Records-pipeline hot-path messages use registered `msgspec.Struct` classes
+instead of Pydantic. Follow `src/aiperf/common/messages/inference_messages.py`
+as the reference implementation:
+
+```python
+# Reference: src/aiperf/common/messages/inference_messages.py
+import msgspec
+
+from aiperf.common.enums import MessageType
+from aiperf.common.messages.wire_codec import register_msgspec_message
+
+class MyRecordsMessage(
+    msgspec.Struct,
+    kw_only=True,
+    tag=str(MessageType.MY_RECORDS),
+    tag_field="message_type",
+    omit_defaults=True,
+):
+    data: list[Record]
+    service_id: str | None = None
+
+    @property
+    def message_type(self) -> str:
+        return type(self).__struct_config__.tag  # type: ignore[no-any-return]
+
+register_msgspec_message(MessageType.MY_RECORDS, MyRecordsMessage)
 ```
 
 Auto-subscription happens during `@on_init` phase.

@@ -5,10 +5,11 @@ import contextlib
 import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy, RequestContentType
 from aiperf.common.models.dataset_models import Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -172,7 +173,7 @@ class TestInferenceClient:
         inference_client.endpoint.get_endpoint_headers.return_value = expected_headers
 
         inference_client.transport.send_request = AsyncMock(
-            return_value=RequestRecord(request_info=sample_request_info)
+            return_value=RequestRecord()
         )
 
         await inference_client.send_request(request_info)
@@ -195,7 +196,7 @@ class TestInferenceClient:
         inference_client.endpoint.get_endpoint_params.return_value = expected_params
 
         inference_client.transport.send_request = AsyncMock(
-            return_value=RequestRecord(request_info=sample_request_info)
+            return_value=RequestRecord()
         )
 
         await inference_client.send_request(request_info)
@@ -226,82 +227,53 @@ class TestInferenceClient:
         assert call_args[0][0] == request_info
         assert record == expected_record
 
+    @pytest.mark.parametrize(
+        "raw_payload",
+        [
+            param(
+                {
+                    "messages": [{"role": "user", "content": "exact body"}],
+                    "temperature": 0.7,
+                    "vendor_flag": {"preserve": True},
+                },
+                id="typical_payload",
+            ),
+            param({}, id="empty_payload"),
+            param(
+                {
+                    "messages": [{"role": "user", "content": "authored"}],
+                    "model": "payload-model",
+                    "stream": True,
+                    "max_tokens": 17,
+                    "temperature": 0.01,
+                    "tools": [{"type": "function", "function": {"name": "do_it"}}],
+                },
+                id="formatter_conflicts",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
     async def test_send_request_sends_raw_payload_without_endpoint_formatting(
-        self, inference_client, sample_request_info
+        self, inference_client, sample_request_info, raw_payload
     ):
         """Test that raw_payload turns bypass endpoint payload formatting."""
-        raw_payload = {
-            "messages": [{"role": "user", "content": "exact body"}],
-            "temperature": 0.7,
-            "vendor_flag": {"preserve": True},
-        }
-        request_info = sample_request_info
-        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
-        expected_record = RequestRecord(request_info=request_info)
-        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
-        inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
-        )
-
-        await inference_client.send_request(request_info)
-
-        inference_client.endpoint.format_payload.assert_not_called()
-        call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-
-    @pytest.mark.asyncio
-    async def test_send_request_sends_empty_raw_payload_without_formatting(
-        self, inference_client, sample_request_info
-    ):
-        """Test that an empty raw_payload is still a verbatim payload."""
-        raw_payload = {}
-        request_info = sample_request_info
-        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
-        expected_record = RequestRecord(request_info=request_info)
-        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
-        inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
-        )
-
-        await inference_client.send_request(request_info)
-
-        inference_client.endpoint.format_payload.assert_not_called()
-        call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-
-    @pytest.mark.asyncio
-    async def test_send_request_preserves_raw_payload_formatter_conflicts(
-        self, inference_client, sample_request_info
-    ):
-        """Test raw_payload top-level fields are not overwritten by endpoint defaults."""
-        raw_payload = {
-            "messages": [{"role": "user", "content": "authored"}],
-            "model": "payload-model",
-            "stream": True,
-            "max_tokens": 17,
-            "temperature": 0.01,
-            "tools": [{"type": "function", "function": {"name": "do_it"}}],
-        }
-        request_info = sample_request_info
-        request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
-        expected_record = RequestRecord(request_info=request_info)
+        sample_request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
+        sample_request_info.payload_bytes = None
         inference_client.endpoint.format_payload.return_value = {
             "model": "endpoint-model",
             "stream": False,
             "messages": [{"role": "user", "content": "rewritten"}],
         }
         inference_client.transport.send_request = AsyncMock(
-            return_value=expected_record
+            return_value=RequestRecord()
         )
 
-        await inference_client.send_request(request_info)
+        await inference_client.send_request(sample_request_info)
 
+        inference_client.endpoint.format_payload.assert_not_called()
         call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-        assert call_args.kwargs["payload"]["model"] == "payload-model"
-        assert call_args.kwargs["payload"]["stream"] is True
-        assert call_args.kwargs["payload"]["messages"][0]["content"] == "authored"
+        assert call_args.kwargs["payload"] is sample_request_info.payload_bytes
+        assert orjson.loads(call_args.kwargs["payload"]) == raw_payload
 
     @pytest.mark.asyncio
     async def test_send_request_formats_when_only_earlier_turn_has_raw_payload(
@@ -317,7 +289,7 @@ class TestInferenceClient:
             Turn(role="user", texts=[Text(contents=["current"])]),
         ]
         expected_payload = {"messages": [{"role": "user", "content": "current"}]}
-        expected_record = RequestRecord(request_info=request_info)
+        expected_record = RequestRecord()
         inference_client.endpoint.format_payload.return_value = expected_payload
         inference_client.transport.send_request = AsyncMock(
             return_value=expected_record
@@ -327,24 +299,293 @@ class TestInferenceClient:
 
         inference_client.endpoint.format_payload.assert_called_once_with(request_info)
         call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == expected_payload
+        assert orjson.loads(call_args.kwargs["payload"]) == expected_payload
 
     @pytest.mark.asyncio
-    async def test_send_request_raises_on_empty_turns(self, inference_client):
-        """Test that send_request raises ValueError when turns is empty."""
+    async def test_send_request_uses_payload_bytes_when_present(
+        self, inference_client, sample_request_info
+    ):
+        """When request_info.payload_bytes is already populated (mmap fast path),
+        inference_client passes it straight through — no format_payload, no
+        re-encode, and turns may be empty."""
+        sample_request_info.payload_bytes = (
+            b'{"messages":[{"role":"user","content":"verbatim"}]}'
+        )
+        sample_request_info.turns = []
+        expected_record = RequestRecord()
+        inference_client.endpoint.format_payload.return_value = {"rewritten": True}
+        inference_client.transport.send_request = AsyncMock(
+            return_value=expected_record
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        # Identity check: the same bytes object reaches the transport.
+        assert call_args.kwargs["payload"] is sample_request_info.payload_bytes
+
+    @pytest.fixture
+    def multipart_inference_client(self, model_endpoint, mock_http_transport_entry):
+        model_endpoint.endpoint.request_content_type = (
+            RequestContentType.MULTIPART_FORM_DATA
+        )
+        mock_transport = MagicMock()
+        mock_endpoint = MagicMock()
+        mock_endpoint.get_endpoint_headers.return_value = {}
+        mock_endpoint.get_endpoint_params.return_value = {}
+        mock_endpoint.format_payload.return_value = {"rewritten": True}
+
+        def mock_get_class(protocol, name):
+            if protocol == "endpoint":
+                return lambda **kwargs: mock_endpoint
+            if protocol == "transport":
+                return lambda **kwargs: mock_transport
+            raise ValueError(f"Unknown protocol: {protocol}")
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
+        ):
+            return InferenceClient(
+                model_endpoint=model_endpoint, service_id="test-service-id"
+            )
+
+    @pytest.mark.asyncio
+    async def test_send_request_keeps_multipart_payload_dict_for_transport(
+        self, multipart_inference_client, sample_request_info
+    ):
+        raw_payload = {
+            "prompt": "edit this",
+            "image": "data:image/png;base64,abc",
+        }
+        sample_request_info.model_endpoint = multipart_inference_client.model_endpoint
+        sample_request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
+        sample_request_info.payload_bytes = None
+        multipart_inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        await multipart_inference_client.send_request(sample_request_info)
+
+        multipart_inference_client.endpoint.format_payload.assert_not_called()
+        call_args = multipart_inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == raw_payload
+        assert orjson.loads(sample_request_info.payload_bytes) == raw_payload
+
+    @pytest.mark.asyncio
+    async def test_send_request_keeps_multipart_formatter_dict_for_transport(
+        self, multipart_inference_client, sample_request_info
+    ):
+        formatted_payload = {
+            "prompt": "edit this",
+            "image": "data:image/png;base64,abc",
+            "num_inference_steps": 4,
+        }
+        sample_request_info.model_endpoint = multipart_inference_client.model_endpoint
+        sample_request_info.turns = [Turn(role="user", texts=[Text(contents=["edit"])])]
+        sample_request_info.payload_bytes = None
+        multipart_inference_client.endpoint.format_payload.return_value = (
+            formatted_payload
+        )
+        multipart_inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        await multipart_inference_client.send_request(sample_request_info)
+
+        multipart_inference_client.endpoint.format_payload.assert_called_once_with(
+            sample_request_info
+        )
+        call_args = multipart_inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == formatted_payload
+        assert orjson.loads(sample_request_info.payload_bytes) == formatted_payload
+
+    @pytest.mark.asyncio
+    async def test_send_request_keeps_multipart_file_tuple_payload_dict_for_transport(
+        self, multipart_inference_client, sample_request_info
+    ):
+        raw_payload = {
+            "prompt": "remove the chair",
+            "image": ("room.png", b"\x89PNG\r\n", "image/png"),
+        }
+        sample_request_info.model_endpoint = multipart_inference_client.model_endpoint
+        sample_request_info.turns = [Turn(role="user", raw_payload=raw_payload)]
+        sample_request_info.payload_bytes = None
+        multipart_inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        await multipart_inference_client.send_request(sample_request_info)
+
+        multipart_inference_client.endpoint.format_payload.assert_not_called()
+        call_args = multipart_inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == raw_payload
+        assert isinstance(call_args.kwargs["payload"], dict)
+        assert sample_request_info.payload_bytes is None
+
+    @pytest.mark.asyncio
+    async def test_send_request_json_formatter_dict_sets_payload_bytes(
+        self, inference_client, sample_request_info
+    ):
+        formatted_payload = {
+            "messages": [{"role": "user", "content": "formatted"}],
+            "max_tokens": 8,
+        }
+        sample_request_info.turns = [Turn(role="user", texts=[Text(contents=["hi"])])]
+        sample_request_info.payload_bytes = None
+        inference_client.endpoint.format_payload.return_value = formatted_payload
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        call_args = inference_client.transport.send_request.call_args
+        assert isinstance(call_args.kwargs["payload"], bytes)
+        assert call_args.kwargs["payload"] is sample_request_info.payload_bytes
+        assert orjson.loads(sample_request_info.payload_bytes) == formatted_payload
+
+    @pytest.mark.asyncio
+    async def test_send_request_raises_only_when_turns_and_payload_bytes_both_empty(
+        self, inference_client
+    ):
+        """The empty-turns guard now permits payload_bytes-only RequestInfo."""
         request_info = RequestInfo(
             model_endpoint=inference_client.model_endpoint,
             turns=[],
             turn_index=0,
-            credit_num=42,
+            credit_num=1,
             credit_phase=CreditPhase.PROFILING,
-            x_request_id="test-id",
-            x_correlation_id="test-corr",
-            conversation_id="test-conv",
+            x_request_id="r",
+            x_correlation_id="c",
+            conversation_id="conv",
         )
 
-        with pytest.raises(ValueError, match="no turns"):
+        with pytest.raises(ValueError, match="no turns and no payload_bytes"):
             await inference_client.send_request(request_info)
+
+        # With payload_bytes set, no raise.
+        request_info.payload_bytes = b'{"messages":[]}'
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+        await inference_client.send_request(request_info)
+
+    @pytest.mark.asyncio
+    async def test_send_request_populates_metric_inputs(
+        self, inference_client, sample_request_info
+    ):
+        """metric_inputs carries routing fields and inline payload bytes."""
+        sample_request_info.payload_bytes = (
+            b'{"messages":[{"role":"user","content":"x"}]}'
+        )
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.metric_inputs is not None
+        assert record.metric_inputs.credit_num == sample_request_info.credit_num
+        assert record.metric_inputs.credit_phase == sample_request_info.credit_phase
+        assert (
+            record.metric_inputs.conversation_id == sample_request_info.conversation_id
+        )
+        assert record.metric_inputs.turn_index == sample_request_info.turn_index
+        assert record.metric_inputs.x_request_id == sample_request_info.x_request_id
+        assert (
+            record.metric_inputs.x_correlation_id
+            == sample_request_info.x_correlation_id
+        )
+        assert (
+            record.metric_inputs.credit_issued_ns
+            == sample_request_info.credit_issued_ns
+        )
+        assert record.metric_inputs.agent_depth == sample_request_info.agent_depth
+        assert (
+            record.metric_inputs.parent_correlation_id
+            == sample_request_info.parent_correlation_id
+        )
+        assert (
+            record.metric_inputs.payload_bytes_or_none
+            == sample_request_info.payload_bytes
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_request_metric_inputs_carries_all_routing_fields(
+        self, inference_client, sample_request_info
+    ):
+        """MetricInputs carries every routing field that ``RequestInfo`` carries."""
+        sample_request_info.payload_bytes = b'{"messages":[]}'
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.metric_inputs is not None
+        assert record.metric_inputs.credit_num == sample_request_info.credit_num
+        assert (
+            record.metric_inputs.conversation_id == sample_request_info.conversation_id
+        )
+        assert (
+            record.metric_inputs.payload_bytes_or_none
+            == sample_request_info.payload_bytes
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_request_drops_payload_bytes_when_from_mmap(
+        self, inference_client, sample_request_info
+    ):
+        """from_mmap=True -> records-process resolves bytes itself; the wire
+        MetricInputs.payload_bytes is None to avoid shipping them twice."""
+        sample_request_info.payload_bytes = (
+            b'{"messages":[{"role":"user","content":"x"}]}'
+        )
+        sample_request_info.from_mmap = True
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.metric_inputs is not None
+        # Wire payload_bytes dropped on PAYLOAD_BYTES path.
+        assert record.metric_inputs.payload_bytes_or_none is None
+        # Routing fields still populated.
+        assert (
+            record.metric_inputs.conversation_id == sample_request_info.conversation_id
+        )
+        assert record.metric_inputs.turn_index == sample_request_info.turn_index
+
+    @pytest.mark.asyncio
+    async def test_send_request_keeps_payload_bytes_when_not_from_mmap(
+        self, inference_client, sample_request_info
+    ):
+        """from_mmap=False (default) -> wire MetricInputs.payload_bytes carries
+        the inline bytes for CONVERSATION-format datasets and error paths."""
+        sample_request_info.payload_bytes = (
+            b'{"messages":[{"role":"user","content":"x"}]}'
+        )
+        # from_mmap defaults to False.
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord()
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.metric_inputs is not None
+        assert (
+            record.metric_inputs.payload_bytes_or_none
+            == sample_request_info.payload_bytes
+        )
 
     def test_enrich_request_record_uses_last_turn_model(self, inference_client):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
@@ -369,7 +610,6 @@ class TestInferenceClient:
             conversation_id="test-conv",
         )
         record = RequestRecord(
-            request_info=request_info,
             start_perf_ns=1000,
             timestamp_ns=1000,
             end_perf_ns=2000,

@@ -14,7 +14,14 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
 )
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
-from aiperf.common.models import Conversation, Image, Text, Turn
+from aiperf.common.models import (
+    Conversation,
+    Image,
+    MemoryMapClientMetadata,
+    ModelEndpointInfo,
+    Text,
+    Turn,
+)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
@@ -356,6 +363,31 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
 
+class TestDatasetManagerInputPayloads:
+    def test_generate_input_payloads_uses_raw_payload_without_reformatting(self):
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="image_edit",
+        )
+        dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
+        raw_payload = {
+            "prompt": "edit this",
+            "image": {"b64_data": "abc", "filename": "image.png"},
+        }
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", raw_payload=raw_payload)],
+            )
+        }
+
+        inputs = dataset_manager._generate_input_payloads(
+            ModelEndpointInfo.from_run(dataset_manager.run)
+        )
+
+        assert inputs.data[0].payloads == [raw_payload]
+
+
 class TestDatasetManagerMemoryAndClient:
     """Test dataset client initialization and memory freeing after configuration."""
 
@@ -427,10 +459,18 @@ class TestDatasetManagerFallbackHandlers:
 
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
-        """Create a configured dataset manager with multiple entries."""
+        """Create a configured dataset manager with multiple entries.
+
+        Uses a multi-turn synthetic config so the composer does NOT pre-format
+        payloads (multi-turn under default DELTAS_WITHOUT_RESPONSES is
+        ineligible). The backing store therefore picks CONVERSATION format,
+        which is the path these fallback handlers exercise.
+        """
         cli_config = CLIConfig(
             model_names=["test-model"],
             num_dataset_entries=3,
+            conversation_turn_mean=2,
+            conversation_turn_stddev=0,
         )
         CLIConfig()
         dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
@@ -707,7 +747,13 @@ class TestConvertMediaUrlsToInline:
         dataset_manager.dataset = {
             "s1": Conversation(
                 session_id="s1",
-                turns=[Turn(images=[Image(contents=[url])], model="test-model")],
+                turns=[
+                    Turn(
+                        images=[Image(contents=[url])],
+                        model="test-model",
+                        raw_payload={"input": [{"type": "image_url", "url": url}]},
+                    )
+                ],
             )
         }
 
@@ -728,9 +774,59 @@ class TestConvertMediaUrlsToInline:
 
             await dataset_manager._convert_media_urls_to_inline()
 
-        contents = dataset_manager.dataset["s1"].turns[0].images[0].contents
+        turn = dataset_manager.dataset["s1"].turns[0]
+        contents = turn.images[0].contents
         assert len(contents) == 1
         assert contents[0].startswith("data:image/png;base64,")
+        assert turn.raw_payload is None
+
+    @pytest.mark.asyncio
+    async def test_configure_dataset_preformats_after_inline_media_conversion(
+        self, dataset_manager, tmp_path
+    ):
+        """Preformatted payloads are built after URL media is converted inline."""
+        url = "https://example.com/image.png"
+        conversation = Conversation(
+            session_id="s1",
+            turns=[Turn(images=[Image(contents=[url])], model="test-model")],
+        )
+        captured: list[list[Conversation]] = []
+
+        async def fake_build(
+            conversations: list[Conversation],
+        ) -> MemoryMapClientMetadata:
+            captured.append(conversations)
+            return MemoryMapClientMetadata(
+                data_file_path=tmp_path / "dataset.dat",
+                index_file_path=tmp_path / "index.dat",
+            )
+
+        dataset_manager._load_synthetic_dataset = MagicMock(return_value=[conversation])
+        dataset_manager._build_and_write_backing_store = AsyncMock(
+            side_effect=fake_build
+        )
+
+        with patch(
+            "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
+        ) as mock_session_cls:
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.read = AsyncMock(return_value=_TINY_PNG_BYTES)
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+            mock_session_cls.return_value = mock_session
+
+            await dataset_manager._configure_dataset()
+
+        turn = captured[0][0].turns[0]
+        assert turn.images[0].contents[0].startswith("data:image/png;base64,")
+        assert turn.raw_payload is not None
+        assert turn.raw_payload["input"][0]["url"].startswith("data:image/png;base64,")
 
     @pytest.mark.asyncio
     async def test_skips_already_encoded_data_urls(self, dataset_manager):
@@ -952,3 +1048,40 @@ class TestAccuracyModeSamplingGuards:
         # accuracy datasets is SEQUENTIAL (matching the v1 mutation behavior).
         dataset = manager.run.cfg.get_default_dataset()
         assert dataset.sampling == DatasetSamplingStrategy.SEQUENTIAL
+
+    async def test_accuracy_load_preformats_raw_payload(self) -> None:
+        """Accuracy benchmarks ride PAYLOAD_BYTES: every loaded conversation's
+        turns must have ``raw_payload`` set after _load_accuracy_dataset."""
+        cli_config = _make_accuracy_cfg(strategy=DatasetSamplingStrategy.SEQUENTIAL)
+        manager = await self._make_manager(cli_config)
+
+        # Two single-turn accuracy-style conversations from a fake loader.
+        fake_convs = [
+            Conversation(
+                session_id="acc-0",
+                turns=[
+                    Turn(role="user", raw_messages=[{"role": "user", "content": "Q0"}])
+                ],
+            ),
+            Conversation(
+                session_id="acc-1",
+                turns=[
+                    Turn(role="user", raw_messages=[{"role": "user", "content": "Q1"}])
+                ],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.AccuracyDatasetLoader.load",
+            new_callable=AsyncMock,
+            return_value=fake_convs,
+        ):
+            result = await manager._load_accuracy_dataset()
+
+        assert len(result) == 2
+        for conv in result:
+            for turn in conv.turns:
+                assert turn.raw_payload is not None, (
+                    f"Expected raw_payload stamped on {conv.session_id} after "
+                    "accuracy load (PAYLOAD_BYTES fast path)."
+                )

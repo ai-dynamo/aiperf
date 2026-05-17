@@ -4,8 +4,7 @@
 import pytest
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.dataset_models import Image, Turn
+from aiperf.common.models import ExtractedPayload, ParsedResponseRecord
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.image_metrics import (
     ImageLatencyMetric,
@@ -49,22 +48,14 @@ def create_record_with_images(
     images_per_turn = images_per_turn or [1]
 
     record = create_record(start_ns=start_ns, responses=responses)
-    turns = [
-        Turn(
-            images=[Image(name=f"image_{i}", contents=[f"data_{i}"]) for i in range(n)]
-        )
-        for n in images_per_turn
-    ]
-    record.request.request_info.turns = turns
-    record.request.turns = turns
-
+    total_images = sum(images_per_turn)
+    record.payload_inputs = ExtractedPayload(image_count=total_images)
     return record
 
 
-def set_turns_on_record(record: ParsedResponseRecord, turns: list[Turn]) -> None:
-    """Set turns on both request_info and request for a record."""
-    record.request.request_info.turns = turns
-    record.request.turns = turns
+def set_image_count_on_record(record: ParsedResponseRecord, count: int) -> None:
+    """Set image_count on the record's payload_inputs."""
+    record.payload_inputs = ExtractedPayload(image_count=count)
 
 
 class TestNumImagesMetric:
@@ -86,10 +77,7 @@ class TestNumImagesMetric:
     def test_num_images_batched_contents(self):
         """Test counting images with batched contents in a single Image object."""
         record = create_record(start_ns=100, responses=[150])
-        turns = [
-            Turn(images=[Image(name="batch", contents=["data1", "data2", "data3"])])
-        ]
-        set_turns_on_record(record, turns)
+        set_image_count_on_record(record, 3)
 
         metric_results = run_image_metrics_pipeline([record], NumImagesMetric.tag)
         assert metric_results[NumImagesMetric.tag] == [3]
@@ -104,21 +92,25 @@ class TestNumImagesMetric:
         metric_results = run_image_metrics_pipeline(records, NumImagesMetric.tag)
         assert metric_results[NumImagesMetric.tag] == [1, 2, 3]
 
-    @pytest.mark.parametrize(
-        "turns",
-        [
-            [Turn(images=[])],
-            [],
-        ],
-        ids=["empty_images", "no_turns"],
-    )  # fmt: skip
-    def test_num_images_error_cases(self, turns):
+    def test_num_images_error_cases(self):
         """Test error when record has no images."""
         record = create_record(start_ns=100, responses=[150])
-        set_turns_on_record(record, turns)
+        set_image_count_on_record(record, 0)
 
         metric = NumImagesMetric()
         with pytest.raises(NoMetricValue, match="at least one image"):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_num_images_missing_payload_inputs(self):
+        """Test error when payload_inputs is None (extraction skipped/failed)."""
+        record = create_record(start_ns=100, responses=[150])
+        # Leave payload_inputs as None.
+
+        metric = NumImagesMetric()
+        with pytest.raises(
+            NoMetricValue,
+            match="Cannot compute num_images: request payload_inputs are unavailable or could not be extracted",
+        ):
             metric.parse_record(record, MetricRecordDict())
 
 

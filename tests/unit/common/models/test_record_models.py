@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from pydantic import BaseModel, Field, SerializeAsAny
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
@@ -149,15 +148,21 @@ class TestSSEMessageDataclass:
         assert msg.packets[0].value == "from_bytes"
 
     def test_pydantic_serialization_roundtrip(self) -> None:
-        """SSEMessage roundtrips through Pydantic when inside a model field."""
+        """SSEMessage round-trips when carried in a msgspec.Struct ``RequestRecord``.
 
-        class Wrapper(BaseModel):
-            responses: SerializeAsAny[list[SSEMessage]] = Field(default_factory=list)
+        Post Task 3a.4: ``RequestRecord`` is itself a ``msgspec.Struct``, and
+        ``SSEMessage`` is a tagged ``msgspec.Struct``; the embedded responses
+        list round-trips natively through ``msgspec.json`` -- no Pydantic
+        bridge required.
+        """
+        import msgspec
+
+        from aiperf.common.models import RequestRecord
 
         msg = SSEMessage.parse("data: roundtrip\nevent: test", perf_ns=123)
-        wrapper = Wrapper(responses=[msg])
-        json_bytes = wrapper.model_dump_json().encode()
-        restored = Wrapper.model_validate_json(json_bytes)
+        record = RequestRecord(responses=[msg])
+        json_bytes = msgspec.json.encode(record)
+        restored = msgspec.json.decode(json_bytes, type=RequestRecord)
         assert restored.responses[0].perf_ns == 123
         assert len(restored.responses[0].packets) == 2
         assert restored.responses[0].packets[0].value == "roundtrip"

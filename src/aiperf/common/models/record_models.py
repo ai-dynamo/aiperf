@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
 
+import msgspec
 import orjson
 from pydantic import (
     ConfigDict,
@@ -16,6 +17,7 @@ from pydantic import (
     PlainSerializer,
     RootModel,
     SerializeAsAny,
+    field_serializer,
     field_validator,
 )
 from pydantic.functional_validators import AfterValidator
@@ -26,11 +28,16 @@ from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
-from aiperf.common.models.dataset_models import Turn
+from aiperf.common.models.dataset_models import Turn, TurnMetadata
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.extracted_payload import ExtractedPayload
+from aiperf.common.models.metric_inputs import MetricInputs
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
+from aiperf.common.models.trace_models import (
+    BaseTraceDataUnion,
+    TraceDataExport,
+)
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
@@ -38,27 +45,63 @@ from aiperf.common.utils import load_json_str
 _logger = AIPerfLogger(__name__)
 
 
-class MetricResult(JsonMetricResult):
-    """The result values of a single metric."""
+class MetricResult(msgspec.Struct, kw_only=True, omit_defaults=True):
+    """The result values of a single metric.
 
-    tag: MetricTagT = Field(description="The unique identifier of the metric")
-    # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize from JSON strings with pydantic.
-    #       If we need an instance of a MetricUnitT, lookup the unit based on the tag in the MetricRegistry.
-    header: str = Field(
-        description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
-    )
-    count: int | None = Field(
-        default=None,
-        description="The total number of records used to calculate the metric",
-    )
-    current: float | None = Field(
-        default=None,
-        description="The most recent value of the metric (used for realtime dashboard display only)",
-    )
-    sum: int | float | None = Field(
-        default=None,
-        description="The sum of all the metric values across all records",
-    )
+    Wire- and storage-compatible ``msgspec.Struct`` (no Pydantic inheritance).
+    Shares the on-wire field shape with ``JsonMetricResult`` so downstream
+    JSON consumers continue to parse the same dict; ``JsonMetricResult`` stays
+    Pydantic because it is exporter-side only (file-writer output) and bumping
+    its schema would require a coordinated GenAI-Perf compatibility note.
+
+    ``omit_defaults=True`` strips None-valued stat fields from the JSON wire
+    so the encoded payload matches the prior Pydantic ``exclude_none=True``
+    shape used by ``RealtimeMetricsMessage`` and the metric exporters.
+    """
+
+    tag: MetricTagT
+    """The unique identifier of the metric."""
+
+    header: str
+    """The user friendly name of the metric (e.g. 'Inter Token Latency')."""
+
+    # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize
+    #       from JSON strings. If we need an instance of a MetricUnitT, lookup
+    #       the unit based on the tag in the MetricRegistry.
+    unit: str
+    """The unit of the metric, e.g. 'ms' or 'requests/sec'."""
+
+    avg: float | None = None
+    p1: float | None = None
+    p5: float | None = None
+    p10: float | None = None
+    p25: float | None = None
+    p50: float | None = None
+    p75: float | None = None
+    p90: float | None = None
+    p95: float | None = None
+    p99: float | None = None
+    min: int | float | None = None
+    max: int | float | None = None
+    std: float | None = None
+    count: int | None = None
+    """The total number of records used to calculate the metric."""
+
+    current: float | None = None
+    """The most recent value of the metric (used for realtime dashboard display only)."""
+
+    sum: int | float | None = None
+    """The sum of all the metric values across all records."""
+
+    def __post_init__(self) -> None:
+        # Tests and downstream consumers depend on ``unit`` being a plain
+        # ``str`` (the prior Pydantic shape coerced enum subclass values via
+        # ``__str__`` during validation). ``MetricUnitT`` enums subclass
+        # ``str`` but compare against bare strings only inside their own
+        # equality; set membership of bare strings against enum members
+        # fails. Force ``str()`` so callers see the wire-stable form.
+        if type(self.unit) is not str:
+            self.unit = str(self.unit)
 
     def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
@@ -94,6 +137,48 @@ class MetricResult(JsonMetricResult):
         return result
 
 
+# Bridge helpers for the residual Pydantic models that still embed
+# ``MetricResult`` (``ProfileResults``, ``RealtimeTelemetryMetricsMessage``,
+# ``TimesliceCollectionExportData``). After every embedding model has migrated
+# to msgspec these can disappear; until then a shared encoder/decoder pair
+# keeps the on-wire shape consistent.
+_METRIC_RESULT_ENCODER = msgspec.json.Encoder()
+_METRIC_RESULT_DECODER = msgspec.json.Decoder(MetricResult)
+
+
+def _metric_result_to_jsonable(value: MetricResult) -> dict[str, Any]:
+    """Encode a ``MetricResult`` Struct to a plain JSON-safe dict."""
+    return orjson.loads(_METRIC_RESULT_ENCODER.encode(value))
+
+
+def _metric_result_from_value(value: Any) -> MetricResult:
+    """Decode a Pydantic-supplied value into a ``MetricResult`` Struct."""
+    if isinstance(value, MetricResult):
+        return value
+    if isinstance(value, dict):
+        return _METRIC_RESULT_DECODER.decode(orjson.dumps(value))
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return _METRIC_RESULT_DECODER.decode(bytes(value))
+    raise TypeError(
+        f"MetricResult must be a MetricResult Struct, dict, or bytes; "
+        f"got {type(value).__name__}"
+    )
+
+
+def _metric_result_list_from_value(value: Any) -> list[MetricResult]:
+    """Decode a list of ``MetricResult`` from a Pydantic-supplied value."""
+    if value is None:
+        return []
+    return [_metric_result_from_value(item) for item in value]
+
+
+def _metric_result_list_to_jsonable(
+    value: list[MetricResult],
+) -> list[dict[str, Any]]:
+    """Encode a list of ``MetricResult`` to plain JSON-safe dicts."""
+    return [_metric_result_to_jsonable(item) for item in value]
+
+
 class MetricValue(AIPerfBaseModel):
     """The value of a metric converted to display units for export."""
 
@@ -101,78 +186,106 @@ class MetricValue(AIPerfBaseModel):
     unit: str
 
 
-class MetricRecordMetadata(AIPerfBaseModel):
-    """The metadata of a metric record for export."""
+class MetricRecordMetadata(msgspec.Struct, kw_only=True, omit_defaults=True):
+    """The metadata of a metric record for export.
 
-    session_num: int = Field(
-        ...,
-        description="The sequential number of the session in the benchmark. For single-turn datasets, this will be the"
-        " request index. For multi-turn datasets, this will be the session index.",
-    )
-    x_request_id: str | None = Field(
-        default=None,
-        description="The X-Request-ID header of the request. This is a unique ID for the request.",
-    )
-    x_correlation_id: str | None = Field(
-        default=None,
-        description="The X-Correlation-ID header of the request. This is a shared ID for each user session/conversation in multi-turn.",
-    )
-    conversation_id: str | None = Field(
-        default=None,
-        description="The ID of the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
-    )
-    turn_index: int | None = Field(
-        default=None,
-        description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
-    )
-    credit_issued_ns: int | None = Field(
-        default=None,
-        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
-        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
-    )
-    request_start_ns: int = Field(
-        ...,
-        description="The wall clock timestamp of the request start time measured as time.time_ns().",
-    )
-    request_ack_ns: int | None = Field(
-        default=None,
-        description="The wall clock timestamp of the request acknowledgement from the server, measured as time.time_ns(), if applicable. "
-        "This is only applicable to streaming requests, and servers that send 200 OK back immediately after the request is received.",
-    )
-    request_end_ns: int = Field(
-        ...,
-        description="The wall clock timestamp of the request end time measured as time.time_ns(). If the request failed, "
-        "this will be the time of the error.",
-    )
-    worker_id: str = Field(
-        ..., description="The ID of the AIPerf worker that processed the request."
-    )
-    record_processor_id: str = Field(
-        ...,
-        description="The ID of the AIPerf record processor that processed the record.",
-    )
-    benchmark_phase: CreditPhase = Field(
-        ...,
-        description="The benchmark phase of the record, either warmup or profiling.",
-    )
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the request was cancelled during execution.",
-    )
-    cancellation_time_ns: int | None = Field(
-        default=None,
-        description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
-        "This is only applicable to requests that were cancelled.",
-    )
-    agent_depth: int = Field(
-        default=0,
-        description="The DAG agent depth of the session that produced this record. 0 for root sessions, "
-        "incremented by 1 for each nested subagent fork. Use to filter records by DAG layer.",
-    )
-    parent_correlation_id: str | None = Field(
-        default=None,
-        description="The x_correlation_id of the parent session that spawned this record's session via a "
-        "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
+    Wire-compatible ``msgspec.Struct`` embedded by ``MetricRecordsData`` /
+    ``MetricRecordsMessage`` on the records-pipeline channel and by the
+    exporter-side ``MetricRecordInfo`` / ``RawRecordInfo`` JSONL records.
+    """
+
+    session_num: int
+    """The sequential number of the session in the benchmark. For single-turn
+    datasets, this will be the request index. For multi-turn datasets, this
+    will be the session index."""
+
+    request_start_ns: int
+    """The wall clock timestamp of the request start time measured as
+    time.time_ns()."""
+
+    request_end_ns: int
+    """The wall clock timestamp of the request end time measured as
+    time.time_ns(). If the request failed, this will be the time of the error."""
+
+    worker_id: str
+    """The ID of the AIPerf worker that processed the request."""
+
+    record_processor_id: str
+    """The ID of the AIPerf record processor that processed the record."""
+
+    benchmark_phase: CreditPhase
+    """The benchmark phase of the record, either warmup or profiling."""
+
+    x_request_id: str | None = None
+    """The X-Request-ID header of the request. This is a unique ID for the request."""
+
+    x_correlation_id: str | None = None
+    """The X-Correlation-ID header of the request. This is a shared ID for each
+    user session/conversation in multi-turn."""
+
+    conversation_id: str | None = None
+    """The ID of the conversation (if applicable). This can be used to lookup
+    the original request data from the inputs.json file."""
+
+    turn_index: int | None = None
+    """The index of the turn in the conversation (if applicable). This can be
+    used to lookup the original request data from the inputs.json file."""
+
+    credit_issued_ns: int | None = None
+    """Wall clock timestamp (time.time_ns) when the credit was issued by the
+    rate limiter. This is the control point for accurate rate measurement,
+    before ZeroMQ transit to workers."""
+
+    request_ack_ns: int | None = None
+    """The wall clock timestamp of the request acknowledgement from the server,
+    measured as time.time_ns(), if applicable. This is only applicable to
+    streaming requests, and servers that send 200 OK back immediately after
+    the request is received."""
+
+    was_cancelled: bool = False
+    """Whether the request was cancelled during execution."""
+
+    cancellation_time_ns: int | None = None
+    """The wall clock timestamp of the request cancellation time measured as
+    time.time_ns(), if applicable. This is only applicable to requests that
+    were cancelled."""
+
+    agent_depth: int = 0
+    """The DAG agent depth of the session that produced this record. 0 for root
+    sessions, incremented by 1 for each nested subagent fork. Use to filter
+    records by DAG layer."""
+
+    parent_correlation_id: str | None = None
+    """The x_correlation_id of the parent session that spawned this record's
+    session via a DAG subagent fork. None for root sessions. Use to group
+    sibling branches of the same DAG."""
+
+
+# Bridge helpers for the residual Pydantic models that still embed
+# ``MetricRecordMetadata`` (``MetricRecordInfo``). After every embedding model
+# has migrated to msgspec these can disappear.
+_METRIC_RECORD_METADATA_ENCODER = msgspec.json.Encoder()
+_METRIC_RECORD_METADATA_DECODER = msgspec.json.Decoder(MetricRecordMetadata)
+
+
+def _metric_record_metadata_to_jsonable(
+    value: MetricRecordMetadata,
+) -> dict[str, Any]:
+    """Encode a ``MetricRecordMetadata`` Struct to a plain JSON-safe dict."""
+    return orjson.loads(_METRIC_RECORD_METADATA_ENCODER.encode(value))
+
+
+def _metric_record_metadata_from_value(value: Any) -> MetricRecordMetadata:
+    """Decode a Pydantic-supplied value into a ``MetricRecordMetadata`` Struct."""
+    if isinstance(value, MetricRecordMetadata):
+        return value
+    if isinstance(value, dict):
+        return _METRIC_RECORD_METADATA_DECODER.decode(orjson.dumps(value))
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return _METRIC_RECORD_METADATA_DECODER.decode(bytes(value))
+    raise TypeError(
+        f"MetricRecordMetadata must be a MetricRecordMetadata Struct, dict, "
+        f"or bytes; got {type(value).__name__}"
     )
 
 
@@ -224,6 +337,48 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+
+    @field_validator("records", mode="before")
+    @classmethod
+    def _route_records(cls, v: Any) -> list[MetricResult] | None:
+        """Decode the ``records`` list back into ``MetricResult`` Structs."""
+        if v is None:
+            return None
+        return _metric_result_list_from_value(v)
+
+    @field_serializer("records", when_used="json")
+    def _encode_records(
+        self, value: list[MetricResult] | None
+    ) -> list[dict[str, Any]] | None:
+        """Encode each ``MetricResult`` via msgspec.json for the JSON wire."""
+        if value is None:
+            return None
+        return _metric_result_list_to_jsonable(value)
+
+    @field_validator("timeslice_metric_results", mode="before")
+    @classmethod
+    def _route_timeslice_metric_results(
+        cls, v: Any
+    ) -> dict[TimeSliceT, list[MetricResult]] | None:
+        """Decode each timeslice's ``MetricResult`` list back into Structs."""
+        if v is None:
+            return None
+        return {
+            slice_key: _metric_result_list_from_value(items)
+            for slice_key, items in v.items()
+        }
+
+    @field_serializer("timeslice_metric_results", when_used="json")
+    def _encode_timeslice_metric_results(
+        self, value: dict[TimeSliceT, list[MetricResult]] | None
+    ) -> dict[TimeSliceT, list[dict[str, Any]]] | None:
+        """Encode each timeslice's ``MetricResult`` list via msgspec.json."""
+        if value is None:
+            return None
+        return {
+            slice_key: _metric_result_list_to_jsonable(items)
+            for slice_key, items in value.items()
+        }
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
@@ -307,20 +462,26 @@ class SSEField:
     was the #1 memory allocator.
     """
 
-    name: SSEFieldType | str
-    """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'."""
+    name: str
+    """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'.
+
+    Stored as plain ``str`` so msgspec can decode SSE packets back from the
+    JSON wire without a union dispatch (msgspec rejects ``SSEFieldType | str``
+    because both are str-like). Equality against ``SSEFieldType`` values still
+    works via ``CaseInsensitiveStrEnum.__eq__``.
+    """
 
     value: str | None = None
     """The value of the field."""
 
 
-@dataclass(slots=True)
-class TextResponse:
-    """Raw text response from an inference client including an optional content type."""
+class TextResponse(msgspec.Struct, kw_only=True, tag="text"):
+    """Raw text response from an inference client including an optional content type.
 
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
+    msgspec.Struct with a string ``tag="text"`` so it discriminates against the
+    other ``InferenceServerResponse`` variants on the records-pipeline wire.
+    Constructed kwargs-only — every callsite already does this.
+    """
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
@@ -349,13 +510,12 @@ class TextResponse:
             return None
 
 
-@dataclass(slots=True)
-class BinaryResponse:
-    """Raw binary response from an inference client for non-text content types."""
+class BinaryResponse(msgspec.Struct, kw_only=True, tag="binary"):
+    """Raw binary response from an inference client for non-text content types.
 
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
+    msgspec.Struct: bytes are base64-encoded by msgspec.json by default, so the
+    ``raw_bytes`` field survives the JSON wire trip without a custom serializer.
+    """
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
@@ -379,23 +539,19 @@ class BinaryResponse:
         return None
 
 
-@dataclass(slots=True)
-class SSEMessage:
+class SSEMessage(msgspec.Struct, kw_only=True, tag="sse"):
     """Individual SSE message from an SSE stream. Delimited by \\n\\n.
 
-    Uses dataclass(slots=True) instead of Pydantic for ~6x faster construction
-    and ~10x smaller memory footprint per instance. Pydantic handles serialization
-    and deserialization automatically when this appears inside Pydantic model fields.
+    msgspec.Struct discriminates against the other ``InferenceServerResponse``
+    variants on the records-pipeline wire via ``tag="sse"``. The embedded
+    ``packets`` list of ``SSEField`` dataclasses round-trips through msgspec
+    natively (msgspec handles plain dataclasses inside Structs).
     """
-
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
 
     perf_ns: int
     """The performance timestamp of the message in nanoseconds (perf_counter_ns)."""
 
-    packets: list[SSEField] = field(default_factory=list)
+    packets: list[SSEField] = msgspec.field(default_factory=list)
     """The parsed SSE fields (data, event, id, retry, comment) in this message."""
 
     @classmethod
@@ -494,27 +650,29 @@ class SSEMessage:
             return None
 
 
-class RecordContext(AIPerfBaseModel):
-    """Slim per-record context attached to ``RequestRecord``.
+# Tagged union for ``RequestRecord.responses`` and ``RawRecordInfo.responses``.
+# msgspec dispatches by the top-level ``"type"`` field which each Struct's
+# ``tag="..."`` populates. Distinct from the ``InferenceServerResponse``
+# Protocol above: the Protocol describes the get_raw/get_text/get_json
+# duck-typed surface that endpoint parsers consume; this union is the
+# exhaustive set of concrete Structs that ride the records-pipeline wire and
+# need tag-discriminated decode.
+InferenceServerResponseUnion = SSEMessage | TextResponse | BinaryResponse
 
-    Carries *only* the fields the record-processor pipeline reads
-    post-transport. The full ``RequestInfo`` (model endpoint, transport
-    headers, URL params, pre-send-only timing fields) stays on the worker
-    and never crosses ZMQ — eliminating ~500-900 bytes of dead weight per
-    record at high request rates.
 
-    ``RequestInfo`` inherits from this class so production-side callers
-    that build a full request info can still assign it to
-    ``RequestRecord.request_info`` (it IS a ``RecordContext``); the worker's
-    ``inference_client._enrich_request_record`` explicitly down-casts to a
-    pure ``RecordContext`` before the ZMQ hop so the subclass extras are
-    dropped.
+class RequestInfo(AIPerfBaseModel):
+    """Full request info used Worker-side for transport dispatch.
 
-    Disambiguation note: aiperf has four "Context" types that are easy to
+    Carries everything ``inference_client`` and the endpoint plugins need to
+    format and send a request: routing identity, the worker-built turn list,
+    transport headers and URL params, timing fields, and the
+    pre-encoded wire payload bytes. ``RequestInfo`` is purely worker-side —
+    it never crosses ZMQ. The records pipeline reads its inputs from the
+    flat ``MetricInputs`` struct attached to ``RequestRecord.metric_inputs``.
+
+    Disambiguation note: aiperf has several "Context" types that are easy to
     confuse but live in distinct subsystems:
 
-    - ``RecordContext`` (this class): per-record fields the record-processor
-      reads post-transport; rides on every ``RequestRecord``.
     - ``CreditContext`` (``aiperf.credit.structs``): timing-side struct the
       credit issuer attaches to a credit before the worker picks it up.
     - ``PhaseCallbackContext`` (``aiperf.credit.callback_handler``): inputs
@@ -525,7 +683,7 @@ class RecordContext(AIPerfBaseModel):
     They do not interconvert; pick the one named for the subsystem you are in.
     """
 
-    # --- Identity / routing (read by MetricRecordMetadata builder) -----------
+    # --- Identity / routing ---------------------------------------------------
 
     credit_num: int = Field(
         ...,
@@ -573,57 +731,35 @@ class RecordContext(AIPerfBaseModel):
         "subagent fork. None for root sessions. Sourced from the originating Credit.",
     )
 
-    # --- Hoisted metric inputs (avoid shipping full Turn structs) -------------
+    # --- Wire payload addressing ----------------------------------------------
 
     payload_bytes: bytes | None = Field(
         default=None,
         description="Canonical pre-encoded JSON bytes of the request body sent to the server. "
-        "Populated by ``inference_client`` before transport dispatch. Used by the raw-record "
-        "exporter to replay the exact wire payload, and tokenised by the record processor.",
-    )
-    max_tokens: int | None = Field(
-        default=None,
-        description="``max_tokens`` from the originating turn. Populated at record-enrichment "
-        "time so the record processor reads it directly off the record without the full ``turns`` "
-        "list on the wire.",
-    )
-    audio_duration_seconds: float | None = Field(
-        default=None,
-        description="``audio_duration_seconds`` from the originating turn. Populated at "
-        "record-enrichment time so the record processor reads it directly off the record without "
-        "the full ``turns`` list on the wire. None for non-ASR requests.",
+        "Populated by ``inference_client`` before transport dispatch (or by the worker when "
+        "the bytes were fetched from mmap).",
     )
 
-    # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
+    # --- Worker-side request shape (used by endpoint.format_payload) ----------
 
     turns: list[Turn] = Field(
         default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations. "
-        "Read by the records pipeline (``inference_result_parser``, ``raw_record_writer_processor``) for response parsing and raw export.",
+        description="The actual turns of the request. Includes assistant turns from prior "
+        "rounds in multi-turn conversations. Consumed by endpoint plugins to format the wire "
+        "payload. Empty for PAYLOAD_BYTES sessions (the worker fetches verbatim bytes from mmap).",
     )
     system_message: str | None = Field(
         default=None,
         description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time. Read by the records pipeline.",
+        "Extracted from conversation.system_message at request time.",
     )
     user_context_message: str | None = Field(
         default=None,
         description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time. Read by the records pipeline.",
+        "Extracted from conversation.user_context_message at request time.",
     )
 
-
-class RequestInfo(RecordContext):
-    """Full request info used Worker-side for transport dispatch.
-
-    Extends ``RecordContext`` with pre-send-only fields that never need to
-    cross the ZMQ hop to the record processor: ``ModelEndpointInfo``
-    (URLs / headers / extras), transport timing (``drop_perf_ns``,
-    ``cancel_after_ns``), round-robin URL index, and the
-    connection-lease-release marker. ``inference_client`` builds these
-    on-the-fly during transport dispatch; ``_enrich_request_record``
-    down-casts to a pure ``RecordContext`` before attaching to the record.
-    """
+    # --- Transport extras ------------------------------------------------------
 
     model_endpoint: ModelEndpointInfo = Field(
         ...,
@@ -659,91 +795,59 @@ class RequestInfo(RecordContext):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
-
-
-class RequestRecord(AIPerfBaseModel):
-    """Record of a request with its associated responses."""
-
-    request_info: RecordContext | None = Field(
-        default=None,
-        description="Slim per-record context (see ``RecordContext``). Built "
-        "by ``inference_client._enrich_request_record`` from the full "
-        "``RequestInfo`` that drove the request — stripping the transport-"
-        "only extras so only the fields the record processor actually "
-        "reads cross ZMQ.",
-    )
-    request_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the request.",
-    )
-    model_name: str | None = Field(
-        default=None,
-        description="The name of the model targeted by the request.",
-    )
-    timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
-    )
-    start_perf_ns: int = Field(
-        default_factory=time.perf_counter_ns,
-        description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
-    )
-    end_perf_ns: int | None = Field(
-        default=None,
-        description="The end time of the request in nanoseconds (perf_counter_ns).",
-    )
-    recv_start_perf_ns: int | None = Field(
-        default=None,
-        description="The start time of the streaming response in nanoseconds (perf_counter_ns).",
-    )
-    status: int | None = Field(
-        default=None,
-        description="The HTTP status code of the response.",
-    )
-    # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
-    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
-    #       the CommandMessage and CommandResponse classes for an example.
-    # NOTE: We need to use SerializeAsAny to allow for generic subclass support
-    # NOTE: The order of the types is important, as that is the order they are type checked.
-    #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
-        default_factory=list,
-        description="The raw responses received from the request.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None,
-        description="The error details if the request failed.",
-    )
-    credit_drop_latency: int | None = Field(
-        default=None,
-        description="The latency of the credit drop in nanoseconds from when it was first received by a Worker to when the inference request was actually sent. "
-        "This can be used to trace internal latency in order to identify bottlenecks or other issues.",
-        ge=0,
-    )
-    cancellation_perf_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
-    )
-    trace_data: SerializeAsAny[BaseTraceData] | None = Field(
-        default=None,
-        description="Comprehensive trace data captured via a trace config. "
-        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
-        "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
+    from_mmap: bool = Field(
+        default=False,
+        description="True when payload_bytes was fetched from mmap by the worker. "
+        "Records-process can read the same bytes via its own mmap client, so the "
+        "wire-side MetricInputs.payload_bytes is None on this path.",
     )
 
-    @field_validator("trace_data", mode="before")
-    @classmethod
-    def route_trace_data(cls, v: Any) -> BaseTraceData | None:
-        """Route nested trace_data to correct subclass based on trace_type discriminator."""
-        if isinstance(v, dict):
-            return BaseTraceData.from_json(v)
-        return v
+
+class RequestRecord(msgspec.Struct, kw_only=True, omit_defaults=True):
+    """Record of a request with its associated responses.
+
+    Wire-only msgspec.Struct. Carries the slim ``MetricInputs`` over the
+    records-pipeline ZMQ channel along with response data, headers, error
+    state, and trace data. All embedded msgspec.Struct types
+    (``MetricInputs``, ``InferenceServerResponseUnion`` tagged union,
+    ``ErrorDetails``, ``BaseTraceDataUnion`` tagged union) round-trip
+    natively through ``msgspec.json`` -- no Pydantic bridges needed.
+
+    Field semantics (descriptions moved here from per-field ``Field(...)`` notes):
+
+    - ``metric_inputs``: Wire-only record-pipeline input populated by
+      ``InferenceClient._finalize_request_record`` before the ZMQ hop. Carries
+      routing identity (credit/conversation/turn IDs), DAG fields, and
+      optionally inline payload bytes (``None`` on the PAYLOAD_BYTES path).
+    - ``timestamp_ns``: Wall-clock timestamp (``time.time_ns``). DO NOT USE
+      FOR LATENCY CALCULATIONS.
+    - ``start_perf_ns`` / ``end_perf_ns``: ``perf_counter_ns`` references for
+      latency math.
+    - ``recv_start_perf_ns``: Start time of the streaming response.
+    - ``credit_drop_latency``: Nanoseconds from worker credit receipt to
+      transport dispatch. Used for internal-latency tracing.
+    - ``cancellation_perf_ns``: ``perf_counter_ns`` at actual cancellation.
+    - ``trace_data``: Comprehensive transport-level trace (connection
+      establishment, DNS, request/response events). Subtype depends on
+      transport/library.
+
+    ``omit_defaults=True`` drops None-valued / default-empty fields from the
+    JSON wire (mirrors the prior Pydantic ``exclude_none=True`` shape).
+    """
+
+    metric_inputs: MetricInputs | None = None
+    request_headers: dict[str, str] | None = None
+    model_name: str | None = None
+    timestamp_ns: int = msgspec.field(default_factory=time.time_ns)
+    start_perf_ns: int = msgspec.field(default_factory=time.perf_counter_ns)
+    end_perf_ns: int | None = None
+    recv_start_perf_ns: int | None = None
+    status: int | None = None
+    responses: list[InferenceServerResponseUnion] = msgspec.field(default_factory=list)
+    error: ErrorDetails | None = None
+    credit_drop_latency: int | None = None
+    cancellation_perf_ns: int | None = None
+    trace_data: BaseTraceDataUnion | None = None
 
     @property
     def was_cancelled(self) -> bool:
@@ -1075,7 +1179,16 @@ class TokenCounts:
 
 @dataclass
 class ParsedResponseRecord:
-    """Record of a request and its associated responses, already parsed and ready for metrics.
+    """A ``RequestRecord`` after the parser has resolved + extracted its inputs.
+
+    Produced by ``InferenceResultParser.parse_request_record``, which is the
+    single chokepoint for payload IO and JSON decode in the records pipeline:
+    bytes are resolved (inline or mmap), parsed once, walked once via
+    ``endpoint.extract_payload_inputs``, and the ``TurnMetadata`` is looked
+    up once. The stashed ``payload_inputs`` / ``turn_metadata`` /
+    ``payload_dict`` fields are how every downstream consumer (tokenizer,
+    raw-record exporter, image/audio/OSL metrics) reads its data — they
+    never re-resolve or re-parse.
 
     Uses @dataclass without slots to allow @cached_property (requires __dict__).
     """
@@ -1088,6 +1201,21 @@ class ParsedResponseRecord:
 
     token_counts: TokenCounts | None = None
     """The token counts for the response. None if the token counts could not be calculated."""
+
+    payload_inputs: ExtractedPayload | None = None
+    """Single-pass payload extraction (texts + image_count + audio_count +
+    video_count + pretokenised_token_count). Populated once by the parser; read
+    by tokenizer + image/audio/video metrics. None when payload couldn't be
+    resolved (no mmap client, no inline bytes, invalid JSON)."""
+
+    turn_metadata: TurnMetadata | None = None
+    """TurnMetadata looked up by (conversation_id, turn_index) at parse time.
+    Read by osl_mismatch (max_tokens) and audio_duration_metric. None for
+    records that arrived without metric_inputs."""
+
+    payload_dict: dict[str, Any] | None = None
+    """Parsed wire payload (same content extract_payload_inputs walked).
+    Stashed so raw_record_writer doesn't re-parse. None when extraction was skipped."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
@@ -1184,7 +1312,13 @@ class ParsedResponseRecord:
 
 
 class MetricRecordInfo(AIPerfBaseModel):
-    """The full info of a metric record including the metadata, metrics, and error for export."""
+    """The full info of a metric record including the metadata, metrics, and error for export.
+
+    Remains Pydantic because it embeds Pydantic-side types
+    (``dict[str, MetricValue]``, ``TraceDataExport``) that the exporter-side
+    JSON-export schema owns; ``MetricRecordMetadata`` still bridges through
+    msgspec while ``ErrorDetails`` is a Pydantic-compatible dataclass.
+    """
 
     metadata: MetricRecordMetadata = Field(
         ...,
@@ -1205,39 +1339,47 @@ class MetricRecordInfo(AIPerfBaseModel):
         description="The error details if the request failed.",
     )
 
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _route_metadata(cls, v: Any) -> MetricRecordMetadata:
+        """Decode a dict / bytes value into a ``MetricRecordMetadata`` Struct."""
+        return _metric_record_metadata_from_value(v)
 
-class RawRecordInfo(AIPerfBaseModel):
-    """The full info of a raw record including the request record for export."""
+    @field_serializer("metadata", when_used="json")
+    def _encode_metadata(self, value: MetricRecordMetadata) -> dict[str, Any]:
+        """Encode the embedded ``MetricRecordMetadata`` via msgspec.json."""
+        return _metric_record_metadata_to_jsonable(value)
 
-    metadata: MetricRecordMetadata = Field(
-        ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
-    )
-    start_perf_ns: int = Field(
-        default_factory=time.perf_counter_ns,
-        description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
-    )
-    payload: dict[str, Any] = Field(
-        ...,
-        description="The raw request payload sent to the server.",
-    )
-    request_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the request.",
-    )
-    status: int | None = Field(
-        default=None,
-        description="The status code of the response.",
-    )
-    response_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the response.",
-    )
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
-        ...,
-        description="The raw responses received from the request.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None,
-        description="The error details if the request failed.",
-    )
+
+class RawRecordInfo(msgspec.Struct, kw_only=True, omit_defaults=True):
+    """The full info of a raw record including the request record for export.
+
+    Wire-compatible ``msgspec.Struct``. All embedded types (``MetricRecordMetadata``,
+    ``InferenceServerResponseUnion`` tagged union, ``ErrorDetails``) round-trip
+    natively through msgspec.json -- no Pydantic bridges needed.
+    """
+
+    metadata: MetricRecordMetadata
+    """The metadata of the record. Should match the metadata in the MetricRecordsMessage."""
+
+    payload: dict[str, Any]
+    """The raw request payload sent to the server."""
+
+    responses: list[InferenceServerResponseUnion]
+    """The raw responses received from the request."""
+
+    start_perf_ns: int = msgspec.field(default_factory=time.perf_counter_ns)
+    """The start reference time of the request in nanoseconds used for latency
+    calculations (perf_counter_ns)."""
+
+    request_headers: dict[str, str] | None = None
+    """The headers of the request."""
+
+    status: int | None = None
+    """The status code of the response."""
+
+    response_headers: dict[str, str] | None = None
+    """The headers of the response."""
+
+    error: ErrorDetails | None = None
+    """The error details if the request failed."""

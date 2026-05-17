@@ -83,7 +83,7 @@ Workers are the processes that send HTTP requests to the inference server and me
 **Key Responsibilities:**
 - Send HTTP requests to inference servers and measure response timing
 - Wait for timing credits before sending requests (enables precise load control)
-- Track conversation state for multi-turn interactions
+- Track conversation state for multi-turn interactions (via `ContentSession` for structured datasets or `RawPayloadSession` for PAYLOAD_BYTES verbatim-replay datasets)
 - Report timing measurements to Record Processors for analysis
 
 **Scalability:**
@@ -102,6 +102,8 @@ The Record Processor processes and interprets the responses received from the in
 - Computing metrics derived from individual requests (TTFT, ITL, Request Latency, Request Throughput etc.)
 - Supporting error detection and handling for malformed or unexpected responses
 - Scales horizontally to handle high-volume metric computation
+
+**Single-extraction chokepoint:** `InferenceResultParser.parse_request_record` is the sole site that touches the wire payload. It resolves bytes (inline from `MetricInputs.payload_bytes`, or via its own `MemoryMapDatasetClientStore` for `PAYLOAD_BYTES` datasets), runs `endpoint.extract_payload_inputs` once, and looks up `TurnMetadata` by `(conversation_id, turn_index)` once. The resulting `ExtractedPayload`, `TurnMetadata`, and parsed dict are stashed on `ParsedResponseRecord` so every downstream metric (image count, OSL mismatch, audio duration, ...) is a pure field read — no metric does IO or parses JSON.
 
 ### Records Manager
 
@@ -174,7 +176,7 @@ This section describes the end-to-end message flow during a benchmark run, showi
 **Key Data Structures:**
 - **Timing Credit**: Grants permission to send one request
 - **Dataset Entry**: Prompt and conversation context
-- **Raw Result**: Request timing, tokens, response text
+- **Raw Result** (`RequestRecord`): Response timing, status, response chunks, plus `MetricInputs` (routing identity + optionally inline payload bytes) — the wire schema between workers and record processors
 - **Metric Record**: Per-request computed metrics plus trace data
 - **Aggregated Results**: Final performance summary and per-request details
 
@@ -182,7 +184,7 @@ This section describes the end-to-end message flow during a benchmark run, showi
 1. Credit Router routes credits to workers via ROUTER/DEALER pattern
 2. Workers access dataset entries via memory-mapped files
 3. Workers send requests to Inference Server (external HTTP)
-4. Workers push raw results to Record Processors
+4. Workers push raw results to Record Processors. For `PAYLOAD_BYTES` datasets, the request body is **not** included on the wire — record processors mmap-resolve the same bytes via the same dataset files
 5. Record Processors push metric records to Records Manager
 6. Records Manager aggregates and exports final results
 

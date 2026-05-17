@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any
 
+import msgspec
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from pydantic import Field
@@ -152,9 +153,11 @@ def format_metrics_json(
 
     metrics_dict = {}
     for metric in metrics:
-        metrics_dict[metric.tag] = metric.model_dump(
-            mode="json", exclude_none=True, exclude={"tag"}
-        )
+        # ``omit_defaults=True`` on the Struct already drops None-valued stat
+        # fields; we strip ``tag`` because it is the dict key.
+        dumped = msgspec.to_builtins(metric)
+        dumped.pop("tag", None)
+        metrics_dict[metric.tag] = dumped
 
     return MetricsResponse(
         aiperf_version=aiperf_version,

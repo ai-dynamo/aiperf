@@ -579,7 +579,6 @@ class TestRecordExportResultsProcessorHttpTrace:
         """
         base_perf_ns = 1000000000
         return AioHttpTraceData(
-            trace_type="aiohttp",
             # Reference timestamps for wall-clock conversion
             reference_time_ns=1700000000000000000,  # Wall-clock reference
             reference_perf_ns=base_perf_ns,

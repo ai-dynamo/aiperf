@@ -8,7 +8,6 @@ import contextlib
 from typing import TYPE_CHECKING
 
 import aiofiles
-import orjson
 
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
@@ -16,16 +15,12 @@ from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
-    ModelEndpointInfo,
     ParsedResponseRecord,
     RawRecordInfo,
 )
-from aiperf.common.models.record_models import RecordContext, RequestInfo
 from aiperf.common.redact import redact_headers
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
-from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -64,12 +59,6 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         safe_id = self.service_id.replace("/", "_").replace(":", "_").replace(" ", "_")
         output_file = output_dir / f"raw_records_{safe_id}.jsonl"
 
-        self._model_endpoint = ModelEndpointInfo.from_run(run)
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, self._model_endpoint.endpoint.type
-        )
-        self._endpoint = EndpointClass(model_endpoint=self._model_endpoint)
-
         # Initialize the buffered writer mixin
         super().__init__(
             output_file=output_file,
@@ -87,43 +76,15 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     def _build_export_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> RawRecordInfo:
-        """Build the export record for a single record."""
+        """Build the export record for a single record.
 
-        # The record arrives carrying a slim ``RecordContext`` (down-cast on
-        # the worker side by ``inference_client._enrich_request_record``); the
-        # transport-only ``model_endpoint`` was stripped to save ZMQ bytes.
-        # Re-attach the locally-known ``model_endpoint`` so the endpoint
-        # plugin's ``format_payload`` has what it needs.
-        ctx = record.request.request_info
-        if ctx is not None:
-            ctx_fields = {
-                k: v
-                for k, v in ctx.model_dump().items()
-                if k in RecordContext.model_fields
-            }
-            request_info = RequestInfo(
-                **ctx_fields,
-                model_endpoint=self._model_endpoint,
-            )
-        else:
-            # Fallback for records without complete request_info
-            # (extremely rare; would indicate an upstream bug).
-            request_info = RequestInfo(
-                model_endpoint=self._model_endpoint,
-                turns=record.request.turns,
-                turn_index=metadata.turn_index or 0,
-                credit_num=metadata.session_num,
-                credit_phase=metadata.benchmark_phase,
-                x_request_id=metadata.x_request_id or "",
-                x_correlation_id=metadata.x_correlation_id or "",
-                conversation_id=metadata.conversation_id or "",
-            )
-
-        payload = (
-            orjson.loads(request_info.payload_bytes)
-            if request_info.payload_bytes is not None
-            else self._endpoint.format_payload(request_info)
-        )
+        The parser already resolved bytes (inline or mmap), parsed them once,
+        and stashed the dict on ``record.payload_dict``. If for some reason
+        the parser couldn't resolve a payload (no inline bytes, no mmap
+        client, JSON decode failure), fall back to an empty dict so the raw
+        export still surfaces the response data and error context.
+        """
+        payload = record.payload_dict if record.payload_dict is not None else {}
         return RawRecordInfo(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,

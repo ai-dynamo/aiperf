@@ -138,7 +138,7 @@ class ConversationSource:
 
         Under FORK mode, the returned session inherits sticky-routing from its
         parent via ``parent_correlation_id``; the credit router pins the child
-        to the parent's worker, where ``UserSessionManager.create_and_store``
+        to the parent's worker, where ``UserSessionManager.create_content_session``
         seeds ``turn_list`` by cloning the parent's in-memory session.
         SPAWN-mode children start with a fresh context, but the sticky pin to
         the parent's correlation_id is preserved at this layer — routing

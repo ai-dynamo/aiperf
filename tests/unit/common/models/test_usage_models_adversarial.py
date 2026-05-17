@@ -828,9 +828,11 @@ class TestUsageCrossVendorMixedShapes:
 def _record_with_response_usages(*usages) -> ParsedResponseRecord:
     """Build a ParsedResponseRecord whose responses carry the given usages,
     in order. Pass a ParsedResponse-compatible dict or None per chunk."""
+    # Note: ``conversation_id`` / ``turn_index`` are not RequestRecord fields;
+    # they live on ``metric_inputs`` post-Phase-3a.4. Pydantic ``extra="allow"``
+    # silently accepted them historically. Drop them -- the test doesn't read
+    # them anywhere downstream.
     request = RequestRecord(
-        conversation_id="test",
-        turn_index=0,
         model_name="m",
         start_perf_ns=100,
         timestamp_ns=100,

@@ -30,12 +30,10 @@ class ResponsesEndpoint(BaseEndpoint):
     differ from chat (``input_text`` vs ``text``, ``input_image`` vs
     ``image_url``), so we override those hooks and leave the iteration /
     raw-messages pass-through skeleton alone.
-
-    The shared ``system_message`` lives on the top-level ``instructions``
-    field rather than inside the ``input`` array (Responses API contract),
-    and the per-conversation ``user_context_message`` is prepended as a
-    leading user item.
     """
+
+    # `format_payload` puts `system_message` on top-level `instructions` and
+    # prepends `user_context_message` as a leading user input item.
 
     # Responses API content-part type names. ``BaseEndpoint.extract_payload_inputs``
     # walks the payload once and dispatches every part against this map -

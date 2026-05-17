@@ -5,9 +5,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
+import orjson
 import pytest
 
-from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase
+from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase, RequestContentType
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
@@ -371,6 +373,119 @@ class TestAioHttpTransport:
         assert isinstance(record, RequestRecord)
         args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
         assert args["json_bytes"] == b"{}"
+
+    @pytest.mark.asyncio
+    async def test_send_request_passes_bytes_payload_verbatim(
+        self, transport, model_endpoint_non_streaming
+    ):
+        """Pre-encoded payload bytes are written to the wire without re-encoding.
+
+        Identity check (`is`, not `==`) proves the transport did not re-encode
+        — the exact bytes object passed in is the one passed to post_request.
+        """
+        await self._setup_initialized_transport_with_mock(transport)
+
+        request_info = create_request_info(model_endpoint_non_streaming)
+        payload_bytes = b'{"messages":[{"role":"user","content":"verbatim"}]}'
+
+        await transport.send_request(request_info, payload_bytes)
+
+        args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
+        assert args["json_bytes"] is payload_bytes
+
+    @pytest.mark.asyncio
+    async def test_send_request_dict_payload_still_encoded(
+        self, transport, model_endpoint_non_streaming
+    ):
+        """Regression: dict payloads still flow through orjson.dumps."""
+        await self._setup_initialized_transport_with_mock(transport)
+
+        request_info = create_request_info(model_endpoint_non_streaming)
+        payload = {"k": "v"}
+
+        await transport.send_request(request_info, payload)
+
+        args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
+        assert args["json_bytes"] == b'{"k":"v"}'
+
+    @pytest.mark.asyncio
+    async def test_send_request_multipart_dict_payload_builds_form_data_without_content_type(
+        self, transport, model_endpoint_non_streaming
+    ) -> None:
+        """Multipart dict payloads stay structured so aiohttp can set the boundary."""
+        model_endpoint_non_streaming.endpoint.request_content_type = (
+            RequestContentType.MULTIPART_FORM_DATA
+        )
+        await self._setup_initialized_transport_with_mock(transport)
+
+        request_info = create_request_info(model_endpoint_non_streaming)
+        payload = {
+            "prompt": "edit the reference image for the catalog hero shot",
+            "image": {
+                "b64_data": "iVBORw0KGgoAAAANSUhEUg==",
+                "filename": "catalog-reference.png",
+                "content_type": "image/png",
+            },
+        }
+
+        await transport.send_request(request_info, payload)
+
+        args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
+        assert isinstance(args["json_bytes"], aiohttp.FormData)
+        assert not isinstance(args["json_bytes"], bytes)
+        assert "Content-Type" not in args["headers"]
+        assert args["headers"]["Accept"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_send_request_json_dict_payload_encodes_bytes_and_sets_content_type(
+        self, transport, model_endpoint_non_streaming
+    ) -> None:
+        """JSON dict payloads cross the transport boundary as encoded bytes."""
+        await self._setup_initialized_transport_with_mock(transport)
+
+        request_info = create_request_info(model_endpoint_non_streaming)
+        payload = {
+            "model": "meta-llama/Llama-3-8B",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Summarize the checkout anomaly for request req-7f2a.",
+                }
+            ],
+        }
+
+        await transport.send_request(request_info, payload)
+
+        args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
+        assert isinstance(args["json_bytes"], bytes)
+        assert orjson.loads(args["json_bytes"]) == payload
+        assert args["headers"]["Content-Type"] == "application/json"
+        assert args["headers"]["Accept"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_send_request_multipart_bytes_payload_passes_verbatim_without_wrapping(
+        self, transport, model_endpoint_non_streaming
+    ) -> None:
+        """Raw payload bytes are never double-wrapped even for multipart endpoints."""
+        model_endpoint_non_streaming.endpoint.request_content_type = (
+            RequestContentType.MULTIPART_FORM_DATA
+        )
+        await self._setup_initialized_transport_with_mock(transport)
+
+        request_info = create_request_info(model_endpoint_non_streaming)
+        payload_bytes = (
+            b"--aiperf-boundary-7f2a\r\n"
+            b'Content-Disposition: form-data; name="prompt"\r\n\r\n'
+            b"preserve this caller-authored multipart body\r\n"
+            b"--aiperf-boundary-7f2a--\r\n"
+        )
+
+        await transport.send_request(request_info, payload_bytes)
+
+        args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
+        assert args["json_bytes"] is payload_bytes
+        assert not isinstance(args["json_bytes"], aiohttp.FormData)
+        assert "Content-Type" not in args["headers"]
 
     @pytest.mark.asyncio
     async def test_send_request_complex_payload(

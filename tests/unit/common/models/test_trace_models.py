@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Comprehensive tests for trace data models."""
 
-import orjson
+import msgspec
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -12,6 +11,7 @@ from aiperf.common.models import (
     BaseTraceData,
     TraceDataExport,
 )
+from aiperf.common.models.trace_models import BaseTraceDataUnion
 from tests.unit.common.models.conftest import (
     create_aiohttp_trace_data,
     create_base_trace_data,
@@ -162,7 +162,7 @@ class TestBaseTraceData:
             trace._convert_perf_to_wall(1000000000)
 
     def test_serialization_roundtrip(self, base_trace_timestamps, sample_headers):
-        """Trace data can be serialized and deserialized."""
+        """Trace data can be serialized and deserialized via msgspec.json."""
         ts = base_trace_timestamps
         trace = create_base_trace_data(
             reference_time_ns=ts["reference_time"],
@@ -172,13 +172,11 @@ class TestBaseTraceData:
             response_status_code=200,
         )
 
-        # Serialize to JSON
-        json_data = orjson.dumps(trace.model_dump())
+        # Serialize via msgspec.json (the wire path used by the records pipeline)
+        json_data = msgspec.json.encode(trace)
+        loaded_trace = msgspec.json.decode(json_data, type=BaseTraceDataUnion)
 
-        # Deserialize
-        loaded_data = orjson.loads(json_data)
-        loaded_trace = BaseTraceData(**loaded_data)
-
+        assert isinstance(loaded_trace, BaseTraceData)
         assert loaded_trace.trace_type == trace.trace_type
         assert loaded_trace.reference_time_ns == trace.reference_time_ns
         assert (
@@ -186,15 +184,14 @@ class TestBaseTraceData:
         )
         assert loaded_trace.request_headers == sample_headers
 
-    def test_trace_type_is_frozen(self):
-        """Trace type field is frozen and cannot be modified."""
+    def test_trace_type_is_class_constant(self):
+        """Trace type is set by the msgspec ``tag`` and is not assignable."""
         trace = create_base_trace_data()
-
-        with pytest.raises(
-            ValidationError,
-            match="Field is frozen",
-        ):
-            trace.trace_type = "modified"
+        assert trace.trace_type == "base"
+        # msgspec.Struct disallows attribute assignment to non-field attributes;
+        # ``trace_type`` is a class-level property derived from the tag.
+        with pytest.raises(AttributeError):
+            trace.trace_type = "modified"  # type: ignore[misc]
 
 
 class TestAioHttpTraceData:
@@ -684,7 +681,6 @@ class TestTraceDataEdgeCases:
 
         if trace_type == "base":
             trace = BaseTraceData(
-                trace_type=trace_type,
                 reference_time_ns=ts["reference_time"],
                 reference_perf_ns=ts["reference_perf"],
             )

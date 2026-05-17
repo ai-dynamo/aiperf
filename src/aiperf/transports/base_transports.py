@@ -172,7 +172,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
     async def send_request(
         self,
         request_info: RequestInfo,
-        payload: RequestInputT,
+        payload: RequestInputT | bytes,
         *,
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
@@ -180,7 +180,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
         Args:
             request_info: Request context and metadata
-            payload: Request payload (format depends on transport)
+            payload: JSON-serializable payload (format depends on transport) or
+                pre-encoded bytes that the transport writes verbatim.
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
 
         Returns:

@@ -3,16 +3,19 @@
 import asyncio
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.enums import ExportLevel
+import orjson
+
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.models import (
     ErrorDetails,
+    ExtractedPayload,
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
+    TurnMetadata,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
@@ -22,11 +25,16 @@ from aiperf.common.models.record_models import (
     find_last_non_empty_usage,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+# Failures from DatasetClientStoreProtocol.get_payload_bytes that the parser demotes to a warn + None record rather than escaping parse_request_record.  # noqa: E501
+_DATASET_CLIENT_RECOVERABLE = (KeyError, IndexError, RuntimeError, OSError, MemoryError, ValueError)  # noqa: E501  # fmt: skip
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -53,6 +61,8 @@ class InferenceResultParser(CommunicationMixin):
         self.disable_tokenization: bool = run.cfg.endpoint.use_server_token_count or (
             not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
         )
+        self._dataset_client: DatasetClientStoreProtocol | None = None
+        self._turn_metadata_by_conversation: dict[str, tuple[TurnMetadata, ...]] = {}
         self.debug(
             lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
             f"class: {self.endpoint.__class__.__name__}",
@@ -62,6 +72,21 @@ class InferenceResultParser(CommunicationMixin):
     async def _initialize(self) -> None:
         """Initialize inference result parser-specific components."""
         self.debug("Initializing inference result parser")
+
+    def on_dataset_configured(
+        self,
+        *,
+        turn_metadata_by_conversation: dict[str, tuple[TurnMetadata, ...]],
+        dataset_client: DatasetClientStoreProtocol | None,
+    ) -> None:
+        """Receive the records-side dataset wiring from RecordProcessor.
+
+        Stashes the conversation_id -> TurnMetadata sequence index and the
+        optional PAYLOAD_BYTES mmap client. ``_extract_payload_inputs`` uses
+        both to resolve payloads once per record.
+        """
+        self._turn_metadata_by_conversation = turn_metadata_by_conversation
+        self._dataset_client = dataset_client
 
     async def configure(self) -> None:
         """Configure the tokenizers."""
@@ -114,14 +139,28 @@ class InferenceResultParser(CommunicationMixin):
     async def parse_request_record(
         self, request_record: RequestRecord
     ) -> ParsedResponseRecord:
-        """Handle an inference results message."""
-        request_info = request_record.request_info
+        """Parse a wire ``RequestRecord`` into a ``ParsedResponseRecord``.
+
+        Sole chokepoint for payload IO + JSON decode in the records
+        pipeline: resolves bytes (inline or PAYLOAD_BYTES mmap), runs
+        ``endpoint.extract_payload_inputs`` once, looks up ``TurnMetadata``
+        once, and stashes the results on the returned record. Downstream
+        consumers read structured fields -- no metric does IO or parses JSON.
+        """
+        mi = request_record.metric_inputs
         self.trace_or_debug(
             lambda: f"Received inference results message: {request_record}",
-            lambda: f"Received inference results for credit '{request_info.credit_num}' (id: {request_info.x_request_id})"
-            if request_info
-            else "Received inference results (no request_info)",
+            lambda: f"Received inference results for credit '{mi.credit_num}' (id: {mi.x_request_id})"
+            if mi
+            else "Received inference results (no metric_inputs)",
         )
+
+        # Single chokepoint -- see docstring.
+        (
+            payload_inputs,
+            turn_metadata,
+            payload_dict,
+        ) = await self._extract_payload_inputs(request_record)
 
         # Make sure any invalid request records are converted to error records for combined processing.
         request_record.create_error_from_invalid()
@@ -133,8 +172,8 @@ class InferenceResultParser(CommunicationMixin):
                 # Suppress exceptions during token counting for error records to avoid masking the original error.
                 # If token counting fails, we still return the error record with token_counts.input=None.
                 with suppress(Exception):
-                    input_token_count = await self.compute_input_token_count(
-                        request_record
+                    input_token_count = await self._compute_input_token_count(
+                        request_record, payload_inputs
                     )
 
             return ParsedResponseRecord(
@@ -143,12 +182,20 @@ class InferenceResultParser(CommunicationMixin):
                 token_counts=TokenCounts(
                     input=input_token_count,
                 ),
+                payload_inputs=payload_inputs,
+                turn_metadata=turn_metadata,
+                payload_dict=payload_dict,
             )
 
         else:
             try:
                 raw_response_count = len(request_record.responses)
-                record = await self.process_valid_record(request_record)
+                record = await self.process_valid_record(
+                    request_record,
+                    payload_inputs=payload_inputs,
+                    turn_metadata=turn_metadata,
+                    payload_dict=payload_dict,
+                )
 
                 # Check if the parsed record is actually valid (e.g., has content responses)
                 record.create_error_from_invalid()
@@ -163,6 +210,9 @@ class InferenceResultParser(CommunicationMixin):
                             if record.token_counts
                             else None
                         ),
+                        payload_inputs=payload_inputs,
+                        turn_metadata=turn_metadata,
+                        payload_dict=payload_dict,
                     )
                 else:
                     # Success path: valid record with no errors
@@ -181,8 +231,8 @@ class InferenceResultParser(CommunicationMixin):
                     # Suppress exceptions during token counting for error records to avoid masking the original error.
                     # If token counting fails, we still return the error record with token_counts.input=None.
                     with suppress(Exception):
-                        input_token_count = await self.compute_input_token_count(
-                            request_record
+                        input_token_count = await self._compute_input_token_count(
+                            request_record, payload_inputs
                         )
 
                 return ParsedResponseRecord(
@@ -191,10 +241,18 @@ class InferenceResultParser(CommunicationMixin):
                     token_counts=TokenCounts(
                         input=input_token_count,
                     ),
+                    payload_inputs=payload_inputs,
+                    turn_metadata=turn_metadata,
+                    payload_dict=payload_dict,
                 )
 
     async def process_valid_record(
-        self, request_record: RequestRecord
+        self,
+        request_record: RequestRecord,
+        *,
+        payload_inputs: ExtractedPayload | None = None,
+        turn_metadata: TurnMetadata | None = None,
+        payload_dict: dict[str, Any] | None = None,
     ) -> ParsedResponseRecord:
         """Process a valid request record."""
         if request_record.model_name is None:
@@ -204,21 +262,19 @@ class InferenceResultParser(CommunicationMixin):
             return ParsedResponseRecord(
                 request=request_record,
                 responses=[],
+                payload_inputs=payload_inputs,
+                turn_metadata=turn_metadata,
+                payload_dict=payload_dict,
             )
 
         resp = self.endpoint.extract_response_data(request_record)
-
-        # Free the raw responses list after extraction.
-        # Skip when RAW export needs the original responses for serialization.
-        if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
-            request_record.responses = None
 
         # Compute token counts based on configuration
         if self.run.cfg.endpoint.use_server_token_count:
             token_counts = await self._compute_server_token_counts(resp)
         elif not self.disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(
-                request_record, resp
+                request_record, resp, payload_inputs
             )
         else:
             token_counts = TokenCounts()
@@ -227,51 +283,71 @@ class InferenceResultParser(CommunicationMixin):
             request=request_record,
             responses=resp,
             token_counts=token_counts,
+            payload_inputs=payload_inputs,
+            turn_metadata=turn_metadata,
+            payload_dict=payload_dict,
         )
 
-    async def compute_input_token_count(
+    async def _extract_payload_inputs(
         self, request_record: RequestRecord
-    ) -> int | None:
-        """Compute the number of tokens in the input for a given request record.
+    ) -> tuple[ExtractedPayload | None, TurnMetadata | None, dict[str, Any] | None]:
+        """THE single chokepoint for payload IO + JSON decode. Tokenization,
+        raw export, and every metric read stashed results off
+        ``ParsedResponseRecord`` -- they do not re-resolve."""
+        mi = request_record.metric_inputs
+        if mi is None:
+            return None, None, None
 
-        This includes:
-        - system_message (shared system prompt)
-        - user_context_message (per-conversation user context)
-        - All turns' text content
-        """
-        turns = request_record.turns
-        if turns is None:
+        turns = self._turn_metadata_by_conversation.get(mi.conversation_id)
+        tmeta = None
+        if turns is not None and 0 <= mi.turn_index < len(turns):
+            tmeta = turns[mi.turn_index]
+
+        raw = mi.payload_bytes_or_none
+        if raw is None and self._dataset_client is not None:
+            try:
+                raw = await self._dataset_client.get_payload_bytes(
+                    mi.conversation_id, mi.turn_index
+                )
+            except _DATASET_CLIENT_RECOVERABLE as e:
+                self.warning(
+                    f"mmap payload resolution failed for {mi.conversation_id}[{mi.turn_index}]: {e!r}"
+                )  # noqa: E501
+                return None, tmeta, None
+        if raw is None:
+            return None, tmeta, None
+        try:
+            payload = orjson.loads(raw)
+        except orjson.JSONDecodeError as e:
             self.warning(
-                "Turns are not set for request record, unable to calculate input token count"
+                f"payload_bytes is not valid JSON for {mi.conversation_id}[{mi.turn_index}]: {e!r}"
+            )  # noqa: E501
+            return None, tmeta, None
+        if not isinstance(payload, dict):
+            self.warning(
+                f"payload_bytes parsed but is not a JSON object (got {type(payload).__name__}) for {mi.conversation_id}[{mi.turn_index}]"
+            )  # noqa: E501
+            return None, tmeta, None
+        return self.endpoint.extract_payload_inputs(payload), tmeta, payload
+
+    async def _compute_input_token_count(
+        self,
+        request_record: RequestRecord,
+        payload_inputs: ExtractedPayload | None,
+    ) -> int | None:
+        if payload_inputs is None:
+            return None
+
+        input_token_count = payload_inputs.pretokenised_token_count or None
+        if payload_inputs.texts:
+            tokenizer = await self.get_tokenizer(request_record.model_name)
+            text_token_count = await self._compute_token_count(
+                tokenizer, payload_inputs.texts, separator=" "
             )
-            return None
+            if text_token_count is not None:
+                input_token_count = (input_token_count or 0) + text_token_count
 
-        tokenizer = await self.get_tokenizer(request_record.model_name)
-        prompt_texts: list[str] = []
-
-        # Include system_message if present (shared system prompt)
-        if request_record.request_info and request_record.request_info.system_message:
-            prompt_texts.append(request_record.request_info.system_message)
-
-        # Include user_context_message if present (per-conversation user context)
-        if (
-            request_record.request_info
-            and request_record.request_info.user_context_message
-        ):
-            prompt_texts.append(request_record.request_info.user_context_message)
-
-        # Include all turns' text content
-        for turn in turns:
-            for text in turn.texts:
-                prompt_texts.append("".join(text.contents))
-
-        if not prompt_texts:
-            return None
-
-        # NOTE: We combine all the prompt texts with a space separator to create a single prompt string.
-        # This will get us the most accurate token count for the prompt by avoiding any potential
-        # boundary issues that could occur if we were to tokenize each text individually.
-        return await self._compute_token_count(tokenizer, prompt_texts, separator=" ")
+        return input_token_count
 
     async def _compute_server_token_counts(
         self, responses: list[ParsedResponse]
@@ -393,18 +469,19 @@ class InferenceResultParser(CommunicationMixin):
         return len(tokens)
 
     async def _compute_client_side_token_counts(
-        self, request_record: RequestRecord, responses: list[ParsedResponse]
+        self,
+        request_record: RequestRecord,
+        responses: list[ParsedResponse],
+        payload_inputs: ExtractedPayload | None,
     ) -> TokenCounts:
         """Compute token counts using client-side tokenization.
 
-        Args:
-            request_record: The request record containing input data
-            responses: List of parsed responses from the server
-
-        Returns:
-            TokenCounts populated with client-side tokenized values
+        ``payload_inputs`` is the already-extracted ExtractedPayload from
+        ``_extract_payload_inputs``; passed in to avoid re-resolution.
         """
-        input_token_count = await self.compute_input_token_count(request_record)
+        input_token_count = await self._compute_input_token_count(
+            request_record, payload_inputs
+        )
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
         output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(

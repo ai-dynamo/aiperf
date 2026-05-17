@@ -23,6 +23,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.messages import Message
 from aiperf.common.models import (
     Conversation,
+    MetricInputs,
     ParsedResponse,
     ParsedResponseRecord,
     RequestInfo,
@@ -633,8 +634,20 @@ def sample_request_info() -> RequestInfo:
 @pytest.fixture
 def sample_request_record(sample_request_info: RequestInfo) -> RequestRecord:
     """Create a sample RequestRecord for testing."""
+    metric_inputs = MetricInputs(
+        credit_num=sample_request_info.credit_num,
+        credit_phase=sample_request_info.credit_phase,
+        conversation_id=sample_request_info.conversation_id,
+        turn_index=sample_request_info.turn_index,
+        x_request_id=sample_request_info.x_request_id,
+        x_correlation_id=sample_request_info.x_correlation_id,
+        credit_issued_ns=sample_request_info.credit_issued_ns,
+        agent_depth=sample_request_info.agent_depth,
+        parent_correlation_id=sample_request_info.parent_correlation_id,
+        payload_bytes=sample_request_info.payload_bytes,
+    )
     return RequestRecord(
-        request_info=sample_request_info,
+        metric_inputs=metric_inputs,
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,

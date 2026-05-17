@@ -22,18 +22,22 @@ class ExtractedPayload(AIPerfBaseModel):
     )
     image_count: int = Field(
         default=0,
+        ge=0,
         description="Count of image content parts in the payload.",
     )
     audio_count: int = Field(
         default=0,
+        ge=0,
         description="Count of audio content parts in the payload.",
     )
     video_count: int = Field(
         default=0,
+        ge=0,
         description="Count of video content parts in the payload.",
     )
     pretokenised_token_count: int = Field(
         default=0,
+        ge=0,
         description="Token count contributed by pre-tokenised input shapes "
         "(OpenAI embeddings ``input: list[list[int]]`` and ``input: list[int]``). "
         "These bypass the tokeniser entirely - the count is the sum of inner "

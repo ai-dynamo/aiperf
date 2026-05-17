@@ -11,6 +11,7 @@ from aiperf.common.enums import (
     ConversationBranchMode,
     ConversationContextMode,
     MediaType,
+    MemoryMapFormat,
 )
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch import ConversationBranchInfo
@@ -43,6 +44,10 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
 
     client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
 
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format of the memory-mapped dataset files.",
+    )
     data_file_path: Path = Field(
         ...,
         description="Path to the memory-mapped data file containing serialized conversations.",
@@ -143,6 +148,18 @@ class TurnMetadata(AIPerfBaseModel):
         "``ConversationMetadata`` can reach prereqs without holding the full "
         "Turn list.",
     )
+    max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="``max_tokens`` from the originating Turn. Projected at load "
+        "time so the records pipeline can read it without the full Turn list.",
+    )
+    audio_duration_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        description="``audio_duration_seconds`` from the originating Turn (ASR). "
+        "Projected at load time. None for non-ASR datasets.",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -235,55 +252,7 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             branch_ids=list(self.branch_ids),
             prerequisites=list(self.prerequisites),
-        )
-
-    def copy_with_stripped_media(self) -> "Turn":
-        """Create a copy of this turn with multimodal data replaced by placeholders.
-
-        This preserves text data (needed for tokenization) and raw messages/tools
-        (needed for API payload reconstruction) but replaces potentially large
-        image/audio/video contents with small placeholder strings. This is
-        more efficient than a full deep copy followed by stripping.
-
-        Returns:
-            A new Turn with stripped multimodal contents and messages.
-        """
-        return Turn(
-            model=self.model,
-            role=self.role,
-            timestamp=self.timestamp,
-            delay=self.delay,
             max_tokens=self.max_tokens,
-            raw_messages=list(self.raw_messages)
-            if self.raw_messages is not None
-            else None,
-            raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
-            texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
-            images=[
-                Image(
-                    name=img.name,
-                    contents=[f"image_{i}" for i in range(len(img.contents))],
-                )
-                for img in self.images
-            ],
-            audios=[
-                Audio(
-                    name=aud.name,
-                    contents=[f"audio_{i}" for i in range(len(aud.contents))],
-                )
-                for aud in self.audios
-            ],
-            videos=[
-                Video(
-                    name=vid.name,
-                    contents=[f"video_{i}" for i in range(len(vid.contents))],
-                )
-                for vid in self.videos
-            ],
-            raw_payload=self.raw_payload,
-            extra_body=dict(self.extra_body) if self.extra_body is not None else None,
-            prerequisites=list(self.prerequisites),
-            branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
         )
 
@@ -470,6 +439,8 @@ class Conversation(AIPerfBaseModel):
                     for bid in t.branch_ids
                 ),
                 prerequisites=list(t.prerequisites),
+                max_tokens=t.max_tokens,
+                audio_duration_seconds=t.audio_duration_seconds,
             )
             for t in self.turns
         ]

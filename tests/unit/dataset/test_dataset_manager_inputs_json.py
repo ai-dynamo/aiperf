@@ -321,9 +321,7 @@ class TestDatasetManagerInputsJsonGeneration:
             model_endpoint=model_endpoint, service_id="test-service"
         )
         client.endpoint.format_payload = Mock(return_value={"messages": []})
-        client.transport.send_request = AsyncMock(
-            return_value=RequestRecord(request_info=request_info)
-        )
+        client.transport.send_request = AsyncMock(return_value=RequestRecord())
 
         await client.send_request(request_info)
 

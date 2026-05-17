@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, field_serializer, field_validator
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
@@ -10,6 +12,10 @@ from aiperf.common.models import (
     MetricResult,
     ProcessTelemetryResult,
     TelemetryRecord,
+)
+from aiperf.common.models.record_models import (
+    _metric_result_list_from_value,
+    _metric_result_list_to_jsonable,
 )
 from aiperf.common.types import MessageTypeT
 
@@ -81,3 +87,14 @@ class RealtimeTelemetryMetricsMessage(BaseServiceMessage):
     metrics: list[MetricResult] = Field(
         ..., description="The current real-time GPU telemetry metrics."
     )
+
+    @field_validator("metrics", mode="before")
+    @classmethod
+    def _route_metrics(cls, v: Any) -> list[MetricResult]:
+        """Decode each ``MetricResult`` dict back into a Struct."""
+        return _metric_result_list_from_value(v)
+
+    @field_serializer("metrics", when_used="json")
+    def _encode_metrics(self, value: list[MetricResult]) -> list[dict[str, Any]]:
+        """Encode each ``MetricResult`` via msgspec.json for the JSON wire."""
+        return _metric_result_list_to_jsonable(value)

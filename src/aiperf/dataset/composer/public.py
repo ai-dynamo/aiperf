@@ -58,6 +58,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
                 self._finalize_turn(turn)
 
         self._finalize_conversations(conversations)
+        self._preformat_payloads(conversations)
         return conversations
 
     def _build_loader_kwargs(self, dataset_type: PublicDatasetType) -> dict[str, Any]:

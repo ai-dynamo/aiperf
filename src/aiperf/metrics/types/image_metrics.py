@@ -26,17 +26,15 @@ class NumImagesMetric(BaseRecordMetric[int]):
     def _parse_record(
         self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> int:
-        """Parse the number of images from the record by summing the number of images in each turn."""
-        num_images = sum(
-            len(image.contents)
-            for turn in record.request.turns
-            for image in turn.images
-        )
-        if num_images == 0:
+        """Parse the number of images from the record's single-pass payload extraction."""
+        if record.payload_inputs is None:
             raise NoMetricValue(
-                "Record must have at least one image in at least one turn."
+                "Cannot compute num_images: request payload_inputs are unavailable or could not be extracted"
             )
-        return num_images
+        count = record.payload_inputs.image_count
+        if count == 0:
+            raise NoMetricValue("Record must have at least one image.")
+        return count
 
 
 class ImageThroughputMetric(BaseRecordMetric[float]):

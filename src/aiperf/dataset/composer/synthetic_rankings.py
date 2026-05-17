@@ -68,6 +68,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             conversation.turns.append(turn)
             conversations.append(conversation)
 
+        self._preformat_payloads(conversations)
         return conversations
 
     def _create_turn(self, num_passages: int) -> Turn:

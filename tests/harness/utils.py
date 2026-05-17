@@ -8,6 +8,7 @@ from multiprocessing.context import ForkProcess, SpawnProcess
 from pathlib import Path
 from typing import Any, TypeAlias
 
+import msgspec
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -165,16 +166,17 @@ class AIPerfResults:
         return records
 
     def _load_raw_records(self) -> list[RawRecordInfo] | None:
-        """Load raw records as Pydantic models."""
+        """Load raw records as ``msgspec.Struct`` instances."""
         file_path = self._find_file("**/*profile_export_raw.jsonl")
         if not file_path:
             return None
 
         records = []
+        decoder = msgspec.json.Decoder(RawRecordInfo)
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(RawRecordInfo.model_validate_json(line))
+                    records.append(decoder.decode(line))
         return records
 
     def _load_server_metrics_json(self) -> ServerMetricsExportData | None:

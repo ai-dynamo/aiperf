@@ -9,6 +9,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.sequence_distribution import (
     SequenceLengthDistribution,
     SequenceLengthPair,
@@ -33,6 +34,14 @@ if TYPE_CHECKING:
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
+    """Base for dataset composers bound to one benchmark run.
+
+    Subclasses build conversations from ``run`` using optional tokenizer-backed
+    prompt generation. Use the cached dataset, synthetic sub-configs, and helper
+    methods instead of re-reading ``run.cfg.get_default_dataset()`` during
+    generation.
+    """
+
     def __init__(
         self,
         *,
@@ -343,3 +352,19 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                     conv=conversation: f"Set user_context_message for session {idx} "
                     f"(conversation {conv.session_id})"
                 )
+
+    def _preformat_payloads(self, conversations: list[Conversation]) -> None:
+        """Pre-format every eligible turn's wire payload onto ``turn.raw_payload``.
+
+        Thin wrapper over :func:`aiperf.dataset.payload_formatting.preformat_payloads`
+        so the heavy lifting is shared with ``DatasetManager._load_accuracy_dataset``
+        (which doesn't run through a composer). See the free function's
+        docstring for the full eligibility + fallback contract.
+        """
+        from aiperf.dataset.payload_formatting import preformat_payloads
+
+        preformat_payloads(
+            conversations,
+            ModelEndpointInfo.from_run(self.run),
+            logger=self,
+        )

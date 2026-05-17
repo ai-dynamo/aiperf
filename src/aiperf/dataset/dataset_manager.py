@@ -18,10 +18,13 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
+    ConversationBranchMode,
     ConversationContextMode,
     CreditPhase,
     ImageFormat,
+    MemoryMapFormat,
     MessageType,
+    RequestContentType,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_request, on_stop
@@ -42,6 +45,7 @@ from aiperf.common.models import (
     ModelEndpointInfo,
     RequestInfo,
     SessionPayloads,
+    Turn,
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
@@ -59,6 +63,7 @@ from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
+    from aiperf.common.models.dataset_models import MemoryMapClientMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
@@ -108,13 +113,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # so probe via getattr.
         self._compress_only = self._is_kubernetes_run()
 
-        BackingStoreClass = plugins.get_class(
-            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
-        )
-        self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=self.run.benchmark_id,
-            compress_only=self._compress_only,
-        )
+        # Backing store construction is deferred to _configure_dataset() so we can
+        # pick MemoryMapFormat based on the actual loaded conversations
+        # (PAYLOAD_BYTES iff every turn has raw_payload, else CONVERSATION).
+        self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
 
@@ -125,6 +127,82 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             kubernetes_run_type is not None
             and self.run.cfg.runtime.service_run_type == kubernetes_run_type
         )
+
+    @staticmethod
+    def _select_mmap_format(
+        conversations: list[Conversation],
+        *,
+        allow_payload_bytes: bool = True,
+    ) -> MemoryMapFormat:
+        """Pick mmap storage format based on the loaded conversations.
+
+        PAYLOAD_BYTES is picked iff every turn in every conversation has
+        ``raw_payload`` set (loaders like raw_payload/inputs_json populate
+        this). Otherwise CONVERSATION is used.
+
+        Format selection is dataset-wide, not per-conversation. Real
+        workloads split cleanly into "all eligible" or "all ineligible":
+        synthetic chat, raw_payload / inputs_json replay, and HF / public
+        datasets are uniformly eligible; multi-turn DELTAS_WITHOUT_RESPONSES
+        synthetic is uniformly ineligible; mooncake's loader rejects mixed
+        sessions outright at parse time. The only mixed shape that arises
+        in practice is DAG-with-FORK (root-eligible + child-ineligible),
+        where the children dominate volume and stay on the slow path
+        either way — per-conversation format dispatch would only let the
+        sparse roots ride the fast path. The index complexity isn't
+        justified by that marginal win, so the choice is global.
+
+        Refuses outright (raises ``ValueError``) when raw_payload turns
+        coexist with FORK-mode branches. FORK children are seeded from the
+        parent's accumulated turn_list, which requires structured role /
+        content / raw_messages to replay; raw_payload turns carry verbatim
+        bytes only. On the PAYLOAD_BYTES path the worker hands the session
+        manager a ``RawPayloadSession`` (a lightweight conversation_id +
+        num_turns descriptor — no Conversation, no turns) and the bytes are
+        read straight from mmap by ``inference_client`` and again by the
+        records pipeline; there is no structured turn list for a FORK child
+        to inherit. Refusing at format-selection time means the bad combo
+        never reaches the worker.
+        """
+        if not conversations or not allow_payload_bytes:
+            return MemoryMapFormat.CONVERSATION
+        total_turns = sum(len(conv.turns) for conv in conversations)
+        if total_turns == 0:
+            # Every conversation is empty; the PAYLOAD_BYTES branch would write
+            # a 0-byte dataset.dat, which mmap refuses to open with a misleading
+            # error from the deserialiser. Fall back to CONVERSATION (which
+            # serialises the Conversation envelope and stays non-empty).
+            return MemoryMapFormat.CONVERSATION
+        all_have_raw_payload = all(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        )
+        if not all_have_raw_payload:
+            return MemoryMapFormat.CONVERSATION
+
+        fork_branches = [
+            (conv.session_id, branch.branch_id)
+            for conv in conversations
+            for branch in conv.branches
+            if branch.mode == ConversationBranchMode.FORK
+        ]
+        if fork_branches:
+            sample = ", ".join(f"{cid}:{bid}" for cid, bid in fork_branches[:3])
+            more = (
+                ""
+                if len(fork_branches) <= 3
+                else f" (and {len(fork_branches) - 3} more)"
+            )
+            raise ValueError(
+                "Raw-payload datasets are incompatible with FORK-mode branches: "
+                "fork children seeded from raw_payload turns would replay empty "
+                f"messages. Found FORK branches on {sample}{more}. Use a "
+                "structured loader (chat / inputs_json without raw_payload) for "
+                "datasets that fork."
+            )
+
+        return MemoryMapFormat.PAYLOAD_BYTES
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -209,7 +287,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         and replaces all occurrences in-place. This is needed for endpoints that
         require inline media (e.g., NIM Image Retrieval).
         """
-        url_to_locations: dict[str, list[tuple[list[str], int]]] = {}
+        url_to_locations: dict[str, list[tuple[Turn, list[str], int]]] = {}
 
         for conversation in self.dataset.values():
             for turn in conversation.turns:
@@ -218,7 +296,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                         parsed = urlparse(content)
                         if parsed.scheme in ("http", "https") and parsed.netloc:
                             url_to_locations.setdefault(content, []).append(
-                                (image.contents, i)
+                                (turn, image.contents, i)
                             )
 
         if not url_to_locations:
@@ -276,8 +354,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         for url, locations in url_to_locations.items():
             data_url = url_to_data_url[url]
-            for contents_list, index in locations:
+            for turn, contents_list, index in locations:
                 contents_list[index] = data_url
+                turn.raw_payload = None
 
         self.info("Media URL download and inline encoding complete")
 
@@ -303,6 +382,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 session_payloads_map[session_id] = []
 
             for i, turn in enumerate(conversation.turns):
+                if turn.raw_payload is not None:
+                    session_payloads_map[session_id].append(turn.raw_payload)
+                    continue
+
                 request_info = RequestInfo(
                     model_endpoint=model_endpoint,
                     turns=[turn],
@@ -408,6 +491,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _load_accuracy_dataset(self) -> list[Conversation]:
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
+        from aiperf.dataset.payload_formatting import preformat_payloads
 
         if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.run.cfg.phases):
             raise self._service_error(
@@ -431,7 +515,54 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         loader = AccuracyDatasetLoader(run=self.run)
-        return await loader.load()
+        conversations = await loader.load()
+
+        # Accuracy benchmarks are single-turn (question + ground truth) and
+        # fully determinable at config time — pre-format so the dataset rides
+        # the PAYLOAD_BYTES mmap fast path alongside every other dataset type.
+        model_endpoint = ModelEndpointInfo.from_run(self.run)
+        preformat_payloads(conversations, model_endpoint, logger=self)
+        return conversations
+
+    async def _build_and_write_backing_store(
+        self, conversations: list[Conversation]
+    ) -> MemoryMapClientMetadata:
+        """Pick storage format, build backing store, and stream conversations.
+
+        PAYLOAD_BYTES iff every turn has raw_payload set, which lets workers
+        ship pre-encoded bytes verbatim with zero Pydantic round-trips on the
+        hot path. In Kubernetes mode (compress_only=True) files are already
+        compressed during finalize(); in local mode uncompressed files are
+        used directly.
+        """
+        mmap_format = self._select_mmap_format(
+            conversations,
+            allow_payload_bytes=(
+                self.run.cfg.endpoint.request_content_type
+                != RequestContentType.MULTIPART_FORM_DATA
+            ),
+        )
+        BackingStoreClass = plugins.get_class(
+            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
+        )
+        self._backing_store = BackingStoreClass(
+            benchmark_id=self.run.benchmark_id,
+            compress_only=self._compress_only,
+            format=mmap_format,
+        )
+        self.info(
+            f"Selected mmap storage format: {mmap_format} "
+            f"({len(conversations)} conversations)"
+        )
+
+        await self._backing_store.initialize()
+        conversations_dict = {conv.session_id: conv for conv in conversations}
+        await self._backing_store.add_conversations(conversations_dict)
+        await self._backing_store.finalize()
+
+        mmap_metadata = self._backing_store.get_client_metadata()
+        self.info(f"Backing store finalized: {mmap_metadata}")
+        return mmap_metadata
 
     async def _configure_dataset(self) -> None:
         self.dataset_configured.clear()
@@ -465,18 +596,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         if endpoint_meta.requires_inline_media:
             await self._convert_media_urls_to_inline()
+            from aiperf.dataset.payload_formatting import preformat_payloads
 
-        # Initialize backing store and stream conversations to mmap files
-        # Workers read directly from these files
-        await self._backing_store.initialize()
-        conversations_dict = {conv.session_id: conv for conv in conversations}
-        await self._backing_store.add_conversations(conversations_dict)
-        await self._backing_store.finalize()
-        # In Kubernetes mode (compress_only=True), files are already compressed
-        # during finalize(). In local mode, uncompressed files are used directly.
+            preformat_payloads(
+                conversations,
+                ModelEndpointInfo.from_run(self.run),
+                logger=self,
+            )
 
-        mmap_metadata = self._backing_store.get_client_metadata()
-        self.info(f"Backing store finalized: {mmap_metadata}")
+        mmap_metadata = await self._build_and_write_backing_store(conversations)
 
         # In Kubernetes mode, workers wait for DatasetDownloadedNotification from
         # WorkerPodManager which provides local file paths. We still send mmap_metadata

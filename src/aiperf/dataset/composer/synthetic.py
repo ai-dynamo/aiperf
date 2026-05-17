@@ -124,6 +124,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         # Finalize all conversations (turn metadata + context prompts)
         self._finalize_conversations(conversations)
+        self._preformat_payloads(conversations)
         return conversations
 
     def _create_turn(self, is_first: bool) -> Turn:

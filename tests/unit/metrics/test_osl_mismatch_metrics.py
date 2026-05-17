@@ -16,8 +16,8 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestInfo,
     RequestRecord,
+    TurnMetadata,
 )
-from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -38,9 +38,9 @@ from aiperf.plugin.enums import EndpointType
 from tests.unit.metrics.conftest import run_simple_metrics_pipeline
 
 
-def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
-    """Create a RequestInfo with a turn that has max_tokens set."""
-    turn = Turn(max_tokens=max_tokens)
+def _create_request_info(max_tokens: int | None = None) -> RequestInfo:
+    """Create a minimal RequestInfo (max_tokens lives on TurnMetadata now)."""
+    del max_tokens  # Kept for signature parity with old helper; ignored.
     return RequestInfo(
         model_endpoint=ModelEndpointInfo(
             models=ModelListInfo(
@@ -52,7 +52,7 @@ def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
                 base_url="http://localhost:8000/v1/test",
             ),
         ),
-        turns=[turn],
+        turns=[],
         turn_index=0,
         credit_num=0,
         credit_phase=CreditPhase.PROFILING,
@@ -73,12 +73,12 @@ def create_record_with_osl(
 
     Args:
         start_ns: Start timestamp in nanoseconds
-        requested_osl: The max_tokens value sent in the request (--osl value)
+        requested_osl: The max_tokens value sent in the request (--osl value).
+            Surfaced via TurnMetadata.max_tokens (the records-side projection).
         actual_output_tokens: The actual number of output tokens generated
         reasoning_tokens: The number of reasoning tokens (defaults to 0)
     """
     request = RequestRecord(
-        request_info=_create_request_info_with_max_tokens(requested_osl),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
@@ -98,6 +98,7 @@ def create_record_with_osl(
             output=actual_output_tokens,
             reasoning=reasoning_tokens,
         ),
+        turn_metadata=TurnMetadata(max_tokens=requested_osl),
     )
 
 

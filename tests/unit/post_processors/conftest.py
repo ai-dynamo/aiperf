@@ -15,7 +15,6 @@ import pytest
 from aiperf.common.enums import (
     CreditPhase,
     ExportLevel,
-    MessageType,
     MetricFlags,
     MetricValueTypeT,
     ModelSelectionStrategy,
@@ -420,15 +419,7 @@ def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
     This fixture includes raw TextResponse objects in the request, which is needed
     for raw record serialization tests.
     """
-    from aiperf.common.models import Text, TextResponseData, Turn
-
-    turns = [
-        Turn(
-            texts=[Text(contents=["Hello, how are you?"])],
-            role="user",
-            model="test-model",
-        )
-    ]
+    from aiperf.common.models import TextResponseData
 
     raw_responses = [
         TextResponse(text="Hello", perf_ns=DEFAULT_FIRST_RESPONSE_NS),
@@ -436,10 +427,6 @@ def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
     ]
 
     request = RequestRecord(
-        request_info=_create_test_request_info(
-            conversation_id="conv-123",
-            turns=turns,
-        ),
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,
@@ -475,23 +462,11 @@ def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
 @pytest.fixture
 def error_parsed_record() -> ParsedResponseRecord:
     """Create an error ParsedResponseRecord for testing."""
-    from aiperf.common.models import Text, Turn
+    from aiperf.common.models import ErrorDetails
 
     error_details = ErrorDetails(code=500, message="Internal server error")
 
-    turns = [
-        Turn(
-            texts=[Text(contents=["This will fail"])],
-            role="user",
-            model="test-model",
-        )
-    ]
-
     request = RequestRecord(
-        request_info=_create_test_request_info(
-            conversation_id="test-conversation-error",
-            turns=turns,
-        ),
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,
@@ -811,11 +786,11 @@ def create_metric_records_message(
             metadata_kwargs["x_request_id"] = x_request_id
         metadata = create_metric_metadata(**metadata_kwargs)
 
+    metrics = {tag: value for result in results for tag, value in result.items()}
     return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
         service_id=service_id,
         metadata=metadata,
-        results=results,
+        metrics=metrics,
         error=error,
         trace_data=trace_data,
     )

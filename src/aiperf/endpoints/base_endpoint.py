@@ -126,27 +126,19 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     #
     # AIPerf's chat-like endpoints (``openai_chat``, ``openai_responses``, and
     # any plugin that emits a role/content message array) share a fixed
-    # flatten-and-merge skeleton:
+    # flatten-and-merge skeleton: iterate ``request_info.turns`` in order;
+    # turns with non-empty ``raw_messages`` (``dag_jsonl`` /
+    # ``mooncake_trace`` payload mode / captured assistant turns) splice in
+    # verbatim; all other turns synthesise a single role/content message
+    # from the structured ``Turn`` fields.
     #
-    #   1. iterate ``request_info.turns`` in order
-    #   2. if the turn carries ``raw_messages`` (author-provided OpenAI-shape
-    #      entries - ``dag_jsonl``, ``mooncake_trace`` payload mode, or a
-    #      captured live assistant turn), splice them in verbatim
-    #   3. otherwise synthesise a single role/content message from the
-    #      structured ``Turn`` fields (``role``, ``texts``, ``images``,
-    #      ``audios``, ``videos``).
-    #
-    # Only step 3 depends on the endpoint's wire shape - OpenAI chat uses
-    # ``{"type": "text"}`` / ``{"type": "image_url"}`` parts, the Responses
-    # API uses ``{"type": "input_text"}`` / ``{"type": "input_image"}``,
-    # future plugins may use something else entirely. The iteration and
-    # merge logic is universal, so it lives here; the part-rendering hooks
-    # below are what endpoint subclasses override.
-    #
-    # Endpoints that don't emit a message array (``openai_completions``,
-    # ``openai_embeddings``, rankings, image/video generation, raw payload
-    # replay) simply never call ``build_messages`` - they format their
-    # payload directly.
+    # Only the synthesised-message rendering depends on the endpoint's wire
+    # shape (chat uses ``{"type": "text"}`` / ``"image_url"``, Responses
+    # uses ``"input_text"`` / ``"input_image"``); the iteration + merge
+    # skeleton is universal, so it lives here and subclasses override the
+    # ``_render_*_part`` hooks. Endpoints that don't emit a message array
+    # (completions, embeddings, rankings, image / video, raw payload
+    # replay) simply never call ``build_messages``.
 
     DEFAULT_TURN_ROLE: str = "user"
     """Default role for a synthesised turn message when ``turn.role`` is None."""

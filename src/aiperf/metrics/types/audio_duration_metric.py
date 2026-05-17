@@ -43,14 +43,14 @@ class AudioDurationMetric(BaseRecordMetric[float]):
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
-        turns = record.request.turns
-        if not turns:
-            raise NoMetricValue("No turns in request; audio duration unavailable.")
-
-        audio_duration = turns[0].audio_duration_seconds
-        if audio_duration is None or audio_duration <= 0:
+        if (
+            record.turn_metadata is None
+            or record.turn_metadata.audio_duration_seconds is None
+            or record.turn_metadata.audio_duration_seconds <= 0
+        ):
             raise NoMetricValue(
-                "Turn has no audio_duration_seconds; audio_duration metric applies to ASR requests only."
+                "audio_duration_seconds not available; "
+                "audio_duration metric applies to ASR requests only."
             )
 
-        return audio_duration
+        return record.turn_metadata.audio_duration_seconds

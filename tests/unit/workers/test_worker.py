@@ -1,18 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, MemoryMapFormat
+from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import (
     Conversation,
+    ConversationMetadata,
+    DatasetMetadata,
+    MemoryMapClientMetadata,
     ParsedResponse,
     SSEMessage,
     TextResponseData,
+    TurnMetadata,
 )
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.workers.worker import Worker
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
@@ -35,6 +42,57 @@ async def mock_worker(
     await worker.start()
     yield worker
     await worker.stop()
+
+
+# --- Dataset metadata lookup tests ---
+
+
+def test_lookup_num_turns_requires_turn_count_index() -> None:
+    worker = Worker.__new__(Worker)
+    worker._num_turns_by_conversation = None
+
+    with pytest.raises(RuntimeError, match="Dataset metadata not yet received"):
+        Worker._lookup_num_turns(worker, "c1")
+
+
+@pytest.mark.asyncio
+async def test_dataset_configured_builds_raw_payload_turn_count_index() -> None:
+    worker = Worker.__new__(Worker)
+    worker._dataset_configured_event = Mock()
+    worker.session_manager = Mock()
+    worker.debug = Mock()
+
+    metadata = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="c1",
+                turns=[TurnMetadata(), TurnMetadata()],
+            ),
+            ConversationMetadata(conversation_id="c2", turns=[TurnMetadata()]),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    client_metadata = MemoryMapClientMetadata(
+        format=MemoryMapFormat.PAYLOAD_BYTES,
+        data_file_path=Path("/tmp/test-data.mmap"),
+        index_file_path=Path("/tmp/test-index.mmap"),
+    )
+    fake_client = Mock()
+    fake_client.initialize = AsyncMock()
+    fake_client_cls = Mock(return_value=fake_client)
+
+    with patch("aiperf.workers.worker.plugins.get_class", return_value=fake_client_cls):
+        await Worker._on_dataset_configured(
+            worker,
+            DatasetConfiguredNotification(
+                service_id="dataset-manager",
+                metadata=metadata,
+                client_metadata=client_metadata,
+            ),
+        )
+
+    assert worker._num_turns_by_conversation == {"c1": 2, "c2": 1}
+    assert Worker._lookup_num_turns(worker, "c1") == 2
 
 
 # --- FirstToken Callback Test Helpers ---

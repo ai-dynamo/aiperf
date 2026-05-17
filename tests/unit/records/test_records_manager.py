@@ -349,7 +349,7 @@ def _metric_records_message(
             record_processor_id="record-processor-rp-7f2a",
             benchmark_phase=phase,
         ),
-        results=[{"request_latency": 250_000_000}],
+        metrics={"request_latency": 250_000_000},
     )
 
 

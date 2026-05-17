@@ -14,7 +14,12 @@ from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.dataset_models import DatasetMetadata
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from aiperf.workers.session_manager import UserSession, UserSessionManager
+from aiperf.workers.session_manager import (
+    ContentSession,
+    RawPayloadSession,
+    UserSession,
+    UserSessionManager,
+)
 
 
 @pytest.fixture
@@ -47,7 +52,7 @@ class TestUserSessionManager:
         the conversation template has 5 turns available.
         """
         # Conversation has 5 turns, but Credit says only do 1
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="test-corr-id",
             conversation=sample_conversation,
             num_turns=1,  # Artificial cap from Credit
@@ -61,7 +66,7 @@ class TestUserSessionManager:
         self, session_manager, sample_conversation
     ):
         """Ensure turn validation uses Credit.num_turns."""
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="test-corr-id",
             conversation=sample_conversation,
             num_turns=2,  # Only 2 turns allowed
@@ -90,7 +95,7 @@ class TestUserSessionManager:
         initialized mid-session and only complete their final turn.
         """
         # User 1 in ramp-up: starts at question_id=5, only does 1 turn
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="ramp-up-user-1",
             conversation=sample_conversation,
             num_turns=1,  # Only 1 turn to execute
@@ -112,7 +117,7 @@ class TestUserSessionManager:
         self, session_manager, sample_conversation
     ):
         """Test normal user who executes all turns (e.g., steady-state users)."""
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="full-session-user",
             conversation=sample_conversation,
             num_turns=5,  # All turns
@@ -129,7 +134,7 @@ class TestUserSessionManager:
         self, session_manager, sample_conversation
     ):
         """Test user who starts mid-session and does partial turns (e.g., User 4 doing 3 turns)."""
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="partial-user",
             conversation=sample_conversation,
             num_turns=3,  # Only 3 turns (simulating User 4 at question_id=3)
@@ -156,7 +161,7 @@ class TestUserSessionManager:
         use the same url_index to ensure the entire conversation hits the same backend.
         """
         # First turn: Credit provides url_index=2 from round-robin
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="multi-url-session",
             conversation=sample_conversation,
             num_turns=3,
@@ -176,7 +181,7 @@ class TestUserSessionManager:
         self, session_manager, sample_conversation
     ):
         """Test that url_index can be None when only one URL is configured."""
-        session = session_manager.create_and_store(
+        session = session_manager.create_content_session(
             x_correlation_id="single-url-session",
             conversation=sample_conversation,
             num_turns=2,
@@ -207,7 +212,7 @@ def _make_session(
     )
     mgr = UserSessionManager()
     mgr.set_default_context_mode(default_context_mode)
-    return mgr.create_and_store(
+    return mgr.create_content_session(
         x_correlation_id="ctx-test",
         conversation=conversation,
         num_turns=num_turns,
@@ -421,3 +426,190 @@ class TestMessageArrayWithoutResponsesRejected:
                 sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
                 default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
             )
+
+
+# ============================================================
+# RawPayloadSession
+# ============================================================
+
+
+class TestRawPayloadSession:
+    """Tests for the PAYLOAD_BYTES-format session type.
+
+    ``RawPayloadSession`` carries only routing fields (conversation_id +
+    num_turns + turn_index). The wire payload bytes live in mmap and the
+    records-process resolves them through its own client — no
+    ``Conversation`` body, no ``turn_list`` to accumulate, no response
+    storage. FORK + PAYLOAD_BYTES is refused upstream, so fork-related
+    behaviors are intentionally absent.
+    """
+
+    def test_create_raw_payload_session_returns_raw_payload_type(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        session = session_manager.create_raw_payload_session(
+            x_correlation_id="raw-x",
+            conversation_id="conv-raw",
+            num_turns=3,
+        )
+        assert isinstance(session, RawPayloadSession)
+        assert not isinstance(session, ContentSession)
+        assert session.conversation_id == "conv-raw"
+        assert session.num_turns == 3
+        assert session.turn_index == 0
+
+    def test_advance_turn_bumps_index_without_turn_list(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        """No Turn objects to instantiate, no list to mutate — just the index."""
+        session = session_manager.create_raw_payload_session(
+            x_correlation_id="raw-adv",
+            conversation_id="conv-raw",
+            num_turns=4,
+        )
+        session.advance_turn(2)
+        assert session.turn_index == 2
+        # RawPayloadSession deliberately exposes no ``turn_list`` attribute.
+        assert not hasattr(session, "turn_list")
+
+    def test_advance_turn_rejects_out_of_range(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        session = session_manager.create_raw_payload_session(
+            x_correlation_id="raw-bad",
+            conversation_id="conv-raw",
+            num_turns=2,
+        )
+        with pytest.raises(ValueError, match="out of range"):
+            session.advance_turn(2)
+
+    def test_advance_turn_rejects_negative(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        session = session_manager.create_raw_payload_session(
+            x_correlation_id="raw-neg",
+            conversation_id="conv-raw",
+            num_turns=2,
+        )
+        with pytest.raises(ValueError, match="negative"):
+            session.advance_turn(-1)
+
+    def test_url_index_propagates(self, session_manager: UserSessionManager) -> None:
+        session = session_manager.create_raw_payload_session(
+            x_correlation_id="raw-url",
+            conversation_id="conv-raw",
+            num_turns=1,
+            url_index=3,
+        )
+        assert session.url_index == 3
+
+    def test_get_returns_stored_raw_payload_session(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        session_manager.create_raw_payload_session(
+            x_correlation_id="raw-get",
+            conversation_id="conv-raw",
+            num_turns=1,
+        )
+        looked_up = session_manager.get("raw-get")
+        assert isinstance(looked_up, RawPayloadSession)
+        assert looked_up.conversation_id == "conv-raw"
+
+    def test_evict_removes_raw_payload_session(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        session_manager.create_raw_payload_session(
+            x_correlation_id="raw-evict",
+            conversation_id="conv-raw",
+            num_turns=1,
+        )
+        session_manager.evict("raw-evict")
+        assert session_manager.get("raw-evict") is None
+
+    def test_evict_if_unpinned_removes_raw_payload_session(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        """RawPayloadSession can never be FORK-pinned, so unpinned eviction
+        always succeeds immediately."""
+        session_manager.create_raw_payload_session(
+            x_correlation_id="raw-unpin",
+            conversation_id="conv-raw",
+            num_turns=1,
+        )
+        session_manager.evict_if_unpinned("raw-unpin")
+        assert session_manager.get("raw-unpin") is None
+
+    def test_pin_for_fork_child_rejects_raw_payload_session(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        """FORK + PAYLOAD_BYTES is refused at dataset-format selection;
+        defensively reject at the pin call site too."""
+        session_manager.create_raw_payload_session(
+            x_correlation_id="raw-pin",
+            conversation_id="conv-raw",
+            num_turns=1,
+        )
+        with pytest.raises(TypeError, match="not a ContentSession"):
+            session_manager.pin_for_fork_child("raw-pin")
+
+    def test_seed_from_parent_noop_when_parent_is_raw_payload(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        """Seeding a child from a RawPayloadSession parent is structurally
+        impossible (no turn_list to copy). It must not raise — just no-op
+        — so the request still goes out without seed context."""
+        # Create a raw payload "parent" and a content-shaped "child"; this
+        # combination should never happen in practice (FORK + PAYLOAD_BYTES
+        # is refused upstream), but seed_from_parent is best-effort.
+        session_manager.create_raw_payload_session(
+            x_correlation_id="raw-parent",
+            conversation_id="conv-raw",
+            num_turns=1,
+        )
+        conversation = Conversation(
+            conversation_id="child-conv",
+            turns=[Turn(messages=[{"role": "user", "content": "Q"}])],
+        )
+        child = session_manager.create_content_session(
+            x_correlation_id="content-child",
+            conversation=conversation,
+            num_turns=1,
+        )
+        session_manager.seed_from_parent("content-child", "raw-parent")
+        # Child's turn_list should still be empty — seed silently no-op'd.
+        assert child.turn_list == []
+
+
+# ============================================================
+# UserSessionManager factory behaviour
+# ============================================================
+
+
+class TestUserSessionManagerFactories:
+    """Both factories store the session in the same cache under the same key."""
+
+    def test_create_content_session_stores_by_correlation_id(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        conversation = Conversation(
+            conversation_id="c-1",
+            turns=[Turn(messages=[{"role": "user", "content": "Q"}])],
+        )
+        created = session_manager.create_content_session(
+            x_correlation_id="corr-content",
+            conversation=conversation,
+            num_turns=1,
+        )
+        assert isinstance(created, ContentSession)
+        assert session_manager.get("corr-content") is created
+
+    def test_create_raw_payload_session_stores_by_correlation_id(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        created = session_manager.create_raw_payload_session(
+            x_correlation_id="corr-raw",
+            conversation_id="conv-raw",
+            num_turns=2,
+        )
+        assert isinstance(created, RawPayloadSession)
+        assert session_manager.get("corr-raw") is created

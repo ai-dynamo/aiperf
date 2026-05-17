@@ -91,8 +91,10 @@ def create_base_trace_data(**overrides):
     """
     from aiperf.common.models import BaseTraceData
 
-    defaults = {"trace_type": "base"}
-    params = {**defaults, **overrides}
+    params = {**overrides}
+    # ``trace_type`` is now the msgspec tag — it is not a kwarg. Tolerate
+    # callers that still pass it (legacy tests) by dropping it.
+    params.pop("trace_type", None)
 
     # Auto-derive aggregate fields from chunk lists if not explicitly provided
     if "request_chunks" in params:

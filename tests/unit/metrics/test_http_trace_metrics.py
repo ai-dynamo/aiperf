@@ -41,8 +41,6 @@ def create_record_with_trace(
     responses = responses or [start_ns + 50]
 
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
@@ -114,7 +112,6 @@ def create_aiohttp_trace_data(
         request_send_end = actual_request_chunks[-1][0]
 
     return AioHttpTraceData(
-        trace_type="aiohttp",
         reference_perf_ns=reference_perf_ns,
         reference_time_ns=reference_time_ns,
         # Connection pool

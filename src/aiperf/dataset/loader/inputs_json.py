@@ -72,8 +72,14 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
 
         result: dict[str, list[InputsJsonSession]] = {}
         for idx, entry in enumerate(data_list):
+            try:
+                session_id = entry["session_id"]
+            except KeyError as e:
+                raise ValueError(
+                    f"{path}: data[{idx}] missing required 'session_id' key"
+                ) from e
             session = InputsJsonSession(
-                session_id=entry["session_id"],
+                session_id=session_id,
                 payloads=entry["payloads"],
             )
             if session.session_id in result:
