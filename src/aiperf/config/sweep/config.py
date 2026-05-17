@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, TypeAlias
 
 from pydantic import ConfigDict, Discriminator, Field, model_validator
 from typing_extensions import Self
@@ -24,6 +24,11 @@ from aiperf.config.loader.dotted_path import _validate_dotted_path
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.plugin.enums import SearchPlannerType
 from aiperf.search_recipes._post_process import PostProcessSpec
+
+SweepType: TypeAlias = Literal[
+    "grid", "zip", "scenarios", "adaptive_search", "sobol", "latin_hypercube"
+]
+
 
 __all__ = [
     "MAGIC_LIST_FIELDS",
@@ -37,6 +42,7 @@ __all__ = [
     "ScenarioSweep",
     "SobolSweep",
     "SweepConfig",
+    "SweepType",
     "SweepVariation",
     "ZipSweep",
     "_set_nested_value",

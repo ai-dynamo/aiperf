@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from aiperf.config.sweep import SweepType
 from aiperf.operator.routers.jobs_models import JobPodSummary
 
 
@@ -31,9 +32,7 @@ class SpecSummary(BaseModel):
     """Compact summary of the sweep's structural spec for the UI detail page."""
 
     model_config = ConfigDict(extra="forbid")
-    sweep_type: Literal["grid", "scenarios"] = Field(
-        description="Variation generator kind."
-    )
+    sweep_type: SweepType = Field(description="Variation generator kind.")
     dimensions: list[DimensionInfo] = Field(
         description="Swept dimensions and their value lists."
     )

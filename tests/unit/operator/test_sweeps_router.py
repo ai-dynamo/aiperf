@@ -80,6 +80,47 @@ def test_detail_404_when_missing(tmp_path: Path) -> None:
     assert r.status_code == 404
 
 
+def test_detail_returns_adaptive_search_spec_summary_from_live(tmp_path: Path) -> None:
+    api = MagicMock()
+    rec = _live_record("adaptive-search-smoke")
+    rec.raw_spec = {
+        "benchmark": {"models": {"items": [{"name": "mock"}]}},
+        "sweep": {
+            "type": "adaptive_search",
+            "searchSpace": [
+                {
+                    "path": "phases.profiling.concurrency",
+                    "lo": 1,
+                    "hi": 40,
+                    "kind": "int",
+                }
+            ],
+            "objectives": [
+                {
+                    "metric": "output_token_throughput",
+                    "stat": "avg",
+                    "direction": "maximize",
+                }
+            ],
+        },
+    }
+    with (
+        patch(
+            "aiperf.operator.routers.sweeps.find_any_sweep",
+            AsyncMock(return_value=rec),
+        ),
+        patch(
+            "aiperf.operator.routers.sweeps.list_all_jobs",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        c = _client_with(api, tmp_path)
+        r = c.get("/api/v1/sweeps/bench/adaptive-search-smoke")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["spec_summary"]["sweep_type"] == "adaptive_search"
+
+
 def test_detail_returns_spec_summary_from_live(tmp_path: Path) -> None:
     api = MagicMock()
     rec = _live_record()
