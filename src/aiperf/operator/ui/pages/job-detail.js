@@ -1,6 +1,6 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { api, poll } from '../lib/api.js';
+import { api, DASHBOARD_MUTATIONS_DISABLED_MESSAGE, DASHBOARD_MUTATIONS_ENABLED, poll } from '../lib/api.js';
 import { openJobWs } from '../lib/job-ws.js';
 import { buildRunSelectorRows } from '../lib/run-selector.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
@@ -1955,7 +1955,7 @@ export function JobDetail({ namespace, name, epoch }) {
               </p>
             `}
           </div>
-          ${isRunning && html`
+          ${isRunning && DASHBOARD_MUTATIONS_ENABLED && html`
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
               ${cancelState === 'idle' && html`
                 <button
@@ -2002,6 +2002,13 @@ export function JobDetail({ namespace, name, epoch }) {
                 <span style=${'font-size: var(--font-size-xs); color: ' + colors.error}>Cancel failed: ${cancelError}</span>
               `}
             </div>
+          `}
+          ${isRunning && !DASHBOARD_MUTATIONS_ENABLED && html`
+            <div
+              data-testid="job-detail-cancel-readonly"
+              title=${DASHBOARD_MUTATIONS_DISABLED_MESSAGE}
+              style=${`max-width: 360px; font-size: var(--font-size-xs); color: ${palette.yellow}; text-align: right;`}
+            >Cancel is disabled in the dashboard. Use <code>aiperf kube</code> or <code>kubectl</code> from an authenticated terminal.</div>
           `}
           ${isTerminal && jobConfig?.spec && html`
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">

@@ -5,9 +5,9 @@
  * Launch — create a new AIPerfJob from the UI.
  *
  * Pick a starting template (or paste your own YAML), edit in the textarea,
- * hit Launch. Parses the YAML client-side, POSTs to ``/api/v1/jobs``, and
- * navigates to the new run on success. Errors (parse / HTTP) are surfaced
- * inline.
+ * and copy it for `aiperf kube apply` or `kubectl apply`. Browser-side job
+ * creation stays disabled because the static SPA has no safe bearer-token
+ * delivery path for protected mutating routes.
  *
  * Hand-rolled YAML parser is used to keep the UI build-step-free; it handles
  * the AIPerfJob shape (mappings, sequences, scalars, inline flow maps for
@@ -16,7 +16,7 @@
 
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { api } from '../lib/api.js';
+import { api, DASHBOARD_MUTATIONS_DISABLED_MESSAGE, DASHBOARD_MUTATIONS_ENABLED } from '../lib/api.js';
 import { navigate } from '../lib/router.js';
 import { palette } from '../lib/theme.js';
 import { Spinner } from '../components/spinner.js';
@@ -387,7 +387,8 @@ export function Launch() {
   }
 
   const peek = peekManifest(yaml);
-  const canSubmit = state.kind !== 'submitting'
+  const canSubmit = DASHBOARD_MUTATIONS_ENABLED
+    && state.kind !== 'submitting'
     && state.kind !== 'ok'
     && !peek.parseError;
   const submitGuardRef = useRef({ canSubmit, yaml });
@@ -454,8 +455,8 @@ export function Launch() {
   return html`
     <div class="launch-page" data-testid="page-launch">
       <div class="section-header" style="margin-bottom: var(--space-4)">
-        <span class="section-title">Launch a new run</span>
-        <span class="text-dim" style="margin-left: var(--space-3); font-size: var(--font-size-xs); font-family: var(--font-mono)">POST /api/v1/jobs</span>
+        <span class="section-title">Prepare a new run</span>
+        <span class="text-dim" style="margin-left: var(--space-3); font-size: var(--font-size-xs); font-family: var(--font-mono)">read-only dashboard</span>
       </div>
 
       <div class="card">
@@ -486,6 +487,13 @@ export function Launch() {
           data-testid="launch-target"
           style=${targetRowStyle}
         >${`${peek.namespace ?? '—'} / ${peek.name ?? '—'}  ·  kind: ${peek.kind ?? '—'}${activeTemplate ? `  ·  template: ${activeTemplate.name}` : ''}`}</div>
+
+        ${!DASHBOARD_MUTATIONS_ENABLED && html`
+          <div
+            data-testid="launch-readonly-notice"
+            style=${`margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid ${palette.yellow}; color: ${palette.yellow}; background: ${palette.yellow}11; font-size: var(--font-size-sm);`}
+          >${DASHBOARD_MUTATIONS_DISABLED_MESSAGE}</div>
+        `}
 
         <textarea
           style=${textareaStyle}
@@ -543,9 +551,10 @@ export function Launch() {
             disabled=${!canSubmit}
             onclick=${launch}
             data-testid="launch-submit"
+            title=${!DASHBOARD_MUTATIONS_ENABLED ? DASHBOARD_MUTATIONS_DISABLED_MESSAGE : 'Create the AIPerfJob'}
           >${state.kind === 'submitting'
               ? html`<span style="display: inline-flex; align-items: center; gap: var(--space-2)"><${Spinner} size=${12} thickness=${1.5} color="var(--bg)" />Launching…</span>`
-              : state.kind === 'ok' ? 'Launched' : 'Launch'}</button>
+              : !DASHBOARD_MUTATIONS_ENABLED ? 'Launch disabled' : state.kind === 'ok' ? 'Launched' : 'Launch'}</button>
         </div>
       </div>
     </div>

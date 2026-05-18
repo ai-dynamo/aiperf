@@ -61,10 +61,12 @@ release name differs from the chart name. The port is exposed under the
 
 ### Authentication
 
-The dashboard inherits the Results API's access model: **no per-user
-authentication** is performed. Access control is the port-forward itself —
-whoever can reach port 8081 inside the cluster (or through a forward) can view
-every job, every result, and trigger `POST /api/v1/jobs/{ns}/{name}/cancel`.
+The dashboard inherits the Results API's read-only access model: **no per-user
+authentication** is performed for reads. Access control is the port-forward
+itself — whoever can reach port 8081 inside the cluster (or through a forward)
+can view every job and every result. Browser mutating actions are disabled by
+default because the static SPA has no safe bearer-token delivery path; create
+and cancel jobs from an authenticated terminal with `aiperf kube` or `kubectl`.
 Do not expose this port via an unauthenticated Ingress.
 
 ---

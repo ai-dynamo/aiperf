@@ -8,6 +8,13 @@ const BASE = '/api/v1';
 // still flagging a real outage within ~6-10s for typical poll cadences.
 const POLL_FAIL_THRESHOLD = 2;
 
+export const DASHBOARD_MUTATIONS_ENABLED = false;
+export const DASHBOARD_MUTATIONS_DISABLED_MESSAGE = 'Dashboard mutating actions are disabled because the browser app has no safe bearer-token delivery path. Use aiperf kube or kubectl for create/cancel operations.';
+
+function dashboardMutationDisabled() {
+  throw new Error(DASHBOARD_MUTATIONS_DISABLED_MESSAGE);
+}
+
 // Count of `poll()` instances currently reporting unhealthy. The banner
 // stays up while ≥1 poller is failing; clears once every poller has had
 // a clean tick. Module-scope so all poll() instances share the gate.
@@ -100,21 +107,17 @@ export const api = {
     return getSweepLogs(ns, name, opts);
   },
 
-  /** Create an AIPerfJob from a parsed manifest object. POSTs the manifest
-   *  wrapped under {manifest: ...} as the operator API expects. Returns the
-   *  created object's {namespace, name} on success; throws ``Error("API <n>: <body>")``
-   *  on non-2xx so callers can extract status + body.detail.
+  /** Create an AIPerfJob from a parsed manifest object.
+   *  Disabled in the browser app because protected mutating routes require a
+   *  bearer token that should not be embedded in static JavaScript.
    */
-  createJob(manifest) {
-    return apiFetch('/jobs', { method: 'POST', body: JSON.stringify({ manifest }) });
+  createJob(_manifest) {
+    return dashboardMutationDisabled();
   },
 
   /** Cancel a running job */
-  cancelJob(ns, name) {
-    return apiFetch(
-      `/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/cancel`,
-      { method: 'POST' },
-    );
+  cancelJob(_ns, _name) {
+    return dashboardMutationDisabled();
   },
 
   /** Get cluster-level info */

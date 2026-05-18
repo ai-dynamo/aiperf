@@ -18,6 +18,7 @@ ingress or a pre-pinned port-forward.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
@@ -32,6 +33,28 @@ app = cyclopts.App(
     name="index",
     help="Manage the operator's runs/sweep_variations SQLite index.",
 )
+
+_MUTATING_ROUTES_TOKEN_ENV = "AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN"
+
+
+def _mutating_route_headers() -> dict[str, str]:
+    """Return Authorization headers for protected operator mutating routes."""
+    token = os.environ.get(_MUTATING_ROUTES_TOKEN_ENV, "").strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _raise_mutating_route_error(exc: httpx.HTTPStatusError) -> None:
+    status_code = exc.response.status_code
+    if status_code not in {401, 403}:
+        raise exc
+    raise RuntimeError(
+        "Operator index rebuild is protected by results-server mutating-route auth. "
+        f"Set {_MUTATING_ROUTES_TOKEN_ENV} to the bearer token configured on the "
+        "operator, or ask an administrator to enable resultsServer.mutatingRoutes "
+        "and provide the token."
+    ) from exc
 
 
 @asynccontextmanager
@@ -115,8 +138,13 @@ async def rebuild(
             _operator_api_base(api_url, options) as base_url,
             httpx.AsyncClient(base_url=base_url, timeout=300.0) as client,
         ):
-            resp = await client.post("/admin/index/rebuild")
-            resp.raise_for_status()
+            resp = await client.post(
+                "/admin/index/rebuild", headers=_mutating_route_headers()
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_mutating_route_error(exc)
             data = orjson.loads(resp.content)
         if output == "json":
             kube_console.console.print(

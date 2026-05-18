@@ -262,7 +262,7 @@ resultsServer:
 
 `resultsServer.mutatingRoutes.enabled` controls POST routes on the results-server that create or cancel `AIPerfJob` resources or rebuild mutable operator indexes. It defaults to `false`, so exposing the results-server for read-only APIs does not also grant clients write access through the operator ServiceAccount.
 
-To enable these routes, create a Kubernetes Secret containing the bearer token and set `resultsServer.mutatingRoutes.tokenSecretName` plus `tokenSecretKey`. The chart projects those values into the results-server as `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`; clients must send `Authorization: Bearer <token>` on protected POST requests.
+To enable these routes, create a Kubernetes Secret containing the bearer token and set `resultsServer.mutatingRoutes.tokenSecretName` plus `tokenSecretKey`. The chart projects those values into the results-server as `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`; clients must send `Authorization: Bearer <token>` on protected POST requests. For `aiperf kube index rebuild`, export the same token in the caller's environment as `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`. The browser dashboard does not receive this secret and keeps create/cancel controls disabled; use `aiperf kube` or `kubectl` from an authenticated terminal for those mutations.
 
 ### `dashboard`
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Mapping
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -32,6 +33,7 @@ class _FakeAsyncClient:
         post_payload: dict[str, Any] | None = None,
         get_exc: Exception | None = None,
         post_exc: Exception | None = None,
+        post_status_code: int = 200,
         base_url: str | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -39,10 +41,12 @@ class _FakeAsyncClient:
         self._post_payload = post_payload or {}
         self._get_exc = get_exc
         self._post_exc = post_exc
+        self._post_status_code = post_status_code
         self.base_url = base_url
         self.timeout = timeout
         self.get_calls: list[str] = []
         self.post_calls: list[str] = []
+        self.post_headers: list[dict[str, str]] = []
 
     async def __aenter__(self) -> _FakeAsyncClient:
         return self
@@ -56,22 +60,33 @@ class _FakeAsyncClient:
             raise self._get_exc
         return _FakeResponse(self._get_payload)
 
-    async def post(self, url: str) -> Any:
+    async def post(self, url: str, *, headers: Mapping[str, str] | None = None) -> Any:
         self.post_calls.append(url)
+        self.post_headers.append(dict(headers or {}))
         if self._post_exc is not None:
             raise self._post_exc
-        return _FakeResponse(self._post_payload)
+        return _FakeResponse(self._post_payload, status_code=self._post_status_code)
 
 
 class _FakeResponse:
     """Minimal httpx.Response stand-in with byte content."""
 
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], *, status_code: int = 200) -> None:
+        self._payload = payload
         self.content = orjson.dumps(payload)
-        self.status_code = 200
+        self.status_code = status_code
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
 
     def raise_for_status(self) -> None:
-        return None
+        if self.status_code < 400:
+            return
+        request = httpx.Request("POST", "http://operator/admin/index/rebuild")
+        response = httpx.Response(self.status_code, request=request)
+        raise httpx.HTTPStatusError(
+            f"{self.status_code} Error", request=request, response=response
+        )
 
 
 def _patch_httpx(client: _FakeAsyncClient) -> Any:
@@ -269,9 +284,29 @@ class TestIndexRebuild:
 
         out = capsys.readouterr().out
         assert client.post_calls == ["/admin/index/rebuild"]
+        assert client.post_headers == [{}]
         assert "Indexed 7 runs" in out
         assert "2 sweep variations" in out
         assert "1.23s" in out
+
+    @pytest.mark.asyncio
+    async def test_rebuild_sends_bearer_token_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.cli_commands.kube.index import rebuild
+
+        monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "secret-token")
+        client = _FakeAsyncClient(
+            post_payload={
+                "runs_indexed": 1,
+                "sweep_variations_indexed": 0,
+                "duration_seconds": 0.0,
+            }
+        )
+        with _patch_httpx(client):
+            await rebuild()
+
+        assert client.post_headers == [{"Authorization": "Bearer secret-token"}]
 
     @pytest.mark.asyncio
     async def test_json_output_emits_indent2_orjson(
@@ -317,6 +352,35 @@ class TestIndexRebuild:
             await rebuild()
 
     @pytest.mark.asyncio
+    async def test_rebuild_403_has_actionable_token_error(self) -> None:
+        from aiperf.cli_commands.kube.index import rebuild
+
+        client = _FakeAsyncClient(post_status_code=403)
+        with _patch_httpx(client), pytest.raises(RuntimeError) as exc_info:
+            await rebuild()
+
+        message = str(exc_info.value)
+        assert "mutating-route auth" in message
+        assert "AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN" in message
+        assert client.post_headers == [{}]
+
+    @pytest.mark.asyncio
+    async def test_rebuild_401_does_not_leak_wrong_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.cli_commands.kube.index import rebuild
+
+        monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "wrong-secret")
+        client = _FakeAsyncClient(post_status_code=401)
+        with _patch_httpx(client), pytest.raises(RuntimeError) as exc_info:
+            await rebuild()
+
+        assert client.post_headers == [{"Authorization": "Bearer wrong-secret"}]
+        message = str(exc_info.value)
+        assert "AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN" in message
+        assert "wrong-secret" not in message
+
+    @pytest.mark.asyncio
     async def test_json_mode_restores_logger_level_on_success(self) -> None:
         """Logger toggled to WARNING then restored after completion."""
         from aiperf.cli_commands.kube.index import rebuild
@@ -337,9 +401,11 @@ class TestIndexRebuild:
         captured_levels: list[int] = []
         original_post = client.post
 
-        async def _spy_post(url: str) -> Any:
+        async def _spy_post(
+            url: str, *, headers: Mapping[str, str] | None = None
+        ) -> Any:
             captured_levels.append(kube_logger.level)
-            return await original_post(url)
+            return await original_post(url, headers=headers)
 
         client.post = _spy_post  # type: ignore[method-assign]
 
