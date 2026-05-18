@@ -339,6 +339,30 @@ def test_epoch_key_from_body_keeps_integer_key_for_whole_seconds() -> None:
     assert epoch_key_from_body(body) == "1714069323"
 
 
+def test_epoch_key_from_body_disambiguates_same_second_k8s_uids() -> None:
+    first = {
+        "metadata": {
+            "creationTimestamp": "2024-04-25T18:22:03Z",
+            "uid": "11111111-1111-4111-8111-111111111111",
+        }
+    }
+    second = {
+        "metadata": {
+            "creationTimestamp": "2024-04-25T18:22:03Z",
+            "uid": "22222222-2222-4222-8222-222222222222",
+        }
+    }
+
+    first_key = epoch_key_from_body(first)
+    second_key = epoch_key_from_body(second)
+
+    assert first_key != second_key
+    assert first_key.startswith("1714069323")
+    assert second_key.startswith("1714069323")
+    assert EPOCH_RE.match(first_key) is not None
+    assert EPOCH_RE.match(second_key) is not None
+
+
 @pytest.mark.asyncio
 async def test_list_runs_async_merges_disk_epochs_when_index_has_stale_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -26,6 +26,7 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import aiosqlite
 import orjson
@@ -50,6 +51,7 @@ SCHEMA_VERSION = 1
 
 _DB: aiosqlite.Connection | None = None
 _DB_PATH: Path | None = None
+_READ_ONLY = False
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -167,7 +169,7 @@ async def open(path: Path) -> None:
 
     Idempotent — calling twice is safe and does not duplicate state.
     """
-    global _DB, _DB_PATH
+    global _DB, _DB_PATH, _READ_ONLY
 
     if _DB is not None:
         return
@@ -199,21 +201,65 @@ async def open(path: Path) -> None:
 
     _DB = db
     _DB_PATH = path
+    _READ_ONLY = False
     logger.info("runs_index opened at %s (schema_version=%d)", path, SCHEMA_VERSION)
+
+
+async def open_readonly(path: Path) -> None:
+    """Open an existing runs_index DB for read-only serving.
+
+    Results-server sidecars use this path because the operator process is the
+    single writer. The DB must already exist; missing or migrated schemas are
+    operator-startup responsibilities, not sidecar side effects.
+    """
+    global _DB, _DB_PATH, _READ_ONLY
+
+    if _DB is not None:
+        return
+
+    uri = f"file:{quote(str(path), safe='/')}?mode=ro"
+    db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
+    await db.execute("PRAGMA query_only = ON")
+    await db.execute("PRAGMA busy_timeout = 5000")
+
+    cur = await db.execute("SELECT value FROM meta WHERE key = 'schema_version'")
+    row = await cur.fetchone()
+    await cur.close()
+    if row is None:
+        await db.close()
+        raise RuntimeError(f"runs_index DB at {path} is missing schema_version")
+    existing = int(row[0])
+    if existing > SCHEMA_VERSION:
+        await db.close()
+        raise RuntimeError(
+            f"runs_index DB at {path} has schema_version={existing} but this "
+            f"build only knows up to {SCHEMA_VERSION}. Refusing to open."
+        )
+
+    _DB = db
+    _DB_PATH = path
+    _READ_ONLY = True
+    logger.info("runs_index opened read-only at %s (schema_version=%d)", path, existing)
 
 
 async def close() -> None:
     """Close the DB. Safe to call when never opened."""
-    global _DB, _DB_PATH
+    global _DB, _DB_PATH, _READ_ONLY
     if _DB is not None:
         await _DB.close()
     _DB = None
     _DB_PATH = None
+    _READ_ONLY = False
 
 
 def is_open() -> bool:
     """Return True iff a runs_index DB is currently open."""
     return _DB is not None
+
+
+def is_readonly() -> bool:
+    """Return True iff the open runs_index connection is read-only."""
+    return _DB is not None and _READ_ONLY
 
 
 def _conn() -> aiosqlite.Connection:
@@ -1472,7 +1518,9 @@ async def _index_sweep_from_disk(
 async def lazy_backfill_run(
     base: Path, namespace: str, job_id: str, epoch: str
 ) -> None:
-    """Background task fired from read-path fallback. Best-effort, never raises."""
+    """Background task fired from writer read-path fallback. Best-effort, never raises."""
+    if is_readonly():
+        return
     try:
         latest_epoch = resolve_latest(base, namespace, job_id)
         await _index_run_from_disk(

@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import time
+import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -35,9 +36,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 LATEST_POINTER = "latest.txt"
-# 9-17 digits covers legacy epoch-seconds directories plus fractional-second
-# run keys encoded as <epoch-seconds><microseconds:06d> for same-name resubmits.
-EPOCH_RE = re.compile(r"^\d{9,17}$")
+# 9-20 digits covers legacy epoch-seconds directories, fractional-second
+# run keys, and whole-second Kubernetes keys with a uid-derived suffix.
+EPOCH_RE = re.compile(r"^\d{9,20}$")
 
 __all__ = [
     "EPOCH_RE",
@@ -529,6 +530,8 @@ def _schedule_lazy_backfill_runs(
     except ImportError as exc:  # pragma: no cover - defensive
         logger.warning("runs_index unavailable for lazy backfill: %s", exc)
         return
+    if _runs_index.is_readonly():
+        return
     for entry in runs:
         try:
             loop.create_task(
@@ -567,6 +570,8 @@ def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
     except ImportError as exc:  # pragma: no cover - defensive
         logger.warning("runs_index unavailable for retention drop: %s", exc)
         return
+    if _runs_index.is_readonly():
+        return
     try:
         loop.create_task(_runs_index.delete_run(namespace, name, epoch))
     except Exception as exc:  # noqa: BLE001 - index path must never break retention
@@ -580,22 +585,28 @@ def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
 
 
 def epoch_key_from_body(body: dict) -> str:
-    """Parse ``metadata.creationTimestamp`` into a decimal epoch-seconds string.
+    """Parse ``metadata.creationTimestamp`` into a decimal run key.
 
-    Matches the legacy dynamo ``EPOCH=$(date +%s)`` convention so run
-    directories sort chronologically. Whole-second timestamps keep the legacy
-    epoch-seconds shape; fractional timestamps append six microsecond digits so
-    same-name resubmits created within one second do not collide.
+    Matches the legacy dynamo ``EPOCH=$(date +%s)`` convention for bodies that
+    have no Kubernetes uid, preserving compatibility with already-written epoch
+    directories. Fractional timestamps append six microsecond digits. Kubernetes
+    whole-second timestamps append a deterministic uid-derived suffix so
+    same-name resubmits created inside the same API-server second do not collide.
 
     Example:
         >>> epoch_key_from_body({"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"}})
         '1714069323'
     """
-    ts = body["metadata"]["creationTimestamp"]
+    metadata = body["metadata"]
+    ts = metadata["creationTimestamp"]
     # ``fromisoformat`` on 3.10 rejects trailing Z; swap for the explicit
     # UTC offset so the parse works across supported Python versions.
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     seconds = int(dt.timestamp())
-    if dt.microsecond == 0:
+    if dt.microsecond != 0:
+        return f"{seconds}{dt.microsecond:06d}"
+    uid = metadata.get("uid")
+    if not uid:
         return str(seconds)
-    return f"{seconds}{dt.microsecond:06d}"
+    suffix = zlib.crc32(str(uid).encode("utf-8"))
+    return f"{seconds}{suffix:010d}"
