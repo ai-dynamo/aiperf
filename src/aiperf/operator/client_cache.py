@@ -246,10 +246,24 @@ def _build_claim_patch_ops(body: dict[str, Any]) -> list[dict[str, Any]]:
     # JSON Pointer RFC 6901: escape '/' as '~1' and '~' as '~0'.
     escaped_key = Annotations.COMPLETION_CLAIMED.replace("~", "~0").replace("/", "~1")
     timestamp = format_timestamp()
-    current_annotations = body.get("metadata", {}).get("annotations")
+    metadata = body.get("metadata", {})
+    current_annotations = metadata.get("annotations")
 
     if current_annotations is None:
+        precondition_path = "/metadata"
+        precondition_value: Any = metadata
+        if metadata.get("resourceVersion") is not None:
+            precondition_path = "/metadata/resourceVersion"
+            precondition_value = metadata["resourceVersion"]
+        elif metadata.get("uid") is not None:
+            precondition_path = "/metadata/uid"
+            precondition_value = metadata["uid"]
         return [
+            {
+                "op": "test",
+                "path": precondition_path,
+                "value": precondition_value,
+            },
             {"op": "add", "path": "/metadata/annotations", "value": {}},
             {
                 "op": "add",

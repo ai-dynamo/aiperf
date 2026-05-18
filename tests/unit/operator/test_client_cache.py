@@ -192,23 +192,83 @@ class TestCompletionClaim:
         assert patch_ops[1]["op"] == "add"
         assert patch_ops[1]["path"] == f"/metadata/annotations/{escaped_key}"
 
-    def test_missing_annotations_parent_adds_without_testing_missing_path(
+    def test_missing_annotations_parent_tests_resource_version_before_add(
         self,
     ) -> None:
-        """A CR with no annotations object is claimable.
+        """Absent annotations are claimable without allowing stale overwrites.
 
         JSON Patch ``test /metadata/annotations == null`` fails when the
-        annotations member is absent, so the patch must create the parent
-        directly and only test paths that already exist.
+        annotations member is absent, so the patch must test an existing
+        Kubernetes-managed precondition before creating the parent.
         """
-        patch_ops = _build_claim_patch_ops({"metadata": {}})
+        patch_ops = _build_claim_patch_ops({"metadata": {"resourceVersion": "42"}})
 
         assert patch_ops[0] == {
+            "op": "test",
+            "path": "/metadata/resourceVersion",
+            "value": "42",
+        }
+        assert patch_ops[1] == {
             "op": "add",
             "path": "/metadata/annotations",
             "value": {},
         }
-        assert all(op["op"] != "test" for op in patch_ops)
+
+    def test_missing_annotations_parent_stale_patch_fails_after_resource_version_changes(
+        self,
+    ) -> None:
+        """Two stale absent-parent claim patches cannot both overwrite."""
+        patch_ops = _build_claim_patch_ops({"metadata": {"resourceVersion": "42"}})
+        live_body = {"metadata": {"resourceVersion": "42"}}
+
+        self._apply_claim_patch(live_body, patch_ops)
+        live_body["metadata"]["resourceVersion"] = "43"
+
+        with pytest.raises(AssertionError):
+            self._apply_claim_patch(live_body, patch_ops)
+
+    def test_missing_annotations_parent_without_resource_version_is_claimable(
+        self,
+    ) -> None:
+        """A CR with no annotations object still gets a valid claim patch."""
+        patch_ops = _build_claim_patch_ops({"metadata": {"uid": "job-uid"}})
+
+        assert patch_ops[0] == {
+            "op": "test",
+            "path": "/metadata/uid",
+            "value": "job-uid",
+        }
+        assert patch_ops[1]["op"] == "add"
+        assert patch_ops[1]["path"] == "/metadata/annotations"
+
+    @staticmethod
+    def _apply_claim_patch(
+        document: dict[str, object], patch_ops: list[dict[str, object]]
+    ) -> None:
+        """Apply the small JSON Patch subset used by completion claims."""
+        for op in patch_ops:
+            parent, member = TestCompletionClaim._resolve_parent(
+                document, str(op["path"])
+            )
+            if op["op"] == "test":
+                assert parent[member] == op["value"]
+            elif op["op"] == "add":
+                parent[member] = op["value"]
+            else:
+                raise AssertionError(f"unsupported patch op: {op['op']}")
+
+    @staticmethod
+    def _resolve_parent(
+        document: dict[str, object], pointer: str
+    ) -> tuple[dict[str, object], str]:
+        parts = [
+            part.replace("~1", "/").replace("~0", "~")
+            for part in pointer.removeprefix("/").split("/")
+        ]
+        parent: dict[str, object] = document
+        for part in parts[:-1]:
+            parent = parent[part]  # type: ignore[assignment]
+        return parent, parts[-1]
 
     @pytest.mark.asyncio
     async def test_submit_claim_patch_422_is_retryable_error_not_lost_race(
