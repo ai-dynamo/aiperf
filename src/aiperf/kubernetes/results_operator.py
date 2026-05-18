@@ -193,7 +193,7 @@ async def _resolve_operator_run(
                 print_error(f"No runs found for {namespace}/{job_id}")
                 return None
             resp.raise_for_status()
-            payload = await resp.json()
+            payload = await resp.json(loads=orjson.loads)
     except aiohttp.ClientError as e:
         print_error(f"Failed to resolve latest run: {e}")
         return None

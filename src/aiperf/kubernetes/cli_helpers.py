@@ -152,6 +152,8 @@ async def resolve_job(
     namespace: str | None = None,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
+    *,
+    quiet: bool = False,
 ) -> ResolvedJob | None:
     """Resolve a job identifier to an AIPerfJob CR, falling back to JobSet.
 
@@ -172,13 +174,14 @@ async def resolve_job(
         namespace: Optional namespace to search in.
         kubeconfig: Path to kubeconfig file.
         kube_context: Kubernetes context name.
+        quiet: Suppress informational user output while resolving defaults.
 
     Returns:
         ResolvedJob if found, None otherwise.
     """
     from aiperf.kubernetes.client import find_aiperf_job, find_jobset
 
-    resolved = resolve_job_id_and_namespace(job_id, namespace)
+    resolved = resolve_job_id_and_namespace(job_id, namespace, quiet=quiet)
     if not resolved:
         return None
     job_id, namespace = resolved
@@ -193,12 +196,13 @@ async def resolve_job(
     # Fallback to JobSet lookup
     jobset_info = await find_jobset(api, job_id, namespace)
     if not jobset_info:
-        print_error(f"No AIPerf job found with ID: {job_id}")
-        if namespace:
-            print_info(f"Searched namespace: {namespace}")
-        else:
-            print_info("Searched all namespaces")
-        print_action("Run 'aiperf kube list' to see available jobs")
+        if not quiet:
+            print_error(f"No AIPerf job found with ID: {job_id}")
+            if namespace:
+                print_info(f"Searched namespace: {namespace}")
+            else:
+                print_info("Searched all namespaces")
+            print_action("Run 'aiperf kube list' to see available jobs")
         await api.close()
         return None
 

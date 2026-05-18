@@ -27,6 +27,7 @@ from aiperf.kubernetes.results_operator import (
     _download_all_operator_files,
     _download_operator_file,
     _list_operator_files,
+    _resolve_operator_run,
     _verify_operator_health,
 )
 
@@ -62,16 +63,19 @@ class FakeResponse:
         self._body = body
         self._json_data = json_data
         self.headers = headers or {}
+        self.json_loads = None
         # Mirror results.py iter_chunked contract
         self.content = _Chunks(chunks if chunks is not None else [body])
 
     async def read(self) -> bytes:
         return self._body
 
-    async def json(self) -> dict:
+    async def json(self, *, loads=None) -> dict:
+        self.json_loads = loads
         if self._json_data is not None:
             return self._json_data
-        return orjson.loads(self._body)
+        parser = loads or orjson.loads
+        return parser(self._body)
 
     def raise_for_status(self) -> None:
         if self.status >= 400:
@@ -445,6 +449,26 @@ class TestListOperatorFiles:
 
 class TestDownloadAllOperatorFiles:
     """Verify end-to-end operator file listing/download URL selection."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_operator_run_uses_orjson_parser(self) -> None:
+        response = FakeResponse(
+            body=b'{"latest_epoch":"1714150923"}',
+        )
+        session = FakeSession(
+            {"http://localhost/api/v1/results/ns/job-1/runs": [response]}
+        )
+
+        latest = await _resolve_operator_run(
+            session,  # type: ignore[arg-type]
+            api_base="http://localhost",
+            namespace="ns",
+            job_id="job-1",
+            run=None,
+        )
+
+        assert latest == "1714150923"
+        assert response.json_loads is orjson.loads
 
     @pytest.mark.asyncio
     async def test_default_download_resolves_latest_epoch_before_listing(

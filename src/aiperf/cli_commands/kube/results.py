@@ -450,13 +450,9 @@ def _render_list_runs_payload(
     import orjson
 
     from aiperf.cli_commands.kube import _runs_render
-    from aiperf.kubernetes import console as kube_console
 
     if output == "json":
-        kube_console.console.print(
-            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode(),
-            highlight=False,
-        )
+        print(orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode())
     else:
         _runs_render.print_runs_table(payload, preview=preview)
 
@@ -489,6 +485,7 @@ async def _run_list_runs(
             manage_options.namespace,
             kubeconfig=manage_options.kubeconfig,
             kube_context=manage_options.kube_context,
+            quiet=output == "json",
         )
         if not resolved:
             return

@@ -17,8 +17,10 @@ import orjson
 import pytest
 
 from aiperf.cli_commands.kube._runs_render import print_runs_table
-from aiperf.cli_commands.kube.results import list_runs
+from aiperf.cli_commands.kube.results import _render_list_runs_payload, list_runs
 from aiperf.config.kube import KubeManageOptions
+from aiperf.kubernetes.console import LastBenchmarkInfo
+from aiperf.kubernetes.models import AIPerfJobInfo
 
 
 @pytest.fixture
@@ -191,6 +193,31 @@ async def test_list_runs_text_output_formats_table(
     assert "4.6 MiB" in out
 
 
+def test_render_list_runs_json_does_not_wrap_long_strings(capsys) -> None:
+    """JSON output must bypass Rich wrapping so stdout remains machine-parseable."""
+    from aiperf.kubernetes.console import console as _console
+
+    payload = {
+        "namespace": "default",
+        "job_id": "foo",
+        "runs": [
+            {
+                "epoch": "1714150923",
+                "variation_label": "long label " * 40,
+            }
+        ],
+    }
+
+    _console.width = 80
+    try:
+        _render_list_runs_payload(payload, output="json", preview=False)
+    finally:
+        _console.width = None
+
+    parsed = orjson.loads(capsys.readouterr().out)
+    assert parsed == payload
+
+
 @pytest.mark.asyncio
 async def test_list_runs_json_output_parseable(
     mock_resolve_and_pod, sample_payload: dict, capsys
@@ -218,6 +245,100 @@ async def test_list_runs_json_output_parseable(
     assert parsed["job_id"] == "foo"
     assert len(parsed["runs"]) == 2
     mock_resolve_and_pod.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_runs_json_threads_quiet_to_resolver(
+    sample_payload: dict,
+) -> None:
+    resolved = MagicMock()
+    resolved.job_id = "foo"
+    resolved.namespace = "default"
+    resolved.api = MagicMock()
+    resolved.aclose = AsyncMock()
+    resolver = AsyncMock(return_value=resolved)
+    get_cm = _mock_http_response(status=200, json_payload=sample_payload)
+    session_cm = _mock_session_cm(get_cm)
+
+    with (
+        patch("aiperf.kubernetes.cli_helpers.resolve_job", new=resolver),
+        patch(
+            "aiperf.kubernetes.client.find_operator_pod",
+            new=AsyncMock(return_value=("operator-pod-x", "Running")),
+        ),
+        patch(
+            "aiperf.kubernetes.client.resolve_operator_namespace",
+            new=AsyncMock(return_value="aiperf-system"),
+        ),
+        patch(
+            "aiperf.kubernetes.port_forward.port_forward_with_status",
+            new=_mock_port_forward,
+        ),
+        patch("aiohttp.ClientSession", new=session_cm),
+    ):
+        await list_runs(
+            job_id=None,
+            manage_options=KubeManageOptions(),
+            output="json",
+        )
+
+    assert resolver.call_args.kwargs["quiet"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_runs_json_default_job_resolution_is_quiet(
+    sample_payload: dict, capsys
+) -> None:
+    """Default last-benchmark resolution must not contaminate JSON stdout."""
+    api = MagicMock()
+    api.close = AsyncMock()
+    job_info = AIPerfJobInfo(
+        name="foo",
+        namespace="default",
+        phase="Completed",
+        job_id="foo",
+    )
+    get_cm = _mock_http_response(status=200, json_payload=sample_payload)
+    session_cm = _mock_session_cm(get_cm)
+
+    with (
+        patch(
+            "aiperf.kubernetes.cli_helpers.get_last_benchmark",
+            return_value=LastBenchmarkInfo(job_id="foo", namespace="default"),
+        ),
+        patch(
+            "aiperf.kubernetes.cli_helpers._open_api_client",
+            new=AsyncMock(return_value=api),
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_aiperf_job",
+            new=AsyncMock(return_value=job_info),
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_operator_pod",
+            new=AsyncMock(return_value=("operator-pod-x", "Running")),
+        ),
+        patch(
+            "aiperf.kubernetes.client.resolve_operator_namespace",
+            new=AsyncMock(return_value="aiperf-system"),
+        ),
+        patch(
+            "aiperf.kubernetes.port_forward.port_forward_with_status",
+            new=_mock_port_forward,
+        ),
+        patch("aiohttp.ClientSession", new=session_cm),
+    ):
+        await list_runs(
+            job_id=None,
+            manage_options=KubeManageOptions(),
+            output="json",
+        )
+
+    out = capsys.readouterr().out.strip()
+    parsed = orjson.loads(out)
+    assert parsed["job_id"] == "foo"
+    assert "Using last benchmark" not in out
+    api.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
