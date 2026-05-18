@@ -102,10 +102,15 @@ def _pivot_compare_rows(
 
 
 async def _get_run_spec_from_index(
-    namespace: str, job_id: str
+    base_dir: Path, namespace: str, job_id: str
 ) -> dict[str, Any] | None:
     try:
-        return await runs_index.get_run_spec(namespace, job_id)
+        row = await runs_index.get_latest_run(namespace, job_id)
+        if row is None:
+            return None
+        if resolve_run_dir(base_dir, namespace, job_id, row.epoch) is None:
+            return None
+        return await runs_index.get_run_spec(namespace, job_id, row.epoch)
     except (RuntimeError, sqlite3.Error):
         return None
 
@@ -285,7 +290,7 @@ def _register_index_routes(
            whose artifacts haven't been persisted yet (e.g. dashboard hero
            SLO chips for the currently-running CR).
         """
-        spec = await _get_run_spec_from_index(namespace, job_id)
+        spec = await _get_run_spec_from_index(base_dir, namespace, job_id)
         if spec is not None:
             return {"source": "index", "spec": spec}
 

@@ -31,6 +31,31 @@ async def _open_runs_index(tmp_path):
     await runs_index.close()
 
 
+def _summary_payload(
+    *, metric_val: float = 100.0, model: str = "llama-7b"
+) -> dict[str, object]:
+    return {
+        "request_throughput": {
+            "avg": metric_val,
+            "p50": metric_val * 0.9,
+            "p99": metric_val * 1.5,
+            "unit": "req/s",
+        },
+        "request_latency": {
+            "avg": 50.0,
+            "p50": 45.0,
+            "p99": 120.0,
+            "unit": "ms",
+        },
+        "start_time": "2026-01-15T10:00:00Z",
+        "end_time": "2026-01-15T10:05:00Z",
+        "input_config": {
+            "models": {"items": [{"name": model}]},
+            "endpoint": {"urls": ["http://localhost:8000"]},
+        },
+    }
+
+
 def _write_profile_export(
     base: Path,
     namespace: str,
@@ -42,32 +67,37 @@ def _write_profile_export(
 ) -> None:
     from aiperf.operator.results_layout import run_dir, write_latest
 
-    payload = orjson.dumps(
-        {
-            "request_throughput": {
-                "avg": metric_val,
-                "p50": metric_val * 0.9,
-                "p99": metric_val * 1.5,
-                "unit": "req/s",
-            },
-            "request_latency": {
-                "avg": 50.0,
-                "p50": 45.0,
-                "p99": 120.0,
-                "unit": "ms",
-            },
-            "start_time": "2026-01-15T10:00:00Z",
-            "end_time": "2026-01-15T10:05:00Z",
-            "input_config": {
-                "models": {"items": [{"name": model}]},
-                "endpoint": {"urls": ["http://localhost:8000"]},
-            },
-        }
-    )
+    payload = orjson.dumps(_summary_payload(metric_val=metric_val, model=model))
     path = run_dir(base, namespace, job_id, epoch)
     path.mkdir(parents=True, exist_ok=True)
     (path / "profile_export_aiperf.json").write_bytes(payload)
     write_latest(base, namespace, job_id, epoch)
+
+
+async def _write_index_run(
+    namespace: str,
+    job_id: str,
+    *,
+    epoch: str = "1714064523",
+    metric_val: float = 100.0,
+    model: str = "llama-7b",
+) -> None:
+    summary = _summary_payload(metric_val=metric_val, model=model)
+    await runs_index.upsert_run_created(
+        namespace, job_id, epoch, spec={"benchmark": summary["input_config"]}
+    )
+    await runs_index.upsert_run_completed(
+        namespace,
+        job_id,
+        epoch,
+        summary_blob=runs_index._zstd_compress(summary),
+        metrics=summary,
+        files=["profile_export_aiperf.json"],
+        mtime_epoch=int(epoch),
+        start_time=summary["start_time"],
+        end_time=summary["end_time"],
+    )
+    await runs_index.set_latest(namespace, job_id, epoch)
 
 
 @pytest.mark.asyncio
@@ -258,6 +288,131 @@ async def test_results_db_compare_merges_stale_index_with_newer_disk_run(tmp_pat
     assert rows[0]["request_throughput_avg"] == 123.0
     assert rows[0]["model"] == "new-model"
     await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_results_db_leaderboard_skips_index_run_when_run_dir_missing(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("ns", "deleted-job", metric_val=999.0)
+    _write_profile_export(tmp_path, "ns", "disk-job", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.leaderboard(metric="request_throughput", stat="avg")
+
+    assert [row["job_id"] for row in rows] == ["disk-job"]
+    await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_results_db_history_skips_index_run_when_run_dir_missing(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("ns", "deleted-job", metric_val=999.0)
+    _write_profile_export(tmp_path, "ns", "disk-job", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.history(metric="request_throughput", stat="avg")
+
+    assert [row["job_id"] for row in rows] == ["disk-job"]
+    await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_results_db_compare_skips_index_run_when_run_dir_missing(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("ns", "deleted-job", metric_val=999.0)
+    _write_profile_export(tmp_path, "ns", "disk-job", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.compare(
+        job_ids=["deleted-job", "disk-job"], metrics=["request_throughput"]
+    )
+
+    assert [row["job_id"] for row in rows] == ["disk-job"]
+    await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_results_db_index_entries_skips_index_run_when_run_dir_missing(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("ns", "deleted-job", metric_val=999.0)
+    _write_profile_export(tmp_path, "ns", "disk-job", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.index_entries()
+
+    assert {(row["namespace"], row["job_id"]) for row in rows} == {("ns", "disk-job")}
+    await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_results_db_summary_skips_index_blob_when_run_dir_missing(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("ns", "deleted-job", metric_val=999.0)
+    db = ResultsDB(tmp_path)
+
+    summary = await db.summary("ns", "deleted-job")
+
+    assert summary is None
+    await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_get_job_config_skips_index_spec_when_run_dir_missing(
+    tmp_path, monkeypatch
+):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("aiperf-bench", "deleted-job", metric_val=999.0)
+    fake_cr = {
+        "metadata": {"name": "deleted-job", "namespace": "aiperf-bench"},
+        "spec": {"benchmark": {"slos": {"time_to_first_token": 500}}},
+    }
+
+    async def fake_get_raw(api, namespace, name):
+        if namespace == "aiperf-bench" and name == "deleted-job":
+            return fake_cr
+        return None
+
+    monkeypatch.setattr(mod, "get_raw_aiperfjob", fake_get_raw, raising=False)
+    db = ResultsDB(tmp_path)
+    router = create_results_analytics_router(lambda: db, tmp_path, [object()])
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/config/aiperf-bench/deleted-job")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source"] == "cr"
+    finally:
+        db.close()
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_get_job_config_skips_index_spec_and_uses_disk_summary(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    await _write_index_run("ns", "job-1", epoch="1714060000", metric_val=999.0)
+    _write_profile_export(tmp_path, "ns", "job-1", epoch="1714064523", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+    router = create_results_analytics_router(lambda: db, tmp_path, [None])
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/config/ns/job-1")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["source"] == "summary"
+        assert body["spec"]["benchmark"]["models"]["items"][0]["name"] == "llama-7b"
+    finally:
+        db.close()
+        await runs_index.close()
 
 
 @pytest.mark.asyncio

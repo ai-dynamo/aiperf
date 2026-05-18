@@ -61,7 +61,11 @@ class ResultsDB:
         except (RuntimeError, sqlite3.Error) as exc:
             logger.debug("runs_index leaderboard unavailable: %s", exc)
             return disk_rows
-        rows = self._merge_latest_rows(index_rows, disk_rows, kwargs.get("epoch"))
+        rows = self._merge_latest_rows(
+            self._filter_existing_index_dicts(index_rows),
+            disk_rows,
+            kwargs.get("epoch"),
+        )
         order = kwargs.get("order", "desc")
         limit = kwargs.get("limit", 20)
         rows.sort(key=lambda row: row["value"], reverse=(order.lower() == "desc"))
@@ -76,7 +80,11 @@ class ResultsDB:
         except (RuntimeError, sqlite3.Error) as exc:
             logger.debug("runs_index history unavailable: %s", exc)
             return disk_rows
-        rows = self._merge_latest_rows(index_rows, disk_rows, kwargs.get("epoch"))
+        rows = self._merge_latest_rows(
+            self._filter_existing_index_dicts(index_rows),
+            disk_rows,
+            kwargs.get("epoch"),
+        )
         limit = kwargs.get("limit", 100)
         rows.sort(key=lambda row: row.get("start_time") or "")
         return rows[:limit]
@@ -90,7 +98,11 @@ class ResultsDB:
         except (RuntimeError, sqlite3.Error) as exc:
             logger.debug("runs_index compare unavailable: %s", exc)
             return disk_rows
-        return self._merge_latest_rows(index_rows, disk_rows, kwargs.get("epoch"))
+        return self._merge_latest_rows(
+            self._filter_existing_index_dicts(index_rows),
+            disk_rows,
+            kwargs.get("epoch"),
+        )
 
     async def summary(
         self,
@@ -105,9 +117,13 @@ class ResultsDB:
 
         if epoch is None:
             row = await runs_index.get_latest_run(namespace, job_id)
-            if row is None:
+            if row is None or not self._index_run_exists(
+                row.namespace, row.job_id, row.epoch
+            ):
                 return await self._summary_from_disk(namespace, job_id, None)
             epoch = row.epoch
+        elif not self._index_run_exists(namespace, job_id, epoch):
+            return await self._summary_from_disk(namespace, job_id, epoch)
 
         blob = await runs_index.get_summary_blob(namespace, job_id, epoch)
         if blob:
@@ -137,10 +153,23 @@ class ResultsDB:
                 "file_count": row.file_count,
             }
             for row in index_rows
+            if self._index_run_exists(row.namespace, row.job_id, row.epoch)
         }
         for row in disk_rows:
             keyed[(row["namespace"], row["job_id"])] = row
         return list(keyed.values())
+
+    def _filter_existing_index_dicts(
+        self, index_rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in index_rows
+            if self._index_run_exists(row["namespace"], row["job_id"], row["epoch"])
+        ]
+
+    def _index_run_exists(self, namespace: str, job_id: str, epoch: str) -> bool:
+        return resolve_run_dir(self._results_dir, namespace, job_id, epoch) is not None
 
     def _merge_latest_rows(
         self,
