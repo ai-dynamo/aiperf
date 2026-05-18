@@ -441,24 +441,41 @@ def test_dashboard_ui_no_longer_a_benchmark_scope_cel_rule():
     )
 
 
-@pytest.mark.skip(
-    reason="multiRun shape on AIPerfSweep differs from AIPerfConfig.MultiRunConfig "
-    "(post Task 13 sweep CRD restructure); convergence vs mode is enforced in "
-    "operator-side AIPerfSweepSpec.model_validator instead of CEL"
-)
-def test_convergence_incompatible_with_repeated_mode():
-    # Post-envelope restructure: multiRun is envelope-level on AIPerfSweep.
-    # AIPerfJob doesn't carry multiRun (kopf doesn't orchestrate multi-run
-    # for standalone jobs), so the rule is checked on AIPerfSweep.
-    from tools.generate_crd import build_aiperfsweep_crd
+def test_convergence_incompatible_with_repeated_mode_enforced_by_spec_model():
+    """AIPerfSweep convergence-vs-repeated belongs in model validation.
 
-    schema = build_aiperfsweep_crd()["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
-    multirun = schema["properties"]["spec"]["properties"]["multiRun"]
-    rules = {r["rule"] for r in multirun.get("x-kubernetes-validations", [])}
-    assert (
-        "!has(self.convergenceMetric) || !has(self.mode) || self.mode != 'repeated'"
-        in rules
-    )
+    The invariant crosses ``spec.multiRun.convergence`` and
+    ``spec.sweep.iterationOrder``. Keep it out of the CRD until both sides are
+    typed in one CEL-friendly node, but assert the operator/local validation
+    rejects the bad combination before a child workload is created.
+    """
+    from aiperf.operator.models import AIPerfSweepSpec
+
+    spec = {
+        "image": "test:0",
+        "benchmark": {
+            "models": ["test/m"],
+            "endpoint": {
+                "type": "chat",
+                "urls": ["http://x:8000/v1/chat/completions"],
+            },
+            "datasets": [{"name": "d", "type": "synthetic", "entries": 10}],
+            "phases": [
+                {"name": "p", "type": "concurrency", "requests": 1, "concurrency": 1}
+            ],
+        },
+        "sweep": {
+            "type": "grid",
+            "iterationOrder": "repeated",
+            "variables": {"benchmark.phases.p.concurrency": [1, 2]},
+        },
+        "multiRun": {
+            "numRuns": 3,
+            "convergence": {"metric": "ttft", "minRuns": 2},
+        },
+    }
+    with pytest.raises(ValueError, match="multi_run.convergence"):
+        AIPerfSweepSpec.model_validate(spec)
 
 
 # -----------------------------------------------------------------------------

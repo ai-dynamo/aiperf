@@ -1048,6 +1048,8 @@ spec:
                       the threshold not exceeded ends as PartiallyFailed.'
                     default: 0
                     minimum: 0
+            required:
+            - benchmark
             x-kubernetes-validations:
             - rule: '!has(self.sweep)'
               message: 'AIPerfJob.spec.sweep must be null/omitted. Use kind: AIPerfSweep for parameter sweeps.'

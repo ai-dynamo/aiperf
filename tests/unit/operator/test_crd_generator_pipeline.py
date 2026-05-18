@@ -39,6 +39,18 @@ def test_kubernetes_schema_converter_preserves_existing_top_level_fields() -> No
     assert "deployment" not in properties
 
 
+def test_aiperfjob_spec_requires_benchmark() -> None:
+    from tools.generate_crd import CRDDocumentBuilder
+
+    source = CRDSchemaSource()
+    job = CRDDocumentBuilder().aiperfjob_crd(source.job_schema())
+    job_spec = job["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"][
+        "spec"
+    ]
+
+    assert "benchmark" in job_spec["required"]
+
+
 def test_crd_schema_enhancer_keeps_sweep_kind_rules() -> None:
     from tools.generate_crd import CRDDocumentBuilder, CRDSchemaEnhancer
 

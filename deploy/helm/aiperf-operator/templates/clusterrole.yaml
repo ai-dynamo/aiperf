@@ -48,12 +48,13 @@ rules:
 
 # ServiceAccounts - preflight verifies custom SA existence; sweep handler
 #   creates a per-sweep SA (`aiperf-sweep-controller-<sweep>`) so the
-#   sweep-controller pod has minimal namespace-scoped access.
+#   sweep-controller pod has minimal namespace-scoped access. Cleanup is via
+#   OwnerReferences, so update/patch/delete are not required.
 # ResourceQuotas - preflight inspects quotas before scheduling
 # Secrets - preflight verifies referenced imagePullSecrets / env secrets
 - apiGroups: [""]
   resources: ["serviceaccounts"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  verbs: ["get", "list", "watch", "create"]
 - apiGroups: [""]
   resources: ["resourcequotas", "secrets"]
   verbs: ["get", "list", "watch"]
@@ -97,9 +98,4 @@ rules:
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["get", "list", "watch", "create", "patch"]
-
-# ServiceAccounts - operator creates the per-sweep SA on AIPerfSweep create
-# (handlers/sweep/create.py:_provision_rbac); 409-skips on conflict.
-# Cleanup is via OwnerReferences. update/patch/delete unused but kept for
-# parity with roles/rolebindings rule above.
 {{- end }}

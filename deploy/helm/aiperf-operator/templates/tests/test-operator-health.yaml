@@ -43,7 +43,7 @@ spec:
     - |
       echo "Finding operator pod..."
       POD_IP=$(kubectl get pods -n {{ .Release.Namespace }} \
-        -l "app.kubernetes.io/name={{ include "aiperf-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" \
+        -l "app.kubernetes.io/name={{ include "aiperf-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=operator" \
         -o jsonpath='{.items[0].status.podIP}')
 
       if [ -z "$POD_IP" ]; then

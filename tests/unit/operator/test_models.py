@@ -527,6 +527,26 @@ class TestAIPerfSweepSpecRequiresSweep:
             AIPerfSweepSpec.model_validate(spec)
         assert "sweep is required" in str(excinfo.value)
 
+    def test_aiperfsweep_rejects_repeated_iteration_with_convergence(self):
+        import pytest
+
+        from aiperf.operator.models import AIPerfSweepSpec
+
+        spec = self._base_spec()
+        spec["sweep"] = {
+            "type": "grid",
+            "iterationOrder": "repeated",
+            "variables": {"benchmark.phases.p.concurrency": [1, 2]},
+        }
+        spec["multiRun"] = {
+            "numRuns": 3,
+            "convergence": {"metric": "ttft", "minRuns": 2},
+        }
+        with pytest.raises(ValueError) as excinfo:
+            AIPerfSweepSpec.model_validate(spec)
+        assert "iteration_order='repeated'" in str(excinfo.value)
+        assert "multi_run.convergence" in str(excinfo.value)
+
 
 class TestAIPerfSweepSpecChildMetadata:
     """spec.childMetadata is the post-Plan-C passthrough for child labels/annotations."""

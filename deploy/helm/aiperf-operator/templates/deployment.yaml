@@ -94,9 +94,11 @@ spec:
         - name: health
           containerPort: 8080
           protocol: TCP
+        {{- if gt (int .Values.operator.metrics.port) 0 }}
         - name: metrics
           containerPort: {{ .Values.operator.metrics.port }}
           protocol: TCP
+        {{- end }}
         env:
         - name: PYTHONUNBUFFERED
           value: "1"

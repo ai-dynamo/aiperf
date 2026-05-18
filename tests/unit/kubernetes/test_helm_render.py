@@ -31,9 +31,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-CHART_PATH = (
-    Path(__file__).parents[3] / "deploy" / "helm" / "aiperf-operator"
-)
+CHART_PATH = Path(__file__).parents[3] / "deploy" / "helm" / "aiperf-operator"
 
 
 def _helm_available() -> bool:
@@ -45,7 +43,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _helm_template(*extra: str, namespace: str = "test-ns", release: str = "aiperf-operator") -> list[dict]:
+def _helm_template(
+    *extra: str, namespace: str = "test-ns", release: str = "aiperf-operator"
+) -> list[dict]:
     """Run ``helm template`` and return parsed YAML docs.
 
     Default release name is ``aiperf-operator`` (matches ``Chart.Name``) so
@@ -76,7 +76,9 @@ def _helm_template(*extra: str, namespace: str = "test-ns", release: str = "aipe
             f"helm template failed (exit={result.returncode}): {result.stderr}"
         )
     return [
-        doc for doc in yaml.safe_load_all(result.stdout) if doc and isinstance(doc, dict)
+        doc
+        for doc in yaml.safe_load_all(result.stdout)
+        if doc and isinstance(doc, dict)
     ]
 
 
@@ -198,6 +200,17 @@ class TestMetricsPortExposure:
             f"Service exposes metrics port even when disabled: {port_names}"
         )
 
+    def test_deployment_omits_metrics_container_port_when_disabled(self) -> None:
+        docs = _helm_template("--set", "operator.metrics.port=0")
+        deploy = _find(docs, "Deployment", "aiperf-operator")
+        operator_container = next(
+            c
+            for c in deploy["spec"]["template"]["spec"]["containers"]
+            if c["name"] == "operator"
+        )
+        port_names = {p["name"] for p in operator_container.get("ports", [])}
+        assert "metrics" not in port_names
+
     def test_service_metrics_port_follows_override(self) -> None:
         docs = _helm_template("--set", "operator.metrics.port=9100")
         svc = _find(docs, "Service", "aiperf-operator")
@@ -216,11 +229,23 @@ class TestMetricsPortExposure:
         )
         assert endpoints[0]["path"] == "/metrics"
 
+    def test_servicemonitor_omitted_when_metrics_disabled(self) -> None:
+        docs = _helm_template(
+            "--set",
+            "serviceMonitor.enabled=true",
+            "--set",
+            "operator.metrics.port=0",
+        )
+        service_monitors = [doc for doc in docs if doc.get("kind") == "ServiceMonitor"]
+        assert service_monitors == []
+
     def test_networkpolicy_allows_metrics_ingress(self) -> None:
         docs = _helm_template("--set", "networkPolicy.enabled=true")
         netpol = _find(docs, "NetworkPolicy", "aiperf-operator")
         all_ingress_ports = {
-            p["port"] for rule in netpol["spec"]["ingress"] for p in rule.get("ports", [])
+            p["port"]
+            for rule in netpol["spec"]["ingress"]
+            for p in rule.get("ports", [])
         }
         assert 9090 in all_ingress_ports, (
             f"NetworkPolicy ingress missing metrics port 9090; got: {all_ingress_ports}"
@@ -228,12 +253,16 @@ class TestMetricsPortExposure:
 
     def test_networkpolicy_omits_metrics_when_disabled(self) -> None:
         docs = _helm_template(
-            "--set", "networkPolicy.enabled=true",
-            "--set", "operator.metrics.port=0",
+            "--set",
+            "networkPolicy.enabled=true",
+            "--set",
+            "operator.metrics.port=0",
         )
         netpol = _find(docs, "NetworkPolicy", "aiperf-operator")
         all_ingress_ports = {
-            p["port"] for rule in netpol["spec"]["ingress"] for p in rule.get("ports", [])
+            p["port"]
+            for rule in netpol["spec"]["ingress"]
+            for p in rule.get("ports", [])
         }
         assert 9090 not in all_ingress_ports, (
             "NetworkPolicy still allows 9090 ingress when metrics disabled"
@@ -254,8 +283,10 @@ class TestBenchmarkRbacNamespaceIngress:
 
     def test_extra_benchmark_namespaces_in_ingress(self) -> None:
         docs = _helm_template(
-            "--set", "networkPolicy.enabled=true",
-            "--set", "benchmarkRbacNamespaces={team-a,team-b}",
+            "--set",
+            "networkPolicy.enabled=true",
+            "--set",
+            "benchmarkRbacNamespaces={team-a,team-b}",
         )
         netpol = _find(docs, "NetworkPolicy", "aiperf-operator")
         all_source_namespaces: set[str] = set()
@@ -292,9 +323,36 @@ class TestHelmTestCoverage:
         )
         assert ":8080/healthz" in args, "kopf health probe still required"
 
+    def test_health_test_selector_targets_operator_component(self) -> None:
+        docs = _helm_template()
+        test_pod = _find(docs, "Pod", "aiperf-operator-test-health")
+        args = test_pod["spec"]["containers"][0]["args"][0]
+        assert "app.kubernetes.io/component=operator" in args
+
     def test_crd_test_covers_both_aiperfjob_and_aiperfsweep(self) -> None:
         docs = _helm_template()
         test_pod = _find(docs, "Pod", "aiperf-operator-test-crd")
         args = test_pod["spec"]["containers"][0]["args"][0]
         assert "aiperfjobs.aiperf.nvidia.com" in args
         assert "aiperfsweeps.aiperf.nvidia.com" in args
+
+
+class TestClusterRolePrivileges:
+    """ClusterRole grants only verbs the operator uses cluster-wide."""
+
+    def test_serviceaccount_verbs_are_limited_to_create_and_reads(self) -> None:
+        docs = _helm_template()
+        cluster_role = _find(docs, "ClusterRole", "aiperf-operator")
+        serviceaccount_rules = [
+            rule
+            for rule in cluster_role["rules"]
+            if rule.get("apiGroups") == [""]
+            and rule.get("resources") == ["serviceaccounts"]
+        ]
+        assert len(serviceaccount_rules) == 1
+        assert set(serviceaccount_rules[0]["verbs"]) == {
+            "create",
+            "get",
+            "list",
+            "watch",
+        }

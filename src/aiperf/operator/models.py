@@ -16,6 +16,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
+from aiperf.common.enums import SweepMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import DeploymentConfig
@@ -468,6 +469,18 @@ class AIPerfSweepSpec(AIPerfWorkloadSpec):
             raise ValueError(
                 "AIPerfSweep.spec.sweep is required; set a `sweep:` block "
                 "(grid or scenarios). For a single benchmark, use AIPerfJob."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_repeated_iteration_with_convergence(self) -> AIPerfSweepSpec:
+        if self.sweep is None or self.multi_run.convergence is None:
+            return self
+        iteration_order = getattr(self.sweep, "iteration_order", None)
+        if iteration_order == SweepMode.REPEATED:
+            raise ValueError(
+                "iteration_order='repeated' is incompatible with adaptive trial "
+                "convergence (multi_run.convergence). Use 'independent' instead."
             )
         return self
 

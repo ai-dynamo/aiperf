@@ -1187,6 +1187,7 @@ def _build_crd_from_job_spec_properties(
             "etc.) use camelCase per Kubernetes API conventions."
         ),
         "properties": spec_properties,
+        "required": ["benchmark"],
     }
 
     # Kind-specific cardinality: AIPerfJob.spec must NOT carry a sweep block.
