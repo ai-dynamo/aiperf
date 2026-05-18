@@ -1,0 +1,187 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release Metadata
+description: >
+  Compute the wheel version, container tag, wheel filename, and artifactory
+  subpath for a given build flavor (pr, post-merge-main, post-merge-release,
+  nightly). Single source of truth for flavor-specific version math.
+  The RC pipeline does not rebuild — it promotes post-merge artifacts — and
+  computes its own paths inline rather than going through this action.
+
+inputs:
+  flavor:
+    description: 'One of: pr, post-merge-main, post-merge-release, nightly'
+    required: true
+  commit_sha:
+    description: 'Full git commit SHA being built'
+    required: true
+  container_registry:
+    description: 'Container registry hostname (e.g. ${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com)'
+    required: true
+  container_repository:
+    description: 'Container repository name within the registry'
+    required: false
+    default: 'aiperf'
+  pr_number:
+    description: 'Pull request number (required when flavor=pr)'
+    required: false
+    default: ''
+  release_version:
+    description: 'Release version X.Y.Z (required when flavor=post-merge-release)'
+    required: false
+    default: ''
+  nightly_date:
+    description: 'YYYYMMDD for nightly flavor (defaults to current UTC date)'
+    required: false
+    default: ''
+  run_id:
+    description: 'GitHub workflow run ID (used for post-merge artifactory subpath)'
+    required: false
+    default: ''
+  run_number:
+    description: 'GitHub workflow run_number (used as alpha N for post-merge-main wheel)'
+    required: false
+    default: ''
+
+outputs:
+  base_version:
+    description: 'Base version from pyproject.toml (X.Y.Z)'
+    value: ${{ steps.compute.outputs.base_version }}
+  wheel_version:
+    description: 'PEP 440 wheel version for this flavor'
+    value: ${{ steps.compute.outputs.wheel_version }}
+  wheel_filename:
+    description: 'Computed wheel filename'
+    value: ${{ steps.compute.outputs.wheel_filename }}
+  container_tag:
+    description: 'Container manifest tag for this flavor'
+    value: ${{ steps.compute.outputs.container_tag }}
+  container_image:
+    description: 'Full container image path without tag (registry/repo)'
+    value: ${{ steps.compute.outputs.container_image }}
+  container_ref:
+    description: 'Full container image reference with tag'
+    value: ${{ steps.compute.outputs.container_ref }}
+  short_sha:
+    description: '7-char short SHA derived from commit_sha'
+    value: ${{ steps.compute.outputs.short_sha }}
+  artifactory_subpath:
+    description: 'Trailing-slash relative subpath in artifactory (e.g. pr/pr123/)'
+    value: ${{ steps.compute.outputs.artifactory_subpath }}
+  skip_version_mutation:
+    description: 'true when the workflow must NOT rewrite pyproject.toml (post-merge-release)'
+    value: ${{ steps.compute.outputs.skip_version_mutation }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute release metadata
+      id: compute
+      shell: bash
+      env:
+        FLAVOR: ${{ inputs.flavor }}
+        COMMIT_SHA: ${{ inputs.commit_sha }}
+        CONTAINER_REGISTRY: ${{ inputs.container_registry }}
+        CONTAINER_REPOSITORY: ${{ inputs.container_repository }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+        NIGHTLY_DATE: ${{ inputs.nightly_date }}
+        RUN_ID: ${{ inputs.run_id }}
+        RUN_NUMBER: ${{ inputs.run_number }}
+      run: |
+        set -euo pipefail
+
+        if [[ ! "${COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::commit_sha must be a 40-char hex SHA, got: ${COMMIT_SHA}"
+          exit 1
+        fi
+        SHORT_SHA="${COMMIT_SHA:0:7}"
+
+        BASE_VERSION=$(grep -m1 -E '^version = "[0-9]+\.[0-9]+\.[0-9]+"' pyproject.toml | sed -E 's/^version = "([^"]+)".*/\1/')
+        if [[ -z "${BASE_VERSION}" ]]; then
+          echo "::error::Could not parse base version from pyproject.toml"
+          exit 1
+        fi
+
+        SKIP_VERSION_MUTATION=false
+
+        case "${FLAVOR}" in
+          pr)
+            if [[ -z "${PR_NUMBER}" ]]; then
+              echo "::error::pr_number is required for flavor=pr"; exit 1
+            fi
+            if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+              echo "::error::pr_number must be a positive integer, got: ${PR_NUMBER}"; exit 1
+            fi
+            WHEEL_VERSION="${BASE_VERSION}.dev0+pr${PR_NUMBER}.g${SHORT_SHA}"
+            CONTAINER_TAG="pr-${PR_NUMBER}-${SHORT_SHA}"
+            ARTIFACTORY_SUBPATH="pr/pr${PR_NUMBER}/"
+            ;;
+          post-merge-main)
+            if [[ -z "${RUN_NUMBER}" ]]; then
+              echo "::error::run_number is required for flavor=post-merge-main"; exit 1
+            fi
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::error::run_id is required for flavor=post-merge-main"; exit 1
+            fi
+            WHEEL_VERSION="${BASE_VERSION}a${RUN_NUMBER}+g${SHORT_SHA}"
+            CONTAINER_TAG="main-${SHORT_SHA}"
+            ARTIFACTORY_SUBPATH="post-merge/${RUN_ID}/"
+            ;;
+          post-merge-release)
+            if [[ -z "${RELEASE_VERSION}" ]]; then
+              echo "::error::release_version is required for flavor=post-merge-release"; exit 1
+            fi
+            if [[ ! "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::release_version must match X.Y.Z, got: ${RELEASE_VERSION}"; exit 1
+            fi
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::error::run_id is required for flavor=post-merge-release"; exit 1
+            fi
+            # Release branches own their version: use whatever pyproject.toml has,
+            # do not mutate. The release captain controls X.Y.Z and any rc/post/dev suffix.
+            WHEEL_VERSION="${BASE_VERSION}"
+            SKIP_VERSION_MUTATION=true
+            CONTAINER_TAG="release-${RELEASE_VERSION}-${SHORT_SHA}"
+            ARTIFACTORY_SUBPATH="post-merge/${RUN_ID}/"
+            ;;
+          nightly)
+            DATE="${NIGHTLY_DATE:-$(date -u +%Y%m%d)}"
+            if [[ ! "${DATE}" =~ ^[0-9]{8}$ ]]; then
+              echo "::error::nightly_date must be YYYYMMDD, got: ${DATE}"; exit 1
+            fi
+            WHEEL_VERSION="${BASE_VERSION}.dev${DATE}"
+            CONTAINER_TAG="nightly-${DATE}-${SHORT_SHA}"
+            ARTIFACTORY_SUBPATH="nightly/"
+            ;;
+          *)
+            echo "::error::Unknown flavor: ${FLAVOR}"; exit 1
+            ;;
+        esac
+
+        WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
+        CONTAINER_IMAGE="${CONTAINER_REGISTRY}/${CONTAINER_REPOSITORY}"
+        CONTAINER_REF="${CONTAINER_IMAGE}:${CONTAINER_TAG}"
+
+        {
+          echo "base_version=${BASE_VERSION}"
+          echo "wheel_version=${WHEEL_VERSION}"
+          echo "wheel_filename=${WHEEL_FILENAME}"
+          echo "container_tag=${CONTAINER_TAG}"
+          echo "container_image=${CONTAINER_IMAGE}"
+          echo "container_ref=${CONTAINER_REF}"
+          echo "short_sha=${SHORT_SHA}"
+          echo "artifactory_subpath=${ARTIFACTORY_SUBPATH}"
+          echo "skip_version_mutation=${SKIP_VERSION_MUTATION}"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Release Metadata (flavor=${FLAVOR})"
+          echo "- Base version: \`${BASE_VERSION}\`"
+          echo "- Wheel: \`${WHEEL_FILENAME}\`"
+          echo "- Container: \`${CONTAINER_REF}\`"
+          echo "- Artifactory subpath: \`${ARTIFACTORY_SUBPATH}\`"
+          echo "- Short SHA: \`${SHORT_SHA}\`"
+          echo "- Skip version mutation: \`${SKIP_VERSION_MUTATION}\`"
+        } >> "$GITHUB_STEP_SUMMARY"
