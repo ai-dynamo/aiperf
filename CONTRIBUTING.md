@@ -156,6 +156,51 @@ Contributions intended to add significant new functionality must follow a more c
 
 Feature branches use `<username>/feature-name` format, forked from `main`.
 
+## Release Pipelines
+
+Four GitHub Actions workflows publish wheels and containers. All four use the
+same dynamo-style buildx pattern — a single `docker buildx build --platform
+linux/amd64,linux/arm64 --push` against a multi-arch builder bootstrapped from
+in-cluster BuildKit pods via the `bootstrap-buildkit` composite action.
+
+| Workflow | Trigger | Wheel destination | Container destination |
+|---|---|---|---|
+| `pr.yaml` | push to `pull-request/*` | Artifactory `pr/pr<N>/` | ECR `aiperf:pr-<N>-<short_sha>` |
+| `post-merge.yaml` | push to `main` or `release/*` | Artifactory `post-merge/<run_id>/` | ECR `aiperf:main-<short_sha>` or `aiperf:release-<X.Y.Z>-<short_sha>` |
+| `nightly.yml` | schedule Mon–Fri 09:00 UTC or `workflow_dispatch` | Artifactory `nightly/` | ECR `aiperf:nightly-<YYYYMMDD>-<short_sha>` → NGC staging |
+| `rc.yaml` | `workflow_dispatch` (manual) | Artifactory `rc/<X.Y.Z>/rc<N>/` | ECR `aiperf:<X.Y.Z>-rc<N>` → NGC staging |
+
+Wheel versioning is flavor-specific:
+
+- PR: `<base>.dev0+pr<N>.g<short_sha>` (PEP 440 local-version label).
+- Post-merge on `main`: `<base>a<run_number>+g<short_sha>` (alpha pre-release).
+- Post-merge on `release/<X.Y.Z>`: **the literal `version =` from
+  `pyproject.toml` — the pipeline never rewrites it**. Release branches own
+  their version; the release captain sets `X.Y.Z`, `X.Y.Z.dev0`, `X.Y.Zrc0`,
+  etc. via a commit on the release branch.
+- Nightly: `<base>.dev<YYYYMMDD>`.
+- RC: `<X.Y.Z>rc<N>`.
+
+### Environment gates
+
+Two GitHub environments gate the staging jobs. Configure both under
+**Settings > Environments** with required reviewers.
+
+| Environment | Used by | What it gates |
+|---|---|---|
+| `automated-release` | `nightly.yml`, `post-merge.yaml` | S3 → Artifactory wheel promotion and ECR → NGC staging |
+| `manual-release-approval` | `rc.yaml` | Build → stage transition; ECR → NGC staging, S3 → Artifactory, GitLab security scan trigger |
+
+### Local validation
+
+```bash
+# Validate the workflow YAML syntax matches what GitHub will parse:
+yamllint .github/workflows/
+
+# Smoke-test the bootstrap-buildkit action against a local docker daemon:
+gh act -W .github/workflows/pr.yaml
+```
+
 ## Running GitHub Actions Locally
 
 You can use the `act` tool to run GitHub Actions locally. See [act usage](https://nektosact.com/introduction.html).
