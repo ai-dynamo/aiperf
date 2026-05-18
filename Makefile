@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
-		test-verbose setup-venv install-mock-server test-ci test-all \
+		test-verbose setup-venv install-mock-server test-ci test-ci-unit test-ci-component-integration test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
@@ -233,6 +233,16 @@ test-ci: #? run the tests using pytest-xdist for CI.
 		printf "$(bold)$(red)AIPerf tests failed with exit code $$exit_code$(reset)\n"; \
 		exit $$exit_code; \
 	fi
+
+test-ci-unit: #? run unit tests only with coverage (for parallel CI workflow).
+	@printf "$(bold)$(blue)Running unit tests (CI mode)...$(reset)\n"
+	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' --tb=short $(args)
+	@printf "$(bold)$(green)AIPerf unit tests (CI mode) passed!$(reset)\n"
+
+test-ci-component-integration: #? run component integration tests only with coverage (for parallel CI workflow).
+	@printf "$(bold)$(blue)Running component integration tests (CI mode)...$(reset)\n"
+	$(activate_venv) && pytest tests/component_integration --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args)
+	@printf "$(bold)$(green)AIPerf component integration tests (CI mode) passed!$(reset)\n"
 
 stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
