@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import orjson
 import pytest
 import yaml
 from pytest import param
@@ -65,6 +66,18 @@ def _minimal_doc() -> dict:
             },
         },
     }
+
+
+def _sweep_doc(sweep: dict | None = None) -> dict:
+    """Return a minimal valid AIPerfSweep document."""
+    doc = _minimal_doc()
+    doc["kind"] = "AIPerfSweep"
+    doc["metadata"]["name"] = "test-sweep"
+    doc["spec"]["sweep"] = sweep or {
+        "type": "grid",
+        "variables": {"phases[0].concurrency": [1, 2]},
+    }
+    return doc
 
 
 def _write_yaml(path: Path, doc: dict) -> Path:
@@ -398,6 +411,49 @@ class TestValidateFile:
         result = validate_file(path)
         assert result.passed
 
+    def test_valid_aiperfsweep_file(self, tmp_path: Path) -> None:
+        path = _write_yaml(tmp_path / "aiperfsweep.yaml", _sweep_doc())
+        result = validate_file(path)
+        assert result.passed
+        assert not result.errors
+
+    @pytest.mark.parametrize(
+        "sweep_value",
+        [
+            param(None, id="missing"),
+            param({}, id="empty"),
+        ],
+    )  # fmt: skip
+    def test_aiperfsweep_requires_non_empty_sweep(
+        self, tmp_path: Path, sweep_value: dict | None
+    ) -> None:
+        doc = _sweep_doc(
+            sweep={"type": "grid", "variables": {"phases[0].concurrency": [1]}}
+        )
+        if sweep_value is None:
+            del doc["spec"]["sweep"]
+        else:
+            doc["spec"]["sweep"] = sweep_value
+        path = _write_yaml(tmp_path / "bad-sweep.yaml", doc)
+
+        result = validate_file(path)
+
+        assert not result.passed
+        assert any("spec.sweep" in e for e in result.errors)
+
+    def test_aiperfjob_rejects_sweep_block(self, tmp_path: Path) -> None:
+        doc = _minimal_doc()
+        doc["spec"]["sweep"] = {
+            "type": "grid",
+            "variables": {"phases[0].concurrency": [1]},
+        }
+        path = _write_yaml(tmp_path / "bad-job.yaml", doc)
+
+        result = validate_file(path)
+
+        assert not result.passed
+        assert any("AIPerfJob" in e and "spec.sweep" in e for e in result.errors)
+
 
 # ---------------------------------------------------------------------------
 # validate_files (multi-file)
@@ -549,3 +605,21 @@ class TestValidateCLI:
         assert captured["level_during"] == logging.WARNING
         # Restored to whatever it was before the call
         assert kube_logger.level == original_level
+
+    @pytest.mark.asyncio
+    async def test_validate_json_failure_output_is_parseable(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        doc = _sweep_doc()
+        del doc["spec"]["sweep"]
+        path = _write_yaml(tmp_path / "bad-sweep.yaml", doc)
+
+        from aiperf.cli_commands.kube.validate import validate
+
+        with pytest.raises(SystemExit) as exc_info:
+            await validate(files=[path], output="json")
+
+        assert exc_info.value.code == 1
+        parsed = orjson.loads(capsys.readouterr().out)
+        assert parsed[0]["passed"] is False
+        assert any("spec.sweep" in error for error in parsed[0]["errors"])

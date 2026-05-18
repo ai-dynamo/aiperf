@@ -53,7 +53,7 @@ def format_age(created: str) -> str:
 
 
 def resolve_job_id_and_namespace(
-    job_id: str | None, namespace: str | None
+    job_id: str | None, namespace: str | None, *, quiet: bool = False
 ) -> tuple[str, str] | None:
     """Resolve job_id and namespace, using last benchmark if not specified.
 
@@ -68,7 +68,8 @@ def resolve_job_id_and_namespace(
         print_action("Run 'aiperf kube profile' first or specify a job_id")
         return None
 
-    print_info(f"Using last benchmark: {last.job_id} in {last.namespace}")
+    if not quiet:
+        print_info(f"Using last benchmark: {last.job_id} in {last.namespace}")
     return (last.job_id, namespace or last.namespace)
 
 

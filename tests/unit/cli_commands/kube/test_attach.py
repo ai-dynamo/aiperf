@@ -36,6 +36,7 @@ def _make_resolved(
     resolved.namespace = namespace
     resolved.api = api
     resolved.job_info = job_info
+    resolved.aclose = AsyncMock()
     return resolved
 
 
@@ -132,6 +133,7 @@ class TestAttachDispatch:
         assert attach_args.kwargs.get("phase") == "Profiling"
         assert attach_args.kwargs.get("kubeconfig") == "/tmp/kc"
         assert attach_args.kwargs.get("kube_context") == "ctx-1"
+        resolved.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_no_manage_options_uses_defaults(self) -> None:

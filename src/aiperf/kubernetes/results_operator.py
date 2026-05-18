@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Operator-PVC result retrieval flow.
-
-Handles downloading benchmark results from the operator's results-server
-sidecar, which is backed by a persistent volume and therefore survives
-JobSet deletion.
-"""
+"""Operator-PVC result retrieval flow."""
 
 from __future__ import annotations
 
@@ -36,24 +31,13 @@ if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
 
-# TCP port for the results-server container's FastAPI app on the operator
-# Pod. The chart-default is 8081 (`Values.resultsServer.port`); users with
-# a non-default chart install (e.g. `--set resultsServer.port=9001` because
-# of host-port collision on a kind cluster) export
-# ``AIPERF_RESULTS_SERVER_PORT`` in their shell before invoking
-# ``aiperf kube results|dashboard|index``. Same env var as the server reads
-# at ``aiperf.operator.results_server:SERVER_PORT`` (single source of truth).
 RESULTS_SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
 
 
 def _result_base_url(
     api_base: str, namespace: str, job_id: str, run: str | None
 ) -> str:
-    """Return the results URL prefix for a job, pinned to a run when given.
-
-    When ``run`` is None, returns the "latest" prefix. Otherwise returns
-    the historical ``<api_base>/api/v1/results/<ns>/<job_id>/runs/<run>`` prefix.
-    """
+    """Return the results URL prefix for a job, pinned to a run when given."""
     base = f"{api_base}/api/v1/results/{namespace}/{job_id}"
     if run is not None:
         return f"{base}/runs/{run}"
@@ -82,7 +66,6 @@ def _safe_sweep_artifact_path(output_dir: Path, display_name: str) -> Path | Non
 async def _download_and_decompress(
     resp: aiohttp.ClientResponse, dest_path: Path, content_encoding: str
 ) -> None:
-    """Download response body, decompressing if needed."""
     import zlib
 
     if content_encoding == "zstd":
@@ -117,15 +100,8 @@ async def _download_operator_file(
     output_dir: Path,
     run: str | None = None,
 ) -> tuple[str, int] | None:
-    """Download a single file from the operator's results server.
-
-    Returns ``(safe_name, size_bytes)`` on success, ``None`` if skipped or
-    the download failed.
-    """
+    """Download a single file from the operator results server."""
     display_name = file_info["name"]
-    # Defend against a compromised/buggy controller returning a traversal
-    # path like ``../../etc/foo``. Strip to the basename and skip empty /
-    # dotfile results.
     safe_name = Path(display_name).name
     if not safe_name or safe_name.startswith("."):
         print_warning(f"Refusing unsafe filename: {display_name!r}")
@@ -156,7 +132,6 @@ async def _download_operator_file(
 
 
 async def _verify_operator_health(api_base: str) -> bool:
-    """Check that the operator's results server is reachable and healthy."""
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
     timeout = aiohttp.ClientTimeout(total=10)
@@ -181,7 +156,6 @@ async def _list_operator_files(
     job_id: str,
     run: str | None = None,
 ) -> list[dict] | None:
-    """List available result files for a job. Returns None on error."""
     list_url = _result_base_url(api_base, namespace, job_id, run)
     try:
         async with session.get(list_url) as resp:
@@ -201,6 +175,36 @@ async def _list_operator_files(
     return available
 
 
+async def _resolve_operator_run(
+    session: aiohttp.ClientSession,
+    *,
+    api_base: str,
+    namespace: str,
+    job_id: str,
+    run: str | None,
+) -> str | None:
+    if run is not None:
+        return run
+
+    runs_url = f"{api_base}/api/v1/results/{namespace}/{job_id}/runs"
+    try:
+        async with session.get(runs_url) as resp:
+            if resp.status == 404:
+                print_error(f"No runs found for {namespace}/{job_id}")
+                return None
+            resp.raise_for_status()
+            payload = await resp.json()
+    except aiohttp.ClientError as e:
+        print_error(f"Failed to resolve latest run: {e}")
+        return None
+
+    latest = payload.get("latest_epoch")
+    if not latest:
+        print_error(f"No latest run available for {namespace}/{job_id}")
+        return None
+    return str(latest)
+
+
 async def _download_all_operator_files(
     *,
     api_base: str,
@@ -209,11 +213,7 @@ async def _download_all_operator_files(
     output_dir: Path,
     run: str | None = None,
 ) -> list[tuple[str, int]] | None:
-    """List and download every result file for a job.
-
-    Returns the list of downloaded ``(name, size)`` tuples, or ``None`` if
-    listing failed / no files were available.
-    """
+    """List and download every result file for a job."""
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
     timeout = aiohttp.ClientTimeout(total=300)
@@ -223,8 +223,22 @@ async def _download_all_operator_files(
         connector=connector,
         auto_decompress=False,
     ) as session:
+        resolved_run = await _resolve_operator_run(
+            session,
+            api_base=api_base,
+            namespace=namespace,
+            job_id=job_id,
+            run=run,
+        )
+        if resolved_run is None:
+            return None
+
         available = await _list_operator_files(
-            session, api_base=api_base, namespace=namespace, job_id=job_id, run=run
+            session,
+            api_base=api_base,
+            namespace=namespace,
+            job_id=job_id,
+            run=resolved_run,
         )
         if available is None:
             return None
@@ -240,7 +254,7 @@ async def _download_all_operator_files(
                 job_id=job_id,
                 file_info=file_info,
                 output_dir=output_dir,
-                run=run,
+                run=resolved_run,
             )
             if result is not None:
                 downloaded.append(result)
@@ -255,7 +269,6 @@ async def _list_sweep_operator_files(
     sweep_name: str,
     run: str,
 ) -> list[dict] | None:
-    """List aggregate artifact files for one sweep epoch."""
     list_url = _sweep_artifacts_base_url(api_base, namespace, sweep_name, run)
     try:
         async with session.get(list_url) as resp:
@@ -287,7 +300,6 @@ async def _download_sweep_operator_file(
     file_info: dict,
     output_dir: Path,
 ) -> tuple[str, int] | None:
-    """Download one sweep aggregate artifact from the operator results server."""
     display_name = file_info["name"]
     dest_path = _safe_sweep_artifact_path(output_dir, display_name)
     if dest_path is None:
@@ -325,7 +337,6 @@ async def _download_all_sweep_operator_files(
     output_dir: Path,
     run: str,
 ) -> list[tuple[str, int]] | None:
-    """List and download every aggregate artifact exposed for one sweep epoch."""
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
     timeout = aiohttp.ClientTimeout(total=300)
@@ -440,19 +451,7 @@ async def retrieve_results_from_operator(
     kube_context: str | None = None,
     run: str | None = None,
 ) -> bool:
-    """Retrieve results from the operator's results server sidecar (PVC-backed).
-
-    Port-forwards to the operator pod's results-server sidecar and downloads
-    all available files for the specified job. Works even after the benchmark
-    JobSet has been deleted, since results are stored on the operator's PVC.
-
-    When ``run`` is provided (a decimal epoch from
-    ``aiperf kube results list-runs`` or the sentinel ``"legacy"``), downloads
-    route through ``/api/v1/results/<ns>/<job>/runs/<run>/`` to pin a specific
-    historical run. Otherwise the latest-run prefix is used.
-
-    Returns True if results were successfully retrieved.
-    """
+    """Retrieve results from the operator results server sidecar."""
     pod_info = await find_operator_pod(api, namespace=operator_namespace)
     if not pod_info:
         print_error("Operator pod not found")

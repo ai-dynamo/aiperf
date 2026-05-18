@@ -28,7 +28,7 @@ async def watch(
         bool,
         Parameter(
             name=["-A", "--all"],
-            help="Watch all running jobs.",
+            help="Reserved for future multi-job watch support; currently fails fast.",
         ),
     ] = False,
     output: Annotated[
@@ -49,7 +49,7 @@ async def watch(
         bool,
         Parameter(
             name=["-f", "--follow-logs"],
-            help="Include live log tail in output.",
+            help="Reserved for future log tail support; currently fails fast.",
         ),
     ] = False,
 ) -> None:
@@ -69,10 +69,10 @@ async def watch(
         # AI agent mode (NDJSON output)
         aiperf kube watch --output json
 
-        # Watch all running benchmarks
+        # Multi-job watch is not implemented yet and fails fast
         aiperf kube watch --all
 
-        # Include log tail in JSON output
+        # Log tail integration is not implemented yet and fails fast
         aiperf kube watch --output json --follow-logs
     """
     await _run_watch(
@@ -110,6 +110,17 @@ async def _run_watch(
     from aiperf.kubernetes import console as kube_console
 
     with cli_utils.exit_on_error(title="Error Watching Benchmark"):
+        if all_jobs:
+            raise ValueError(
+                "aiperf kube watch --all is not implemented yet; pass a job ID "
+                "or omit --all to watch the last benchmark."
+            )
+        if follow_logs:
+            raise ValueError(
+                "aiperf kube watch --follow-logs is not implemented yet; use "
+                "`aiperf kube logs --follow` in a separate terminal."
+            )
+
         from aiperf.kubernetes.watch_orchestrator import WatchOrchestrator
 
         orchestrator = WatchOrchestrator(
@@ -121,10 +132,12 @@ async def _run_watch(
             renderer=_build_renderer(output),
             interval=interval,
             follow_logs=follow_logs,
+            quiet=output == "json",
         )
         try:
             await orchestrator.run()
         except KeyboardInterrupt:
             # Clean Ctrl-C exit (mirrors dashboard.py); exit_on_error excludes
             # KeyboardInterrupt so we'd otherwise leak a bare traceback.
-            kube_console.print_info("Stopped watching.")
+            if output != "json":
+                kube_console.print_info("Stopped watching.")

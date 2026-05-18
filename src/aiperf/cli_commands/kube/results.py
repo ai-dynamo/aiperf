@@ -193,46 +193,49 @@ async def _run_results(
     ns = resolved.namespace
     api = resolved.api
 
-    op_ns = await _resolve_op_ns(api, explicit=operator_namespace)
+    try:
+        op_ns = await _resolve_op_ns(api, explicit=operator_namespace)
 
-    jobset_info = await find_jobset(api, job_id, ns)
+        jobset_info = await find_jobset(api, job_id, ns)
 
-    output_dir = _default_output_dir(
-        output=output, namespace=ns, job_name=resolved.job_info.name, run=run
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    kube_creds = {
-        "kubeconfig": manage_options.kubeconfig,
-        "kube_context": manage_options.kube_context,
-    }
-
-    if from_pods:
-        retrieval_success, used_api = await _retrieve_from_pods(
-            job_id=job_id,
-            ns=ns,
-            output_dir=output_dir,
-            jobset_info=jobset_info,
-            api=api,
-            port=port,
-            all_artifacts=all_artifacts,
-            kube_creds=kube_creds,
+        output_dir = _default_output_dir(
+            output=output, namespace=ns, job_name=resolved.job_info.name, run=run
         )
-    else:
-        retrieval_success = await _retrieve_from_operator(
-            job_id=job_id,
-            ns=ns,
-            output_dir=output_dir,
-            api=api,
-            port=port,
-            op_ns=op_ns,
-            run=run,
-            kube_creds=kube_creds,
-        )
-        used_api = False
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    if shutdown and used_api and retrieval_success:
-        await kube_results.shutdown_api_service(job_id, ns, api, port, **kube_creds)
+        kube_creds = {
+            "kubeconfig": manage_options.kubeconfig,
+            "kube_context": manage_options.kube_context,
+        }
+
+        if from_pods:
+            retrieval_success, used_api = await _retrieve_from_pods(
+                job_id=job_id,
+                ns=ns,
+                output_dir=output_dir,
+                jobset_info=jobset_info,
+                api=api,
+                port=port,
+                all_artifacts=all_artifacts,
+                kube_creds=kube_creds,
+            )
+        else:
+            retrieval_success = await _retrieve_from_operator(
+                job_id=job_id,
+                ns=ns,
+                output_dir=output_dir,
+                api=api,
+                port=port,
+                op_ns=op_ns,
+                run=run,
+                kube_creds=kube_creds,
+            )
+            used_api = False
+
+        if shutdown and used_api and retrieval_success:
+            await kube_results.shutdown_api_service(job_id, ns, api, port, **kube_creds)
+    finally:
+        await resolved.aclose()
 
 
 async def _run_sweep_results(
@@ -440,6 +443,24 @@ async def list_runs(
         )
 
 
+def _render_list_runs_payload(
+    payload: dict, *, output: Literal["text", "json"], preview: bool
+) -> None:
+    """Render the list-runs payload as JSON or a text table."""
+    import orjson
+
+    from aiperf.cli_commands.kube import _runs_render
+    from aiperf.kubernetes import console as kube_console
+
+    if output == "json":
+        kube_console.console.print(
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode(),
+            highlight=False,
+        )
+    else:
+        _runs_render.print_runs_table(payload, preview=preview)
+
+
 async def _run_list_runs(
     *,
     job_id: str | None,
@@ -450,11 +471,8 @@ async def _run_list_runs(
 ) -> None:
     import logging
 
-    import orjson
-
     from aiperf.cli_commands.kube import _runs_render
     from aiperf.kubernetes import cli_helpers
-    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.client import find_operator_pod
     from aiperf.kubernetes.port_forward import port_forward_with_status
     from aiperf.kubernetes.results_operator import RESULTS_SERVER_PORT
@@ -464,6 +482,7 @@ async def _run_list_runs(
     if output == "json":
         kube_logger.setLevel(logging.WARNING)
 
+    resolved = None
     try:
         resolved = await cli_helpers.resolve_job(
             job_id,
@@ -507,17 +526,12 @@ async def _run_list_runs(
             )
     finally:
         kube_logger.setLevel(original_level)
+        if resolved is not None:
+            await resolved.aclose()
 
     if preview and retention is not None:
         _runs_render.annotate_preview(payload, retention)
-
-    if output == "json":
-        kube_console.console.print(
-            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode(),
-            highlight=False,
-        )
-    else:
-        _runs_render.print_runs_table(payload, preview=preview)
+    _render_list_runs_payload(payload, output=output, preview=preview)
 
 
 async def _fetch_runs_and_retention(

@@ -24,6 +24,7 @@ from pytest import param
 
 from aiperf.kubernetes.results_operator import (
     RESULTS_SERVER_PORT,
+    _download_all_operator_files,
     _download_operator_file,
     _list_operator_files,
     _verify_operator_health,
@@ -440,6 +441,55 @@ class TestListOperatorFiles:
 # ============================================================
 # Module constants
 # ============================================================
+
+
+class TestDownloadAllOperatorFiles:
+    """Verify end-to-end operator file listing/download URL selection."""
+
+    @pytest.mark.asyncio
+    async def test_default_download_resolves_latest_epoch_before_listing(
+        self, tmp_path: Path
+    ) -> None:
+        session = FakeSession(
+            {
+                "http://localhost/api/v1/results/ns/job-1/runs": [
+                    FakeResponse(json_data={"latest_epoch": "1714150923", "runs": []})
+                ],
+                "http://localhost/api/v1/results/ns/job-1/runs/1714150923": [
+                    FakeResponse(json_data={"files": [{"name": "a.json"}]})
+                ],
+                "http://localhost/api/v1/results/ns/job-1/runs/1714150923/a.json": [
+                    FakeResponse(
+                        body=b"{}",
+                        chunks=[b"{}"],
+                        headers={"Content-Encoding": "identity"},
+                    )
+                ],
+            }
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("aiohttp.ClientSession", return_value=session),
+            patch(
+                "aiperf.transports.aiohttp_client.create_tcp_connector",
+                return_value=None,
+            ),
+        ):
+            downloaded = await _download_all_operator_files(
+                api_base="http://localhost",
+                namespace="ns",
+                job_id="job-1",
+                output_dir=tmp_path,
+            )
+
+        assert downloaded == [("a.json", 2)]
+        assert "http://localhost/api/v1/results/ns/job-1" not in session.get_calls
+        assert all(
+            "/runs/1714150923" in url or url.endswith("/runs")
+            for url in session.get_calls
+        )
 
 
 class TestModuleConstants:

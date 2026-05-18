@@ -7206,7 +7206,7 @@ Job to watch (default: last deployed / auto-detect).
 
 #### `-A`, `--all`, `--no-all`
 
-Watch all running jobs.
+Reserved for future multi-job watch support; currently fails fast.
 
 #### `-o`, `--output` `<str>`
 
@@ -7220,7 +7220,7 @@ Refresh interval in seconds.
 
 #### `-f`, `--follow-logs`, `--no-follow-logs`
 
-Include live log tail in output.
+Reserved for future log tail support; currently fails fast.
 
 ### Kubernetes
 

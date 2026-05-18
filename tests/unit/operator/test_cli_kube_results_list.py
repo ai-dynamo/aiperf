@@ -139,6 +139,7 @@ def mock_resolve_and_pod():
     resolved.job_id = "foo"
     resolved.namespace = "default"
     resolved.api = MagicMock()
+    resolved.aclose = AsyncMock()
 
     async def _fake_resolve_op_ns(_api, *, explicit, default="aiperf-system"):
         return explicit if explicit is not None else default
@@ -216,6 +217,7 @@ async def test_list_runs_json_output_parseable(
     assert parsed["namespace"] == "default"
     assert parsed["job_id"] == "foo"
     assert len(parsed["runs"]) == 2
+    mock_resolve_and_pod.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -280,7 +282,9 @@ def mock_resolve_for_results(tmp_path):
     job_info.namespace = "default"
     job_info.job_id = "foo"
     job_info.name = "foo"
-    resolved = ResolvedJob(name="foo", job_info=job_info, api=MagicMock())
+    api = MagicMock()
+    api.close = AsyncMock()
+    resolved = ResolvedJob(name="foo", job_info=job_info, api=api)
 
     async def _fake_resolve_op_ns(_api, *, explicit, default="aiperf-system"):
         return explicit if explicit is not None else default
@@ -333,6 +337,33 @@ async def test_results_routes_through_runs_prefix_when_run_set(
         )
 
     assert captured["run"] == "1714150923"
+    mock_resolve_for_results.api.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_results_closes_resolved_api_on_job_path(
+    mock_resolve_for_results, tmp_path
+) -> None:
+    """The job results path closes the ApiClient returned by resolve_target."""
+    from aiperf.cli_commands.kube.results import _run_results
+
+    with patch(
+        "aiperf.kubernetes.results.retrieve_results_from_operator",
+        new=AsyncMock(return_value=True),
+    ):
+        await _run_results(
+            job_id="foo",
+            manage_options=KubeManageOptions(),
+            output=tmp_path / "out",
+            from_pods=False,
+            all_artifacts=True,
+            shutdown=False,
+            port=0,
+            operator_namespace="aiperf-system",
+            run=None,
+        )
+
+    mock_resolve_for_results.api.close.assert_awaited_once()
 
 
 def test_result_base_url_helper_pins_epoch() -> None:

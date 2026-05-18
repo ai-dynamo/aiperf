@@ -59,6 +59,7 @@ class WatchOrchestrator:
         renderer: WatchRenderer | None = None,
         interval: float = 2.0,
         follow_logs: bool = False,
+        quiet: bool = False,
     ) -> None:
         """Configure the orchestrator.
 
@@ -80,6 +81,7 @@ class WatchOrchestrator:
                 iteration.
             follow_logs: Reserved for future log-tailing support; currently
                 unused but preserved for CLI parity.
+            quiet: Suppress human status lines while resolving defaults.
         """
         self._job_id = job_id
         self._namespace = namespace
@@ -89,6 +91,7 @@ class WatchOrchestrator:
         self._renderer = renderer
         self._interval = interval
         self._follow_logs = follow_logs
+        self._quiet = quiet
         self._running = True
 
     async def run(self) -> None:
@@ -132,7 +135,7 @@ class WatchOrchestrator:
         ns = self._namespace or DEFAULT_BENCHMARK_NAMESPACE
         if self._job_id:
             return self._job_id, ns
-        resolved = cli_helpers.resolve_job_id_and_namespace(None, ns)
+        resolved = cli_helpers.resolve_job_id_and_namespace(None, ns, quiet=self._quiet)
         if not resolved:
             return None
         return resolved

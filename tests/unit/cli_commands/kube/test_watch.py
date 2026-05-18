@@ -93,8 +93,8 @@ class TestWatchCommandWiring:
 
         assert isinstance(mock_ctor.call_args.kwargs["renderer"], TextRenderer)
 
-    async def test_watch_forwards_job_id_namespace_and_flags(self) -> None:
-        """job_id + manage_options + flags pass through to the orchestrator ctor."""
+    async def test_watch_forwards_job_id_namespace_and_interval(self) -> None:
+        """job_id + manage_options + interval pass through to orchestrator ctor."""
         instance = MagicMock()
         instance.run = AsyncMock()
         opts = KubeManageOptions(
@@ -109,9 +109,7 @@ class TestWatchCommandWiring:
             await watch(
                 job_id="abc123",
                 manage_options=opts,
-                all_jobs=True,
                 interval=0.5,
-                follow_logs=True,
             )
 
         kwargs = mock_ctor.call_args.kwargs
@@ -119,9 +117,30 @@ class TestWatchCommandWiring:
         assert kwargs["namespace"] == "my-ns"
         assert kwargs["kubeconfig"] == "/tmp/kc.yaml"
         assert kwargs["kube_context"] == "dev"
-        assert kwargs["all_jobs"] is True
+        assert kwargs["all_jobs"] is False
         assert kwargs["interval"] == 0.5
-        assert kwargs["follow_logs"] is True
+        assert kwargs["follow_logs"] is False
+
+    @pytest.mark.parametrize(
+        "kwargs, expected",
+        [
+            param({"all_jobs": True}, "--all", id="all-jobs"),
+            param({"follow_logs": True}, "--follow-logs", id="follow-logs"),
+        ],
+    )  # fmt: skip
+    async def test_watch_rejects_exposed_but_unimplemented_flags(
+        self, kwargs: dict[str, bool], expected: str, capsys: Any
+    ) -> None:
+        """Reserved flags fail fast instead of being silently ignored."""
+        with (
+            patch("aiperf.kubernetes.watch_orchestrator.WatchOrchestrator") as ctor,
+            pytest.raises(SystemExit),
+        ):
+            await watch(manage_options=KubeManageOptions(), **kwargs)
+
+        ctor.assert_not_called()
+        captured = capsys.readouterr()
+        assert expected in (captured.out + captured.err)
 
     async def test_watch_default_manage_options_when_omitted(self) -> None:
         """Omitting manage_options yields default KubeManageOptions()."""
@@ -175,3 +194,18 @@ class TestWatchCommandErrorSurface:
 
         captured = capsys.readouterr()
         assert "Stopped watching" in (captured.out + captured.err)
+
+    async def test_keyboard_interrupt_suppresses_human_message_in_json(
+        self, capsys: Any
+    ) -> None:
+        """JSON mode must not print non-JSON status lines on Ctrl-C."""
+        instance = MagicMock()
+        instance.run = AsyncMock(side_effect=KeyboardInterrupt)
+        with patch(
+            "aiperf.kubernetes.watch_orchestrator.WatchOrchestrator",
+            return_value=instance,
+        ):
+            await watch(manage_options=KubeManageOptions(), output="json")
+
+        captured = capsys.readouterr()
+        assert "Stopped watching" not in (captured.out + captured.err)

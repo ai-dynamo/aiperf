@@ -91,12 +91,15 @@ async def attach(
         if not resolved:
             return
 
-        await kube_attach.attach_to_benchmark(
-            resolved.job_id,
-            resolved.namespace,
-            port,
-            resolved.api,
-            phase=resolved.job_info.phase,
-            kubeconfig=manage_options.kubeconfig,
-            kube_context=manage_options.kube_context,
-        )
+        try:
+            await kube_attach.attach_to_benchmark(
+                resolved.job_id,
+                resolved.namespace,
+                port,
+                resolved.api,
+                phase=resolved.job_info.phase,
+                kubeconfig=manage_options.kubeconfig,
+                kube_context=manage_options.kube_context,
+            )
+        finally:
+            await resolved.aclose()

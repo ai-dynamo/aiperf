@@ -63,8 +63,6 @@ async def validate(
 
             import orjson
 
-            from aiperf.kubernetes.console import console
-
             # Suppress text output in JSON mode so only clean JSON goes to stdout
             kube_logger = logging.getLogger("aiperf.kube")
             original_level = kube_logger.level
@@ -89,7 +87,7 @@ async def validate(
                 kube_logger.setLevel(original_level)
 
             json_output = orjson.dumps(results, option=orjson.OPT_INDENT_2).decode()
-            console.print(json_output, highlight=False)
+            print(json_output)
 
             if any_failed:
                 raise SystemExit(1)
