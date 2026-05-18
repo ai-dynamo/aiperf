@@ -3,10 +3,14 @@
 
 from pathlib import Path
 
-from aiperf.config import BenchmarkRun
-from aiperf.config import BenchmarkConfig
-from aiperf.config import SweepVariation
-from aiperf.sweep_controller.k8s_executor import K8sChildJobExecutor
+import orjson
+
+from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
+from aiperf.operator.handlers.sweep import _child_runs
+from aiperf.sweep_controller.k8s_executor import (
+    VARIATION_VALUES_MAX_ANNOTATION_BYTES,
+    K8sChildJobExecutor,
+)
 
 
 def _sweep_cr() -> dict:
@@ -125,6 +129,87 @@ def test_build_child_metadata_sets_owner_and_labels():
     assert md["labels"]["aiperf.nvidia.com/trial-index"] == "2"
 
 
+def test_build_run_entry_reads_executor_produced_variation_values():
+    executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
+    variation_values = {"phases.profiling.concurrency": 64}
+    run = BenchmarkRun(
+        benchmark_id="x",
+        cfg=_benchmark_config_for_run(),
+        variation=SweepVariation(index=7, label="c=64", values=variation_values),
+        trial=2,
+        label="run_0003",
+        artifact_dir=Path("/results"),
+    )
+    metadata = executor._build_child_metadata(run, "test-sweep-v07-t2")
+
+    entry = _child_runs.build_run_entry(
+        body={"metadata": metadata},
+        status={"phase": "Completed"},
+        name="test-sweep-v07-t2",
+    )
+
+    assert entry["values"] == orjson.dumps(variation_values).decode()
+
+
+def test_build_child_metadata_bounds_large_variation_values_annotation():
+    executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
+    variation_values = {
+        "endpoint.extra_body": {
+            "messages": [
+                {"role": "user", "content": "x" * 100_000},
+            ],
+        },
+    }
+    run = BenchmarkRun(
+        benchmark_id="x",
+        cfg=_benchmark_config_for_run(),
+        variation=SweepVariation(
+            index=7,
+            label="scenario",
+            values=variation_values,
+        ),
+        trial=2,
+        label="run_0003",
+        artifact_dir=Path("/results"),
+    )
+
+    metadata = executor._build_child_metadata(run, "test-sweep-v07-t2")
+    annotation = metadata["annotations"]["aiperf.nvidia.com/variation-values"]
+    payload = orjson.loads(annotation)
+
+    assert len(annotation.encode()) <= VARIATION_VALUES_MAX_ANNOTATION_BYTES
+    assert payload == {
+        "__aiperf_truncated__": True,
+        "reason": "variation values exceeded metadata byte limit",
+        "limitBytes": VARIATION_VALUES_MAX_ANNOTATION_BYTES,
+        "originalBytes": len(orjson.dumps(variation_values)),
+    }
+
+
+def test_build_run_entry_rebounds_oversized_legacy_variation_values_annotation():
+    raw_annotation = orjson.dumps({"prompt": "x" * 100_000}).decode()
+
+    entry = _child_runs.build_run_entry(
+        body={
+            "metadata": {
+                "labels": {"aiperf.nvidia.com/variation-index": "7"},
+                "annotations": {"aiperf.nvidia.com/variation-values": raw_annotation},
+            }
+        },
+        status={"phase": "Completed"},
+        name="test-sweep-v07-t2",
+    )
+    payload = orjson.loads(entry["values"])
+
+    assert len(entry["values"].encode()) <= 256
+    assert payload == {
+        "__aiperf_truncated__": True,
+        "reason": "variation values exceeded status byte limit",
+        "limitBytes": 256,
+        "originalBytes": len(raw_annotation.encode()),
+    }
+
+
 def test_derive_id_uses_deterministic_naming():
     executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
     assert executor.derive_id(plan=None, var_idx=7, trial=2) == "test-sweep-v07-t2"
@@ -216,11 +301,12 @@ def test_build_child_metadata_accepts_snake_case_child_metadata():
     )
     md = executor._build_child_metadata(run, "test-sweep-v00-t1")
     assert md["labels"]["team"] == "perf"
-    assert md["annotations"] == {"foo": "bar"}
+    assert md["annotations"]["foo"] == "bar"
+    assert md["annotations"]["aiperf.nvidia.com/variation-values"] == "{}"
 
 
-def test_build_child_metadata_no_user_metadata_keeps_empty_annotations():
-    """When childMetadata is absent, annotations stay empty — no regression."""
+def test_build_child_metadata_no_user_metadata_keeps_variation_annotation():
+    """When childMetadata is absent, only executor-owned annotations are set."""
     executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
     run = BenchmarkRun(
         benchmark_id="x",
@@ -231,7 +317,7 @@ def test_build_child_metadata_no_user_metadata_keeps_empty_annotations():
         artifact_dir=Path("/results"),
     )
     md = executor._build_child_metadata(run, "test-sweep-v00-t1")
-    assert md["annotations"] == {}
+    assert md["annotations"] == {"aiperf.nvidia.com/variation-values": "{}"}
 
 
 def test_build_child_spec_strips_child_metadata():

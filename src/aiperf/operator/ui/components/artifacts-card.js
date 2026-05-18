@@ -1,70 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Artifacts card — file browser for a job's results PVC. Renders a card
- * head with primary "Download all (.zip)" + secondary "Quick export
- * JSON" buttons, a per-format filter strip, a zebra file table with a
- * format chip per row, and a "Show all N" footer when truncated.
- *
- * The list of files comes from the parent (``files`` prop). The card
- * does not fetch — it only renders + filters + truncates. Per-row
- * click delegates to ``openFile(name)``; previewable extensions open
- * the FileViewerModal in the parent, the rest trigger a download.
- *
- * Endpoints:
- *   - "Download all" wires to ``api.resultBundleUrl(ns, name, epoch)``
- *     (the existing ``/runs/{epoch}.zip`` route).
- *   - "Quick export JSON" wires to the new
- *     ``/runs/{epoch}/profile_export?format=json`` route, which aliases
- *     ``profile_export_aiperf.json`` with a Content-Disposition header
- *     so a plain ``<a download>`` saves it without the listing
- *     roundtrip.
- *
- * @param {object} props
- * @param {Array<{name:string,size_bytes:number}>} props.files
- * @param {boolean} props.filesLoaded
- * @param {string} props.namespace
- * @param {string} props.name
- * @param {string|null} props.epoch
- * @param {string|null} props.resolvedEpoch
- * @param {boolean} props.isCompleted
- * @param {boolean} props.isRunning
- * @param {(name:string) => void} props.openFile
- * @param {object} props.api - api.js export, used for resultBundleUrl
- * @param {function} props.fmtBytes
- */
-
 import { html } from 'htm/preact';
-import { useState } from 'preact/hooks';
-import { LoadingPanel } from './spinner.js';
-
-// Format chip palette. Maps each known extension to a brand-style hue
-// and a short label. Unknown extensions fall back to a neutral chip
-// labelled with the uppercased extension (truncated at 6 chars).
-const FORMAT_TYPES = {
-  json:    { label: 'JSON',    color: '#facc15' },   // amber-400
-  jsonl:   { label: 'JSONL',   color: '#fb923c' },   // orange-400
-  csv:     { label: 'CSV',     color: '#22c55e' },   // green-500
-  parquet: { label: 'PARQUET', color: '#a78bfa' },   // violet-400
-  txt:     { label: 'TXT',     color: '#60a5fa' },   // blue-400
-  log:     { label: 'LOG',     color: '#38bdf8' },   // sky-400
-  ansi:    { label: 'ANSI',    color: '#7dd3fc' },   // sky-300
-  yaml:    { label: 'YAML',    color: '#06b6d4' },   // cyan-500
-  yml:     { label: 'YAML',    color: '#06b6d4' },
-  html:    { label: 'HTML',    color: '#f472b6' },   // pink-400
-  htm:     { label: 'HTML',    color: '#f472b6' },
-  zip:     { label: 'ZIP',     color: '#9ca3af' },   // grey
-  gz:      { label: 'GZ',      color: '#9ca3af' },
-  tar:     { label: 'TAR',     color: '#9ca3af' },
-  png:     { label: 'PNG',     color: '#c084fc' },   // purple-400
-  jpg:     { label: 'JPG',     color: '#c084fc' },
-  jpeg:    { label: 'JPG',     color: '#c084fc' },
-  svg:     { label: 'SVG',     color: '#c084fc' },
-};
+import { useEffect, useState } from 'preact/hooks';
+import { fmtBytes as defaultFmtBytes } from '../lib/format.js';
+import { palette } from '../lib/theme.js';
+import { LoadingPanel, Spinner } from './spinner.js';
 
 const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
-const TRUNCATE_LIMIT = 8;
 
 const defaultEmptyMessages = {
   waiting: 'Waiting for a run epoch before showing result files.',
@@ -73,16 +16,297 @@ const defaultEmptyMessages = {
   unavailable: 'No result files available.',
 };
 
-function chipFor(filename) {
-  const ext = (filename.split('.').pop() || '').toLowerCase();
-  return FORMAT_TYPES[ext]
-    ?? { label: (ext || 'FILE').toUpperCase().slice(0, 6), color: '#9ca3af' };
+const defaultEmptyDetails = {
+  waiting: 'This page now requires a pinned run epoch before it will fetch final artifacts, so the status and results cannot drift to different runs.',
+  completed: 'The job completed but no artifacts were uploaded — check the operator logs or the controller pod for this run.',
+  running: 'Files (profile_export_aiperf.json, profile_export.jsonl, server_metrics_export.json, ...) appear here once the run finishes and uploads them to the results PVC.',
+  unavailable: 'Artifacts will appear here after the run starts producing output.',
+};
+
+const BACKDROP_STYLE = [
+  'position: fixed; inset: 0; z-index: 1000;',
+  'background: ' + palette.base + 'cc;',
+  'backdrop-filter: blur(4px);',
+  'display: flex; align-items: center; justify-content: center;',
+].join(' ');
+
+const MODAL_BASE_STYLE = [
+  'background: ' + palette.mantle + ';',
+  'border: 1px solid ' + palette.surface0 + ';',
+  'border-radius: var(--radius-md);',
+  'max-height: 80vh;',
+  'display: flex; flex-direction: column;',
+  'overflow: hidden;',
+].join(' ');
+
+const MODAL_STYLE_WIDE = MODAL_BASE_STYLE + ' max-width: 95vw; width: 1400px;';
+
+function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, copyDisabled = false, children }) {
+  return html`
+    <div style=${BACKDROP_STYLE} onclick=${e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style=${MODAL_STYLE_WIDE}>
+        <div style=${'display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid ' + palette.surface0 + '; flex-shrink: 0'}>
+          <span style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
+          <div style="display: flex; gap: var(--space-2); align-items: center">
+            ${onCopy && html`
+              <button
+                onclick=${copyDisabled ? undefined : onCopy}
+                disabled=${copyDisabled}
+                style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: ' + (copyDisabled ? 'not-allowed' : 'pointer') + '; font-size: var(--font-size-xs); opacity: ' + (copyDisabled ? '0.55' : '1')}
+              >${copyLabel ?? 'Copy'}</button>
+            `}
+            <button
+              onclick=${onDownload}
+              style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
+            >Download</button>
+            <button
+              onclick=${onClose}
+              style=${'background: transparent; color: ' + palette.overlay1 + '; border: 1px solid ' + palette.surface1 + '; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); line-height: 1'}
+            >×</button>
+          </div>
+        </div>
+        <div style="overflow: auto; flex: 1; padding: var(--space-4)">
+          ${children}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
-function splitPath(name) {
-  const slash = name.lastIndexOf('/');
-  if (slash < 0) return { dir: '', base: name };
-  return { dir: name.slice(0, slash), base: name.slice(slash + 1) };
+function syntaxHighlight(json) {
+  const tokens = [];
+  const re = /("(?:[^"\\]|\\.)*")\s*:|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)|([\[\]{},])|(\s+)/g;
+  let match;
+  let lastIndex = 0;
+  while ((match = re.exec(json)) !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ text: json.slice(lastIndex, match.index), color: null });
+    }
+    if (match[1] !== undefined) {
+      tokens.push({ text: match[0], color: palette.mauve });
+    } else if (match[2] !== undefined) {
+      tokens.push({ text: match[2], color: palette.green });
+    } else if (match[3] !== undefined) {
+      tokens.push({ text: match[3], color: palette.peach });
+    } else if (match[4] !== undefined) {
+      tokens.push({ text: match[4], color: palette.blue });
+    } else if (match[5] !== undefined) {
+      tokens.push({ text: match[5], color: palette.overlay0 });
+    } else {
+      tokens.push({ text: match[0], color: null });
+    }
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < json.length) {
+    tokens.push({ text: json.slice(lastIndex), color: null });
+  }
+  return tokens;
+}
+
+function parseCSV(text) {
+  const rows = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+    const cols = [];
+    let cur = '';
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
+        else { inQuote = !inQuote; }
+      } else if (ch === ',' && !inQuote) {
+        cols.push(cur);
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    cols.push(cur);
+    rows.push(cols);
+  }
+  return rows;
+}
+
+function stripAnsi(text) {
+  return text.replace(/\x1b\[[0-9;]*[mGKHFJ]/g, '');
+}
+
+function FileViewerModal({ filename, url, onClose }) {
+  const [rawContent, setRawContent] = useState(null);
+  const [parsedJson, setParsedJson] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [copyLabel, setCopyLabel] = useState('Copy');
+  const ext = filename.split('.').pop().toLowerCase();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreview() {
+      setRawContent(null);
+      setParsedJson(null);
+      setErrorMessage(null);
+      setIsLoading(true);
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
+        }
+        if (ext === 'json') {
+          const data = await response.json();
+          if (cancelled) return;
+          setParsedJson(data);
+          setRawContent(JSON.stringify(data, null, 2));
+        } else {
+          const text = await response.text();
+          if (cancelled) return;
+          setRawContent(text);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const details = error instanceof Error && error.message ? error.message : 'unknown error';
+        setErrorMessage(`Unable to load preview for ${filename}: ${details}`);
+        setRawContent(null);
+        setParsedJson(null);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    loadPreview();
+    return () => { cancelled = true; };
+  }, [url, ext, filename]);
+
+  function handleDownload() {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+  }
+
+  function handleCopy() {
+    if (rawContent == null) return;
+    navigator.clipboard.writeText(rawContent).then(() => {
+      setCopyLabel('Copied!');
+      setTimeout(() => setCopyLabel('Copy'), 2000);
+    });
+  }
+
+  let body;
+  if (isLoading) {
+    body = html`<span style="display: inline-flex; align-items: center; gap: var(--space-2)"><${Spinner} size=${14} /><span class="text-dim">Loading file…</span></span>`;
+  } else if (errorMessage != null) {
+    body = html`<div style=${'font-size: var(--font-size-sm); color: ' + palette.red}>${errorMessage}</div>`;
+  } else if (rawContent == null) {
+    body = html`<span class="text-dim">No preview content available.</span>`;
+  } else if (ext === 'json') {
+    const jsonText = parsedJson == null ? rawContent : JSON.stringify(parsedJson, null, 2);
+    const tokens = syntaxHighlight(jsonText);
+    body = html`
+      <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text}>
+        ${tokens.map((t, i) =>
+          t.color
+            ? html`<span key=${i} style=${'color: ' + t.color}>${t.text}</span>`
+            : t.text
+        )}
+      </pre>
+    `;
+  } else if (ext === 'csv') {
+    const rows = parseCSV(rawContent);
+    if (rows.length === 0) {
+      body = html`<span class="text-dim">Empty file</span>`;
+    } else {
+      const header = rows[0];
+      const dataRows = rows.slice(1);
+      body = html`
+        <div style="overflow-x: auto">
+          <table style=${'border-collapse: collapse; font-size: var(--font-size-xs); font-family: monospace; min-width: 100%'}>
+            <thead>
+              <tr>
+                ${header.map((col, i) => html`
+                  <th key=${i} style=${'padding: var(--space-2) var(--space-3); text-align: left; font-weight: 700; color: ' + palette.text + '; background: ' + palette.surface0 + '; border-bottom: 2px solid ' + palette.surface1 + '; white-space: nowrap'}>${col}</th>
+                `)}
+              </tr>
+            </thead>
+            <tbody>
+              ${dataRows.map((row, ri) => html`
+                <tr key=${ri} style=${'background: ' + (ri % 2 === 0 ? palette.base : palette.mantle)}>
+                  ${row.map((cell, ci) => html`
+                    <td key=${ci} style=${'padding: var(--space-1) var(--space-3); color: ' + palette.text + '; border-bottom: 1px solid ' + palette.surface0 + '; white-space: nowrap'}>${cell}</td>
+                  `)}
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  } else {
+    const plain = ext === 'ansi' ? stripAnsi(rawContent) : rawContent;
+    body = html`
+      <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text + '; tab-size: 4'}>${plain}</pre>
+    `;
+  }
+
+  return html`
+    <${ModalChrome}
+      filename=${filename}
+      onCopy=${handleCopy}
+      onDownload=${handleDownload}
+      onClose=${onClose}
+      copyLabel=${copyLabel}
+      copyDisabled=${rawContent == null}
+    >
+      ${body}
+    </${ModalChrome}>
+  `;
+}
+
+function fileColor(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  if (ext === 'json' || ext === 'jsonl') return palette.mauve;
+  if (ext === 'csv') return palette.teal;
+  if (ext === 'txt' || ext === 'ansi') return palette.blue;
+  return palette.overlay1;
+}
+
+function fileTypeChip(filename) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  const types = {
+    json:    { label: 'JSON',    color: palette.yellow },
+    jsonl:   { label: 'JSONL',   color: palette.peach },
+    csv:     { label: 'CSV',     color: palette.green },
+    parquet: { label: 'PARQUET', color: palette.lavender },
+    txt:     { label: 'TXT',     color: palette.blue },
+    log:     { label: 'LOG',     color: palette.sapphire },
+    ansi:    { label: 'ANSI',    color: palette.sky },
+    yaml:    { label: 'YAML',    color: palette.teal },
+    yml:     { label: 'YAML',    color: palette.teal },
+    html:    { label: 'HTML',    color: palette.pink },
+    htm:     { label: 'HTML',    color: palette.pink },
+    zip:     { label: 'ZIP',     color: palette.overlay1 },
+    gz:      { label: 'GZ',      color: palette.overlay1 },
+    tar:     { label: 'TAR',     color: palette.overlay1 },
+    png:     { label: 'PNG',     color: palette.mauve },
+    jpg:     { label: 'JPG',     color: palette.mauve },
+    jpeg:    { label: 'JPG',     color: palette.mauve },
+    svg:     { label: 'SVG',     color: palette.mauve },
+  };
+  return types[ext] ?? { label: (ext || 'FILE').toUpperCase().slice(0, 6), color: palette.overlay1 };
+}
+
+function resultFileUrl(namespace, name, epoch, fileName) {
+  return `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/${encodeURIComponent(fileName)}`;
+}
+
+function selectedEmptyKey({ resolvedEpoch, isCompleted, isRunning }) {
+  if (resolvedEpoch == null) return 'waiting';
+  if (isCompleted) return 'completed';
+  if (isRunning) return 'running';
+  return 'unavailable';
 }
 
 export function ArtifactsCard({
@@ -94,141 +318,190 @@ export function ArtifactsCard({
   resolvedEpoch,
   isCompleted,
   isRunning,
-  openFile,
   api,
-  fmtBytes,
-  title = 'Artifacts',
-  testIdPrefix = 'job-detail-artifacts',
+  testIdPrefix = 'artifacts',
   bundleUrl = null,
   quickExportUrl = null,
   emptyMessages = null,
+  fmtBytes = defaultFmtBytes,
+  title = 'Result Files',
+  cardTestId = 'artifacts-card',
+  quickExportLabel = 'Export JSON',
+  bundleLabel = null,
+  showIndividualDownloadAll = true,
+  emptyDetails = null,
+  fileUrl = null,
 }) {
-  const [activeFilter, setActiveFilter] = useState(null);
-  const [showAll, setShowAll] = useState(false);
-
-  // Discovered formats with count, ordered by descending count then label
-  // so the most-frequent ones land near the ALL chip.
-  const counts = new Map();
-  for (const f of files) {
-    const ext = (f.name.split('.').pop() || '').toLowerCase();
-    counts.set(ext, (counts.get(ext) ?? 0) + 1);
-  }
-  const formats = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-
-  const filtered = activeFilter
-    ? files.filter(f => (f.name.split('.').pop() || '').toLowerCase() === activeFilter)
-    : files;
-
-  const visible = showAll ? filtered : filtered.slice(0, TRUNCATE_LIMIT);
-  const truncated = filtered.length > visible.length;
-  const totalBytes = files.reduce((s, f) => s + (Number(f.size_bytes) || 0), 0);
-
-  const downloadAllUrl = bundleUrl ?? (epoch != null ? api.resultBundleUrl(namespace, name, epoch) : null);
+  const [fileViewer, setFileViewer] = useState(null);
+  const totalArtifactBytes = files.reduce((s, f) => s + (Number(f.size_bytes) || 0), 0);
+  const messages = { ...defaultEmptyMessages, ...(emptyMessages ?? {}) };
+  const details = { ...defaultEmptyDetails, ...(emptyDetails ?? {}) };
+  const emptyKey = selectedEmptyKey({ resolvedEpoch, isCompleted, isRunning });
+  const downloadAllUrl = bundleUrl ?? (epoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, epoch) : null);
   const resolvedQuickExportUrl = quickExportUrl ?? (epoch != null
     ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/profile_export?format=json`
     : null);
-  const messages = { ...defaultEmptyMessages, ...(emptyMessages ?? {}) };
+  const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
+
+  useEffect(() => {
+    if (!fileViewer) return undefined;
+    function onKeyDown(event) {
+      if (event.key === 'Escape') setFileViewer(null);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fileViewer]);
+
+  function resolveFileUrl(fileName) {
+    if (fileUrl) return fileUrl(fileName);
+    if (epoch == null) return null;
+    return resultFileUrl(namespace, name, epoch, fileName);
+  }
+
+  function downloadFile(fileName) {
+    const url = resolveFileUrl(fileName);
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+  }
+
+  function openFile(fileName) {
+    const url = resolveFileUrl(fileName);
+    if (!url) return;
+    const ext = fileName.split('.').pop().toLowerCase();
+    if (PREVIEWABLE.has(ext)) {
+      setFileViewer({ filename: fileName, url });
+    } else {
+      downloadFile(fileName);
+    }
+  }
+
+  function downloadAll() {
+    files.forEach((f, i) => {
+      setTimeout(() => downloadFile(f.name), i * 300);
+    });
+  }
 
   return html`
-    <div class="artifacts-card" data-testid=${testIdPrefix}>
-      <header class="artifacts-card__head">
-        <div>
-          <h3 class="artifacts-card__title">${title}</h3>
-          <span class="artifacts-card__sub">
-            ${files.length} file${files.length === 1 ? '' : 's'}${totalBytes > 0 ? ` · ${fmtBytes(totalBytes)} total` : ''}
-          </span>
-        </div>
-        <div class="artifacts-card__actions">
-          ${downloadAllUrl && html`
-            <a class="btn btn--primary"
-               href=${downloadAllUrl}
-               download
-               data-testid=${`${testIdPrefix}-download-all`}>
-              ⤓ Download all (.zip)
-            </a>
-          `}
-          ${resolvedQuickExportUrl && html`
-            <a class="btn btn--secondary"
-               href=${resolvedQuickExportUrl}
-               download
-               data-testid=${`${testIdPrefix}-quick-export`}>
-              { } Quick export JSON
-            </a>
-          `}
-        </div>
-      </header>
+    <div class="card" style="margin-top: var(--space-4)" data-testid=${cardTestId}>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
+        <div class="card-title" style="margin: 0">${title}</div>
+        ${files.length > 0 && html`
+          <div style="display: flex; gap: var(--space-2); flex-wrap: wrap">
+            ${resolvedQuickExportUrl && (quickExportUrl || hasExportFile) && html`
+              <a
+                href=${resolvedQuickExportUrl}
+                download
+                data-testid=${`${testIdPrefix}-quick-export`}
+                style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
+              >
+                ${quickExportLabel}
+              </a>
+            `}
+            ${downloadAllUrl && html`
+              <a
+                class="btn"
+                href=${downloadAllUrl}
+                download
+                data-testid=${`${testIdPrefix}-download-all`}
+                style=${'background: ' + palette.green + '22; color: ' + palette.green + '; border: 1px solid ' + palette.green + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
+                title=${'Download all ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' as a single .zip'}
+              >
+                ${bundleLabel ?? `Download .zip${totalArtifactBytes > 0 ? ` (${fmtBytes(totalArtifactBytes)})` : ''}`}
+              </a>
+            `}
+            ${showIndividualDownloadAll && html`
+              <button
+                onclick=${downloadAll}
+                data-testid=${`${testIdPrefix}-download-individual`}
+                style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
+                title="Trigger one download per file (browser saves them individually)"
+              >
+                Download All
+              </button>
+            `}
+          </div>
+        `}
+      </div>
 
       ${!filesLoaded && html`
         <${LoadingPanel} label="Looking up result files…" inline=${true} testid="artifacts-loading" />
       `}
 
       ${filesLoaded && files.length === 0 && html`
-        <div data-testid="artifacts-empty" class="artifacts-card__empty">
-          ${resolvedEpoch == null
-            ? messages.waiting
-            : isCompleted
-              ? messages.completed
-              : isRunning
-                ? messages.running
-                : messages.unavailable}
+        <div data-testid="artifacts-empty" style=${'padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); border: 1px dashed ' + palette.surface0 + '; color: ' + palette.subtext0 + '; font-size: var(--font-size-sm); display: flex; align-items: center; gap: var(--space-3)'}>
+          <span style=${'flex-shrink: 0; color: ' + palette.overlay0}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 3 H7 a2 2 0 0 0 -2 2 v14 a2 2 0 0 0 2 2 h10 a2 2 0 0 0 2 -2 V8 z" />
+              <polyline points="14,3 14,8 19,8" />
+              <line x1="9" y1="13" x2="15" y2="13" />
+              <line x1="9" y1="17" x2="13" y2="17" />
+            </svg>
+          </span>
+          <div style="display: flex; flex-direction: column; gap: 2px">
+            <div style=${'font-weight: 600; color: ' + palette.text}>
+              ${messages[emptyKey]}
+            </div>
+            <div class="text-dim" style="font-size: var(--font-size-xs)">
+              ${details[emptyKey]}
+            </div>
+          </div>
         </div>
       `}
 
       ${filesLoaded && files.length > 0 && html`
-        <div class="artifacts-card__filter-strip">
-          <span class="artifacts-card__filter-label">Filter</span>
-          <button
-            class=${'format-chip format-chip--all' + (activeFilter === null ? ' active' : '')}
-            onClick=${() => setActiveFilter(null)}
-          >ALL · ${files.length}</button>
-          ${formats.map(([fmt, count]) => {
-            const ch = chipFor('.' + fmt);
+        <div style="display: flex; flex-direction: column; gap: var(--space-1)">
+          ${files.map(f => {
+            const ext = f.name.split('.').pop().toLowerCase();
+            const previewable = PREVIEWABLE.has(ext);
+            const chip = fileTypeChip(f.name);
+            const action = () => openFile(f.name);
             return html`
-              <button
-                key=${fmt}
-                class=${'format-chip' + (activeFilter === fmt ? ' active' : '')}
-                style=${'background: ' + ch.color}
-                onClick=${() => setActiveFilter(activeFilter === fmt ? null : fmt)}
-              >${ch.label} · ${count}</button>
+              <div
+                key=${f.name}
+                onclick=${action}
+                onkeydown=${e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    action();
+                  }
+                }}
+                role="button"
+                tabindex="0"
+                aria-label=${(previewable ? 'Preview ' : 'Download ') + f.name}
+                title=${previewable ? 'Click to preview' : 'Click to download'}
+                style=${'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); background: ' + palette.base + '; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s; border: 1px solid ' + palette.surface0 + '60; outline: none'}
+                onmouseenter=${e => { e.currentTarget.style.background = palette.surface0; }}
+                onmouseleave=${e => { e.currentTarget.style.background = palette.base; }}
+                onfocus=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.borderColor = palette.blue + '88'; }}
+                onblur=${e => { e.currentTarget.style.background = palette.base; e.currentTarget.style.borderColor = palette.surface0 + '60'; }}
+              >
+                <div style="display: flex; align-items: center; gap: var(--space-2); min-width: 0">
+                  <span
+                    class="file-type-chip"
+                    style=${'background: ' + chip.color + '22; color: ' + chip.color + '; border: 1px solid ' + chip.color + '55'}
+                    title=${'File type: ' + chip.label.toLowerCase()}
+                  >${chip.label}</span>
+                  <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name) + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap'}>${f.name}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0">
+                  <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>${previewable ? 'preview' : 'download'}</span>
+                  <span class="text-dim" style="font-size: var(--font-size-xs)">${fmtBytes(f.size_bytes)}</span>
+                </div>
+              </div>
             `;
           })}
         </div>
-        <table class="artifacts-card__table artifacts-card__table--zebra">
-          <tbody>
-            ${visible.map(f => {
-              const ch = chipFor(f.name);
-              const path = splitPath(f.name);
-              const ext = (f.name.split('.').pop() || '').toLowerCase();
-              const previewable = PREVIEWABLE.has(ext);
-              return html`
-                <tr key=${f.name}>
-                  <td class="fmt-cell">
-                    <span class="format-chip" style=${'background: ' + ch.color}>${ch.label}</span>
-                  </td>
-                  <td class="fname">
-                    ${path.dir && html`<span class="path-prefix">${path.dir}/</span>`}${path.base}
-                  </td>
-                  <td class="fsize">${fmtBytes(f.size_bytes)}</td>
-                  <td class="fact">
-                    ${previewable && html`
-                      <a class="act-link" onClick=${() => openFile(f.name)}>view</a>
-                    `}
-                    <a class="act-link" onClick=${() => openFile(f.name)}>${previewable ? 'download' : 'open'}</a>
-                  </td>
-                </tr>
-              `;
-            })}
-          </tbody>
-        </table>
-        ${truncated && html`
-          <footer class="artifacts-card__foot">
-            <button class="show-all" onClick=${() => setShowAll(true)}>
-              Show all ${filtered.length} files
-            </button>
-            <span class="totals">total · ${fmtBytes(totalBytes)}</span>
-          </footer>
-        `}
       `}
     </div>
+    ${fileViewer && html`
+      <${FileViewerModal}
+        filename=${fileViewer.filename}
+        url=${fileViewer.url}
+        onClose=${() => setFileViewer(null)}
+      />
+    `}
   `;
 }

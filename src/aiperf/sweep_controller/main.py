@@ -330,11 +330,12 @@ def _load_aggregate_for_cr(
     ``confidence`` payload grows linearly and the patch can exceed the
     apiserver's 1 MB CR size cap, returning 413 and stranding the parent
     at ``Aggregating``. We bound the inlined size: if the encoded bundle
-    exceeds ``_AGGREGATE_INLINE_MAX_BYTES`` we drop ``confidence`` (the
-    largest contributor) and emit only ``parent`` + ``children``. The
-    disk-backed path served by the results sidecar still has the full
-    document, so consumers fetching ``status.aggregateRef.apiPath`` see
-    no loss; only the in-CR mirror is reduced.
+    exceeds ``_AGGREGATE_INLINE_MAX_BYTES`` we drop ``confidence`` first,
+    then omit ``children`` and add a compact ``childrenTruncated`` marker
+    if the post-drop payload still exceeds the budget. The disk-backed
+    path served by the results sidecar still has the full document, so
+    consumers fetching ``status.aggregateRef.apiPath`` see no loss; only
+    the in-CR mirror is reduced.
 
     Missing files are silently skipped: this loader is best-effort and the
     primary signal (``aggregation.phase=Complete`` and ``terminal_phase``)
@@ -369,17 +370,74 @@ def _load_aggregate_for_cr(
             )
             continue
 
-    if "confidence" in bundle:
-        encoded_size = len(orjson.dumps(bundle))
-        if encoded_size > _AGGREGATE_INLINE_MAX_BYTES:
-            logger.warning(
-                "aggregate bundle is %d bytes (> %d cap); dropping `confidence` "
-                "from CR mirror — full document remains at the disk-backed path",
-                encoded_size,
-                _AGGREGATE_INLINE_MAX_BYTES,
-            )
-            bundle.pop("confidence", None)
+    _fit_aggregate_bundle_for_cr(bundle)
     return bundle
+
+
+def _fit_aggregate_bundle_for_cr(bundle: dict[str, Any]) -> None:
+    """Mutate an aggregate bundle so its CR mirror fits the inline budget."""
+    encoded_size = len(orjson.dumps(bundle))
+    if encoded_size <= _AGGREGATE_INLINE_MAX_BYTES:
+        return
+
+    if "confidence" in bundle:
+        logger.warning(
+            "aggregate bundle is %d bytes (> %d cap); dropping `confidence` "
+            "from CR mirror — full document remains at the disk-backed path",
+            encoded_size,
+            _AGGREGATE_INLINE_MAX_BYTES,
+        )
+        bundle.pop("confidence", None)
+        encoded_size = len(orjson.dumps(bundle))
+
+    if encoded_size <= _AGGREGATE_INLINE_MAX_BYTES:
+        return
+
+    children_doc = bundle.pop("children", None)
+    if children_doc is not None:
+        bundle["childrenTruncated"] = _children_truncated_marker(children_doc)
+        logger.warning(
+            "aggregate bundle is %d bytes (> %d cap) after dropping `confidence`; "
+            "omitting `children` from CR mirror — full children manifest remains "
+            "at the disk-backed path",
+            encoded_size,
+            _AGGREGATE_INLINE_MAX_BYTES,
+        )
+        encoded_size = len(orjson.dumps(bundle))
+
+    if encoded_size <= _AGGREGATE_INLINE_MAX_BYTES:
+        return
+
+    original_keys = sorted(bundle)
+    bundle.clear()
+    bundle["aggregateTruncated"] = {
+        "reason": "inline_status_budget_exceeded",
+        "includedKeys": [],
+        "omittedKeys": original_keys,
+        "maxBytes": _AGGREGATE_INLINE_MAX_BYTES,
+        "originalBytes": encoded_size,
+    }
+    if len(orjson.dumps(bundle)) > _AGGREGATE_INLINE_MAX_BYTES:
+        bundle.clear()
+
+
+def _children_truncated_marker(children_doc: Any) -> dict[str, Any]:
+    total: int | None = None
+    sweep_run_epoch = ""
+    if isinstance(children_doc, dict):
+        children = children_doc.get("children")
+        sweep_run_epoch = str(children_doc.get("sweep_run_epoch") or "")
+        if isinstance(children, list):
+            total = len(children)
+    elif isinstance(children_doc, list):
+        total = len(children_doc)
+
+    return {
+        "reason": "inline_status_budget_exceeded",
+        "total": total,
+        "included": 0,
+        "sweep_run_epoch": sweep_run_epoch,
+    }
 
 
 async def main() -> int:

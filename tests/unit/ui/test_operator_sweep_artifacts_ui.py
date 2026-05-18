@@ -53,23 +53,29 @@ def test_artifacts_card_accepts_endpoint_agnostic_props_with_job_defaults() -> N
     props = signature.group("body")
 
     for prop in [
-        "title = 'Artifacts'",
-        "testIdPrefix = 'job-detail-artifacts'",
+        "testIdPrefix = 'artifacts'",
         "bundleUrl = null",
         "quickExportUrl = null",
         "emptyMessages = null",
+        "fmtBytes = defaultFmtBytes",
+        "title = 'Result Files'",
+        "cardTestId = 'artifacts-card'",
+        "quickExportLabel = 'Export JSON'",
+        "showIndividualDownloadAll = true",
+        "emptyDetails = null",
+        "fileUrl = null",
     ]:
         assert prop in props
 
     assert (
-        "const downloadAllUrl = bundleUrl ?? (epoch != null ? api.resultBundleUrl(namespace, name, epoch) : null);"
+        "const downloadAllUrl = bundleUrl ?? (epoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, epoch) : null);"
         in src
     )
     assert "const resolvedQuickExportUrl = quickExportUrl ?? (epoch != null" in src
-    assert "data-testid=${testIdPrefix}" in src
+    assert "data-testid=${cardTestId}" in src
     assert "data-testid=${`${testIdPrefix}-download-all`}" in src
     assert "data-testid=${`${testIdPrefix}-quick-export`}" in src
-    assert '<h3 class="artifacts-card__title">${title}</h3>' in src
+    assert '<div class="card-title" style="margin: 0">${title}</div>' in src
 
 
 def test_artifacts_card_empty_messages_are_overrideable_without_changing_job_text() -> (
@@ -85,10 +91,14 @@ def test_artifacts_card_empty_messages_are_overrideable_without_changing_job_tex
     assert (
         "const messages = { ...defaultEmptyMessages, ...(emptyMessages ?? {}) };" in src
     )
-    assert "? messages.waiting" in src
-    assert "? messages.completed" in src
-    assert "? messages.running" in src
-    assert ": messages.unavailable" in src
+    assert "const defaultEmptyDetails = {" in src
+    assert "const details = { ...defaultEmptyDetails, ...(emptyDetails ?? {}) };" in src
+    assert (
+        "const emptyKey = selectedEmptyKey({ resolvedEpoch, isCompleted, isRunning });"
+        in src
+    )
+    assert "${messages[emptyKey]}" in src
+    assert "${details[emptyKey]}" in src
 
 
 def test_sweep_detail_fetches_and_renders_aggregate_artifacts_card() -> None:
@@ -114,6 +124,9 @@ def test_sweep_detail_fetches_and_renders_aggregate_artifacts_card() -> None:
     assert "api.sweepArtifactListUrl(namespace, name, resolvedEpoch)" in src
     assert 'title="Aggregate Artifacts"' in src
     assert 'testIdPrefix="sweep-detail-aggregate-artifacts"' in src
+    assert 'cardTestId="sweep-detail-aggregate-artifacts-card"' in src
+    assert 'quickExportLabel="Export JSON"' in src
+    assert "showIndividualDownloadAll=${true}" in src
     assert "Waiting for a sweep epoch before showing aggregate artifacts." in src
     assert "No aggregate artifacts available for this sweep epoch." in src
     assert "No aggregate artifacts yet." in src

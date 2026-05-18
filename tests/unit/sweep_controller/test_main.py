@@ -169,6 +169,7 @@ def test_load_aggregate_for_cr_drops_confidence_when_over_size_cap(
     assert "confidence" not in bundle, (
         "confidence must be dropped when bundle exceeds inline cap"
     )
+    assert len(orjson.dumps(bundle)) <= 1000
 
 
 def test_load_aggregate_for_cr_keeps_confidence_under_cap(tmp_path: Path):
@@ -183,6 +184,81 @@ def test_load_aggregate_for_cr_keeps_confidence_under_cap(tmp_path: Path):
 
     bundle = _load_aggregate_for_cr(base_dir, "ns", "s", "1234")
     assert "confidence" in bundle
+
+
+def test_load_aggregate_for_cr_omits_children_when_still_over_cap(
+    tmp_path: Path, monkeypatch
+):
+    """Children must not make the terminal CR aggregate exceed its budget."""
+    base_dir = tmp_path
+    sweep_dir = base_dir / "ns" / "sweeps" / "s" / "1234"
+    _write_json(sweep_dir / "aggregate.json", {"summary": "small"})
+    _write_json(
+        sweep_dir / "children.json",
+        {
+            "sweep_run_epoch": "1234",
+            "children": [
+                {
+                    "namespace": "ns",
+                    "name": f"s-v{i:04d}",
+                    "variation_index": i,
+                    "variation_label": "x" * 80,
+                    "trial_index": 0,
+                    "child_run_epoch": "1234",
+                }
+                for i in range(250)
+            ],
+        },
+    )
+    _write_json(
+        base_dir / "aggregate" / "profile_export_aiperf_aggregate.json", {"small": 1}
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.main._AGGREGATE_INLINE_MAX_BYTES", 1000
+    )
+
+    bundle = _load_aggregate_for_cr(base_dir, "ns", "s", "1234")
+
+    assert len(orjson.dumps(bundle)) <= 1000
+    assert "children" not in bundle
+    assert bundle["childrenTruncated"] == {
+        "reason": "inline_status_budget_exceeded",
+        "total": 250,
+        "included": 0,
+        "sweep_run_epoch": "1234",
+    }
+
+
+def test_load_aggregate_for_cr_drops_confidence_then_omits_children(
+    tmp_path: Path, monkeypatch
+):
+    """The post-confidence-drop bundle is rechecked before patching status."""
+    base_dir = tmp_path
+    sweep_dir = base_dir / "ns" / "sweeps" / "s" / "1234"
+    _write_json(sweep_dir / "aggregate.json", {"summary": "small"})
+    _write_json(
+        sweep_dir / "children.json",
+        {
+            "sweep_run_epoch": "1234",
+            "children": [
+                {"name": f"child-{i}", "payload": "y" * 50} for i in range(200)
+            ],
+        },
+    )
+    _write_json(
+        base_dir / "aggregate" / "profile_export_aiperf_aggregate.json",
+        {f"row_{i}": list(range(20)) for i in range(200)},
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.main._AGGREGATE_INLINE_MAX_BYTES", 1000
+    )
+
+    bundle = _load_aggregate_for_cr(base_dir, "ns", "s", "1234")
+
+    assert len(orjson.dumps(bundle)) <= 1000
+    assert "confidence" not in bundle
+    assert "children" not in bundle
+    assert bundle["childrenTruncated"]["total"] == 200
 
 
 def test_load_aggregate_for_cr_skips_malformed_pareto_keeps_others(tmp_path: Path):

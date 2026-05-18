@@ -1,17 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Per-variation run-summary append helpers for the sweep rollup handler.
-
-Carved out of ``child_rollup.py`` to keep that module under the 500-line
-ergonomics ceiling. The rollup handler in ``child_rollup`` owns the
-counts/currentChildRef/phase logic; this module owns the
-``AIPerfSweep.status.runs[]`` summary-entry contract.
-"""
+"""Per-variation ``AIPerfSweep.status.runs[]`` append helpers."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
+
+import orjson
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -25,25 +21,32 @@ __all__ = [
     "append_run_entry",
 ]
 
-# Lowercased terminal phases from the child's ``status.phase`` that
-# trigger a runs[] summary append. Matches AIPerfJob's terminal-phase
-# vocabulary; PartiallyFailed intentionally excluded (it is a parent
-# rollup state, never a child phase).
 TERMINAL_CHILD_PHASES = frozenset({"completed", "succeeded", "failed", "cancelled"})
-
-# Safety threshold: stop appending to runs[] when the entry count would
-# push the AIPerfSweep CR past this. Headroom under apiserver's 1 MiB
-# limit (per preflight workload validator). 1500 x 600B ~ 900 KB.
 _RUNS_SAFETY_THRESHOLD = 1500
+_STATUS_RUNS_MAX_BYTES = 350_000
+_STATUS_VARIATION_VALUES_MAX_BYTES = 256
+
+
+def _status_variation_values_truncated_payload(original_bytes: int) -> dict[str, Any]:
+    return {
+        "__aiperf_truncated__": True,
+        "reason": "variation values exceeded status byte limit",
+        "limitBytes": _STATUS_VARIATION_VALUES_MAX_BYTES,
+        "originalBytes": original_bytes,
+    }
+
+
+def _bounded_status_variation_values(raw: str) -> str:
+    encoded = raw.encode()
+    if len(encoded) <= _STATUS_VARIATION_VALUES_MAX_BYTES:
+        return raw
+    return orjson.dumps(
+        _status_variation_values_truncated_payload(len(encoded))
+    ).decode()
 
 
 def extract_summary_metrics(child_status: dict[str, Any]) -> dict[str, Any]:
-    """Extract the slim metric set carried on AIPerfSweep.status.runs[i].metrics.
-
-    Per spec: output_token_throughput, request_throughput, ttft.{p50,p95,p99},
-    itl.{p50,p95,p99}, request_count, error_count. Bounded ~400-800 bytes.
-    Pulled from child AIPerfJob.status.summary or .liveSummary if present.
-    """
+    """Extract the slim metric set carried on AIPerfSweep.status.runs[i].metrics."""
     summary = child_status.get("summary") or child_status.get("liveSummary") or {}
     out: dict[str, Any] = {}
     for key in (
@@ -70,13 +73,7 @@ def build_run_entry(
     status: dict[str, Any],
     name: str,
 ) -> dict[str, Any]:
-    """Build the slim summary entry to append to ``status.runs[]``.
-
-    ``body`` is the just-transitioned child AIPerfJob; ``status`` is its
-    ``status`` subresource; ``name`` is the child's ``metadata.name``.
-    Variation index/label/values are read from labels and annotations
-    stamped at child-creation time by the sweep-controller's k8s_executor.
-    """
+    """Build the slim summary entry to append to ``status.runs[]``."""
     metadata = body.get("metadata") or {}
     labels = metadata.get("labels") or {}
     annotations = metadata.get("annotations") or {}
@@ -87,7 +84,9 @@ def build_run_entry(
     return {
         "index": index,
         "label": labels.get("aiperf.nvidia.com/variation-label", ""),
-        "values": annotations.get("aiperf.nvidia.com/variation-values", ""),
+        "values": _bounded_status_variation_values(
+            annotations.get("aiperf.nvidia.com/variation-values", "")
+        ),
         "phase": status.get("phase"),
         "childName": name,
         "startedAt": status.get("startTime"),
@@ -105,9 +104,10 @@ async def append_run_entry(
 ) -> None:
     """Append ``entry`` to ``AIPerfSweep.status.runs`` via JSON-patch.
 
-    Two-step: idempotently initialize ``status.runs = []`` (swallowing the
-    409/422 from re-init when it already exists), then ``add`` the entry
-    at ``/status/runs/-``.
+    Read first, initialize ``status.runs = []`` only when absent, then
+    ``add`` the entry at ``/status/runs/-``. JSON Patch ``add`` to an
+    existing object member replaces it, so repeated appends must not send
+    the initializer once ``runs`` already exists.
 
     Truncation safety net: if the current ``runs[]`` length is at or above
     ``_RUNS_SAFETY_THRESHOLD``, skip the append and stamp
@@ -116,76 +116,279 @@ async def append_run_entry(
     full run list from the operator results API.
     """
     from kubernetes_asyncio import client
-    from kubernetes_asyncio.client.exceptions import ApiException
 
     custom_objects = client.CustomObjectsApi(api)
-    try:
-        await custom_objects.patch_namespaced_custom_object(
-            group="aiperf.nvidia.com",
-            version="v1alpha1",
-            plural="aiperfsweeps",
-            namespace=namespace,
-            name=sweep_name,
-            body=[{"op": "add", "path": "/status/runs", "value": []}],
-            _content_type="application/json-patch+json",
-        )
-    except ApiException as e:
-        # 409/422 = path already exists; that's the steady-state case
-        # after the very first append. 404 = parent CR was deleted; the
-        # subsequent append will see the same 404 and be skipped there.
-        if e.status not in (409, 422, 404):
-            logger.warning(
-                "runs[] init-patch failed for %s/%s: %s",
+    max_attempts = 20
+    for _attempt in range(max_attempts):
+        (
+            current_runs,
+            total_variations,
+            runs_present,
+            runs_is_list,
+            runs_truncated_present,
+            resource_version,
+        ) = await _read_runs_state(custom_objects, namespace, sweep_name)
+        if runs_truncated_present:
+            return
+        if runs_present and not runs_is_list:
+            await _truncate_non_list_runs(
+                custom_objects, namespace, sweep_name, total_variations
+            )
+            return
+        if not runs_present:
+            init_result = await _ensure_runs_present(
+                custom_objects,
                 namespace,
                 sweep_name,
-                e.reason,
+                resource_version=resource_version,
             )
+            if init_result == "retry":
+                continue
+            if init_result == "missing":
+                return
 
-    current_runs_len, total_variations = await _read_runs_len_and_total(
-        custom_objects, namespace, sweep_name
-    )
-    if current_runs_len >= _RUNS_SAFETY_THRESHOLD:
-        await _stamp_runs_truncated(
+        if _run_entry_already_present(current_runs, entry):
+            return
+
+        if await _truncate_if_over_budget(
             custom_objects,
             namespace,
             sweep_name,
-            included=current_runs_len,
-            total=total_variations or current_runs_len,
-        )
-        return
+            current_runs,
+            entry,
+            total_variations=total_variations,
+        ):
+            return
 
+        append_result = await _append_run_entry_patch(
+            custom_objects,
+            namespace,
+            sweep_name,
+            entry,
+            resource_version=resource_version,
+        )
+        if _append_result_needs_retry(namespace, sweep_name, append_result):
+            continue
+        return
+    _raise_runs_retry(
+        namespace,
+        sweep_name,
+        f"runs[] append raced for {max_attempts} resourceVersion attempts",
+    )
+
+
+async def _truncate_if_over_budget(
+    custom_objects: Any,
+    namespace: str,
+    sweep_name: str,
+    current_runs: list[dict[str, Any]],
+    entry: dict[str, Any],
+    *,
+    total_variations: int,
+) -> bool:
+    current_runs_len = len(current_runs)
+    if (
+        current_runs_len < _RUNS_SAFETY_THRESHOLD
+        and not _runs_payload_would_exceed_budget(current_runs, entry)
+    ):
+        return False
+    await _stamp_runs_truncated(
+        custom_objects,
+        namespace,
+        sweep_name,
+        included=current_runs_len,
+        total=total_variations or current_runs_len,
+    )
+    return True
+
+
+async def _ensure_runs_present(
+    custom_objects: Any,
+    namespace: str,
+    sweep_name: str,
+    *,
+    resource_version: str | None,
+) -> Literal["initialized", "missing", "retry"]:
+    if resource_version is None:
+        _raise_runs_retry(
+            namespace,
+            sweep_name,
+            "status.runs absent but resourceVersion unavailable",
+        )
+    return await _initialize_runs_if_absent(
+        custom_objects,
+        namespace,
+        sweep_name,
+        resource_version=resource_version,
+    )
+
+
+def _run_entry_already_present(
+    current_runs: list[dict[str, Any]], entry: dict[str, Any]
+) -> bool:
+    child_name = entry.get("childName")
+    if child_name:
+        return any(run.get("childName") == child_name for run in current_runs)
+
+    identity = (entry.get("index"), entry.get("label"), entry.get("values"))
+    return any(
+        (run.get("index"), run.get("label"), run.get("values")) == identity
+        for run in current_runs
+    )
+
+
+def _append_result_needs_retry(
+    namespace: str,
+    sweep_name: str,
+    result: Literal["appended", "missing", "retry", "failed"],
+) -> bool:
+    if result == "retry":
+        return True
+    if result == "failed":
+        _raise_runs_retry(
+            namespace,
+            sweep_name,
+            "runs[] append failed before entry was persisted",
+        )
+    return False
+
+
+def _raise_runs_retry(namespace: str, sweep_name: str, reason: str) -> NoReturn:
+    import kopf
+
+    raise kopf.TemporaryError(
+        f"retry AIPerfSweep {namespace}/{sweep_name} child run rollup: {reason}",
+        delay=5,
+    )
+
+
+def _is_resource_version_retry(error: Any, resource_version: str | None) -> bool:
+    """Return true when a JSON Patch CAS failure should re-read and retry."""
+    if resource_version is None or error.status not in {409, 422}:
+        return False
+    if error.status == 409:
+        return True
+    text = " ".join(
+        str(part).lower()
+        for part in (getattr(error, "reason", ""), getattr(error, "body", ""))
+    )
+    return "resourceversion" in text or "resource version" in text
+
+
+async def _truncate_non_list_runs(
+    custom_objects: Any, namespace: str, sweep_name: str, total_variations: int
+) -> None:
+    logger.warning(
+        "runs[] has non-list value for %s/%s; refusing to replace it",
+        namespace,
+        sweep_name,
+    )
+    await _stamp_runs_truncated(
+        custom_objects,
+        namespace,
+        sweep_name,
+        included=0,
+        total=total_variations,
+    )
+
+
+async def _append_run_entry_patch(
+    custom_objects: Any,
+    namespace: str,
+    sweep_name: str,
+    entry: dict[str, Any],
+    *,
+    resource_version: str | None,
+) -> Literal["appended", "missing", "retry", "failed"]:
+    """Append one run entry with a resourceVersion CAS guard."""
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    body = []
+    if resource_version is not None:
+        body.append(
+            {
+                "op": "test",
+                "path": "/metadata/resourceVersion",
+                "value": resource_version,
+            }
+        )
+    body.append({"op": "add", "path": "/status/runs/-", "value": entry})
     try:
-        await custom_objects.patch_namespaced_custom_object(
+        await custom_objects.patch_namespaced_custom_object_status(
             group="aiperf.nvidia.com",
             version="v1alpha1",
             plural="aiperfsweeps",
             namespace=namespace,
             name=sweep_name,
-            body=[{"op": "add", "path": "/status/runs/-", "value": entry}],
+            body=body,
             _content_type="application/json-patch+json",
         )
     except ApiException as e:
         if e.status == 404:
-            return
+            return "missing"
+        if _is_resource_version_retry(e, resource_version):
+            return "retry"
         logger.warning(
             "runs[] append failed for %s/%s: %s",
             namespace,
             sweep_name,
             e.reason,
         )
+        return "failed"
+    return "appended"
 
 
-async def _read_runs_len_and_total(
+async def _initialize_runs_if_absent(
     custom_objects: Any,
     namespace: str,
     sweep_name: str,
-) -> tuple[int, int]:
-    """Return ``(len(status.runs), status.totalVariations)`` for the sweep.
+    *,
+    resource_version: str | None,
+) -> Literal["initialized", "missing", "retry"]:
+    """Initialize absent ``status.runs`` without replacing existing values."""
+    from kubernetes_asyncio.client.exceptions import ApiException
 
-    Best-effort: any GET failure returns ``(0, 0)`` so the caller falls
-    through to the normal append path. The threshold check is a safety
-    net, not a correctness gate.
-    """
+    body = []
+    if resource_version is not None:
+        body.append(
+            {
+                "op": "test",
+                "path": "/metadata/resourceVersion",
+                "value": resource_version,
+            }
+        )
+    body.append({"op": "add", "path": "/status/runs", "value": []})
+    try:
+        await custom_objects.patch_namespaced_custom_object_status(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            plural="aiperfsweeps",
+            namespace=namespace,
+            name=sweep_name,
+            body=body,
+            _content_type="application/json-patch+json",
+        )
+    except ApiException as e:
+        if e.status == 404:
+            return "missing"
+        if _is_resource_version_retry(e, resource_version):
+            return "retry"
+        logger.warning(
+            "runs[] init-patch failed for %s/%s: %s",
+            namespace,
+            sweep_name,
+            e.reason,
+        )
+        return "retry"
+    return "initialized"
+
+
+async def _read_runs_state(
+    custom_objects: Any,
+    namespace: str,
+    sweep_name: str,
+) -> tuple[list[dict[str, Any]], int, bool, bool, bool, str | None]:
+    """Return current run-list state plus truncation and resourceVersion flags."""
     from kubernetes_asyncio.client.exceptions import ApiException
 
     try:
@@ -196,18 +399,46 @@ async def _read_runs_len_and_total(
             namespace=namespace,
             name=sweep_name,
         )
-    except ApiException:
-        return 0, 0
-    except (ConnectionError, TimeoutError):
-        return 0, 0
+    except ApiException as e:
+        if e.status == 404:
+            return [], 0, True, True, True, None
+        _raise_runs_retry(
+            namespace,
+            sweep_name,
+            f"apiserver rejected status read ({e.status}): {e.reason}",
+        )
+    except (ConnectionError, TimeoutError) as e:
+        _raise_runs_retry(
+            namespace,
+            sweep_name,
+            f"apiserver unreachable during status read: {e}",
+        )
+    resource_version = ((cr or {}).get("metadata") or {}).get("resourceVersion")
     status = (cr or {}).get("status") or {}
-    runs = status.get("runs") or []
+    runs_present = "runs" in status
+    raw_runs = status.get("runs")
+    runs_is_list = isinstance(raw_runs, list)
+    runs = raw_runs if runs_is_list else []
+    runs_truncated_present = "runsTruncated" in status
     total = status.get("totalVariations") or 0
     try:
         total_int = int(total)
     except (TypeError, ValueError):
         total_int = 0
-    return len(runs), total_int
+    return (
+        runs,
+        total_int,
+        runs_present,
+        runs_is_list,
+        runs_truncated_present,
+        resource_version,
+    )
+
+
+def _runs_payload_would_exceed_budget(
+    current_runs: list[dict[str, Any]], entry: dict[str, Any]
+) -> bool:
+    return len(orjson.dumps({"runs": [*current_runs, entry]})) > _STATUS_RUNS_MAX_BYTES
 
 
 async def _stamp_runs_truncated(
@@ -220,9 +451,10 @@ async def _stamp_runs_truncated(
 ) -> None:
     """Stamp ``status.runsTruncated`` with ``{total, included, fetchURL}``.
 
-    Best-effort merge-patch; logs and swallows non-404 errors so a stuck
-    apiserver does not block the rollup handler. The fetchURL points at
-    the operator results API's per-sweep children endpoint.
+    Missing sweep CRs are ignored because the parent was deleted. Other
+    apiserver failures raise ``kopf.TemporaryError`` so the rollup event is
+    retried and the durable truncation marker is not silently skipped. The
+    fetchURL points at the operator results API's per-sweep children endpoint.
     """
     from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -252,9 +484,14 @@ async def _stamp_runs_truncated(
     except ApiException as e:
         if e.status == 404:
             return
-        logger.warning(
-            "runsTruncated stamp failed for %s/%s: %s",
+        _raise_runs_retry(
             namespace,
             sweep_name,
-            e.reason,
+            f"runsTruncated stamp failed ({e.status}): {e.reason}",
+        )
+    except (ConnectionError, TimeoutError) as e:
+        _raise_runs_retry(
+            namespace,
+            sweep_name,
+            f"apiserver unreachable during runsTruncated stamp: {e}",
         )

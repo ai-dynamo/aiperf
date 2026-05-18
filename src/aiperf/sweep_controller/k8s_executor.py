@@ -50,6 +50,8 @@ SWEEP_UID_LABEL = "aiperf.nvidia.com/sweep-uid"
 SWEEP_RUN_EPOCH_LABEL = "aiperf.nvidia.com/sweep-run-epoch"
 VARIATION_INDEX_LABEL = "aiperf.nvidia.com/variation-index"
 VARIATION_LABEL_LABEL = "aiperf.nvidia.com/variation-label"
+VARIATION_VALUES_ANNOTATION = "aiperf.nvidia.com/variation-values"
+VARIATION_VALUES_MAX_ANNOTATION_BYTES = 2048
 TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
 
 TERMINAL_PHASES = frozenset(
@@ -88,6 +90,8 @@ __all__ = [
     "TRIAL_INDEX_LABEL",
     "VARIATION_INDEX_LABEL",
     "VARIATION_LABEL_LABEL",
+    "VARIATION_VALUES_ANNOTATION",
+    "VARIATION_VALUES_MAX_ANNOTATION_BYTES",
     "ApiException",
     "ChildNameConflictError",
     "CustomObjectsApi",
@@ -111,6 +115,22 @@ def is_my_child(child: dict[str, Any], *, sweep_uid: str, sweep_name: str) -> bo
     owner_match = any(ref.get("uid") == sweep_uid for ref in refs)
     label_match = (meta.get("labels") or {}).get(SWEEP_LABEL) == sweep_name
     return owner_match and label_match
+
+
+def _variation_values_truncated_payload(original_bytes: int) -> dict[str, Any]:
+    return {
+        "__aiperf_truncated__": True,
+        "reason": "variation values exceeded metadata byte limit",
+        "limitBytes": VARIATION_VALUES_MAX_ANNOTATION_BYTES,
+        "originalBytes": original_bytes,
+    }
+
+
+def _bounded_variation_values_json(values: Any) -> str:
+    encoded = orjson.dumps(values)
+    if len(encoded) <= VARIATION_VALUES_MAX_ANNOTATION_BYTES:
+        return encoded.decode()
+    return orjson.dumps(_variation_values_truncated_payload(len(encoded))).decode()
 
 
 class K8sChildJobExecutor(RunExecutor):
@@ -248,6 +268,9 @@ class K8sChildJobExecutor(RunExecutor):
         if run.variation is not None:
             labels[VARIATION_INDEX_LABEL] = f"{run.variation.index:02d}"
             labels[VARIATION_LABEL_LABEL] = _sanitize_for_label(run.variation.label)
+            user_annotations[VARIATION_VALUES_ANNOTATION] = (
+                _bounded_variation_values_json(run.variation.values)
+            )
         if self.with_trial_suffix:
             labels[TRIAL_INDEX_LABEL] = f"{run.trial:01d}"
         return {

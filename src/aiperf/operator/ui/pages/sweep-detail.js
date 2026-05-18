@@ -406,14 +406,6 @@ export function SweepDetail({ namespace, name, epoch }) {
     }
   }
 
-  function openArtifactFile(fileName) {
-    if (resolvedEpoch == null) return;
-    const a = document.createElement('a');
-    a.href = api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName);
-    a.download = fileName;
-    a.click();
-  }
-
   const childRows = useMemo(() => {
     const live = detail?.children ?? [];
     if (epoch !== undefined && live.length === 0 && archivedChildren) {
@@ -623,19 +615,30 @@ export function SweepDetail({ namespace, name, epoch }) {
           resolvedEpoch=${resolvedEpoch}
           isCompleted=${isCompleted}
           isRunning=${isRunning}
-          openFile=${openArtifactFile}
           api=${api}
           fmtBytes=${fmtBytes}
           title="Aggregate Artifacts"
           testIdPrefix="sweep-detail-aggregate-artifacts"
+          cardTestId="sweep-detail-aggregate-artifacts-card"
           bundleUrl=${resolvedEpoch != null ? api.sweepArtifactBundleUrl(namespace, name, resolvedEpoch) : null}
           quickExportUrl=${resolvedEpoch != null ? api.sweepProfileExportUrl(namespace, name, resolvedEpoch, 'json') : null}
+          quickExportLabel="Export JSON"
+          showIndividualDownloadAll=${true}
+          fileUrl=${fileName => resolvedEpoch != null
+            ? api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName)
+            : null}
           emptyMessages=${{
             waiting: 'Waiting for a sweep epoch before showing aggregate artifacts.',
             completed: 'No aggregate artifacts available for this sweep epoch.',
             running: 'No aggregate artifacts yet.',
             available: 'No aggregate artifacts available for this sweep epoch.',
             unavailable: 'No aggregate artifacts available for this sweep epoch.',
+          }}
+          emptyDetails=${{
+            waiting: 'This page requires a pinned sweep epoch before it will fetch aggregate artifacts, so the sweep summary and results cannot drift to different runs.',
+            completed: 'The sweep completed but no aggregate artifacts were uploaded — check the operator logs or the sweep-controller pod for this epoch.',
+            running: 'Aggregate files appear here once the sweep-controller writes and uploads the sweep aggregate bundle.',
+            unavailable: 'Aggregate artifacts will appear here after the sweep starts producing output.',
           }}
         />
       </div>

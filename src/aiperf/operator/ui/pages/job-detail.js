@@ -22,6 +22,7 @@ import { jobs as jobsSignal } from '../lib/state.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 import { ServerMetricsSection } from '../components/server-metrics/index.js';
 import { RelaunchButton } from '../components/relaunch-button.js';
+import { ArtifactsCard } from '../components/artifacts-card.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -827,7 +828,7 @@ function RunMetadata({ status, results, info }) {
   `;
 }
 
-// --- File Viewer Modal ---
+// --- Shared Modal Chrome ---
 
 // Shared modal chrome styles
 const BACKDROP_STYLE = [
@@ -849,15 +850,10 @@ const MODAL_BASE_STYLE = [
 // Default modal sizing (used by the spec/YAML viewer).
 const MODAL_STYLE = MODAL_BASE_STYLE + ' max-width: 80vw; width: 900px;';
 
-// Wider sizing for file viewers (profile_export_aiperf.json and friends —
-// pretty-printed JSON nested several levels deep needs the horizontal room).
-const MODAL_STYLE_WIDE = MODAL_BASE_STYLE + ' max-width: 95vw; width: 1400px;';
-
-function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, wide, children }) {
-  const modalStyle = wide ? MODAL_STYLE_WIDE : MODAL_STYLE;
+function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, children }) {
   return html`
     <div style=${BACKDROP_STYLE} onclick=${e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style=${modalStyle}>
+      <div style=${MODAL_STYLE}>
         <div style=${'display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid ' + palette.surface0 + '; flex-shrink: 0'}>
           <span style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
           <div style="display: flex; gap: var(--space-2); align-items: center">
@@ -885,177 +881,6 @@ function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, wide, c
   `;
 }
 
-function syntaxHighlight(json) {
-  // Split formatted JSON into tokens and wrap with color spans.
-  // Returns array of {text, color} objects.
-  const tokens = [];
-  const re = /("(?:[^"\\]|\\.)*")\s*:|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)|([\[\]{},])|(\s+)/g;
-  let match;
-  let lastIndex = 0;
-  while ((match = re.exec(json)) !== null) {
-    if (match.index > lastIndex) {
-      tokens.push({ text: json.slice(lastIndex, match.index), color: null });
-    }
-    if (match[1] !== undefined) {
-      // object key (includes trailing `:` from the pattern)
-      tokens.push({ text: match[0], color: palette.mauve });
-    } else if (match[2] !== undefined) {
-      // string value
-      tokens.push({ text: match[2], color: palette.green });
-    } else if (match[3] !== undefined) {
-      // number
-      tokens.push({ text: match[3], color: palette.peach });
-    } else if (match[4] !== undefined) {
-      // boolean
-      tokens.push({ text: match[4], color: palette.blue });
-    } else if (match[5] !== undefined) {
-      // null
-      tokens.push({ text: match[5], color: palette.overlay0 });
-    } else {
-      // punctuation or whitespace - no color
-      tokens.push({ text: match[0], color: null });
-    }
-    lastIndex = re.lastIndex;
-  }
-  if (lastIndex < json.length) {
-    tokens.push({ text: json.slice(lastIndex), color: null });
-  }
-  return tokens;
-}
-
-function parseCSV(text) {
-  // Simple CSV parser: handles quoted fields with embedded commas/newlines.
-  const rows = [];
-  const lines = text.split('\n');
-  for (const line of lines) {
-    if (line.trim() === '') continue;
-    const cols = [];
-    let cur = '';
-    let inQuote = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
-        else { inQuote = !inQuote; }
-      } else if (ch === ',' && !inQuote) {
-        cols.push(cur);
-        cur = '';
-      } else {
-        cur += ch;
-      }
-    }
-    cols.push(cur);
-    rows.push(cols);
-  }
-  return rows;
-}
-
-function stripAnsi(text) {
-  // Remove ANSI escape sequences (color codes, cursor control, etc.)
-  return text.replace(/\x1b\[[0-9;]*[mGKHFJ]/g, '');
-}
-
-// Generic file viewer modal: dispatches to JSON/CSV/TXT renderers based on extension.
-function FileViewerModal({ filename, url, onClose }) {
-  const [rawContent, setRawContent] = useState(null);
-  const [parsedJson, setParsedJson] = useState(null);
-  const [copyLabel, setCopyLabel] = useState('Copy');
-  const ext = filename.split('.').pop().toLowerCase();
-
-  useEffect(() => {
-    if (ext === 'json') {
-      fetch(url)
-        .then(r => r.json())
-        .then(d => { setParsedJson(d); setRawContent(JSON.stringify(d, null, 2)); })
-        .catch(() => { setRawContent(null); });
-    } else {
-      fetch(url)
-        .then(r => r.text())
-        .then(t => setRawContent(t))
-        .catch(() => setRawContent(null));
-    }
-  }, [url, ext]);
-
-  function handleDownload() {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-  }
-
-  function handleCopy() {
-    if (rawContent == null) return;
-    navigator.clipboard.writeText(rawContent).then(() => {
-      setCopyLabel('Copied!');
-      setTimeout(() => setCopyLabel('Copy'), 2000);
-    });
-  }
-
-  let body;
-  if (rawContent == null) {
-    body = html`<span style="display: inline-flex; align-items: center; gap: var(--space-2)"><${Spinner} size=${14} /><span class="text-dim">Loading file…</span></span>`;
-  } else if (ext === 'json') {
-    const tokens = syntaxHighlight(rawContent);
-    body = html`
-      <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text}>
-        ${tokens.map((t, i) =>
-          t.color
-            ? html`<span key=${i} style=${'color: ' + t.color}>${t.text}</span>`
-            : t.text
-        )}
-      </pre>
-    `;
-  } else if (ext === 'csv') {
-    const rows = parseCSV(rawContent);
-    if (rows.length === 0) {
-      body = html`<span class="text-dim">Empty file</span>`;
-    } else {
-      const header = rows[0];
-      const dataRows = rows.slice(1);
-      body = html`
-        <div style="overflow-x: auto">
-          <table style=${'border-collapse: collapse; font-size: var(--font-size-xs); font-family: monospace; min-width: 100%'}>
-            <thead>
-              <tr>
-                ${header.map((col, i) => html`
-                  <th key=${i} style=${'padding: var(--space-2) var(--space-3); text-align: left; font-weight: 700; color: ' + palette.text + '; background: ' + palette.surface0 + '; border-bottom: 2px solid ' + palette.surface1 + '; white-space: nowrap'}>${col}</th>
-                `)}
-              </tr>
-            </thead>
-            <tbody>
-              ${dataRows.map((row, ri) => html`
-                <tr key=${ri} style=${'background: ' + (ri % 2 === 0 ? palette.base : palette.mantle)}>
-                  ${row.map((cell, ci) => html`
-                    <td key=${ci} style=${'padding: var(--space-1) var(--space-3); color: ' + palette.text + '; border-bottom: 1px solid ' + palette.surface0 + '; white-space: nowrap'}>${cell}</td>
-                  `)}
-                </tr>
-              `)}
-            </tbody>
-          </table>
-        </div>
-      `;
-    }
-  } else {
-    // txt or ansi: strip ANSI codes and show as plain monospace text
-    const plain = ext === 'ansi' ? stripAnsi(rawContent) : rawContent;
-    body = html`
-      <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text + '; tab-size: 4'}>${plain}</pre>
-    `;
-  }
-
-  return html`
-    <${ModalChrome}
-      filename=${filename}
-      onCopy=${handleCopy}
-      onDownload=${handleDownload}
-      onClose=${onClose}
-      copyLabel=${copyLabel}
-      wide=${true}
-    >
-      ${body}
-    </${ModalChrome}>
-  `;
-}
 
 // Minimal YAML emitter for AIPerfJob CR specs. Handles strings, numbers,
 // bools, null, lists, objects. Quotes strings that contain YAML-significant
@@ -1162,9 +987,9 @@ function syntaxHighlightYaml(text) {
   return tokens;
 }
 
-// Spec viewer modal: in-memory YAML content (no URL fetch). Mirrors
-// FileViewerModal's chrome but owns its own Escape listener so it's
-// self-contained — JobConfigSection state is local to that component.
+// Spec viewer modal: in-memory YAML content (no URL fetch). Reuses
+// shared modal chrome but owns its own Escape listener so it's self-contained —
+// JobConfigSection state is local to that component.
 function SpecViewerModal({ filename, content, onClose }) {
   const [copyLabel, setCopyLabel] = useState('Copy');
 
@@ -1628,7 +1453,6 @@ export function JobDetail({ namespace, name, epoch }) {
   const [serverMetrics, setServerMetrics] = useState(null);
   const [serverMetricsLoaded, setServerMetricsLoaded] = useState(false);
   const [serverMetricsError, setServerMetricsError] = useState(null);
-  const [fileViewer, setFileViewer] = useState(null); // { filename, url }
   const [jsonlRecords, setJsonlRecords] = useState(null);
   const [jsonlLoaded, setJsonlLoaded] = useState(false);
   const [jsonlError, setJsonlError] = useState(null);
@@ -1644,20 +1468,10 @@ export function JobDetail({ namespace, name, epoch }) {
   const [cancelState, setCancelState] = useState('idle');
   const [cancelError, setCancelError] = useState(null);
 
-  const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
-
   const resultsBase = epoch
     ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}`
     : null;
 
-  // Close file viewer on Escape
-  useEffect(() => {
-    function onKeyDown(e) {
-      if (e.key === 'Escape') setFileViewer(null);
-    }
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1865,43 +1679,6 @@ export function JobDetail({ namespace, name, epoch }) {
     return () => ac.abort();
   }, [namespace, name, epoch, resultsBase]);
 
-  function humanSize(bytes) {
-    return fmtBytes(bytes);
-  }
-
-  function downloadFile(fileName) {
-    const url = `${resultsBase}/${encodeURIComponent(fileName)}`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-  }
-
-  function openFile(fileName) {
-    const url = `${resultsBase}/${encodeURIComponent(fileName)}`;
-    const ext = fileName.split('.').pop().toLowerCase();
-    if (PREVIEWABLE.has(ext)) {
-      setFileViewer({ filename: fileName, url });
-    } else {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-    }
-  }
-
-  function downloadAll() {
-    // Browsers throttle synthetic download clicks from one user gesture;
-    // space them out so all files actually start downloading.
-    files.forEach((f, i) => {
-      setTimeout(() => downloadFile(f.name), i * 300);
-    });
-  }
-
-  function exportJson() {
-    const exportFile = files.find(f => f.name === 'profile_export_aiperf.json');
-    if (exportFile) downloadFile(exportFile.name);
-  }
 
   async function handleCancel() {
     setCancelError(null);
@@ -2064,11 +1841,6 @@ export function JobDetail({ namespace, name, epoch }) {
     },
   };
 
-  const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
-  // Sum file sizes for the "Download .zip (N MB)" label. Files without a known
-  // size (older API shapes) contribute 0; the label hides the size suffix
-  // entirely when the total is 0 so we never show a misleading "0 B" badge.
-  const totalArtifactBytes = files.reduce((s, f) => s + (Number(f.size_bytes) || 0), 0);
 
   // Warmup hint: running, but no live KPI numbers yet — typical for the first ~30s
   // while the workers ramp and TimingManager hasn't issued enough credits to populate
@@ -2077,42 +1849,6 @@ export function JobDetail({ namespace, name, epoch }) {
   const showWarmupHint = isRunning && noKpisYet;
   const currentSubPhase = info.currentPhase ?? status.currentPhase ?? null;
 
-  function fileColor(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    if (ext === 'json' || ext === 'jsonl') return palette.mauve;
-    if (ext === 'csv') return palette.teal;
-    if (ext === 'txt' || ext === 'ansi') return palette.blue;
-    return palette.overlay1;
-  }
-
-  // Per-extension chip that renders before each filename in the artifact list.
-  // Label is short (the extension, uppercase); color tints the background +
-  // border so users can scan the table by type. Unknown extensions fall back
-  // to a neutral grey so we never silently drop the chip.
-  function fileTypeChip(filename) {
-    const ext = (filename.split('.').pop() || '').toLowerCase();
-    const TYPES = {
-      json:    { label: 'JSON',    color: palette.yellow },
-      jsonl:   { label: 'JSONL',   color: palette.peach },
-      csv:     { label: 'CSV',     color: palette.green },
-      parquet: { label: 'PARQUET', color: palette.lavender },
-      txt:     { label: 'TXT',     color: palette.blue },
-      log:     { label: 'LOG',     color: palette.sapphire },
-      ansi:    { label: 'ANSI',    color: palette.sky },
-      yaml:    { label: 'YAML',    color: palette.teal },
-      yml:     { label: 'YAML',    color: palette.teal },
-      html:    { label: 'HTML',    color: palette.pink },
-      htm:     { label: 'HTML',    color: palette.pink },
-      zip:     { label: 'ZIP',     color: palette.overlay1 },
-      gz:      { label: 'GZ',      color: palette.overlay1 },
-      tar:     { label: 'TAR',     color: palette.overlay1 },
-      png:     { label: 'PNG',     color: palette.mauve },
-      jpg:     { label: 'JPG',     color: palette.mauve },
-      jpeg:    { label: 'JPG',     color: palette.mauve },
-      svg:     { label: 'SVG',     color: palette.mauve },
-    };
-    return TYPES[ext] ?? { label: (ext || 'FILE').toUpperCase().slice(0, 6), color: palette.overlay1 };
-  }
 
   return html`
     <div class="job-detail" data-testid="page-job-detail">
@@ -2439,134 +2175,22 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Full metrics breakdown (completed only) -->
       ${isCompleted && results && html`<${MetricsTable} results=${results} />`}
 
-      <!-- Artifacts — always rendered so the section's existence and
-           location are predictable; falls back to a contextual empty/
-           loading message instead of disappearing while the job is
-           still producing files. -->
-      <div class="card" style="margin-top: var(--space-4)" data-testid="artifacts-card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
-          <div class="card-title" style="margin: 0">Result Files</div>
-          ${files.length > 0 && html`
-            <div style="display: flex; gap: var(--space-2); flex-wrap: wrap">
-              ${hasExportFile && html`
-                <button
-                  onclick=${exportJson}
-                  style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
-                >
-                  Export JSON
-                </button>
-              `}
-              <a
-                class="btn"
-                href=${api.resultBundleUrl(namespace, name, epoch)}
-                download
-                data-testid="artifacts-bundle"
-                style=${'background: ' + palette.green + '22; color: ' + palette.green + '; border: 1px solid ' + palette.green + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
-                title=${'Download all ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' as a single .zip'}
-              >
-                Download .zip${totalArtifactBytes > 0 ? ` (${fmtBytes(totalArtifactBytes)})` : ''}
-              </a>
-              <button
-                onclick=${downloadAll}
-                style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
-                title="Trigger one download per file (browser saves them individually)"
-              >
-                Download All
-              </button>
-            </div>
-          `}
-        </div>
-
-        ${!filesLoaded && html`
-          <${LoadingPanel} label="Looking up result files…" inline=${true} testid="artifacts-loading" />
-        `}
-
-        ${filesLoaded && files.length === 0 && html`
-          <div data-testid="artifacts-empty" style=${'padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); border: 1px dashed ' + palette.surface0 + '; color: ' + palette.subtext0 + '; font-size: var(--font-size-sm); display: flex; align-items: center; gap: var(--space-3)'}>
-            <span style=${'flex-shrink: 0; color: ' + palette.overlay0}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M14 3 H7 a2 2 0 0 0 -2 2 v14 a2 2 0 0 0 2 2 h10 a2 2 0 0 0 2 -2 V8 z" />
-                <polyline points="14,3 14,8 19,8" />
-                <line x1="9" y1="13" x2="15" y2="13" />
-                <line x1="9" y1="17" x2="13" y2="17" />
-              </svg>
-            </span>
-            <div style="display: flex; flex-direction: column; gap: 2px">
-              <div style=${'font-weight: 600; color: ' + palette.text}>
-                ${resolvedEpoch == null
-                  ? 'Waiting for a run epoch before showing result files.'
-                  : isCompleted
-                    ? 'No result files persisted for this run.'
-                    : isRunning
-                      ? 'No result files yet.'
-                      : 'No result files available.'}
-              </div>
-              <div class="text-dim" style="font-size: var(--font-size-xs)">
-                ${resolvedEpoch == null
-                  ? 'This page now requires a pinned run epoch before it will fetch final artifacts, so the status and results cannot drift to different runs.'
-                  : isCompleted
-                    ? 'The job completed but no artifacts were uploaded — check the operator logs or the controller pod for this run.'
-                    : isRunning
-                      ? 'Files (profile_export_aiperf.json, profile_export.jsonl, server_metrics_export.json, ...) appear here once the run finishes and uploads them to the results PVC.'
-                      : 'Artifacts will appear here after the run starts producing output.'}
-              </div>
-            </div>
-          </div>
-        `}
-
-        ${filesLoaded && files.length > 0 && html`
-          <div style="display: flex; flex-direction: column; gap: var(--space-1)">
-            ${files.map(f => {
-              const ext = f.name.split('.').pop().toLowerCase();
-              const previewable = PREVIEWABLE.has(ext);
-              const chip = fileTypeChip(f.name);
-              const action = () => openFile(f.name);
-              return html`
-                <div
-                  key=${f.name}
-                  onclick=${action}
-                  onkeydown=${e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      action();
-                    }
-                  }}
-                  role="button"
-                  tabindex="0"
-                  aria-label=${(previewable ? 'Preview ' : 'Download ') + f.name}
-                  title=${previewable ? 'Click to preview' : 'Click to download'}
-                  style=${'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); background: ' + palette.base + '; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s; border: 1px solid ' + palette.surface0 + '60; outline: none'}
-                  onmouseenter=${e => { e.currentTarget.style.background = palette.surface0; }}
-                  onmouseleave=${e => { e.currentTarget.style.background = palette.base; }}
-                  onfocus=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.borderColor = palette.blue + '88'; }}
-                  onblur=${e => { e.currentTarget.style.background = palette.base; e.currentTarget.style.borderColor = palette.surface0 + '60'; }}
-                >
-                  <div style="display: flex; align-items: center; gap: var(--space-2); min-width: 0">
-                    <span
-                      class="file-type-chip"
-                      style=${'background: ' + chip.color + '22; color: ' + chip.color + '; border: 1px solid ' + chip.color + '55'}
-                      title=${'File type: ' + chip.label.toLowerCase()}
-                    >${chip.label}</span>
-                    <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name) + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap'}>${f.name}</span>
-                  </div>
-                  <div style="display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0">
-                    <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>${previewable ? 'preview' : 'download'}</span>
-                    <span class="text-dim" style="font-size: var(--font-size-xs)">${humanSize(f.size_bytes)}</span>
-                  </div>
-                </div>
-              `;
-            })}
-          </div>
-        `}
-      </div>
-    </div>
-    ${fileViewer && html`
-      <${FileViewerModal}
-        filename=${fileViewer.filename}
-        url=${fileViewer.url}
-        onClose=${() => setFileViewer(null)}
+      <${ArtifactsCard}
+        files=${files}
+        filesLoaded=${filesLoaded}
+        namespace=${namespace}
+        name=${name}
+        epoch=${epoch}
+        resolvedEpoch=${epoch}
+        isCompleted=${isCompleted}
+        isRunning=${isRunning}
+        api=${api}
+        fmtBytes=${fmtBytes}
+        title="Result Files"
+        testIdPrefix="job-detail-artifacts"
+        cardTestId="artifacts-card"
       />
-    `}
+    </div>
     <style>
       @keyframes pulse {
         0%, 100% { opacity: 1; transform: scale(1); }

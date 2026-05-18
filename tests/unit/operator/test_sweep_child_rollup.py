@@ -17,12 +17,14 @@ Mocking strategy:
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import kopf
+import orjson
 import pytest
 from pytest import param
 
@@ -1409,6 +1411,70 @@ class TestBuildRunEntry:
         )
         assert entry["index"] == -1
 
+    def test_small_scalar_variation_values_are_preserved(self) -> None:
+        entry = _child_runs.build_run_entry(
+            body={
+                "metadata": {
+                    "annotations": {
+                        "aiperf.nvidia.com/variation-values": '{"concurrency": 50}'
+                    }
+                }
+            },
+            status={"phase": "Succeeded"},
+            name="c",
+        )
+        assert entry["values"] == '{"concurrency": 50}'
+
+    def test_status_variation_values_use_compact_bound(self) -> None:
+        raw_values = orjson.dumps({"prompt_prefix": "x" * 2048}).decode()
+        entry = _child_runs.build_run_entry(
+            body={
+                "metadata": {
+                    "annotations": {"aiperf.nvidia.com/variation-values": raw_values}
+                }
+            },
+            status={"phase": "Succeeded"},
+            name="c",
+        )
+
+        values = entry["values"]
+        payload = orjson.loads(values)
+        assert payload == {
+            "__aiperf_truncated__": True,
+            "reason": "variation values exceeded status byte limit",
+            "limitBytes": 256,
+            "originalBytes": len(raw_values.encode()),
+        }
+        assert len(values.encode()) <= 256
+
+    def test_status_runs_budget_leaves_inline_aggregate_headroom(self) -> None:
+        from aiperf.sweep_controller.main import _AGGREGATE_INLINE_MAX_BYTES
+
+        apiserver_safe_status_bytes = 1_000_000
+
+        assert apiserver_safe_status_bytes >= (
+            _child_runs._STATUS_RUNS_MAX_BYTES + _AGGREGATE_INLINE_MAX_BYTES
+        )
+
+        raw_values = orjson.dumps({"prompt_prefix": "x" * 2048}).decode()
+        entries = [
+            _child_runs.build_run_entry(
+                body={
+                    "metadata": {
+                        "annotations": {
+                            "aiperf.nvidia.com/variation-values": raw_values
+                        }
+                    }
+                },
+                status={"phase": "Succeeded"},
+                name=f"c-{i}",
+            )
+            for i in range(1500)
+        ]
+
+        full_runs_payload_bytes = len(orjson.dumps({"runs": entries}))
+        assert full_runs_payload_bytes > _child_runs._STATUS_RUNS_MAX_BYTES
+
 
 class TestAppendRunEntryWiring:
     """End-to-end: ``on_child_phase_transition`` calls ``_append_run_entry``
@@ -1532,17 +1598,205 @@ class TestAppendRunEntryHelper:
     """Direct tests of ``_child_runs.append_run_entry`` JSON-patch behavior."""
 
     @pytest.mark.asyncio
-    async def test_init_then_append_two_patches(
+    async def test_repeated_appends_preserve_runs_and_truncate_before_budget(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Helper calls patch twice: init `[]` then `add` to /-."""
+        """Fake apiserver applies JSON patches across repeated appends."""
+
+        class FakeCustomObjectsApi:
+            def __init__(self) -> None:
+                self.cr: dict[str, Any] = {
+                    "metadata": {"resourceVersion": "1"},
+                    "status": {"totalVariations": 25},
+                }
+                self.status_patches: list[dict[str, Any]] = []
+
+            async def get_namespaced_custom_object(
+                self, **_kwargs: Any
+            ) -> dict[str, Any]:
+                return self.cr
+
+            async def patch_namespaced_custom_object(self, **_kwargs: Any) -> None:
+                raise AssertionError(
+                    "runs status writes must use the status subresource"
+                )
+
+            async def patch_namespaced_custom_object_status(
+                self, *, body: list[dict[str, Any]] | dict[str, Any], **_kwargs: Any
+            ) -> None:
+                self.status_patches.append(body)
+                status = self.cr.setdefault("status", {})
+                if isinstance(body, list):
+                    for op in body:
+                        if op.get("op") == "test":
+                            continue
+                        if op == {"op": "add", "path": "/status/runs", "value": []}:
+                            status["runs"] = []
+                            self.cr["metadata"]["resourceVersion"] = str(
+                                int(self.cr["metadata"]["resourceVersion"]) + 1
+                            )
+                        elif (
+                            op.get("op") == "add" and op.get("path") == "/status/runs/-"
+                        ):
+                            status.setdefault("runs", []).append(op["value"])
+                            self.cr["metadata"]["resourceVersion"] = str(
+                                int(self.cr["metadata"]["resourceVersion"]) + 1
+                            )
+                        else:  # pragma: no cover - defensive assertion aid
+                            raise AssertionError(f"unexpected JSON patch op: {op}")
+                    return
+                status.update(body.get("status", {}))
+
+        fake_custom = FakeCustomObjectsApi()
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: fake_custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+        monkeypatch.setattr(_child_runs, "_STATUS_RUNS_MAX_BYTES", 1000)
+
+        accepted: list[dict[str, Any]] = []
+        entries = [
+            {"index": i, "phase": "Succeeded", "childName": f"swp-v{i:02d}"}
+            for i in range(25)
+        ]
+        rejected_entry: dict[str, Any] | None = None
+        for entry in entries:
+            if _child_runs._runs_payload_would_exceed_budget(accepted, entry):
+                rejected_entry = entry
+                break
+            await _child_runs.append_run_entry("ns", "swp", entry, api=MagicMock())
+            accepted.append(entry)
+            assert fake_custom.cr["status"]["runs"] == accepted
+
+        assert rejected_entry is not None
+        assert len(accepted) > 10
+        assert len(orjson.dumps({"runs": fake_custom.cr["status"]["runs"]})) <= 1000
+
+        await _child_runs.append_run_entry("ns", "swp", rejected_entry, api=MagicMock())
+
+        assert fake_custom.cr["status"]["runs"] == accepted
+        assert len(orjson.dumps({"runs": fake_custom.cr["status"]["runs"]})) <= 1000
+        assert fake_custom.cr["status"]["runsTruncated"]["included"] == len(accepted)
+        assert fake_custom.cr["status"]["runsTruncated"]["total"] == 25
+
+    @pytest.mark.asyncio
+    async def test_existing_truncation_marker_makes_later_append_noop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once truncation is declared, later small entries must not mutate the prefix."""
+        marker = {
+            "total": 25,
+            "included": 12,
+            "fetchURL": "http://aiperf-operator.aiperf-system:8081"
+            "/api/v1/sweeps/ns/swp/children",
+        }
+        runs = [{"index": i, "childName": f"swp-v{i:02d}"} for i in range(12)]
         patch_mock = AsyncMock()
         custom = MagicMock()
-        custom.patch_namespaced_custom_object = patch_mock
-        # GET returns a CR with empty runs[] so we stay below the
-        # truncation threshold and follow the normal append path.
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError("runs status writes must use status subresource")
+        )
+        custom.patch_namespaced_custom_object_status = patch_mock
         custom.get_namespaced_custom_object = AsyncMock(
-            return_value={"status": {"runs": [], "totalVariations": 1}}
+            return_value={
+                "metadata": {"resourceVersion": "9"},
+                "status": {
+                    "runs": runs,
+                    "runsTruncated": marker,
+                    "totalVariations": 25,
+                },
+            }
+        )
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        await _child_runs.append_run_entry(
+            "ns",
+            "swp",
+            {"index": 12, "phase": "Succeeded", "childName": "swp-v12"},
+            api=MagicMock(),
+        )
+
+        patch_mock.assert_not_awaited()
+        status = custom.get_namespaced_custom_object.return_value["status"]
+        assert status["runs"] == runs
+        assert status["runsTruncated"] == marker
+
+    @pytest.mark.asyncio
+    async def test_retry_after_phase_patch_failure_does_not_duplicate_existing_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A retried child event must see the existing childName and no-op.
+
+        ``child_rollup`` appends ``status.runs[]`` before its later phase patch.
+        If that later patch raises ``TemporaryError``, kopf replays the same
+        child terminal event; this helper must make that replay idempotent.
+        """
+        entry = {
+            "index": 0,
+            "label": "v0",
+            "values": '{"concurrency": 1}',
+            "phase": "Succeeded",
+            "childName": "swp-v00-t0",
+        }
+        patch_mock = AsyncMock()
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError("runs status writes must use status subresource")
+        )
+        custom.patch_namespaced_custom_object_status = patch_mock
+        custom.get_namespaced_custom_object = AsyncMock(
+            return_value={
+                "metadata": {"resourceVersion": "9"},
+                "status": {"runs": [entry], "totalVariations": 1},
+            }
+        )
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        await _child_runs.append_run_entry("ns", "swp", dict(entry), api=MagicMock())
+
+        patch_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_runs_init_then_append_two_patches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Helper initializes absent ``runs`` once, then appends to /-."""
+        patch_mock = AsyncMock()
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError(
+                "runs status writes must use the status subresource"
+            )
+        )
+        custom.patch_namespaced_custom_object_status = patch_mock
+        # GET returns a CR with no runs[] so initialization is required
+        # before the normal append path.
+        custom.get_namespaced_custom_object = AsyncMock(
+            return_value={
+                "metadata": {"resourceVersion": "7"},
+                "status": {"totalVariations": 1},
+            }
         )
         fake_k8s_module = SimpleNamespace(
             CustomObjectsApi=lambda _api: custom,
@@ -1560,49 +1814,258 @@ class TestAppendRunEntryHelper:
         assert patch_mock.await_count == 2
         # First call: init runs[] = []
         first_body = patch_mock.await_args_list[0].kwargs["body"]
-        assert first_body == [{"op": "add", "path": "/status/runs", "value": []}]
+        assert first_body == [
+            {"op": "test", "path": "/metadata/resourceVersion", "value": "7"},
+            {"op": "add", "path": "/status/runs", "value": []},
+        ]
         # Second call: append to /-
         second_body = patch_mock.await_args_list[1].kwargs["body"]
         assert second_body == [
+            {"op": "test", "path": "/metadata/resourceVersion", "value": "7"},
             {
                 "op": "add",
                 "path": "/status/runs/-",
                 "value": {"index": 0, "phase": "Succeeded"},
-            }
+            },
         ]
 
     @pytest.mark.asyncio
-    async def test_init_409_swallowed_then_append_proceeds(
+    async def test_concurrent_absent_runs_initializers_preserve_both_appends(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Init-patch raising 409 (already exists) must not block the append."""
+        """Two stale absent readers must not let one init erase another append."""
+
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        class FakeCustomObjectsApi:
+            def __init__(self) -> None:
+                self.cr: dict[str, Any] = {
+                    "metadata": {"resourceVersion": "1"},
+                    "status": {"totalVariations": 2},
+                }
+                self.get_count = 0
+                self.init_count = 0
+                self.both_read_absent = asyncio.Event()
+                self.first_append_done = asyncio.Event()
+
+            async def get_namespaced_custom_object(
+                self, **_kwargs: Any
+            ) -> dict[str, Any]:
+                self.get_count += 1
+                if self.get_count == 2:
+                    self.both_read_absent.set()
+                await self.both_read_absent.wait()
+                if self.get_count <= 2:
+                    return {
+                        "metadata": {"resourceVersion": "1"},
+                        "status": {"totalVariations": 2},
+                    }
+                return self.cr
+
+            async def patch_namespaced_custom_object(self, **_kwargs: Any) -> None:
+                raise AssertionError(
+                    "runs status writes must use the status subresource"
+                )
+
+            async def patch_namespaced_custom_object_status(
+                self, *, body: list[dict[str, Any]], **_kwargs: Any
+            ) -> None:
+                status = self.cr.setdefault("status", {})
+                op_index = 0
+                if body[0].get("op") == "test":
+                    expected = body[0]["value"]
+                    actual = self.cr["metadata"]["resourceVersion"]
+                    if expected != actual:
+                        raise ApiException(status=409, reason="Conflict")
+                    op_index = 1
+                op = body[op_index]
+                if op == {"op": "add", "path": "/status/runs", "value": []}:
+                    self.init_count += 1
+                    if self.init_count == 2:
+                        await self.first_append_done.wait()
+                    status["runs"] = []
+                    self.cr["metadata"]["resourceVersion"] = str(
+                        int(self.cr["metadata"]["resourceVersion"]) + 1
+                    )
+                    return
+                if op.get("op") == "add" and op.get("path") == "/status/runs/-":
+                    status.setdefault("runs", []).append(op["value"])
+                    self.cr["metadata"]["resourceVersion"] = str(
+                        int(self.cr["metadata"]["resourceVersion"]) + 1
+                    )
+                    self.first_append_done.set()
+                    return
+                raise AssertionError(f"unexpected JSON patch op: {op}")
+
+        fake_custom = FakeCustomObjectsApi()
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: fake_custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        entries = [
+            {"index": 0, "phase": "Succeeded"},
+            {"index": 1, "phase": "Succeeded"},
+        ]
+        await asyncio.gather(
+            *(
+                _child_runs.append_run_entry("ns", "swp", entry, api=MagicMock())
+                for entry in entries
+            )
+        )
+
+        assert (
+            sorted(fake_custom.cr["status"]["runs"], key=lambda item: item["index"])
+            == entries
+        )
+
+    @pytest.mark.asyncio
+    async def test_many_concurrent_append_writers_preserve_all_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Many stale writers must retry until every child entry is appended."""
+
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        writer_count = 8
+
+        class FakeCustomObjectsApi:
+            def __init__(self) -> None:
+                self.cr: dict[str, Any] = {
+                    "metadata": {"resourceVersion": "1"},
+                    "status": {"runs": [], "totalVariations": writer_count},
+                }
+                self.get_count = 0
+                self.first_read_barrier = asyncio.Event()
+                self.lock = asyncio.Lock()
+
+            async def get_namespaced_custom_object(
+                self, **_kwargs: Any
+            ) -> dict[str, Any]:
+                self.get_count += 1
+                if self.get_count == writer_count:
+                    self.first_read_barrier.set()
+                if self.get_count <= writer_count:
+                    await self.first_read_barrier.wait()
+                    return {
+                        "metadata": {"resourceVersion": "1"},
+                        "status": {"runs": [], "totalVariations": writer_count},
+                    }
+                return {
+                    "metadata": dict(self.cr["metadata"]),
+                    "status": {
+                        "runs": list(self.cr["status"]["runs"]),
+                        "totalVariations": writer_count,
+                    },
+                }
+
+            async def patch_namespaced_custom_object(self, **_kwargs: Any) -> None:
+                raise AssertionError(
+                    "runs status writes must use the status subresource"
+                )
+
+            async def patch_namespaced_custom_object_status(
+                self, *, body: list[dict[str, Any]], **_kwargs: Any
+            ) -> None:
+                async with self.lock:
+                    expected = body[0]["value"]
+                    actual = self.cr["metadata"]["resourceVersion"]
+                    if expected != actual:
+                        raise ApiException(status=409, reason="Conflict")
+                    self.cr["status"]["runs"].append(body[1]["value"])
+                    self.cr["metadata"]["resourceVersion"] = str(int(actual) + 1)
+
+        fake_custom = FakeCustomObjectsApi()
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: fake_custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        entries = [{"index": i, "phase": "Succeeded"} for i in range(writer_count)]
+        await asyncio.gather(
+            *(
+                _child_runs.append_run_entry("ns", "swp", entry, api=MagicMock())
+                for entry in entries
+            )
+        )
+
+        assert (
+            sorted(fake_custom.cr["status"]["runs"], key=lambda item: item["index"])
+            == entries
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "conflict_status",
+        [param(409, id="conflict"), param(422, id="unprocessable-cas")],
+    )  # fmt: skip
+    async def test_absent_runs_init_cas_failure_still_attempts_append(
+        self, monkeypatch: pytest.MonkeyPatch, conflict_status: int
+    ) -> None:
+        """Stale GET with absent runs plus init CAS failure still appends."""
 
         class FakeApiException(Exception):
-            def __init__(self, status: int, reason: str) -> None:
+            def __init__(self, status: int, reason: str, body: str = "") -> None:
                 super().__init__(reason)
                 self.status = status
                 self.reason = reason
+                self.body = body
 
         calls: list[Any] = []
+        get_count = 0
+        init_failed = False
+
+        async def fake_get(**_kwargs: Any) -> dict[str, Any]:
+            nonlocal get_count
+            get_count += 1
+            if get_count == 1:
+                return {
+                    "metadata": {"resourceVersion": "7"},
+                    "status": {"totalVariations": 1},
+                }
+            return {
+                "metadata": {"resourceVersion": "8"},
+                "status": {"runs": [], "totalVariations": 1},
+            }
 
         async def fake_patch(**kwargs: Any) -> None:
-            calls.append(kwargs["body"])
-            # First call (init) → 409; subsequent (append) → succeed.
-            if len(calls) == 1:
-                raise FakeApiException(409, "Conflict")
+            nonlocal init_failed
+            body = kwargs["body"]
+            calls.append(body)
+            if (
+                body[-1] == {"op": "add", "path": "/status/runs", "value": []}
+                and not init_failed
+            ):
+                init_failed = True
+                raise FakeApiException(
+                    conflict_status,
+                    "Conflict",
+                    body="json patch test failed for metadata.resourceVersion",
+                )
 
         custom = MagicMock()
-        custom.patch_namespaced_custom_object = fake_patch
-        custom.get_namespaced_custom_object = AsyncMock(
-            return_value={"status": {"runs": [], "totalVariations": 1}}
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError(
+                "runs status writes must use the status subresource"
+            )
         )
+        custom.patch_namespaced_custom_object_status = fake_patch
+        custom.get_namespaced_custom_object = fake_get
         fake_k8s_module = SimpleNamespace(
             CustomObjectsApi=lambda _api: custom,
             exceptions=SimpleNamespace(ApiException=FakeApiException),
         )
 
-        # ``_child_runs`` does ``from kubernetes_asyncio.client.exceptions import
-        # ApiException`` — patch that import path too.
         import kubernetes_asyncio
         import kubernetes_asyncio.client.exceptions as kexc
 
@@ -1612,10 +2075,223 @@ class TestAppendRunEntryHelper:
         monkeypatch.setattr(kexc, "ApiException", FakeApiException, raising=False)
 
         await _child_runs.append_run_entry("ns", "swp", {"index": 1}, api=MagicMock())
-        assert len(calls) == 2
-        assert calls[1] == [
-            {"op": "add", "path": "/status/runs/-", "value": {"index": 1}}
+        assert calls == [
+            [
+                {"op": "test", "path": "/metadata/resourceVersion", "value": "7"},
+                {"op": "add", "path": "/status/runs", "value": []},
+            ],
+            [
+                {"op": "test", "path": "/metadata/resourceVersion", "value": "8"},
+                {"op": "add", "path": "/status/runs/-", "value": {"index": 1}},
+            ],
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "conflict_status",
+        [param(409, id="conflict"), param(422, id="unprocessable-cas")],
+    )  # fmt: skip
+    async def test_append_run_entry_cas_retry_exhaustion_raises_retryable(
+        self, monkeypatch: pytest.MonkeyPatch, conflict_status: int
+    ) -> None:
+        """Repeated resourceVersion conflicts must let kopf retry later."""
+
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError("runs status writes must use status subresource")
+        )
+        custom.get_namespaced_custom_object = AsyncMock(
+            return_value={
+                "metadata": {"resourceVersion": "1"},
+                "status": {"runs": [], "totalVariations": 1},
+            }
+        )
+        api_error = ApiException(status=conflict_status, reason="Conflict")
+        api_error.body = "json patch test failed for metadata.resourceVersion"
+        custom.patch_namespaced_custom_object_status = AsyncMock(side_effect=api_error)
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        with pytest.raises(kopf.TemporaryError, match="raced for 20"):
+            await _child_runs.append_run_entry(
+                "ns", "swp", {"index": 1}, api=MagicMock()
+            )
+
+        assert custom.get_namespaced_custom_object.await_count == 20
+        assert custom.patch_namespaced_custom_object_status.await_count == 20
+        for call in custom.patch_namespaced_custom_object_status.await_args_list:
+            assert call.kwargs["body"] == [
+                {"op": "test", "path": "/metadata/resourceVersion", "value": "1"},
+                {"op": "add", "path": "/status/runs/-", "value": {"index": 1}},
+            ]
+
+    @pytest.mark.asyncio
+    async def test_append_run_entry_transient_get_failure_raises_without_init(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unknown current status must not be treated as absent runs[]."""
+
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError("runs status writes must use status subresource")
+        )
+        custom.get_namespaced_custom_object = AsyncMock(
+            side_effect=TimeoutError("apiserver read timed out")
+        )
+        custom.patch_namespaced_custom_object_status = AsyncMock()
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        with pytest.raises(kopf.TemporaryError, match="status read"):
+            await _child_runs.append_run_entry(
+                "ns", "swp", {"index": 1}, api=MagicMock()
+            )
+
+        custom.patch_namespaced_custom_object_status.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_append_run_entry_parent_get_404_noops_without_patch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deleted parent sweeps must not make kopf retry child rollups forever."""
+
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError("runs status writes must use status subresource")
+        )
+        custom.get_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=404, reason="Not Found")
+        )
+        custom.patch_namespaced_custom_object_status = AsyncMock()
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        await _child_runs.append_run_entry("ns", "swp", {"index": 1}, api=MagicMock())
+
+        custom.get_namespaced_custom_object.assert_awaited_once()
+        custom.patch_namespaced_custom_object_status.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_stale_append_rechecks_budget_after_conflict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Concurrent stale readers CAS, retry, then truncate instead of overfilling."""
+
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        current_runs = [{"index": i, "payload": "x" * 50} for i in range(5)]
+        safe_entry = {"index": 5, "payload": "safe"}
+        rejected_entry = {"index": 6, "payload": "over"}
+        budget = max(
+            len(orjson.dumps({"runs": [*current_runs, safe_entry]})),
+            len(orjson.dumps({"runs": [*current_runs, rejected_entry]})),
+        )
+        assert len(orjson.dumps({"runs": [*current_runs, safe_entry]})) <= budget
+        assert len(orjson.dumps({"runs": [*current_runs, rejected_entry]})) <= budget
+        assert (
+            len(orjson.dumps({"runs": [*current_runs, safe_entry, rejected_entry]}))
+            > budget
+        )
+
+        class FakeCustomObjectsApi:
+            def __init__(self) -> None:
+                self.cr: dict[str, Any] = {
+                    "metadata": {"resourceVersion": "1"},
+                    "status": {"runs": list(current_runs), "totalVariations": 7},
+                }
+                self.get_count = 0
+                self.both_stale_reads_done = asyncio.Event()
+                self.safe_append_done = asyncio.Event()
+
+            async def get_namespaced_custom_object(
+                self, **_kwargs: Any
+            ) -> dict[str, Any]:
+                self.get_count += 1
+                if self.get_count == 2:
+                    self.both_stale_reads_done.set()
+                await self.both_stale_reads_done.wait()
+                if self.get_count <= 2:
+                    return {
+                        "metadata": {"resourceVersion": "1"},
+                        "status": {"runs": list(current_runs), "totalVariations": 7},
+                    }
+                return self.cr
+
+            async def patch_namespaced_custom_object(self, **_kwargs: Any) -> None:
+                raise AssertionError(
+                    "runs status writes must use the status subresource"
+                )
+
+            async def patch_namespaced_custom_object_status(
+                self, *, body: list[dict[str, Any]] | dict[str, Any], **_kwargs: Any
+            ) -> None:
+                if not isinstance(body, list):
+                    self.cr.setdefault("status", {}).update(body.get("status", {}))
+                    return
+
+                expected = body[0]["value"]
+                op = body[1]
+                entry = op["value"]
+                if entry["index"] == rejected_entry["index"] and expected == "1":
+                    await self.safe_append_done.wait()
+                actual = self.cr["metadata"]["resourceVersion"]
+                if expected != actual:
+                    raise ApiException(status=409, reason="Conflict")
+                self.cr.setdefault("status", {}).setdefault("runs", []).append(entry)
+                self.cr["metadata"]["resourceVersion"] = str(int(actual) + 1)
+                if entry["index"] == safe_entry["index"]:
+                    self.safe_append_done.set()
+
+        fake_custom = FakeCustomObjectsApi()
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: fake_custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+        monkeypatch.setattr(_child_runs, "_STATUS_RUNS_MAX_BYTES", budget)
+
+        await asyncio.gather(
+            _child_runs.append_run_entry("ns", "swp", safe_entry, api=MagicMock()),
+            _child_runs.append_run_entry("ns", "swp", rejected_entry, api=MagicMock()),
+        )
+
+        assert fake_custom.cr["status"]["runs"] == [*current_runs, safe_entry]
+        assert len(orjson.dumps({"runs": fake_custom.cr["status"]["runs"]})) <= budget
+        assert fake_custom.cr["status"]["runsTruncated"] == {
+            "total": 7,
+            "included": len(current_runs) + 1,
+            "fetchURL": "http://aiperf-operator.aiperf-system:8081"
+            "/api/v1/sweeps/ns/swp/children",
+        }
 
     @pytest.mark.asyncio
     async def test_append_run_entry_truncates_above_threshold(
@@ -1624,7 +2300,11 @@ class TestAppendRunEntryHelper:
         """At/above 1500 entries, stamp ``status.runsTruncated`` instead of
         appending. The threshold protects the AIPerfSweep CR from blowing
         past apiserver's 1 MiB limit on extremely large sweeps."""
-        patch_mock = AsyncMock()
+        patch_mock = AsyncMock(
+            side_effect=AssertionError(
+                "runs status writes must use the status subresource"
+            )
+        )
         status_patch_mock = AsyncMock()
         custom = MagicMock()
         custom.patch_namespaced_custom_object = patch_mock
@@ -1656,8 +2336,9 @@ class TestAppendRunEntryHelper:
         # ``add to /-`` patch must NOT fire — only the truncated stamp.
         append_calls = [
             c
-            for c in patch_mock.await_args_list
-            if c.kwargs["body"][0].get("path") == "/status/runs/-"
+            for c in status_patch_mock.await_args_list
+            if isinstance(c.kwargs["body"], list)
+            and c.kwargs["body"][-1].get("path") == "/status/runs/-"
         ]
         assert append_calls == []
         # The merge-patch onto ``status.runsTruncated`` is the only
@@ -1673,3 +2354,132 @@ class TestAppendRunEntryHelper:
             == "http://aiperf-operator.aiperf-system:8081"
             "/api/v1/sweeps/ns/swp/children"
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status_code",
+        [param(500, id="internal-server-error"), param(503, id="service-unavailable")],
+    )  # fmt: skip
+    async def test_truncation_stamp_transient_failure_raises_retryable(
+        self, monkeypatch: pytest.MonkeyPatch, status_code: int
+    ) -> None:
+        """When no inline append happens, a failed truncation marker must retry."""
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=AssertionError("runs status writes must use status subresource")
+        )
+        custom.patch_namespaced_custom_object_status = AsyncMock(
+            side_effect=ApiException(status=status_code, reason="temporary")
+        )
+        custom.get_namespaced_custom_object = AsyncMock(
+            return_value={
+                "status": {
+                    "runs": [{"index": i} for i in range(1500)],
+                    "totalVariations": 2000,
+                }
+            }
+        )
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        with pytest.raises(kopf.TemporaryError, match="runsTruncated stamp failed"):
+            await _child_runs.append_run_entry(
+                "ns", "swp", {"index": 1500, "phase": "Succeeded"}, api=MagicMock()
+            )
+
+    @pytest.mark.asyncio
+    async def test_append_run_entry_truncates_before_serialized_runs_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Byte-budget truncation uses the full serialized runs payload.
+
+        Counting only values bytes misses labels, timestamps, metrics, and JSON
+        overhead; this test fills ``status.runs`` below the byte budget and
+        verifies the next representative entry is rejected before the serialized
+        payload crosses it.
+        """
+        budget = _child_runs._STATUS_RUNS_MAX_BYTES
+        representative_entry = {
+            "index": 0,
+            "label": "prompt_prefix_0000",
+            "values": orjson.dumps(
+                _child_runs._status_variation_values_truncated_payload(2056)
+            ).decode(),
+            "phase": "Succeeded",
+            "childName": "swp-v0000-t0",
+            "startedAt": "2026-05-03T12:00:00Z",
+            "completedAt": "2026-05-03T12:05:00Z",
+            "metrics": {
+                "output_token_throughput": 12345.678,
+                "request_throughput": 987.654,
+                "request_count": 100000,
+                "error_count": 0,
+                "ttft": {"p50": 1.23, "p95": 4.56, "p99": 7.89},
+                "itl": {"p50": 0.12, "p95": 0.34, "p99": 0.56},
+            },
+        }
+        current_runs: list[dict[str, Any]] = []
+        while True:
+            next_entry = representative_entry | {
+                "index": len(current_runs),
+                "label": f"prompt_prefix_{len(current_runs):04d}",
+                "childName": f"swp-v{len(current_runs):04d}-t0",
+            }
+            if len(orjson.dumps({"runs": [*current_runs, next_entry]})) > budget:
+                rejected_entry = next_entry
+                break
+            current_runs.append(next_entry)
+
+        assert len(current_runs) < _child_runs._RUNS_SAFETY_THRESHOLD
+        assert len(orjson.dumps({"runs": current_runs})) <= budget
+        assert len(orjson.dumps({"runs": [*current_runs, rejected_entry]})) > budget
+
+        patch_mock = AsyncMock(
+            side_effect=AssertionError(
+                "runs status writes must use the status subresource"
+            )
+        )
+        status_patch_mock = AsyncMock()
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = patch_mock
+        custom.patch_namespaced_custom_object_status = status_patch_mock
+        custom.get_namespaced_custom_object = AsyncMock(
+            return_value={
+                "status": {
+                    "runs": current_runs,
+                    "totalVariations": len(current_runs) + 1,
+                }
+            }
+        )
+        fake_k8s_module = SimpleNamespace(
+            CustomObjectsApi=lambda _api: custom,
+            exceptions=SimpleNamespace(ApiException=Exception),
+        )
+        import kubernetes_asyncio
+
+        monkeypatch.setattr(
+            kubernetes_asyncio, "client", fake_k8s_module, raising=False
+        )
+
+        await _child_runs.append_run_entry("ns", "swp", rejected_entry, api=MagicMock())
+
+        append_calls = [
+            c
+            for c in status_patch_mock.await_args_list
+            if isinstance(c.kwargs["body"], list)
+            and c.kwargs["body"][-1].get("path") == "/status/runs/-"
+        ]
+        assert append_calls == []
+        status_patch_mock.assert_awaited_once()
+        body = status_patch_mock.await_args.kwargs["body"]
+        assert body["status"]["runsTruncated"]["included"] == len(current_runs)
+        assert body["status"]["runsTruncated"]["total"] == len(current_runs) + 1
