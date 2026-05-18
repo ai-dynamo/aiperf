@@ -64,8 +64,9 @@ def resolve_job_id_and_namespace(
 
     last = get_last_benchmark()
     if last is None:
-        print_error("No job_id specified and no previous benchmark found")
-        print_action("Run 'aiperf kube profile' first or specify a job_id")
+        if not quiet:
+            print_error("No job_id specified and no previous benchmark found")
+            print_action("Run 'aiperf kube profile' first or specify a job_id")
         return None
 
     if not quiet:

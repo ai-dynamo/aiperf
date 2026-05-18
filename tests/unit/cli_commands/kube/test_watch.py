@@ -209,3 +209,13 @@ class TestWatchCommandErrorSurface:
 
         captured = capsys.readouterr()
         assert "Stopped watching" not in (captured.out + captured.err)
+
+    async def test_json_without_last_benchmark_keeps_stdout_empty(
+        self, capsys: Any
+    ) -> None:
+        """JSON mode must not contaminate stdout when default job resolution fails."""
+        with patch("aiperf.kubernetes.console.get_last_benchmark", return_value=None):
+            await watch(manage_options=KubeManageOptions(), output="json")
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
