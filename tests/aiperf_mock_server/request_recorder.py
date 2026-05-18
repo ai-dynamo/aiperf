@@ -224,6 +224,17 @@ def _quantiles(values: list[int]) -> dict[str, float] | None:
     }
 
 
+def _stat_block(values: list[int]) -> dict[str, Any] | None:
+    """Build the percentiles + histogram + unique_values block, or None when empty."""
+    if not values:
+        return None
+    block = _quantiles(values)
+    assert block is not None  # `_quantiles` only returns None for empty input
+    block["unique_values"] = len(set(values))
+    block["histogram"] = _histogram(values)
+    return block
+
+
 def _build_summary(
     total: int,
     isls: dict[str, list[int]],
@@ -235,14 +246,16 @@ def _build_summary(
 ) -> dict[str, Any]:
     per_endpoint: dict[str, Any] = {}
     for ep in sorted(isls.keys()):
+        isl_vals = isls[ep]
+        osl_vals = osls.get(ep, [])
         per_endpoint[ep] = {
-            "count": len(isls[ep]),
+            "count": len(isl_vals),
             "streamed_count": streamed.get(ep, 0),
             "ignore_eos_count": ignore_eos.get(ep, 0),
             "reasoning_effort_counts": dict(reasoning_efforts.get(ep, Counter()))
             or None,
-            "isl": _quantiles(isls[ep]),
-            "requested_osl": _quantiles(osls.get(ep, [])),
+            "isl": _stat_block(isl_vals),
+            "requested_osl": _stat_block(osl_vals),
             "min_tokens": _quantiles(min_tokens.get(ep, [])),
         }
     return {"total_requests": total, "per_endpoint": per_endpoint}
