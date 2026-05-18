@@ -150,14 +150,14 @@ def _apply_controller_progress_status(
         sb.set_phase(Phase.INITIALIZING)
 
 
-async def _delete_jobset_silently(
+async def _delete_jobset_or_retry(
     custom: CustomObjectsApi,
     namespace: str,
     jobset_name: str,
     *,
     context: str,
 ) -> None:
-    """Delete a JobSet, swallowing 404 and logging any other ApiException."""
+    """Delete a JobSet; non-404 failures raise for a retryable monitor tick."""
     try:
         await custom.delete_namespaced_custom_object(
             group=JOBSET_GROUP,
@@ -168,10 +168,11 @@ async def _delete_jobset_silently(
         )
         logger.info(f"Deleted JobSet {jobset_name} after {context}")
     except ApiException as e:
-        if e.status != 404:
-            logger.warning(
-                f"Failed to delete JobSet {jobset_name} after {context}: {e}"
-            )
+        if e.status == 404:
+            return
+        msg = f"Failed to delete JobSet {namespace}/{jobset_name} after {context}: {e}"
+        logger.warning(msg)
+        raise kopf.TemporaryError(msg, delay=15) from e
 
 
 async def _reconcile_missing_jobset(
@@ -289,14 +290,14 @@ async def _check_job_timeout(
     if elapsed is None or elapsed <= timeout_sec:
         return False
 
+    if jobset_name:
+        await _delete_jobset_or_retry(custom, namespace, jobset_name, context="timeout")
     sb.set_phase(Phase.FAILED).set_error(
         f"Job timed out after {elapsed:.0f}s (limit: {timeout_sec:.0f}s)"
     )
     sb.set_completion_time()
     sb.finalize()
     events.job_timeout(body, job_id, elapsed)
-    if jobset_name:
-        await _delete_jobset_silently(custom, namespace, jobset_name, context="timeout")
     await close_progress_client(key)
     return True
 
@@ -1142,6 +1143,10 @@ async def _recover_from_partial_checkpoints(
         f"Controller container terminated before final export; "
         f"recovered {len(result.checkpoints)} partial checkpoint file(s)"
     )
+    await _delete_jobset_or_retry(
+        custom, namespace, jobset_name, context="partial checkpoint recovery"
+    )
+
     sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
     sb.set_results_path(str(dest_dir))
     # Stamp runEpoch so the operator-API metrics fallback in
@@ -1161,10 +1166,6 @@ async def _recover_from_partial_checkpoints(
     events.results_stored(body, str(dest_dir), len(result.checkpoints))
     events.failed(body, job_id, error)
 
-    await _delete_jobset_silently(
-        custom, namespace, jobset_name, context="partial checkpoint recovery"
-    )
-
 
 async def _fail_unrecoverable_controller(
     *,
@@ -1177,6 +1178,10 @@ async def _fail_unrecoverable_controller(
     custom: CustomObjectsApi,
 ) -> None:
     """Mark CR FAILED and delete the JobSet when no results can be recovered."""
+    await _delete_jobset_or_retry(
+        custom, namespace, jobset_name, context="unrecoverable controller termination"
+    )
+
     error = f"Controller container terminated before results were recoverable: {reason}"
     sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
     sb.conditions.set_false(
@@ -1186,10 +1191,6 @@ async def _fail_unrecoverable_controller(
     )
     sb.finalize()
     events.failed(body, job_id, error)
-
-    await _delete_jobset_silently(
-        custom, namespace, jobset_name, context="unrecoverable controller termination"
-    )
 
 
 async def _maybe_recover_terminated_controller(

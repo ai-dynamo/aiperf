@@ -81,16 +81,13 @@ async def on_cancel(
     truthy and the CR is not already terminal.
 
     Side effects:
-        - Deletes the JobSet custom object (logs a warning on non-404
-          failures but does not re-raise).
-        - Closes the cached ProgressClient for this job.
+        - Sets the same sticky in-process cancellation flag as ``on_delete`` so
+          in-flight completion/fetch paths cannot overwrite Cancelled.
+        - Deletes the JobSet custom object; non-404 failures raise
+          ``kopf.TemporaryError`` so the cancel field watcher retries.
+        - Closes the cached ProgressClient for this job after deletion succeeds.
         - Patches ``status.phase`` to ``Cancelled`` and sets completion time.
         - Emits a ``Cancelled`` kopf event on the CR.
-
-    Unlike ``on_delete`` this does NOT set the in-process cancellation
-    flag — the CR is staying around in ``Cancelled`` phase for user
-    inspection; there are no in-flight completion paths to abort because
-    the monitor handler will see the terminal phase on its next tick.
     """
     if not spec.get("cancel"):
         return
@@ -100,9 +97,11 @@ async def on_cancel(
         return  # Already terminal
 
     job_id = status.get("jobId", name)
+    key = job_key(namespace, job_id)
     jobset_name = status.get("jobSetName")
 
     logger.info(f"Cancelling AIPerfJob {namespace}/{name}")
+    request_cancellation(key)
 
     sb = StatusBuilder(patch, status)
 
@@ -119,9 +118,11 @@ async def on_cancel(
             logger.info(f"Deleted JobSet {jobset_name}")
         except ApiException as e:
             if e.status != 404:
-                logger.warning(f"Failed to delete JobSet: {e}")
+                msg = f"Failed to delete JobSet {namespace}/{jobset_name} during cancel: {e}"
+                logger.warning(msg)
+                raise kopf.TemporaryError(msg, delay=15) from e
 
-    await close_progress_client(job_key(namespace, job_id))
+    await close_progress_client(key)
     sb.set_phase(Phase.CANCELLED).set_completion_time()
     generation = body.get("metadata", {}).get("generation")
     if generation is not None:

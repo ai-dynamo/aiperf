@@ -7,13 +7,16 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
 
+import kopf
 import pytest
+from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.operator.client_cache import (
     _cancellation_events,
     _reset_for_testing,
     _shutdown_sent,
+    is_cancellation_requested,
 )
 from aiperf.operator.status import Phase
 
@@ -108,6 +111,51 @@ class TestOnCancel:
 
         mock_delete.assert_awaited_once()
         assert patch.status["phase"] == Phase.CANCELLED
+        assert is_cancellation_requested("ns/j1") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_failure_retries_without_terminalizing(
+        self, mock_events: None
+    ) -> None:
+        """Non-404 delete failure must not mark Cancelled while pods may run."""
+        from contextlib import asynccontextmanager
+
+        from aiperf.operator.handlers.lifecycle import on_cancel
+
+        mock_delete = AsyncMock(
+            side_effect=ApiException(status=500, reason="apiserver unavailable")
+        )
+        mock_custom = MagicMock(delete_namespaced_custom_object=mock_delete)
+        patch = MagicMock()
+        patch.status = {}
+
+        @asynccontextmanager
+        async def _fake_client():
+            yield MagicMock()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.k8s_client",
+                return_value=_fake_client(),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+            pytest.raises(kopf.TemporaryError),
+        ):
+            await on_cancel(
+                body={},
+                spec={"cancel": True},
+                status={"phase": Phase.RUNNING, "jobId": "j1", "jobSetName": "js1"},
+                name="j1",
+                namespace="ns",
+                patch=patch,
+            )
+
+        mock_delete.assert_awaited_once()
+        assert patch.status.get("phase") != Phase.CANCELLED
+        assert is_cancellation_requested("ns/j1") is True
 
 
 class TestOnBenchmarkComplete:

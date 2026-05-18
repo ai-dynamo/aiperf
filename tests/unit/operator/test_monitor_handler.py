@@ -14,16 +14,20 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
+import kopf
 import pytest
+from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.common.enums.lifecycle_enums import SystemState
 from aiperf.operator.handlers.monitor import (
     _apply_controller_progress_status,
+    _check_job_timeout,
     _classify_jobset_failure,
     _container_status_by_name,
+    _fail_unrecoverable_controller,
     _get_terminated_controller_info,
     _handle_kueue_suspension,
     _should_poll_progress,
@@ -308,6 +312,58 @@ class TestUpdateWorkerCounts:
         assert _update_worker_counts(
             status=status, jobset_status=jobset_status, sb=sb
         ) == (0, 0, 0)
+
+
+class TestCleanupDeleteFailures:
+    """Tests for cleanup paths that delete JobSets before terminal status."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_delete_failure_retries_without_terminal_phase(self) -> None:
+        """Timeout cleanup must not terminalize while JobSet deletion failed."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=500, reason="apiserver unavailable")
+        )
+
+        with pytest.raises(kopf.TemporaryError):
+            await _check_job_timeout(
+                custom,
+                body={"kind": "AIPerfJob"},
+                status={"startTime": "2020-01-01T00:00:00Z"},
+                spec={"timeoutSeconds": 1},
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                key="ns/job",
+                sb=sb,
+            )
+
+        assert patch.status.get("phase") != str(Phase.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_unrecoverable_controller_delete_failure_retries_without_terminal_phase(
+        self,
+    ) -> None:
+        """Controller-failure cleanup must surface delete errors to kopf."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=503, reason="apiserver unavailable")
+        )
+
+        with pytest.raises(kopf.TemporaryError):
+            await _fail_unrecoverable_controller(
+                body={"kind": "AIPerfJob"},
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                reason="OOMKilled",
+                sb=sb,
+                custom=custom,
+            )
+
+        assert patch.status.get("phase") != str(Phase.FAILED)
 
 
 class TestApplyControllerProgressStatus:

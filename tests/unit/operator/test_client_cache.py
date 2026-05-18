@@ -6,17 +6,23 @@ from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch as mock_patch
 
 import pytest
+from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.kubernetes.constants import Annotations
 from aiperf.operator.client_cache import (
+    _build_claim_patch_ops,
     _progress_clients,
     _reset_for_testing,
     _shutdown_sent,
+    _submit_claim_patch,
     _warned_pod_restarts,
     close_progress_client,
     get_or_create_progress_client,
     job_key,
+    try_claim_completion,
 )
 
 
@@ -153,6 +159,82 @@ class TestCloseProgressClient:
         """Verify closing a non-existent key is safe."""
         await close_progress_client("nonexistent")
         assert "nonexistent" not in _progress_clients
+
+
+class TestCompletionClaim:
+    """Tests for durable completion claim JSON patches."""
+
+    def test_existing_annotations_without_claim_tests_parent_not_missing_child(
+        self,
+    ) -> None:
+        """Absent annotation keys are claimable JSON Patch paths.
+
+        Kubernetes rejects ``test /metadata/annotations/<missing-key>`` with
+        422 because the path does not exist. The atomic guard must test the
+        existing parent annotations object instead, then add the claim key.
+        """
+        body = {
+            "metadata": {
+                "annotations": {
+                    "aiperf.nvidia.com/other": "value",
+                }
+            }
+        }
+
+        patch_ops = _build_claim_patch_ops(body)
+
+        escaped_key = Annotations.COMPLETION_CLAIMED.replace("/", "~1")
+        assert patch_ops[0] == {
+            "op": "test",
+            "path": "/metadata/annotations",
+            "value": {"aiperf.nvidia.com/other": "value"},
+        }
+        assert patch_ops[1]["op"] == "add"
+        assert patch_ops[1]["path"] == f"/metadata/annotations/{escaped_key}"
+
+    @pytest.mark.asyncio
+    async def test_submit_claim_patch_422_is_retryable_error_not_lost_race(
+        self,
+    ) -> None:
+        """422 can mean a malformed/non-race patch and must not poison cache."""
+        from contextlib import asynccontextmanager
+
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=422, reason="missing path")
+        )
+
+        @asynccontextmanager
+        async def _fake_client():
+            yield MagicMock()
+
+        with (
+            mock_patch(
+                "aiperf.operator.client_cache.k8s_client", return_value=_fake_client()
+            ),
+            mock_patch(
+                "aiperf.operator.client_cache.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+        ):
+            result = await _submit_claim_patch("ns", "job", [])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_retryable_claim_patch_error_does_not_mark_shutdown_sent(
+        self,
+    ) -> None:
+        """Unexpected claim failures must allow a later monitor tick to retry."""
+        with mock_patch(
+            "aiperf.operator.client_cache._submit_claim_patch",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            claimed = await try_claim_completion("ns", "job", {"metadata": {}})
+
+        assert claimed is False
+        assert "ns/job" not in _shutdown_sent
 
 
 class TestResetForTesting:

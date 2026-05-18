@@ -261,8 +261,8 @@ def _build_claim_patch_ops(body: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "op": "test",
-            "path": f"/metadata/annotations/{escaped_key}",
-            "value": None,
+            "path": "/metadata/annotations",
+            "value": current_annotations,
         },
         {
             "op": "add",
@@ -312,7 +312,7 @@ async def _submit_claim_patch(
             )
     except ApiException as e:
         status_code = e.status or 0
-        if status_code in (409, 422):
+        if status_code == 409:
             logger.debug(
                 "Completion claim for %s/%s lost race (status %s), skipping",
                 namespace,
@@ -320,6 +320,15 @@ async def _submit_claim_patch(
                 status_code,
             )
             return False
+        if status_code == 422:
+            logger.warning(
+                "Completion claim patch was rejected for %s/%s with status 422; "
+                "not caching as a lost race so a later tick can retry: %s",
+                namespace,
+                name,
+                e,
+            )
+            return None
         logger.warning(
             "Completion claim patch failed for %s/%s: %s (not claiming)",
             namespace,
