@@ -19,6 +19,7 @@ with `--no-tokenizer`).
 """
 
 import logging
+import math
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -27,6 +28,12 @@ from typing import IO, Any
 import orjson
 
 logger = logging.getLogger(__name__)
+
+# Histogram bucketing rule: at least _HISTOGRAM_MIN_BINS bins, and bin width
+# never exceeds _HISTOGRAM_MAX_BIN_WIDTH. Floor keeps narrow ranges informative;
+# cap keeps wide ranges from collapsing 10 bins onto a 1500-token spread.
+_HISTOGRAM_MIN_BINS = 10
+_HISTOGRAM_MAX_BIN_WIDTH = 100.0
 
 
 class RequestRecorder:
@@ -155,6 +162,38 @@ class RequestRecorder:
             orjson.dumps(summary, option=orjson.OPT_INDENT_2)
         )
         _print_summary(summary)
+
+
+def _histogram(values: list[int]) -> dict[str, list[float] | list[int]] | None:
+    """Equal-width histogram with the max_bin_width / min_bins rule.
+
+    Returns ``None`` for an empty input, ``{"bin_edges": [v, v], "counts": [n]}``
+    when all values are equal, and otherwise a dict with ``len(bin_edges) ==
+    len(counts) + 1``. The last bin is closed on both ends so the observed
+    maximum lands in it instead of just past the last edge.
+    """
+    if not values:
+        return None
+    lo = float(min(values))
+    hi = float(max(values))
+    if lo == hi:
+        return {"bin_edges": [lo, hi], "counts": [len(values)]}
+    span = hi - lo
+    num_bins = max(_HISTOGRAM_MIN_BINS, math.ceil(span / _HISTOGRAM_MAX_BIN_WIDTH))
+    width = span / num_bins
+    edges = [lo + i * width for i in range(num_bins + 1)]
+    edges[-1] = hi  # pin last edge exactly to max to avoid float drift
+    counts = [0] * num_bins
+    for v in values:
+        if v >= hi:
+            idx = num_bins - 1
+        else:
+            idx = int((v - lo) / width)
+            # Float-drift guard: int((v-lo)/width) can round to num_bins when v is very close to hi.
+            if idx >= num_bins:
+                idx = num_bins - 1
+        counts[idx] += 1
+    return {"bin_edges": edges, "counts": counts}
 
 
 def _quantiles(values: list[int]) -> dict[str, float] | None:
