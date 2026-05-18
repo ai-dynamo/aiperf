@@ -196,12 +196,17 @@ async def on_aiperfsweep_aggregation_complete(
             f"status.runEpoch; skipping disk persistence"
         )
         return
-    await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
+    fetched_count = await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
         sweep_name=name,
         namespace=namespace,
         epoch=str(epoch),
         base_dir=OperatorEnvironment.RESULTS.DIR,
     )
+    if fetched_count == 0:
+        raise kopf.TemporaryError(
+            f"AIPerfSweep {namespace}/{name} aggregate sidecar returned no files; retrying",
+            delay=30,
+        )
 
 
 @kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.phase")

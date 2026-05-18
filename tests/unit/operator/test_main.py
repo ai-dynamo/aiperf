@@ -52,6 +52,29 @@ _FIXTURE_BODY: dict[str, Any] = {
     "metadata": {"creationTimestamp": _FIXTURE_CREATION_TS}
 }
 
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_complete_zero_fetch_raises_temporary_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The field handler retries when the sidecar returns no aggregate files."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.main import on_aiperfsweep_aggregation_complete
+
+    fetch = AsyncMock(return_value=0)
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+
+    with pytest.raises(kopf.TemporaryError):
+        await on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    fetch.assert_awaited_once()
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
