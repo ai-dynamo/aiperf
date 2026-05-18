@@ -250,7 +250,6 @@ def _build_claim_patch_ops(body: dict[str, Any]) -> list[dict[str, Any]]:
 
     if current_annotations is None:
         return [
-            {"op": "test", "path": "/metadata/annotations", "value": None},
             {"op": "add", "path": "/metadata/annotations", "value": {}},
             {
                 "op": "add",

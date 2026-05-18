@@ -123,6 +123,55 @@ async def test_handle_completion_short_circuits_on_cancellation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handle_completion_short_circuits_when_cancelled_after_fetch() -> None:
+    """In-flight cancellation after fetch must not stamp Failed/Completed."""
+    from aiperf.operator.handlers.completion import handle_completion
+    from aiperf.operator.models import ControllerFetchResult
+    from aiperf.operator.status import StatusBuilder
+
+    patch = MagicMock()
+    patch.status = {}
+    sb = StatusBuilder(patch, {"workers": {"total": 1}})
+
+    async def fake_fetch(*_args, **_kwargs):
+        request_cancellation("ns/j")
+        return ControllerFetchResult(
+            metrics=None,
+            downloaded=[],
+            checkpoints=[],
+            error="Cancelled by CR deletion",
+        )
+
+    with (
+        mock_patch(
+            "aiperf.operator.handlers.completion.fetch_results_with_retry",
+            side_effect=fake_fetch,
+        ) as mock_fetch,
+        mock_patch(
+            "aiperf.operator.handlers.completion._apply_completion_results",
+            new_callable=AsyncMock,
+        ) as mock_apply,
+        mock_patch(
+            "aiperf.operator.handlers.completion._maybe_delete_jobset_after_success",
+            new_callable=AsyncMock,
+        ) as mock_delete,
+    ):
+        await handle_completion(
+            body=_FIXTURE_BODY,
+            namespace="ns",
+            jobset_name="js",
+            job_id="j",
+            status={},
+            sb=sb,
+        )
+
+    mock_fetch.assert_awaited_once()
+    mock_apply.assert_not_awaited()
+    mock_delete.assert_not_awaited()
+    assert patch.status.get("phase") is None
+
+
+@pytest.mark.asyncio
 async def test_monitor_progress_short_circuits_on_cancellation() -> None:
     """monitor_progress must return early on cancellation without fetching
     the JobSet (the CR is about to disappear)."""

@@ -72,10 +72,7 @@ def _has_key_result_files(paths: list[str] | None) -> bool:
     classifier still needs to recognize those files as authoritative results.
     """
     names = set(paths or [])
-    for key in _KEY_RESULT_FILES:
-        if key in names or f"{key}.zst" in names:
-            return True
-    return False
+    return any(key in names or f"{key}.zst" in names for key in _KEY_RESULT_FILES)
 
 
 def _recover_result_from_disk(
@@ -141,20 +138,17 @@ async def handle_completion(
     """
     # on_delete cancellation: skip fetch/JobSet-delete/status patches so the
     # CR delete doesn't block on retry backoff.
-    if is_cancellation_requested(job_key(namespace, job_id)):
-        logger.info(
-            f"Cancellation requested for {namespace}/{job_id}, "
-            "skipping completion handling"
-        )
+    if _completion_cancelled(namespace, job_id):
         return
 
-    _backfill_pre_completion_conditions(status, sb)
-    sb.set_completion_time()
     duration_sec = _compute_duration_seconds(status)
 
     if result is None:
         host = controller_dns_name(jobset_name, namespace)
         result = await fetch_results_with_retry(host, namespace, job_id, body=body)
+
+    if _completion_cancelled(namespace, job_id):
+        return
 
     result = _recover_result_from_disk(
         body=body,
@@ -171,6 +165,11 @@ async def handle_completion(
         result=result,
         flags=flags,
     )
+    if _completion_cancelled(namespace, job_id):
+        return
+
+    _backfill_pre_completion_conditions(status, sb)
+    sb.set_completion_time()
     await _apply_completion_results(
         body=body,
         namespace=namespace,
@@ -181,11 +180,24 @@ async def handle_completion(
         flags=flags,
     )
 
+    if _completion_cancelled(namespace, job_id):
+        return
+
     sb.finalize()
     if flags.success:
         events.completed(body, job_id, duration_sec)
 
     await _maybe_delete_jobset_after_success(namespace, jobset_name, job_id, flags)
+
+
+def _completion_cancelled(namespace: str, job_id: str) -> bool:
+    """Return True and log when a completion path should stop mutating status."""
+    if not is_cancellation_requested(job_key(namespace, job_id)):
+        return False
+    logger.info(
+        f"Cancellation requested for {namespace}/{job_id}, skipping completion handling"
+    )
+    return True
 
 
 async def _apply_completion_results(
@@ -594,7 +606,7 @@ def _parse_metrics_from_files(
     Per-candidate failures (non-JSON .zst siblings such as
     ``profile_export.jsonl.zst`` or ``server_metrics_export.parquet.zst``)
     are caught and skipped — the candidate sort puts ``.zst`` first, so a
-    bail-out on the first unparseable file would silently swallow the
+    bail-out on the first unparsable file would silently swallow the
     valid ``profile_export_aiperf.json`` that follows it.
     """
     dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
@@ -604,7 +616,7 @@ def _parse_metrics_from_files(
             data = _load_metrics_payload(path)
         except (OSError, ValueError, orjson.JSONDecodeError, zstandard.ZstdError) as e:
             logger.debug(
-                f"completion: skipping unparseable candidate {path} for "
+                f"completion: skipping unparsable candidate {path} for "
                 f"{namespace}/{job_id} epoch={epoch} "
                 f"({type(e).__name__}: {e})"
             )

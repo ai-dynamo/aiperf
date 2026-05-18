@@ -30,6 +30,7 @@ from aiperf.operator.handlers.monitor import (
     _fail_unrecoverable_controller,
     _get_terminated_controller_info,
     _handle_kueue_suspension,
+    _recover_from_partial_checkpoints,
     _should_poll_progress,
     _update_worker_counts,
 )
@@ -359,6 +360,34 @@ class TestCleanupDeleteFailures:
                 jobset_name="js",
                 job_id="job",
                 reason="OOMKilled",
+                sb=sb,
+                custom=custom,
+            )
+
+        assert patch.status.get("phase") != str(Phase.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_partial_checkpoint_delete_failure_retries_without_terminal_phase(
+        self,
+    ) -> None:
+        """Partial-checkpoint cleanup must not set Failed until JobSet delete wins."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=503, reason="apiserver unavailable")
+        )
+        result = SimpleNamespace(checkpoints=["checkpoints/partial.json"])
+
+        with pytest.raises(kopf.TemporaryError):
+            await _recover_from_partial_checkpoints(
+                body={
+                    "kind": "AIPerfJob",
+                    "metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"},
+                },
+                result=result,
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
                 sb=sb,
                 custom=custom,
             )

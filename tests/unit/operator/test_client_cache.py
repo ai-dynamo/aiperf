@@ -192,6 +192,24 @@ class TestCompletionClaim:
         assert patch_ops[1]["op"] == "add"
         assert patch_ops[1]["path"] == f"/metadata/annotations/{escaped_key}"
 
+    def test_missing_annotations_parent_adds_without_testing_missing_path(
+        self,
+    ) -> None:
+        """A CR with no annotations object is claimable.
+
+        JSON Patch ``test /metadata/annotations == null`` fails when the
+        annotations member is absent, so the patch must create the parent
+        directly and only test paths that already exist.
+        """
+        patch_ops = _build_claim_patch_ops({"metadata": {}})
+
+        assert patch_ops[0] == {
+            "op": "add",
+            "path": "/metadata/annotations",
+            "value": {},
+        }
+        assert all(op["op"] != "test" for op in patch_ops)
+
     @pytest.mark.asyncio
     async def test_submit_claim_patch_422_is_retryable_error_not_lost_race(
         self,
