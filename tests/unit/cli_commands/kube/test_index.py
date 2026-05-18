@@ -236,17 +236,17 @@ class TestIndexStats:
 
     @pytest.mark.asyncio
     async def test_json_mode_restores_logger_level_on_error(self) -> None:
-        """The finally block must restore aiperf.kube logger to INFO."""
+        """The finally block must restore the original aiperf.kube level."""
         from aiperf.cli_commands.kube.index import stats
 
         kube_logger = logging.getLogger("aiperf.kube")
-        kube_logger.setLevel(logging.INFO)
+        kube_logger.setLevel(logging.ERROR)
 
         client = _FakeAsyncClient(get_exc=RuntimeError("boom"))
         with _patch_httpx(client), pytest.raises(RuntimeError):
             await stats(output="json")
 
-        assert kube_logger.level == logging.INFO
+        assert kube_logger.level == logging.ERROR
 
 
 class TestIndexRebuild:
@@ -318,11 +318,11 @@ class TestIndexRebuild:
 
     @pytest.mark.asyncio
     async def test_json_mode_restores_logger_level_on_success(self) -> None:
-        """Logger toggled to WARNING then restored to INFO after completion."""
+        """Logger toggled to WARNING then restored after completion."""
         from aiperf.cli_commands.kube.index import rebuild
 
         kube_logger = logging.getLogger("aiperf.kube")
-        kube_logger.setLevel(logging.INFO)
+        kube_logger.setLevel(logging.DEBUG)
 
         client = _FakeAsyncClient(
             post_payload={
@@ -348,5 +348,5 @@ class TestIndexRebuild:
 
         # During the request the logger was suppressed
         assert captured_levels == [logging.WARNING]
-        # After the request finishes the finally block restores INFO
-        assert kube_logger.level == logging.INFO
+        # After the request finishes the finally block restores the original level.
+        assert kube_logger.level == logging.DEBUG

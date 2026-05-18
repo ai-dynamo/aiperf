@@ -105,8 +105,10 @@ async def rebuild(
     options: KubeManageOptions | None = None,
 ) -> None:
     """Rebuild the operator's runs index from the PVC."""
+    kube_logger = logging.getLogger("aiperf.kube")
+    original_level = kube_logger.level
     if output == "json":
-        logging.getLogger("aiperf.kube").setLevel(logging.WARNING)
+        kube_logger.setLevel(logging.WARNING)
 
     try:
         async with (
@@ -128,7 +130,7 @@ async def rebuild(
             )
     finally:
         if output == "json":
-            logging.getLogger("aiperf.kube").setLevel(logging.INFO)
+            kube_logger.setLevel(original_level)
 
 
 @app.command(name="stats")
@@ -148,8 +150,10 @@ async def stats(
     options: KubeManageOptions | None = None,
 ) -> None:
     """Show runs index statistics."""
+    kube_logger = logging.getLogger("aiperf.kube")
+    original_level = kube_logger.level
     if output == "json":
-        logging.getLogger("aiperf.kube").setLevel(logging.WARNING)
+        kube_logger.setLevel(logging.WARNING)
     try:
         async with (
             _operator_api_base(api_url, options) as base_url,
@@ -172,4 +176,4 @@ async def stats(
             )
     finally:
         if output == "json":
-            logging.getLogger("aiperf.kube").setLevel(logging.INFO)
+            kube_logger.setLevel(original_level)
