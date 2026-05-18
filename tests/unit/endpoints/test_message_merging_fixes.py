@@ -18,6 +18,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -37,6 +38,12 @@ def chat_endpoint():
 def responses_endpoint():
     ep_info = create_model_endpoint(EndpointType.RESPONSES, streaming=True)
     return create_endpoint_with_mock_transport(ResponsesEndpoint, ep_info)
+
+
+@pytest.fixture
+def embeddings_endpoint():
+    ep_info = create_model_endpoint(EndpointType.EMBEDDINGS, streaming=False)
+    return create_endpoint_with_mock_transport(EmbeddingsEndpoint, ep_info)
 
 
 # ---------------------------------------------------------------------------
@@ -420,13 +427,20 @@ class TestResponsesInstructionsListForm:
 
 
 class TestEmbeddingsPretokenisedInput:
-    def test_list_of_int_pretokenised(self, chat_endpoint):
+    def test_chat_does_not_treat_numeric_input_as_pretokenised(self, chat_endpoint):
         out = chat_endpoint.extract_payload_inputs({"input": [1, 2, 3, 4, 5]})
+        assert out.pretokenised_token_count == 0
+        assert out.texts == []
+
+    def test_embeddings_list_of_int_pretokenised(self, embeddings_endpoint):
+        out = embeddings_endpoint.extract_payload_inputs({"input": [1, 2, 3, 4, 5]})
         assert out.pretokenised_token_count == 5
         assert out.texts == []
 
-    def test_list_of_list_int_pretokenised(self, chat_endpoint):
-        out = chat_endpoint.extract_payload_inputs({"input": [[1, 2, 3], [4, 5], [6]]})
+    def test_embeddings_list_of_list_int_pretokenised(self, embeddings_endpoint):
+        out = embeddings_endpoint.extract_payload_inputs(
+            {"input": [[1, 2, 3], [4, 5], [6]]}
+        )
         assert out.pretokenised_token_count == 6
         assert out.texts == []
 

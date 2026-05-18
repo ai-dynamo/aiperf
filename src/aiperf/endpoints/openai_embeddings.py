@@ -7,6 +7,7 @@ from typing import Any
 
 from aiperf.common.models import (
     EmbeddingResponseData,
+    ExtractedPayload,
     InferenceServerResponse,
     ModelEndpointInfo,
     ParsedResponse,
@@ -89,6 +90,11 @@ class EmbeddingsEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    def extract_payload_inputs(self, payload: dict[str, Any]) -> ExtractedPayload:
+        from aiperf.endpoints.payload_extraction import extract_inputs
+
+        return extract_inputs(payload, self.PART_TYPES, allow_pretokenised_input=True)
 
     def parse_response(
         self, response: InferenceServerResponse

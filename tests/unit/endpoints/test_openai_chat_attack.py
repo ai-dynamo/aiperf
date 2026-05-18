@@ -412,18 +412,20 @@ class TestChatParseResponseHostile:
 
 
 class TestPayloadExtractionPretokenisedEdges:
-    def test_pretokenised_list_of_ints_10000_entries(self):
+    def test_pretokenised_list_of_ints_requires_opt_in(self):
         from aiperf.common.enums import MediaType
 
         payload = {"input": list(range(10000))}
         result = extract_inputs(payload, {MediaType.TEXT: {"text"}})
-        assert result.pretokenised_token_count == 10000
+        assert result.pretokenised_token_count == 0
 
-    def test_pretokenised_list_of_list_of_ints_mixed_sizes(self):
+    def test_pretokenised_list_of_list_of_ints_mixed_sizes_when_opted_in(self):
         from aiperf.common.enums import MediaType
 
         payload = {"input": [list(range(10)), list(range(20)), list(range(30))]}
-        result = extract_inputs(payload, {MediaType.TEXT: {"text"}})
+        result = extract_inputs(
+            payload, {MediaType.TEXT: {"text"}}, allow_pretokenised_input=True
+        )
         assert result.pretokenised_token_count == 60
 
     def test_input_mixed_str_and_int_falls_through(self):

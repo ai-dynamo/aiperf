@@ -23,6 +23,8 @@ from aiperf.common.models import ExtractedPayload
 def extract_inputs(
     payload: dict[str, Any],
     part_types: dict[MediaType, set[str]],
+    *,
+    allow_pretokenised_input: bool = False,
 ) -> ExtractedPayload:
     """Single O(n) walk yielding tokenisable text + per-modality counts.
 
@@ -47,7 +49,9 @@ def extract_inputs(
     if found_items_shape:
         return result
 
-    _walk_flat_fallbacks(payload, result)
+    _walk_flat_fallbacks(
+        payload, result, allow_pretokenised_input=allow_pretokenised_input
+    )
     return result
 
 
@@ -198,7 +202,12 @@ def _collect_str_fields(
             out.append(value)
 
 
-def _walk_flat_fallbacks(payload: dict[str, Any], result: ExtractedPayload) -> None:
+def _walk_flat_fallbacks(
+    payload: dict[str, Any],
+    result: ExtractedPayload,
+    *,
+    allow_pretokenised_input: bool,
+) -> None:
     """Flat-field fallback shapes (completions / embeddings / rankings / HF).
 
     Only consulted when no items-array was found so embeddings
@@ -208,7 +217,9 @@ def _walk_flat_fallbacks(payload: dict[str, Any], result: ExtractedPayload) -> N
     """
     if _append_string_or_list(payload, "prompt", result):
         return
-    if _append_string_or_list(payload, "input", result):
+    if _append_string_or_list(
+        payload, "input", result, allow_pretokenised=allow_pretokenised_input
+    ):
         return
     if _append_query_passages(payload, result):
         return
@@ -219,7 +230,11 @@ def _walk_flat_fallbacks(payload: dict[str, Any], result: ExtractedPayload) -> N
 
 
 def _append_string_or_list(
-    payload: dict[str, Any], key: str, result: ExtractedPayload
+    payload: dict[str, Any],
+    key: str,
+    result: ExtractedPayload,
+    *,
+    allow_pretokenised: bool = False,
 ) -> bool:
     """Append payload[key] if it's a string or list-of-strings; True if matched.
 
@@ -238,14 +253,17 @@ def _append_string_or_list(
         if all(isinstance(s, str) for s in value):
             result.texts.extend(value)
             return True
-        if value and all(isinstance(s, int) for s in value):
-            # Single pre-tokenised sequence: list[int].
+        if allow_pretokenised and value and all(isinstance(s, int) for s in value):
             result.pretokenised_token_count += len(value)
             return True
-        if value and all(
-            isinstance(s, list) and all(isinstance(t, int) for t in s) for s in value
+        if (
+            allow_pretokenised
+            and value
+            and all(
+                isinstance(s, list) and all(isinstance(t, int) for t in s)
+                for s in value
+            )
         ):
-            # Batch of pre-tokenised sequences: list[list[int]].
             result.pretokenised_token_count += sum(len(s) for s in value)
             return True
     return False
