@@ -12,6 +12,7 @@ SELECTs. The wrapper exists so the FastAPI routers in
 from __future__ import annotations
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -35,13 +36,29 @@ class ResultsDB:
         # runs_index lifecycle is managed by the operator startup hook.
         pass
 
+    async def _ensure_readonly_index(self) -> bool:
+        if runs_index.is_open():
+            return True
+        try:
+            await runs_index.open_readonly(self._results_dir / ".aiperf_index.sqlite")
+        except (RuntimeError, OSError, sqlite3.Error) as exc:
+            logger.debug("runs_index read-only open unavailable: %s", exc)
+            return False
+        return True
+
     async def leaderboard(self, *args, **kwargs):
+        if not await self._ensure_readonly_index():
+            return []
         return await runs_index.leaderboard(*args, **kwargs)
 
     async def history(self, *args, **kwargs):
+        if not await self._ensure_readonly_index():
+            return []
         return await runs_index.history(*args, **kwargs)
 
     async def compare(self, *args, **kwargs):
+        if not await self._ensure_readonly_index():
+            return []
         return await runs_index.compare(*args, **kwargs)
 
     async def summary(
@@ -52,6 +69,9 @@ class ResultsDB:
         epoch: str | None = None,
     ) -> dict[str, Any] | None:
         # epoch=None means "latest" — pull from is_latest column
+        if not await self._ensure_readonly_index():
+            return await self._summary_from_disk(namespace, job_id, epoch)
+
         if epoch is None:
             row = await runs_index.get_latest_run(namespace, job_id)
             if row is None:

@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -73,14 +74,18 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # The runs_index SQLite DB is opened here when results_server runs
-        # standalone; in the kopf operator process it's already opened by the
-        # @kopf.on.startup hook in operator/main.py. open() is idempotent only
-        # via the global singleton — guard with a no-op when already open.
+        # The results-server sidecar serves from a read-only PVC mount. The
+        # kopf operator process is the single SQLite writer and creates/migrates
+        # the index during operator startup; this process only opens a read-only
+        # connection for normal API serving.
         index_owned_here = False
         if not runs_index.is_open():
-            await runs_index.open(base_dir / ".aiperf_index.sqlite")
-            index_owned_here = True
+            try:
+                await runs_index.open_readonly(base_dir / ".aiperf_index.sqlite")
+            except (RuntimeError, OSError, sqlite3.Error) as exc:
+                logger.warning("runs_index read-only open skipped: %s", exc)
+            else:
+                index_owned_here = True
         db_holder[0] = ResultsDB(base_dir)
         logger.info(f"runs_index analytics facade initialized (results_dir={base_dir})")
 
@@ -187,7 +192,11 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     app.include_router(create_sweeps_router(api_holder, base_dir))
     app.include_router(create_results_files_router(base_dir))
     app.include_router(create_config_router())
-    app.include_router(create_admin_router(base_dir, base_dir / ".aiperf_index.sqlite"))
+    app.include_router(
+        create_admin_router(
+            base_dir, base_dir / ".aiperf_index.sqlite", allow_rebuild=False
+        )
+    )
 
     def _get_db() -> ResultsDB:
         db = db_holder[0]

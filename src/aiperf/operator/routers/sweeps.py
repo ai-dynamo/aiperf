@@ -158,7 +158,9 @@ async def _get_sweep_impl(
 
     spec_summary = _spec_summary_from_record(rec)
 
-    children_records = await list_all_jobs(api, base_dir, all_namespaces=False)
+    children_records = await list_all_jobs(
+        api, base_dir, all_namespaces=False, namespace=namespace
+    )
     children = [
         j.model_dump(by_alias=True)
         for j in children_records
@@ -219,7 +221,9 @@ async def _cells_from_live_children(
     Reads each child's profile_export_aiperf.json from the PVC if present.
     Returns an empty list if no terminal children are persisted yet.
     """
-    children_records = await list_all_jobs(api, base_dir, all_namespaces=False)
+    children_records = await list_all_jobs(
+        api, base_dir, all_namespaces=False, namespace=namespace
+    )
     matched = [
         j
         for j in children_records
@@ -402,7 +406,6 @@ async def _get_children_impl(
             if live is not None:
                 return live
 
-    # Fallback: per-epoch on-disk archive (post-TTL or explicit epoch lookup).
     sweep_dir = resolve_sweep_dir(base_dir, namespace, name, epoch=epoch)
     if sweep_dir is None:
         raise HTTPException(

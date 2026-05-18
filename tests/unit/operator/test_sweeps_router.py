@@ -183,6 +183,26 @@ def test_detail_returns_spec_summary_from_live(tmp_path: Path) -> None:
     assert "concurrency" in dim_names
 
 
+def test_detail_lists_children_from_requested_namespace(tmp_path: Path) -> None:
+    api = MagicMock()
+    rec = _live_record()
+    list_jobs = AsyncMock(return_value=[])
+    with (
+        patch(
+            "aiperf.operator.routers.sweeps.find_any_sweep",
+            AsyncMock(return_value=rec),
+        ),
+        patch("aiperf.operator.routers.sweeps.list_all_jobs", list_jobs),
+    ):
+        c = _client_with(api, tmp_path)
+        r = c.get("/api/v1/sweeps/bench/s1")
+
+    assert r.status_code == 200
+    list_jobs.assert_awaited_once_with(
+        api, tmp_path, all_namespaces=False, namespace="bench"
+    )
+
+
 def test_detail_archived_uses_synthesized_status(tmp_path: Path) -> None:
     sweep_dir = tmp_path / "bench" / "sweeps" / "s1"
     sweep_dir.mkdir(parents=True)
@@ -358,6 +378,26 @@ def test_cells_live_no_aggregate_returns_empty_with_dimensions(tmp_path: Path) -
     assert body["source"] == "live"
     assert body["cells"] == []
     assert [d["name"] for d in body["dimensions"]] == ["concurrency"]
+
+
+def test_cells_live_child_lookup_scopes_to_requested_namespace(tmp_path: Path) -> None:
+    api = MagicMock()
+    rec = _live_record()
+    list_jobs = AsyncMock(return_value=[])
+    with (
+        patch(
+            "aiperf.operator.routers.sweeps.find_any_sweep",
+            AsyncMock(return_value=rec),
+        ),
+        patch("aiperf.operator.routers.sweeps.list_all_jobs", list_jobs),
+    ):
+        c = _client_with(api, tmp_path)
+        r = c.get("/api/v1/sweeps/bench/s1/cells")
+
+    assert r.status_code == 200
+    list_jobs.assert_awaited_once_with(
+        api, tmp_path, all_namespaces=False, namespace="bench"
+    )
 
 
 def test_cells_404_when_neither_present(tmp_path: Path) -> None:

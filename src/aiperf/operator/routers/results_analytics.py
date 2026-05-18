@@ -182,6 +182,27 @@ def _register_compare_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
     ) -> CompareResponse:
         """Compare specific jobs side-by-side."""
         rows = await get_db().compare(job_ids=jobs, metrics=metrics, epoch=epoch)
+        bare_jobs = {job for job in jobs if "/" not in job}
+        ambiguous: dict[str, list[str]] = {}
+        for job in bare_jobs:
+            matches = sorted(
+                {
+                    f"{row.get('namespace')}/{row.get('job_id')}"
+                    for row in rows
+                    if row.get("job_id") == job and row.get("namespace")
+                }
+            )
+            if len(matches) > 1:
+                ambiguous[job] = matches
+        if ambiguous:
+            detail = "; ".join(
+                f"{job!r} matches {', '.join(matches)}"
+                for job, matches in sorted(ambiguous.items())
+            )
+            raise HTTPException(
+                409,
+                f"Ambiguous compare job name; use namespace/job syntax: {detail}",
+            )
         metric_list = metrics or list(DEFAULT_COMPARE_METRICS)
         entries, meta = _pivot_compare_rows(rows, metric_list)
         return CompareResponse(

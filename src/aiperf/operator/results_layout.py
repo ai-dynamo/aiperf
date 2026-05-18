@@ -35,9 +35,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 LATEST_POINTER = "latest.txt"
-# 9-11 digits covers epoch-seconds from 1973 (10^9) through 5138 (10^11),
-# which comfortably brackets any realistic AIPerfJob creation timestamp.
-EPOCH_RE = re.compile(r"^\d{9,11}$")
+# 9-17 digits covers legacy epoch-seconds directories plus fractional-second
+# run keys encoded as <epoch-seconds><microseconds:06d> for same-name resubmits.
+EPOCH_RE = re.compile(r"^\d{9,17}$")
 
 __all__ = [
     "EPOCH_RE",
@@ -144,20 +144,29 @@ async def list_runs_async(base: Path, namespace: str, name: str) -> list[RunEntr
         rows = await _runs_index.list_runs_for_job(namespace, name)
     except RuntimeError:
         rows = []
-    if rows:
-        return [
-            RunEntry(
-                epoch=r.epoch,
-                mtime_epoch=r.mtime_epoch or 0,
-                file_count=r.file_count,
-                total_size_bytes=r.total_size_bytes,
-                is_latest=r.is_latest,
-            )
-            for r in rows
-        ]
-    if not job_dir(base, namespace, name).is_dir():
+
+    parent = job_dir(base, namespace, name)
+    if not parent.is_dir():
         return []
-    return list_runs(base, namespace, name)
+
+    disk_runs = list_runs(base, namespace, name)
+    if not rows:
+        return disk_runs
+
+    combined: dict[str, RunEntry] = {}
+    for r in rows:
+        if not (parent / r.epoch).is_dir():
+            continue
+        combined[r.epoch] = RunEntry(
+            epoch=r.epoch,
+            mtime_epoch=r.mtime_epoch or 0,
+            file_count=r.file_count,
+            total_size_bytes=r.total_size_bytes,
+            is_latest=r.is_latest,
+        )
+    for entry in disk_runs:
+        combined[entry.epoch] = entry
+    return sorted(combined.values(), key=lambda r: r.mtime_epoch, reverse=True)
 
 
 def job_dir(base: Path, namespace: str, name: str) -> Path:
@@ -365,16 +374,17 @@ async def list_sweep_epochs_async(
         epochs = await _runs_index.list_sweep_epochs_for_sweep(namespace, name)
     except RuntimeError:
         epochs = []
+
+    disk_epochs = list_sweep_epochs(base, namespace, name)
     if not epochs:
-        return list_sweep_epochs(base, namespace, name)
+        return disk_epochs
 
+    by_epoch = {entry.epoch: entry for entry in disk_epochs}
     sweep_root = base / namespace / "sweeps" / name
-    if not sweep_root.is_dir():
-        return list_sweep_epochs(base, namespace, name)
-
     latest = resolve_sweep_latest(base, namespace, name)
-    out: list[RunEntry] = []
     for epoch in epochs:
+        if epoch in by_epoch:
+            continue
         epoch_dir = sweep_root / epoch
         if not epoch_dir.is_dir():
             continue
@@ -385,16 +395,14 @@ async def list_sweep_epochs_async(
             total_size_bytes = sum(c.stat().st_size for c in children if c.is_file())
         except OSError:
             continue
-        out.append(
-            RunEntry(
-                epoch=epoch,
-                mtime_epoch=mtime,
-                file_count=file_count,
-                total_size_bytes=total_size_bytes,
-                is_latest=(epoch == latest),
-            )
+        by_epoch[epoch] = RunEntry(
+            epoch=epoch,
+            mtime_epoch=mtime,
+            file_count=file_count,
+            total_size_bytes=total_size_bytes,
+            is_latest=(epoch == latest),
         )
-    return sorted(out, key=lambda e: e.epoch)
+    return sorted(by_epoch.values(), key=lambda e: e.epoch)
 
 
 def list_run_epochs(base: Path, namespace: str, name: str) -> list[str]:
@@ -575,9 +583,9 @@ def epoch_key_from_body(body: dict) -> str:
     """Parse ``metadata.creationTimestamp`` into a decimal epoch-seconds string.
 
     Matches the legacy dynamo ``EPOCH=$(date +%s)`` convention so run
-    directories sort chronologically and collide only when two jobs are
-    created in the same second (rare in practice, and safe because
-    Kubernetes names are also unique per-job).
+    directories sort chronologically. Whole-second timestamps keep the legacy
+    epoch-seconds shape; fractional timestamps append six microsecond digits so
+    same-name resubmits created within one second do not collide.
 
     Example:
         >>> epoch_key_from_body({"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"}})
@@ -587,4 +595,7 @@ def epoch_key_from_body(body: dict) -> str:
     # ``fromisoformat`` on 3.10 rejects trailing Z; swap for the explicit
     # UTC offset so the parse works across supported Python versions.
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return str(int(dt.timestamp()))
+    seconds = int(dt.timestamp())
+    if dt.microsecond == 0:
+        return str(seconds)
+    return f"{seconds}{dt.microsecond:06d}"

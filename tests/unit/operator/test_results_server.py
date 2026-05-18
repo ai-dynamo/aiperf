@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import orjson
@@ -88,6 +89,8 @@ async def _ingest_runs(base_dir: Path) -> None:
     bootstrap with ``force=True`` makes the walk idempotent across multiple
     writes within a single test.
     """
+    if not runs_index.is_open():
+        await runs_index.open(base_dir / ".aiperf_index.sqlite")
     await runs_index.bootstrap(base_dir, force=True)
 
 
@@ -166,6 +169,8 @@ async def client(results_dir: Path):
         yield c
 
     await ctx.__aexit__(None, None, None)
+    if runs_index.is_open():
+        await runs_index.close()
 
 
 # ============================================================
@@ -251,6 +256,36 @@ class TestHealthEndpoint:
         app = create_app(results_dir=tmp_path)
         paths = {route.path for route in app.routes if hasattr(route, "path")}
         assert "/dashboard/{path:path}" in paths
+
+    @pytest.mark.asyncio
+    async def test_results_server_opens_runs_index_readonly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The results-server sidecar must not become a second SQLite writer."""
+        from aiperf.operator import runs_index as runs_index_mod
+        from aiperf.operator.results_server import create_app
+
+        calls: list[tuple[str, Path]] = []
+
+        async def fake_open(path: Path) -> None:
+            calls.append(("write", path))
+
+        async def fake_open_readonly(path: Path) -> None:
+            calls.append(("read", path))
+
+        monkeypatch.setattr(runs_index_mod, "is_open", lambda: False)
+        monkeypatch.setattr(runs_index_mod, "open", fake_open)
+        monkeypatch.setattr(
+            runs_index_mod, "open_readonly", fake_open_readonly, raising=False
+        )
+        monkeypatch.setattr(runs_index_mod, "close", AsyncMock())
+
+        app = create_app(results_dir=tmp_path)
+        ctx = app.router.lifespan_context(app)
+        await ctx.__aenter__()
+        await ctx.__aexit__(None, None, None)
+
+        assert calls == [("read", tmp_path / ".aiperf_index.sqlite")]
 
 
 # ============================================================
@@ -686,6 +721,70 @@ class TestCompareEndpoint:
         )
         assert resp.status_code == 200
         assert resp.json()["entries"] == []
+
+    @pytest.mark.asyncio
+    async def test_compare_bare_job_name_rejects_namespace_ambiguity(
+        self, results_dir: Path, client: httpx.AsyncClient
+    ) -> None:
+        _create_result_file(
+            results_dir,
+            "ns-a",
+            "same-job",
+            "profile_export_aiperf.json",
+            _summary_json(metric_val=100.0),
+        )
+        _create_result_file(
+            results_dir,
+            "ns-b",
+            "same-job",
+            "profile_export_aiperf.json",
+            _summary_json(metric_val=200.0),
+        )
+        await _ingest_runs(results_dir)
+
+        resp = await client.get(
+            "/api/v1/analytics/compare",
+            params={"jobs": ["same-job"]},
+        )
+
+        assert resp.status_code == 409
+        assert "ns-a/same-job" in resp.json()["detail"]
+        assert "ns-b/same-job" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_compare_accepts_namespace_qualified_job_refs(
+        self, results_dir: Path, client: httpx.AsyncClient
+    ) -> None:
+        _create_result_file(
+            results_dir,
+            "ns-a",
+            "same-job",
+            "profile_export_aiperf.json",
+            _summary_json(metric_val=100.0),
+        )
+        _create_result_file(
+            results_dir,
+            "ns-b",
+            "same-job",
+            "profile_export_aiperf.json",
+            _summary_json(metric_val=200.0),
+        )
+        await _ingest_runs(results_dir)
+
+        resp = await client.get(
+            "/api/v1/analytics/compare",
+            params={"jobs": ["ns-a/same-job"]},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["meta"].keys() == {"ns-a/same-job"}
+        value_entries = [
+            entry
+            for entry in data["entries"]
+            if entry["metric"] == "request_throughput" and entry["stat"] == "avg"
+        ]
+        assert value_entries[0]["values"] == {"ns-a/same-job": 100.0}
 
 
 # ============================================================

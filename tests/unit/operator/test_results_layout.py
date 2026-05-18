@@ -13,6 +13,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from aiperf.operator.results_layout import (
     EPOCH_RE,
     LATEST_POINTER,
@@ -20,7 +22,9 @@ from aiperf.operator.results_layout import (
     epoch_key_from_body,
     job_dir,
     list_run_epochs,
+    list_runs_async,
     list_sweep_epochs,
+    list_sweep_epochs_async,
     resolve_latest,
     resolve_run_dir,
     resolve_sweep_dir,
@@ -316,3 +320,94 @@ def test_list_sweep_epochs_orders_by_epoch_asc(tmp_path: Path) -> None:
 
 def test_resolve_sweep_latest_returns_none_when_unset(tmp_path: Path) -> None:
     assert resolve_sweep_latest(tmp_path, "bench", "s1") is None
+
+
+def test_epoch_key_from_body_preserves_subsecond_distinction() -> None:
+    first = {"metadata": {"creationTimestamp": "2024-04-25T18:22:03.123456Z"}}
+    second = {"metadata": {"creationTimestamp": "2024-04-25T18:22:03.654321Z"}}
+
+    first_key = epoch_key_from_body(first)
+    second_key = epoch_key_from_body(second)
+
+    assert first_key != second_key
+    assert EPOCH_RE.match(first_key) is not None
+    assert EPOCH_RE.match(second_key) is not None
+
+
+def test_epoch_key_from_body_keeps_integer_key_for_whole_seconds() -> None:
+    body = {"metadata": {"creationTimestamp": "2024-04-25T18:22:03.000000Z"}}
+    assert epoch_key_from_body(body) == "1714069323"
+
+
+@pytest.mark.asyncio
+async def test_list_runs_async_merges_disk_epochs_when_index_has_stale_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aiperf.operator.runs_index_models import RunIndexRow
+
+    old = "1714064523"
+    new = "1714150923"
+    old_dir = run_dir(tmp_path, "bench", "job", old)
+    new_dir = run_dir(tmp_path, "bench", "job", new)
+    old_dir.mkdir(parents=True)
+    new_dir.mkdir(parents=True)
+    (old_dir / "old.json").write_text("{}")
+    (new_dir / "new.json").write_text("{}")
+    write_latest(tmp_path, "bench", "job", new)
+
+    async def fake_index_rows(namespace: str, job_id: str) -> list[RunIndexRow]:
+        return [
+            RunIndexRow(
+                namespace=namespace,
+                job_id=job_id,
+                epoch=old,
+                phase="Succeeded",
+                is_latest=True,
+                start_time=None,
+                end_time=None,
+                created_unix=int(old),
+                mtime_epoch=1,
+                error=None,
+                model=None,
+                endpoint=None,
+                gpu_count=0,
+                gpu_name=None,
+                file_count=1,
+                total_size_bytes=2,
+                sweep_namespace=None,
+                sweep_name=None,
+                sweep_epoch=None,
+                sweep_variation_idx=None,
+            )
+        ]
+
+    monkeypatch.setattr("aiperf.operator.runs_index.list_runs_for_job", fake_index_rows)
+
+    runs = await list_runs_async(tmp_path, "bench", "job")
+
+    assert {run.epoch for run in runs} == {old, new}
+    assert {run.epoch for run in runs if run.is_latest} == {new}
+
+
+@pytest.mark.asyncio
+async def test_list_sweep_epochs_async_merges_disk_epochs_when_index_is_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = "1714064523"
+    new = "1714150923"
+    sweep_root = tmp_path / "bench" / "sweeps" / "s1"
+    (sweep_root / old).mkdir(parents=True)
+    (sweep_root / new).mkdir(parents=True)
+    write_sweep_latest(tmp_path, "bench", "s1", new)
+
+    async def fake_index_epochs(namespace: str, sweep_name: str) -> list[str]:
+        return [old]
+
+    monkeypatch.setattr(
+        "aiperf.operator.runs_index.list_sweep_epochs_for_sweep", fake_index_epochs
+    )
+
+    epochs = await list_sweep_epochs_async(tmp_path, "bench", "s1")
+
+    assert [entry.epoch for entry in epochs] == [old, new]
+    assert {entry.epoch for entry in epochs if entry.is_latest} == {new}

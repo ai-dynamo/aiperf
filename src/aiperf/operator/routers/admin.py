@@ -62,7 +62,9 @@ class IndexRunRowResponse(BaseModel):
     inter_token_latency_p99: float | None = Field(default=None)
 
 
-def create_admin_router(base_dir: Path, db_path: Path) -> APIRouter:
+def create_admin_router(
+    base_dir: Path, db_path: Path, *, allow_rebuild: bool = True
+) -> APIRouter:
     """Build the /admin/index router bound to ``base_dir`` and ``db_path``.
 
     The router exposes:
@@ -82,6 +84,12 @@ def create_admin_router(base_dir: Path, db_path: Path) -> APIRouter:
 
     @router.post("/rebuild", response_model=IndexRebuildResponse)
     async def rebuild() -> IndexRebuildResponse:
+        if not allow_rebuild:
+            raise HTTPException(
+                503,
+                "Index rebuild is disabled in the read-only results-server sidecar; "
+                "run it from the operator writer process.",
+            )
         result = await runs_index.bootstrap(base_dir, force=True)
         return IndexRebuildResponse(
             runs_indexed=result.runs_indexed,
