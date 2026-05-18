@@ -323,13 +323,23 @@ async def _submit_claim_patch(
     except ApiException as e:
         status_code = e.status or 0
         if status_code == 409:
-            logger.debug(
-                "Completion claim for %s/%s lost race (status %s), skipping",
+            live_claimed = await _read_live_completion_claimed(namespace, name)
+            if live_claimed is True:
+                logger.debug(
+                    "Completion claim for %s/%s lost race (status %s), skipping",
+                    namespace,
+                    name,
+                    status_code,
+                )
+                return False
+            logger.warning(
+                "Completion claim patch conflicted for %s/%s without a live claim; "
+                "not caching as a lost race so a later tick can retry: %s",
                 namespace,
                 name,
-                status_code,
+                e,
             )
-            return False
+            return None
         if status_code == 422:
             logger.warning(
                 "Completion claim patch was rejected for %s/%s with status 422; "
@@ -363,6 +373,44 @@ async def _submit_claim_patch(
         )
         return None
     return True
+
+
+async def _read_live_completion_claimed(namespace: str, name: str) -> bool | None:
+    """Re-read the CR after a claim conflict and report whether it is claimed."""
+    try:
+        async with k8s_client() as api:
+            live_body = await client.CustomObjectsApi(api).get_namespaced_custom_object(
+                group=AIPERF_JOB_GROUP,
+                version=AIPERF_JOB_VERSION,
+                plural=AIPERF_JOB_PLURAL,
+                namespace=namespace,
+                name=name,
+            )
+    except ApiException as e:
+        logger.warning(
+            "Failed to re-read completion claim for %s/%s after conflict: %s",
+            namespace,
+            name,
+            e,
+        )
+        return None
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.warning(
+            "Unexpected error re-reading completion claim for %s/%s after conflict: %s",
+            namespace,
+            name,
+            e,
+        )
+        return None
+    except Exception as e:  # noqa: BLE001 - fail-safe: do not cache a race on unreadable live state
+        logger.warning(
+            "Unexpected error re-reading completion claim for %s/%s after conflict: %s",
+            namespace,
+            name,
+            e,
+        )
+        return None
+    return is_completion_claimed(live_body)
 
 
 def _reset_for_testing() -> None:

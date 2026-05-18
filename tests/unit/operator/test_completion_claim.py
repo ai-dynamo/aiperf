@@ -166,19 +166,58 @@ class TestTryClaimCompletion:
         assert patch_ops[1]["path"] == "/metadata/annotations"
 
     @pytest.mark.asyncio
-    async def test_conflict_409_returns_false(self) -> None:
-        """On 409 the patch lost a race: return False, mark in-process cache."""
-        body = _body_without_annotation()
+    async def test_conflict_409_without_live_claim_is_retryable(self) -> None:
+        """409 from an unrelated resourceVersion change must not poison the cache."""
+        body = {"metadata": {"resourceVersion": "42"}}
         mock_api = MagicMock()
         mock_custom = MagicMock()
         mock_custom.patch_namespaced_custom_object = AsyncMock(
             side_effect=ApiException(status=409, reason="conflict")
         )
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            return_value={"metadata": {"resourceVersion": "43", "annotations": {}}}
+        )
 
         with (
             mock_patch(
                 "aiperf.operator.client_cache.k8s_client",
-                return_value=_fake_k8s_client(mock_api),
+                side_effect=lambda: _fake_k8s_client(mock_api),
+            ),
+            mock_patch(
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+        ):
+            result = await try_claim_completion("ns", "j", body)
+
+        assert result is False
+        assert "ns/j" not in _shutdown_sent
+        mock_custom.get_namespaced_custom_object.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_conflict_409_with_live_claim_marks_lost_race(self) -> None:
+        """409 with the live claim annotation is still a completion-race loss."""
+        body = {"metadata": {"resourceVersion": "42"}}
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=409, reason="conflict")
+        )
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            return_value={
+                "metadata": {
+                    "resourceVersion": "43",
+                    "annotations": {
+                        Annotations.COMPLETION_CLAIMED: "2026-01-01T00:00:00Z"
+                    },
+                }
+            }
+        )
+
+        with (
+            mock_patch(
+                "aiperf.operator.client_cache.k8s_client",
+                side_effect=lambda: _fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "kubernetes_asyncio.client.CustomObjectsApi",
@@ -189,6 +228,7 @@ class TestTryClaimCompletion:
 
         assert result is False
         assert "ns/j" in _shutdown_sent
+        mock_custom.get_namespaced_custom_object.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_unprocessable_422_returns_false(self) -> None:
