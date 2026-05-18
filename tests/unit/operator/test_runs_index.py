@@ -406,6 +406,107 @@ async def test_bootstrap_walks_pvc_and_indexes_runs(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
+    tmp_path: Path,
+) -> None:
+    """K8s sweep bundles put per-cell metrics under sweep_aggregate/."""
+    base = tmp_path / "results"
+    epoch_dir = base / "ns" / "sweeps" / "satsweep" / "1714069323"
+    aggregate_dir = epoch_dir / "sweep_aggregate"
+    aggregate_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(
+        orjson.dumps(
+            {
+                "phase": "Succeeded",
+                "totalVariations": 2,
+                "completedRuns": 2,
+                "failedRuns": 0,
+            }
+        )
+    )
+    (epoch_dir / "children.json").write_bytes(
+        orjson.dumps(
+            {
+                "sweep_run_epoch": "1714069323",
+                "children": [
+                    {
+                        "namespace": "ns",
+                        "name": "satsweep-v00",
+                        "variation_index": 0,
+                        "variation_label": "concurrency=10",
+                        "child_run_epoch": "1714069324",
+                        "status": "Succeeded",
+                    },
+                    {
+                        "namespace": "ns",
+                        "name": "satsweep-v01",
+                        "variation_index": 1,
+                        "variation_label": "concurrency=20",
+                        "child_run_epoch": "1714069325",
+                        "status": "Succeeded",
+                    },
+                ],
+            }
+        )
+    )
+    (aggregate_dir / "profile_export_aiperf_sweep.json").write_bytes(
+        orjson.dumps(
+            {
+                "aggregation_type": "sweep",
+                "metadata": {"sweep_mode": "INDEPENDENT"},
+                "per_combination_metrics": [
+                    {
+                        "parameters": {"concurrency": 10},
+                        "metrics": {
+                            "request_throughput": {
+                                "mean": 100.0,
+                                "avg": 100.0,
+                                "p50": 95.0,
+                                "p99": 110.0,
+                                "unit": "rps",
+                            }
+                        },
+                    },
+                    {
+                        "parameters": {"concurrency": 20},
+                        "metrics": {
+                            "request_throughput": {
+                                "mean": 180.0,
+                                "avg": 180.0,
+                                "p50": 175.0,
+                                "p99": 190.0,
+                                "unit": "rps",
+                            }
+                        },
+                    },
+                ],
+                "best_configurations": {
+                    "best_throughput": {
+                        "parameters": {"concurrency": 20},
+                        "metric": 180.0,
+                        "unit": "rps",
+                    }
+                },
+                "pareto_optimal": [{"concurrency": 10}, {"concurrency": 20}],
+            }
+        )
+    )
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        stats = await runs_index.bootstrap(base)
+        assert stats.sweep_variations_indexed == 2
+        rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
+        assert [r.variation_idx for r in rows] == [0, 1]
+        assert rows[0].child_job_id == "satsweep-v00"
+        assert rows[1].child_epoch == "1714069325"
+        assert rows[1].is_best is True
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_ingests_legacy_runs_without_ready_marker(
     tmp_path: Path,
 ) -> None:

@@ -369,6 +369,32 @@ def _narrow_metric_columns(metrics: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _metric_stat_value(payload: dict[str, Any]) -> Any:
+    return payload.get("avg", payload.get("mean"))
+
+
+def _normalize_sweep_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Normalize sweep per-combination stats for narrow-column extraction."""
+    normalized: dict[str, Any] = {}
+    for name in _NARROW_METRICS:
+        direct = metrics.get(name)
+        if isinstance(direct, dict):
+            entry = dict(direct)
+            if "avg" not in entry and "mean" in entry:
+                entry["avg"] = entry["mean"]
+            normalized[name] = entry
+
+        for stat in ("avg", "p50", "p99"):
+            stat_payload = metrics.get(f"{name}_{stat}")
+            if not isinstance(stat_payload, dict):
+                continue
+            entry = normalized.setdefault(name, {})
+            entry[stat] = _metric_stat_value(stat_payload)
+            if "unit" not in entry and stat_payload.get("unit") is not None:
+                entry["unit"] = stat_payload["unit"]
+    return normalized
+
+
 async def upsert_run_created(
     namespace: str, job_id: str, epoch: str, *, spec: dict[str, Any]
 ) -> None:
@@ -908,8 +934,7 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
                             f"({type(exc).__name__}: {exc})"
                         )
                         continue
-                    if indexed:
-                        sweep_count += 1
+                    sweep_count += indexed
 
     elapsed = time.monotonic() - started
     await set_meta("last_bootstrap_unix", str(int(time.time())))
@@ -974,39 +999,164 @@ async def _index_run_from_disk(
     return True
 
 
+SweepRow = tuple[Any, dict[str, Any], dict[str, Any], dict[str, Any]]
+
+
+def _sweep_mode(agg: dict[str, Any]) -> str:
+    metadata = agg.get("metadata") if isinstance(agg.get("metadata"), dict) else {}
+    mode = metadata.get("mode") or metadata.get("sweep_mode") or "INDEPENDENT"
+    return str(mode).rsplit(".", 1)[-1]
+
+
+def _legacy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
+    rows: list[SweepRow] = []
+    for row in agg.get("per_combination_metrics", []) or []:
+        idx = row.get("variation_idx")
+        if idx is None:
+            continue
+        rows.append(
+            (
+                idx,
+                row.get("variation_values", {}),
+                _normalize_sweep_metrics(row.get("metrics", {}) or {}),
+                row,
+            )
+        )
+    return rows
+
+
+def _load_strategy_sweep_aggregate(epoch_dir: Path) -> dict[str, Any] | None:
+    path = epoch_dir / "sweep_aggregate" / "profile_export_aiperf_sweep.json"
+    try:
+        return orjson.loads(path.read_bytes())
+    except (FileNotFoundError, OSError, orjson.JSONDecodeError):
+        return None
+
+
+def _strategy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
+    rows: list[SweepRow] = []
+    for fallback_idx, row in enumerate(agg.get("per_combination_metrics", []) or []):
+        idx = row.get("variation_idx", fallback_idx)
+        rows.append(
+            (
+                idx,
+                row.get("variation_values") or row.get("parameters", {}) or {},
+                _normalize_sweep_metrics(row.get("metrics", {}) or {}),
+                row,
+            )
+        )
+    return rows
+
+
+def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
+    path = epoch_dir / "children.json"
+    try:
+        doc = orjson.loads(path.read_bytes())
+    except (FileNotFoundError, OSError, orjson.JSONDecodeError):
+        return {}
+
+    refs: dict[int, tuple[str, str, str]] = {}
+    for child in doc.get("children", []) or []:
+        try:
+            idx = int(child["variation_index"])
+            refs[idx] = (
+                child.get("namespace") or "",
+                child["name"],
+                child.get("child_run_epoch") or "",
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return refs
+
+
+def _variation_key(values: dict[str, Any]) -> bytes:
+    return orjson.dumps(values, option=orjson.OPT_SORT_KEYS)
+
+
+def _best_parameter_keys(best_configurations: Any) -> set[bytes]:
+    if not isinstance(best_configurations, dict):
+        return set()
+    keys: set[bytes] = set()
+    for item in best_configurations.values():
+        if isinstance(item, dict) and isinstance(item.get("parameters"), dict):
+            keys.add(_variation_key(item["parameters"]))
+    return keys
+
+
+def _sweep_rankings(
+    agg: dict[str, Any], indexed_rows: list[tuple[int, dict[str, Any]]]
+) -> list[tuple[int, int, bool]]:
+    pareto_idxs = {p.get("variation_idx") for p in agg.get("pareto_optimal", []) or []}
+    best = agg.get("best_configurations", []) or []
+    best_idxs = {b.get("variation_idx") for b in best if isinstance(b, dict)}
+    pareto_param_keys = {
+        _variation_key(p)
+        for p in agg.get("pareto_optimal", []) or []
+        if isinstance(p, dict)
+    }
+    best_param_keys = _best_parameter_keys(best)
+    if not (pareto_idxs or best_idxs or pareto_param_keys or best_param_keys):
+        return []
+
+    rankings: list[tuple[int, int, bool]] = []
+    for idx, variation_values in indexed_rows:
+        key = _variation_key(variation_values)
+        rankings.append(
+            (
+                idx,
+                idx if idx in pareto_idxs or key in pareto_param_keys else 999,
+                idx in best_idxs or key in best_param_keys,
+            )
+        )
+    return rankings
+
+
 async def _index_sweep_from_disk(
     namespace: str, sweep_name: str, sweep_epoch: str, epoch_dir: Path
-) -> bool:
+) -> int:
     """Ingest <ns>/sweeps/<name>/<epoch>/ — variations + pareto if present.
 
-    Looks for ``aggregate.json`` (the format ``aggregate_sweep_and_export``
-    writes). Variations without it are skipped.
+    Returns the number of variation rows indexed. K8s sweep-controller archives
+    put parent status in ``aggregate.json`` and per-cell metrics under
+    ``sweep_aggregate/profile_export_aiperf_sweep.json``; legacy in-process
+    sweep archives may put ``per_combination_metrics`` directly in
+    ``aggregate.json``.
     """
     aggregate_path = epoch_dir / "aggregate.json"
     if not aggregate_path.exists():
-        return False
+        return 0
     try:
-        agg = orjson.loads(aggregate_path.read_bytes())
+        parent_agg = orjson.loads(aggregate_path.read_bytes())
     except (OSError, orjson.JSONDecodeError):
-        return False
+        return 0
 
-    indexed = False
-    for v in agg.get("per_combination_metrics", []) or []:
-        idx = v.get("variation_idx")
-        if idx is None:
-            continue
+    source_agg = parent_agg
+    rows = _legacy_sweep_rows(parent_agg)
+    if not rows:
+        strategy_agg = _load_strategy_sweep_aggregate(epoch_dir)
+        if strategy_agg is None:
+            return 0
+        source_agg = strategy_agg
+        rows = _strategy_sweep_rows(strategy_agg)
+
+    child_refs = _load_sweep_child_refs(epoch_dir)
+    indexed_rows: list[tuple[int, dict[str, Any]]] = []
+    for idx, variation_values, metrics, row_blob in rows:
         try:
+            variation_idx = int(idx)
             await upsert_sweep_variation(
                 namespace,
                 sweep_name,
                 sweep_epoch,
-                int(idx),
-                variation_values=v.get("variation_values", {}),
-                mode=agg.get("metadata", {}).get("mode", "INDEPENDENT"),
+                variation_idx,
+                variation_values=variation_values,
+                mode=_sweep_mode(source_agg),
                 phase="Succeeded",
-                metrics=v.get("metrics", {}),
-                child_ref=None,
-                metrics_blob=zstandard.ZstdCompressor().compress(orjson.dumps(v)),
+                metrics=metrics,
+                child_ref=child_refs.get(variation_idx),
+                metrics_blob=zstandard.ZstdCompressor().compress(
+                    orjson.dumps(row_blob)
+                ),
             )
         except (
             sqlite3.Error,
@@ -1024,26 +1174,10 @@ async def _index_sweep_from_disk(
                 f"({type(exc).__name__}: {exc})"
             )
             continue
-        indexed = True
+        indexed_rows.append((variation_idx, variation_values))
 
-    pareto_idxs = {p.get("variation_idx") for p in agg.get("pareto_optimal", []) or []}
-    best_idxs = {
-        b.get("variation_idx") for b in agg.get("best_configurations", []) or []
-    }
-    if pareto_idxs or best_idxs:
-        rankings: list[tuple[int, int, bool]] = []
-        for v in agg.get("per_combination_metrics", []) or []:
-            idx = v.get("variation_idx")
-            if idx is None:
-                continue
-            i = int(idx)
-            rankings.append(
-                (
-                    i,
-                    i if i in pareto_idxs else 999,
-                    i in best_idxs,
-                )
-            )
+    rankings = _sweep_rankings(source_agg, indexed_rows)
+    if rankings:
         await mark_sweep_pareto(
             namespace,
             sweep_name,
@@ -1051,7 +1185,7 @@ async def _index_sweep_from_disk(
             rankings=rankings,
         )
 
-    return indexed
+    return len(indexed_rows)
 
 
 async def lazy_backfill_run(

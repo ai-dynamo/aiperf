@@ -397,7 +397,7 @@ class TestBootstrapEdgeCases:
         epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
         epoch_dir.mkdir(parents=True)
         ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
-        assert ok is False
+        assert ok == 0
 
     @pytest.mark.asyncio
     async def test_index_sweep_from_disk_aggregate_without_pareto(
@@ -430,7 +430,7 @@ class TestBootstrapEdgeCases:
         (epoch_dir / "aggregate.json").write_bytes(orjson.dumps(agg))
 
         ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
-        assert ok is True
+        assert ok == 1
         rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
         assert len(rows) == 1
         assert rows[0].is_best is False
@@ -488,7 +488,7 @@ class TestBootstrapEdgeCases:
             "ns", "ajc-sweep-x", "1714069323", epoch_dir
         )
 
-        assert ok is True, "at least one variation succeeded → indexed"
+        assert ok == 2, "two variations succeeded → indexed"
         rows = await runs_index.list_sweep_variations("ns", "ajc-sweep-x", "1714069323")
         indices = sorted(r.variation_idx for r in rows)
         assert indices == [0, 2], (
@@ -538,7 +538,7 @@ class TestBootstrapEdgeCases:
         (epoch_dir / "aggregate.json").write_bytes(orjson.dumps(agg))
 
         ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
-        assert ok is True
+        assert ok == 1
         rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
         assert len(rows) == 1
         assert rows[0].is_best is True
