@@ -40,6 +40,55 @@ _logger = AIPerfLogger(__name__)
 _NormalRequestT = WekaNormalRequest | WekaStreamingRequest
 
 
+def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
+    """Recorded end time of a subagent, in seconds.
+
+    Uses ``duration_ms`` when present. Falls back to ``max(inner.t + inner.api_time)``
+    when ``duration_ms`` is None (recorded for ``status='async_launched'`` subagents).
+    Falls back further to ``entry.t`` when both are unavailable.
+    """
+    if entry.duration_ms is not None:
+        return entry.t + entry.duration_ms / 1000.0
+    if entry.requests:
+        return max(ir.t + (ir.api_time or 0.0) for ir in entry.requests)
+    return entry.t
+
+
+def _pack_into_streams(
+    requests: list[WekaNormalRequest],
+) -> list[list[WekaNormalRequest]]:
+    """Partition inner requests into the minimum number of non-overlapping
+    sequential streams (interval-graph chromatic decomposition, greedy
+    earliest-fit).
+
+    Two requests ``A``, ``B`` overlap when ``[A.t, A.t + A.api_time)`` intersects
+    ``[B.t, B.t + B.api_time)``. Each returned stream is a chain of
+    non-overlapping requests in ``t``-order. The number of streams equals the
+    maximum number of concurrent inner requests at any instant.
+
+    A request with ``api_time = None`` is treated as zero-duration (the
+    interval becomes the instant ``[t, t)``) - it never overlaps anything by
+    itself, so it lands in the first stream by ``t``. This matches the
+    behaviour of subagents whose telemetry was not captured.
+    """
+    sorted_reqs = sorted(requests, key=lambda r: r.t)
+    streams: list[list[WekaNormalRequest]] = []
+    stream_ends: list[float] = []
+    for r in sorted_reqs:
+        r_end = r.t + (r.api_time or 0.0)
+        placed = False
+        for i, end in enumerate(stream_ends):
+            if end <= r.t:
+                streams[i].append(r)
+                stream_ends[i] = r_end
+                placed = True
+                break
+        if not placed:
+            streams.append([r])
+            stream_ends.append(r_end)
+    return streams
+
+
 def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float:
     """Clamp a delay to at most cap_seconds * 1000 ms.
 
@@ -58,6 +107,7 @@ class _ParentPlan:
     trace_id: str
     normals: list[tuple[int, _NormalRequestT]]
     subagents: list[tuple[int, WekaSubagentEntry]]
+    block_size: int
 
 
 @dataclass
@@ -66,6 +116,46 @@ class _ChildPlan:
     parent_trace_id: str
     subagent_index: int
     entry: WekaSubagentEntry
+    stream_index: int
+    stream_requests: list[WekaNormalRequest]
+    block_size: int
+
+
+def _expand_subagent_to_child_plans(
+    trace_id: str,
+    sa_index: int,
+    entry: WekaSubagentEntry,
+    block_size: int,
+) -> list[_ChildPlan]:
+    """Pack a subagent's inner requests into per-stream child plans.
+
+    Single-stream subagents keep the legacy ``::sa:{agent_id}`` session-id
+    shape; multi-stream subagents append ``:s{stream_index}``. Subagents with
+    zero recorded inner requests still emit one (empty) child to preserve
+    the parent SPAWN branch's child-conversation target.
+    """
+    streams = _pack_into_streams(list(entry.requests))
+    if not streams:
+        streams = [[]]
+    plans: list[_ChildPlan] = []
+    multi = len(streams) > 1
+    for stream_idx, stream_reqs in enumerate(streams):
+        if multi:
+            child_sid = f"{trace_id}::sa:{entry.agent_id}:s{stream_idx}"
+        else:
+            child_sid = f"{trace_id}::sa:{entry.agent_id}"
+        plans.append(
+            _ChildPlan(
+                session_id=child_sid,
+                parent_trace_id=trace_id,
+                subagent_index=sa_index,
+                entry=entry,
+                stream_index=stream_idx,
+                stream_requests=stream_reqs,
+                block_size=block_size,
+            )
+        )
+    return plans
 
 
 class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
@@ -134,15 +224,34 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._tokenizer_revision = user_config.tokenizer.revision
         user_block_size = user_config.input.prompt.input_tokens.block_size
         if user_block_size is not None:
-            self._block_size = user_block_size
+            self._user_block_size_override: int | None = user_block_size
         elif default_block_size is not None:
-            self._block_size = default_block_size
+            self._user_block_size_override = default_block_size
         else:
-            self._block_size = 64  # matches Weka traces' default
+            self._user_block_size_override = None
+        # ``self._block_size`` is preserved for callbacks (``_decode_block_tokens``
+        # closes over it) and for tests that set it directly. It is overwritten
+        # per-trace in the reconstruction loop with the result of
+        # ``_block_size_for_trace`` so the user-override > trace-declared > 64
+        # precedence is honored without changing the callback signature.
+        self._block_size = self._user_block_size_override or 64
         self._delay_cap_tracker = DelayCapTracker(
             cap_seconds=user_config.loadgen.inter_turn_delay_cap_seconds
         )
         self._use_live_assistant = Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
+
+    def _block_size_for_trace(self, trace: WekaTrace) -> int:
+        """Resolve block_size with precedence: user-override > trace-declared > 64.
+
+        Real Weka captures declare their own ``block_size`` per file (see
+        :class:`WekaTrace.block_size`). When the user hasn't passed
+        ``--block-size`` (or whatever flag maps to
+        ``user_config.input.prompt.input_tokens.block_size``) we honor that
+        per-file value instead of silently using the historical default of 64.
+        """
+        if self._user_block_size_override is not None:
+            return self._user_block_size_override
+        return trace.block_size
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
@@ -454,6 +563,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         for trace_id, wekas in data.items():
             trace = wekas[0]
+            trace_bs = self._block_size_for_trace(trace)
             normals: list[tuple[int, _NormalRequestT]] = []
             subagents: list[tuple[int, WekaSubagentEntry]] = []
             for idx, req in enumerate(trace.requests):
@@ -464,16 +574,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 else:  # WekaSubagentEntry
                     sa_index = len(subagents)
                     subagents.append((idx, req))
-                    child_sid = f"{trace_id}::sa:{req.agent_id}"
-                    child_plans.append(
-                        _ChildPlan(
-                            session_id=child_sid,
-                            parent_trace_id=trace_id,
-                            subagent_index=sa_index,
-                            entry=req,
+                    child_plans.extend(
+                        _expand_subagent_to_child_plans(
+                            trace_id, sa_index, req, trace_bs
                         )
                     )
-            parent_plans.append(_ParentPlan(trace_id, normals, subagents))
+            parent_plans.append(
+                _ParentPlan(trace_id, normals, subagents, block_size=trace_bs)
+            )
 
         # Per-trace model rewrite map. Built once here, applied in both the
         # serial and parallel reconstruction paths so workers don't need
@@ -592,6 +700,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             pg._cache.clear()
             pg._hash_id_corpus_rng.set_trace_id(plan.trace_id)
 
+            # Sync the instance attribute so the ``_decode_block_tokens``
+            # closure (which reads ``self._block_size``) sees the per-trace
+            # value resolved by ``_block_size_for_trace``.
+            self._block_size = plan.block_size
+
             model_map = model_map_per_trace.get(plan.trace_id, {})
 
             # raw_messages carries delta-encoded segments per turn; the
@@ -603,7 +716,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 context_mode=self._resolved_context_mode(),
             )
             recon = ConversationReconstructor(
-                block_size=self._block_size,
+                block_size=plan.block_size,
                 decode_block_tokens=self._decode_block_tokens,
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
@@ -663,7 +776,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 defaultdict(list)
             )
             group_order: list[tuple[int | None, int | None]] = []
+            group_following_outer: dict[tuple[int | None, int | None], int | None] = {}
             dropped_sa_agent_ids: set[str] = set()
+            outer_to_t: dict[int, float] = {
+                outer_idx: req.t for outer_idx, req in plan.normals
+            }
 
             for sa_outer_idx, sa_entry in plan.subagents:
                 preceding = max(
@@ -681,16 +798,48 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                     dropped_sa_agent_ids.add(sa_entry.agent_id)
                     continue
+                following_outer_idx = min(
+                    (oi for oi in outer_to_t if oi > sa_outer_idx),
+                    default=None,
+                )
                 key = (preceding, following)
                 if key not in groups:
                     group_order.append(key)
+                    group_following_outer[key] = following_outer_idx
                 groups[key].append(sa_entry)
 
             for preceding, following in group_order:
                 entries = groups[(preceding, following)]
-                child_sids = [f"{plan.trace_id}::sa:{e.agent_id}" for e in entries]
+                child_sids: list[str] = []
+                for e in entries:
+                    e_streams = _pack_into_streams(list(e.requests))
+                    if len(e_streams) == 1:
+                        child_sids.append(f"{plan.trace_id}::sa:{e.agent_id}")
+                    else:
+                        for stream_idx in range(len(e_streams)):
+                            child_sids.append(
+                                f"{plan.trace_id}::sa:{e.agent_id}:s{stream_idx}"
+                            )
+                        _logger.info(
+                            f"Trace {plan.trace_id}: subagent '{e.agent_id}' has "
+                            f"{len(e_streams)} parallel inner-request streams; emitting "
+                            f"as sibling child conversations."
+                        )
                 branch_id = f"{plan.trace_id}:spawn:{entries[0].agent_id}"
                 is_background = following is None
+                if not is_background:
+                    following_outer_idx = group_following_outer[(preceding, following)]
+                    following_t = outer_to_t[following_outer_idx]
+                    sa_end_t = max(_sa_end_seconds(entry) for entry in entries)
+                    if sa_end_t > following_t:
+                        is_background = True
+                        _logger.info(
+                            f"Trace {plan.trace_id}: reclassifying subagent branch "
+                            f"'{branch_id}' as background - recorded subagent end "
+                            f"t={sa_end_t:.2f}s exceeds following parent turn "
+                            f"t={following_t:.2f}s (parent did not wait in the "
+                            f"recording)."
+                        )
                 conv.branches.append(
                     ConversationBranchInfo(
                         branch_id=branch_id,
@@ -700,7 +849,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                 )
                 conv.turns[preceding].branch_ids.append(branch_id)
-                if following is not None:
+                if following is not None and not is_background:
                     conv.turns[following].prerequisites.append(
                         TurnPrerequisite(
                             kind=PrerequisiteKind.SPAWN_JOIN,
@@ -728,9 +877,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             pg = self.prompt_generator
             pg._cache.clear()
             pg._hash_id_corpus_rng.set_trace_id(cp.session_id)
+            # Sync for ``_decode_block_tokens``; see parent loop above.
+            self._block_size = cp.block_size
 
             child_recon = ConversationReconstructor(
-                block_size=self._block_size,
+                block_size=cp.block_size,
                 decode_block_tokens=self._decode_block_tokens,
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
@@ -741,7 +892,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 session_id=cp.session_id,
                 context_mode=self._resolved_context_mode(),
             )
-            for k, creq in enumerate(cp.entry.requests):
+            for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 if k == 0:
                     child_recon.init_turn_0(
@@ -752,7 +903,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         seed=seed,
                     )
                 else:
-                    prev_creq = cp.entry.requests[k - 1]
+                    prev_creq = cp.stream_requests[k - 1]
                     child_recon.advance_turn(
                         prev_hash_ids=prev_creq.hash_ids,
                         prev_in_tokens=prev_creq.input_length,
@@ -767,7 +918,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 elif think_time_only and creq.think_time is not None:
                     child_delay_ms = creq.think_time * 1000.0
                 else:
-                    child_delay_ms = t_ms - cp.entry.requests[k - 1].t * 1000.0
+                    child_delay_ms = t_ms - cp.stream_requests[k - 1].t * 1000.0
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
@@ -828,6 +979,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         # Partition child plans by parent trace_id.
         children_by_trace: dict[str, list[_WekaChildPayload]] = defaultdict(list)
+        # Per-subagent stream SIDs (parent process owns stream packing; the
+        # worker just echoes the SIDs back when building the SPAWN branch).
+        sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
             requests_dicts: list[_WekaNormalRequestPayload] = [
                 {
@@ -838,7 +992,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                 }
-                for creq in cp.entry.requests
+                for creq in cp.stream_requests
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
@@ -850,6 +1004,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "system_tokens": cp.entry.system_tokens,
                     "requests": requests_dicts,
                 }
+            )
+            sids_by_subagent[(cp.parent_trace_id, cp.subagent_index)].append(
+                cp.session_id
             )
 
         tasks: list[_WekaTraceTask] = []
@@ -870,17 +1027,22 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 for outer_idx, req in plan.normals
             ]
-            subagents_dicts: list[tuple[int, _WekaSubagentMarkerPayload]] = [
-                (
-                    outer_idx,
-                    {
-                        "agent_id": sa.agent_id,
-                        "tool_tokens": sa.tool_tokens,
-                        "system_tokens": sa.system_tokens,
-                    },
+            subagents_dicts: list[tuple[int, _WekaSubagentMarkerPayload]] = []
+            for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
+                subagents_dicts.append(
+                    (
+                        outer_idx,
+                        {
+                            "agent_id": sa.agent_id,
+                            "tool_tokens": sa.tool_tokens,
+                            "system_tokens": sa.system_tokens,
+                            "child_session_ids": sids_by_subagent.get(
+                                (plan.trace_id, sa_index), []
+                            ),
+                            "sa_end_seconds": _sa_end_seconds(sa),
+                        },
+                    )
                 )
-                for outer_idx, sa in plan.subagents
-            ]
             tasks.append(
                 _WekaTraceTask(
                     trace_id=plan.trace_id,
@@ -896,6 +1058,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     think_time_only=think_time_only,
                     model_map=model_map_per_trace.get(plan.trace_id, {}),
                     emit_assistant_segments=not self._use_live_assistant,
+                    block_size=plan.block_size,
                 )
             )
 

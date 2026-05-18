@@ -453,7 +453,7 @@ async def test_handle_credit_return_recycles_on_final_turn():
     # _active_traces so the new full-pool pop loop's skip-active-on-pop
     # logic mirrors a real run.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()
@@ -506,7 +506,7 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
     # Also seed _active_traces so the new pop loop skips trace_0 while it is
     # nominally alive — discard happens at the top of _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()

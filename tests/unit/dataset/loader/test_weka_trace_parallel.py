@@ -114,6 +114,7 @@ def _drive_parallel_inproc(
         from collections import defaultdict
 
         children_by_trace = defaultdict(list)
+        sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
             requests_dicts = [
                 {
@@ -124,7 +125,7 @@ def _drive_parallel_inproc(
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                 }
-                for creq in cp.entry.requests
+                for creq in cp.stream_requests
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
@@ -136,6 +137,9 @@ def _drive_parallel_inproc(
                     "system_tokens": cp.entry.system_tokens,
                     "requests": requests_dicts,
                 }
+            )
+            sids_by_subagent[(cp.parent_trace_id, cp.subagent_index)].append(
+                cp.session_id
             )
 
         results = []
@@ -156,17 +160,27 @@ def _drive_parallel_inproc(
                 )
                 for outer_idx, req in plan.normals
             ]
-            subagents_dicts = [
-                (
-                    outer_idx,
-                    {
-                        "agent_id": sa.agent_id,
-                        "tool_tokens": sa.tool_tokens,
-                        "system_tokens": sa.system_tokens,
-                    },
+            subagents_dicts = []
+            for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
+                child_sids = sids_by_subagent.get((plan.trace_id, sa_index), [])
+                if sa.duration_ms is not None:
+                    sa_end = sa.t + sa.duration_ms / 1000.0
+                elif sa.requests:
+                    sa_end = max(ir.t + (ir.api_time or 0.0) for ir in sa.requests)
+                else:
+                    sa_end = sa.t
+                subagents_dicts.append(
+                    (
+                        outer_idx,
+                        {
+                            "agent_id": sa.agent_id,
+                            "tool_tokens": sa.tool_tokens,
+                            "system_tokens": sa.system_tokens,
+                            "child_session_ids": child_sids,
+                            "sa_end_seconds": sa_end,
+                        },
+                    )
                 )
-                for outer_idx, sa in plan.subagents
-            ]
             task = wpc._WekaTraceTask(
                 trace_id=plan.trace_id,
                 parent={
@@ -180,6 +194,7 @@ def _drive_parallel_inproc(
                 ignore_delays=ignore_delays,
                 think_time_only=think_time_only,
                 model_map=loader._build_model_map(trace),
+                block_size=loader._block_size_for_trace(trace),
             )
             results.append(wpc._process_task(task))
         return results
@@ -219,6 +234,7 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
         trace_id: str
         normals: list
         subagents: list
+        block_size: int
 
     @dataclass
     class _ChildPlan:
@@ -226,12 +242,16 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
         parent_trace_id: str
         subagent_index: int
         entry: object
+        stream_index: int
+        stream_requests: list
+        block_size: int
 
     parent_plans: list = []
     child_plans: list = []
 
     for trace_id, wekas in data.items():
         trace = wekas[0]
+        trace_bs = loader._block_size_for_trace(trace)
         normals = []
         subagents = []
         for idx, req in enumerate(trace.requests):
@@ -242,16 +262,28 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
             else:
                 sa_index = len(subagents)
                 subagents.append((idx, req))
-                child_sid = f"{trace_id}::sa:{req.agent_id}"
-                child_plans.append(
-                    _ChildPlan(
-                        session_id=child_sid,
-                        parent_trace_id=trace_id,
-                        subagent_index=sa_index,
-                        entry=req,
+                from aiperf.dataset.loader.weka_trace import _pack_into_streams
+
+                streams = _pack_into_streams(list(req.requests))
+                if not streams:
+                    streams = [[]]
+                for stream_idx, stream_reqs in enumerate(streams):
+                    if len(streams) == 1:
+                        child_sid = f"{trace_id}::sa:{req.agent_id}"
+                    else:
+                        child_sid = f"{trace_id}::sa:{req.agent_id}:s{stream_idx}"
+                    child_plans.append(
+                        _ChildPlan(
+                            session_id=child_sid,
+                            parent_trace_id=trace_id,
+                            subagent_index=sa_index,
+                            entry=req,
+                            stream_index=stream_idx,
+                            stream_requests=stream_reqs,
+                            block_size=trace_bs,
+                        )
                     )
-                )
-        parent_plans.append(_ParentPlan(trace_id, normals, subagents))
+        parent_plans.append(_ParentPlan(trace_id, normals, subagents, trace_bs))
 
     return parent_plans, child_plans, {}
 
@@ -529,8 +561,8 @@ def test_worker_scope_helpers_deterministic_per_trace_id(tmp_path):
             )
             wpc._init_worker(args)
 
-        decode_a, _, _ = wpc._make_scope_helpers("scope-a")
-        decode_b, _, _ = wpc._make_scope_helpers("scope-b")
+        decode_a, _, _ = wpc._make_scope_helpers("scope-a", 64)
+        decode_b, _, _ = wpc._make_scope_helpers("scope-b", 64)
         toks_a = decode_a([42])
         toks_b = decode_b([42])
         assert toks_a != toks_b, (
@@ -538,7 +570,7 @@ def test_worker_scope_helpers_deterministic_per_trace_id(tmp_path):
         )
 
         # Determinism: re-running with same scope yields identical content.
-        decode_a2, _, _ = wpc._make_scope_helpers("scope-a")
+        decode_a2, _, _ = wpc._make_scope_helpers("scope-a", 64)
         toks_a2 = decode_a2([42])
         assert toks_a == toks_a2
     finally:

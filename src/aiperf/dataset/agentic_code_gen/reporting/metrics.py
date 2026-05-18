@@ -90,6 +90,7 @@ def extract_metrics(
     sessions: dict[str, list[ParsedTurn]],
     prefill_tps: float = 20_000,
     decode_tps: float = 60,
+    input_lengths_are_cumulative: bool = False,
 ) -> dict[str, np.ndarray]:
     initial_context: list[float] = []
     new_tokens_per_turn: list[float] = []
@@ -105,6 +106,8 @@ def extract_metrics(
     for turns in sessions.values():
         turns_per_session.append(float(len(turns)))
         session_lat = 0.0
+        prev_input_length = 0
+        prev_output_length = 0
         for i, turn in enumerate(turns):
             total_isl.append(float(turn.input_length))
             total_osl.append(float(turn.output_length))
@@ -120,8 +123,17 @@ def extract_metrics(
             if i == 0:
                 initial_context.append(float(turn.input_length))
             else:
-                new_tokens_per_turn.append(float(turn.input_length))
+                if input_lengths_are_cumulative:
+                    new_tokens = max(
+                        turn.input_length - prev_input_length - prev_output_length,
+                        0,
+                    )
+                else:
+                    new_tokens = turn.input_length
+                new_tokens_per_turn.append(float(new_tokens))
                 inter_turn_delay.append(turn.delay_ms / 1000.0)
+            prev_input_length = turn.input_length
+            prev_output_length = turn.output_length
 
         session_duration_min.append(session_lat / 1000.0 / 60.0)
 
@@ -143,20 +155,14 @@ def extract_metrics(
 def extract_cache_metrics(
     sessions: dict[str, list[ParsedTurn]],
     block_size: int = 512,
+    hash_scope: str = "global",
 ) -> dict[str, np.ndarray]:
     """Compute prefix/cache-reuse statistics from hash_ids."""
-    all_turns: list[ParsedTurn] = []
-    session_boundaries: list[int] = []
-    for turns in sessions.values():
-        session_boundaries.append(len(all_turns))
-        all_turns.extend(turns)
-    session_boundary_set = set(session_boundaries)
+    if hash_scope not in {"global", "local"}:
+        raise ValueError("hash_scope must be 'global' or 'local'")
 
-    hash_counter: Counter[tuple[int, int]] = Counter()
-    for turn in all_turns:
-        for pos, hid in enumerate(turn.hash_ids):
-            hash_counter[(pos, hid)] += 1
-    repeated = {k for k, v in hash_counter.items() if v > 1}
+    all_turns = [turn for turns in sessions.values() for turn in turns]
+    global_repeated = _repeated_hash_positions(all_turns)
 
     prefix_length: list[float] = []
     unique_prompt_length: list[float] = []
@@ -164,33 +170,41 @@ def extract_cache_metrics(
     sequential_cache_hit_rate: list[float] = []
     per_session_cache_hit_rate: list[float] = []
     global_seen: set[int] = set()
-    session_seen: set[int] = set()
 
-    for idx, turn in enumerate(all_turns):
-        hash_ids = turn.hash_ids
-        input_length = turn.input_length
-
-        repeated_count = sum(
-            1 for pos, hid in enumerate(hash_ids) if (pos, hid) in repeated
+    for turns in sessions.values():
+        repeated = (
+            _repeated_hash_positions(turns)
+            if hash_scope == "local"
+            else global_repeated
         )
-        prefix_tokens = (
-            input_length
-            if hash_ids and repeated_count == len(hash_ids)
-            else min(repeated_count * block_size, input_length)
-        )
+        session_seen: set[int] = set()
+        if hash_scope == "local":
+            global_seen = set()
+        for turn in turns:
+            hash_ids = turn.hash_ids
+            input_length = turn.input_length
 
-        prefix_length.append(float(prefix_tokens))
-        unique_prompt_tokens = max(input_length - prefix_tokens, 0)
-        unique_prompt_length.append(float(unique_prompt_tokens))
-        prefix_ratio.append(prefix_tokens / input_length if input_length > 0 else 0.0)
+            repeated_count = sum(
+                1 for pos, hid in enumerate(hash_ids) if (pos, hid) in repeated
+            )
+            prefix_tokens = (
+                input_length
+                if hash_ids and repeated_count == len(hash_ids)
+                else min(repeated_count * block_size, input_length)
+            )
 
-        sequential_cache_hit_rate.append(_cache_hit_rate(hash_ids, global_seen))
-        global_seen.update(hash_ids)
+            prefix_length.append(float(prefix_tokens))
+            unique_prompt_tokens = max(input_length - prefix_tokens, 0)
+            unique_prompt_length.append(float(unique_prompt_tokens))
+            prefix_ratio.append(
+                prefix_tokens / input_length if input_length > 0 else 0.0
+            )
 
-        if idx in session_boundary_set:
-            session_seen = set()
-        per_session_cache_hit_rate.append(_cache_hit_rate(hash_ids, session_seen))
-        session_seen.update(hash_ids)
+            sequential_cache_hit_rate.append(_cache_hit_rate(hash_ids, global_seen))
+            global_seen.update(hash_ids)
+
+            per_session_cache_hit_rate.append(_cache_hit_rate(hash_ids, session_seen))
+            session_seen.update(hash_ids)
 
     return {
         "prefix_length": np.array(prefix_length),
@@ -199,6 +213,14 @@ def extract_cache_metrics(
         "sequential_cache_hit_rate": np.array(sequential_cache_hit_rate),
         "per_session_cache_hit_rate": np.array(per_session_cache_hit_rate),
     }
+
+
+def _repeated_hash_positions(turns: list[ParsedTurn]) -> set[tuple[int, int]]:
+    hash_counter: Counter[tuple[int, int]] = Counter()
+    for turn in turns:
+        for pos, hid in enumerate(turn.hash_ids):
+            hash_counter[(pos, hid)] += 1
+    return {k for k, v in hash_counter.items() if v > 1}
 
 
 def _cache_hit_rate(hash_ids: list[int], seen: set[int]) -> float:
@@ -255,23 +277,26 @@ def build_report_data(
     manifest: DatasetManifest | None = None,
 ) -> ReportData:
     comparisons: list[TargetComparison] = []
-    for key, target_mean, target_median, display in _target_table(manifest):
-        arr = metrics.get(key)
-        if arr is None or len(arr) == 0:
-            continue
-        observed = _percentile_stats(arr)
-        pct_err = (
-            _pct_error(target_mean, observed.mean) if target_mean is not None else None
-        )
-        comparisons.append(
-            TargetComparison(
-                metric_name=display,
-                target_mean=target_mean,
-                target_median=target_median,
-                observed=observed,
-                pct_error_mean=round(pct_err, 2) if pct_err is not None else None,
+    if manifest is not None:
+        for key, target_mean, target_median, display in _target_table(manifest):
+            arr = metrics.get(key)
+            if arr is None or len(arr) == 0:
+                continue
+            observed = _percentile_stats(arr)
+            pct_err = (
+                _pct_error(target_mean, observed.mean)
+                if target_mean is not None
+                else None
             )
-        )
+            comparisons.append(
+                TargetComparison(
+                    metric_name=display,
+                    target_mean=target_mean,
+                    target_median=target_median,
+                    observed=observed,
+                    pct_error_mean=round(pct_err, 2) if pct_err is not None else None,
+                )
+            )
 
     cache_fields: dict[str, PercentileStats | None] = {}
     for field_name, metric_key in [

@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, CreditPhase
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
@@ -77,6 +77,7 @@ def _make_strategy(
     issuer: AsyncMock | None = None,
     scheduler: MagicMock | None = None,
     stop_checker: MagicMock | None = None,
+    cache_bust_target: CacheBustTarget | None = None,
 ) -> tuple[AgenticReplayStrategy, AsyncMock, MagicMock]:
     src = _build_real_trajectory_source(dataset=dataset, trajectories=trajectories)
     cfg = MagicMock()
@@ -85,6 +86,13 @@ def _make_strategy(
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     stop_checker = stop_checker if stop_checker is not None else MagicMock()
+    # Default user_config=None preserves the old path used by all prior tests:
+    # _cache_bust_target resolves to CacheBustTarget.NONE in __init__.
+    user_config = None
+    if cache_bust_target is not None:
+        user_config = MagicMock()
+        user_config.input.prompt.cache_bust.target = cache_bust_target
+        user_config.benchmark_id = "bench_test"
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -92,6 +100,7 @@ def _make_strategy(
         stop_checker=stop_checker,
         credit_issuer=issuer,
         lifecycle=MagicMock(),
+        user_config=user_config,
     )
     return strategy, issuer, stop_checker
 
@@ -148,7 +157,7 @@ async def test_single_trace_concurrency_one_recycles_self():
     # Register the in-flight session's lane (normally done by _execute_profiling).
     # Seed _active_traces so the new pop loop skips trace_0 while it is alive.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     # Final turn (last index = 2 of num_turns=3)
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
@@ -208,8 +217,8 @@ async def test_pool_one_concurrency_two_no_deadlock():
     # session is currently alive, mirroring _execute_profiling behavior.
     strategy._correlation_to_lane["xcorr_a"] = 0
     strategy._correlation_to_lane["xcorr_b"] = 1
-    strategy._active_traces.add("trace_0")
-    strategy._active_traces.add("trace_1")
+    strategy._active_traces["trace_0"] += 1
+    strategy._active_traces["trace_1"] += 1
 
     # Two parallel consumers complete. We use asyncio.gather to drive them
     # concurrently within the same event-loop tick. asyncio.Queue is non-blocking
@@ -283,7 +292,7 @@ async def test_burst_of_ten_completions_preserves_completion_order():
     # is alive (mirroring _execute_profiling).
     for i in range(10):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces.add(f"trace_{i}")
+        strategy._active_traces[f"trace_{i}"] += 1
 
     # Fire 10 completions in completion order: trace_0..trace_9 finish in order.
     for i in range(10):
@@ -363,7 +372,7 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
     # _active_traces too so the new pop loop skips alive trace_ids.
     for i in range(50):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces.add(f"trace_{i}")
+        strategy._active_traces[f"trace_{i}"] += 1
 
     finals = [
         _make_credit(
@@ -397,12 +406,14 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
 async def test_double_recycle_same_trace_raises():
     """Calling handle_credit_return twice for the same final turn must raise.
 
-    This is a programmer-error guard: the recycle queue's invariant is that a
-    given trace_id is in-flight (either dispatched or queued) exactly once at
-    any moment. Pushing the same trace_id twice in the same recycle cycle
-    breaks that invariant.
+    This is a programmer-error guard: each session's final turn must trigger
+    exactly one recycle. Firing handle_credit_return twice with the same
+    correlation_id means the same final turn was reported twice — invariant
+    violation, never legitimate.
 
-    The guard is unconditional (was previously gated on ``__debug__``, which
+    The guard is keyed on x_correlation_id (not trace_id) so that wrap-filled
+    lanes legitimately sharing a trace_id with distinct correlation_ids don't
+    collide. It is unconditional (was previously gated on ``__debug__``, which
     ``python -O`` strips, silently allowing the duplicate-final-turn corruption
     to escape into production).
     """
@@ -417,11 +428,11 @@ async def test_double_recycle_same_trace_raises():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    # Queue starts with [trace_1, trace_2].
-    # We keep trace_0 in-flight by *not* popping it after the first push.
-    # Manually manipulate state to simulate the "trace_0 just got pushed but
-    # somehow was reported finished again before it was popped" pathology.
-    strategy._in_flight_recycled.add("trace_0")
+    # Seed the in-flight-recycled set with the correlation_id we're about to
+    # report-finished, simulating "this session's final turn was already
+    # processed and is being reported again" — the actual bug class the guard
+    # exists to catch.
+    strategy._in_flight_recycled.add("xcorr")
     # Register the in-flight session's lane bookkeeping so we get past the
     # missing-correlation guard and reach the double-recycle assertion.
     strategy._correlation_to_lane["xcorr"] = 0
@@ -468,7 +479,7 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
     # so the cooldown gate is reached after the discard at the top of
     # _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     # Final turn arrives during cooldown.
     final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
@@ -548,7 +559,7 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
     for lane in range(trajectory_count):
         corr = f"xcorr_traj_{lane}"
         strategy._correlation_to_lane[corr] = lane
-        strategy._active_traces.add(f"trace_{lane}")
+        strategy._active_traces[f"trace_{lane}"] += 1
         in_flight.append((f"trace_{lane}", corr))
 
     total_completions = 1500
@@ -707,3 +718,203 @@ async def test_recycle_missing_correlation_id_logs_warning(caplog):
 
     # The fallback path issues a fresh credit (lane 0) so recycle progresses.
     assert issuer.issue_credit.await_count == 1
+
+
+# =============================================================================
+# Tests 10-13: DAG-child final-turn short-circuit
+#
+# DAG-child terminal completion is owned by BranchOrchestrator
+# (on_child_leaf_reached / on_child_errored, invoked by CreditCallbackHandler
+# before reaching the strategy). The trajectory recycle pool is root-only:
+# child conversation_ids like ``parent::sa:agent_id`` are NOT legitimate pool
+# entries, and they repeat across recycle passes of the same parent. Without
+# the short-circuit, the second time a parent re-runs, its child re-completes
+# with the same conversation_id and trips the double-recycle guard.
+# =============================================================================
+
+
+def _make_child_credit(
+    *,
+    conversation_id: str,
+    turn_index: int,
+    num_turns: int,
+    agent_depth: int = 1,
+    x_correlation_id: str = "xcorr_child",
+    parent_correlation_id: str = "xcorr_parent",
+) -> Credit:
+    return Credit(
+        id=0,
+        phase=CreditPhase.PROFILING,
+        conversation_id=conversation_id,
+        x_correlation_id=x_correlation_id,
+        turn_index=turn_index,
+        num_turns=num_turns,
+        issued_at_ns=0,
+        agent_depth=agent_depth,
+        parent_correlation_id=parent_correlation_id,
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+
+
+@pytest.mark.asyncio
+async def test_child_final_turn_does_not_enter_recycle_pool():
+    """A DAG-child final-turn return must NOT push the child's conversation_id
+    into the recycle queue, must NOT add it to ``_in_flight_recycled``, and
+    must NOT dispatch a fresh session.
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=3, turns_per_trace=2)
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    initial_size = strategy._recycle_queue.qsize()
+    initial_queue = list(strategy._recycle_queue._queue)
+
+    child_cid = "trace_0::sa:codex_subagent_001_3b3e9875"
+    final_child = _make_child_credit(
+        conversation_id=child_cid,
+        turn_index=4,
+        num_turns=5,
+    )
+    await strategy.handle_credit_return(final_child)
+
+    # Issuer untouched: no fresh session dispatched on child terminal.
+    assert issuer.issue_credit.await_count == 0
+    # Recycle queue untouched: child conversation_id is not a pool entry.
+    assert strategy._recycle_queue.qsize() == initial_size
+    assert list(strategy._recycle_queue._queue) == initial_queue
+    # Double-recycle bookkeeping untouched.
+    assert child_cid not in strategy._in_flight_recycled
+
+
+@pytest.mark.asyncio
+async def test_child_final_turn_repeated_does_not_trigger_double_recycle():
+    """Regression for the production crash: when the parent trace is recycled
+    and re-runs, its subagent child re-completes with the SAME
+    ``conversation_id`` (deterministic ``parent::sa:agent_id``). The strategy
+    must not raise the double-recycle ``RuntimeError`` in this case.
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=3, turns_per_trace=2)
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+
+    child_cid = "trace_0::sa:codex_subagent_001_3b3e9875"
+    # First recycle-pass child completion.
+    await strategy.handle_credit_return(
+        _make_child_credit(
+            conversation_id=child_cid,
+            turn_index=2,
+            num_turns=3,
+            x_correlation_id="xcorr_child_pass0",
+        )
+    )
+    # Second pass: same child conversation_id, fresh x_correlation_id.
+    await strategy.handle_credit_return(
+        _make_child_credit(
+            conversation_id=child_cid,
+            turn_index=2,
+            num_turns=3,
+            x_correlation_id="xcorr_child_pass1",
+        )
+    )
+
+    # Neither call raised, and neither touched recycle state.
+    assert child_cid not in strategy._in_flight_recycled
+    assert issuer.issue_credit.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_child_non_final_turn_still_dispatches_next_turn():
+    """Non-final child returns MUST continue to dispatch the next turn — the
+    short-circuit applies only to terminal child returns. This protects the
+    BranchOrchestrator's contract that "child continuation turns dispatch via
+    the strategy's normal path".
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=2, turns_per_trace=2)
+
+    # Register the child conversation_id in the metadata lookup so
+    # _dispatch_next_turn -> get_next_turn_metadata succeeds.
+    child_cid = "trace_0::sa:agent_a"
+    child_meta = ConversationMetadata(
+        conversation_id=child_cid,
+        turns=[TurnMetadata(timestamp_ms=None, delay_ms=None) for _ in range(3)],
+    )
+
+    issued: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        issued.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    strategy.conversation_source._metadata_lookup[child_cid] = child_meta
+    await strategy.setup_phase()
+
+    non_final_child = _make_child_credit(
+        conversation_id=child_cid,
+        turn_index=0,
+        num_turns=3,
+    )
+    await strategy.handle_credit_return(non_final_child)
+
+    # Next turn (turn_index=1) was issued via the normal continuation path.
+    assert issued == [(child_cid, 1)]
+
+
+@pytest.mark.asyncio
+async def test_root_final_turn_still_recycles_after_child_shortcircuit():
+    """Regression baseline: the child-final short-circuit must not affect
+    root final-turn recycling. A root (``agent_depth == 0``) final-turn return
+    must still push to the recycle queue and dispatch the next session.
+    """
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=2, turns_per_trace=2)
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    strategy._correlation_to_lane["xcorr"] = 0
+    strategy._active_traces["trace_0"] += 1
+
+    # Root credit: agent_depth defaults to 0 via _make_credit.
+    root_final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
+    await strategy.handle_credit_return(root_final)
+
+    # Recycle dispatched a fresh session — proves the short-circuit didn't
+    # block the root path. (For this layout the head of the recycle queue
+    # is trace_0 after push, so it self-recycles.)
+    assert len(issued) == 1
+    assert issued[0] == "trace_0"

@@ -11,9 +11,9 @@ loader-produced trace pool size in ``TrajectorySource`` /
 - concurrency == pool_size: every trace becomes a trajectory; recycle queue
   starts EMPTY and the just-finished trace_id is reused via the
   put-then-pop-on-empty path in ``_spawn_from_recycle_or_id``.
-- concurrency > pool_size: ``TrajectorySource.__init__`` rejects the
-  configuration with ``InsufficientTrajectoriesError`` rather than silently
-  capping load below the requested concurrency.
+- concurrency > pool_size: ``TrajectorySource`` wrap-fills the missing lanes
+  by cycling through distinct trajectories with fresh ``start_turn_index``
+  salts (Task 8 covers the full E2E recycle behavior).
 - traces with 0 turns are skipped at trajectory-selection time with a per-trace
   WARNING; an entirely-empty pool raises ``EmptyTracePoolError`` from the
   ``TrajectorySource`` constructor before any strategy is built.
@@ -22,6 +22,7 @@ loader-produced trace pool size in ``TrajectorySource`` /
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,7 +36,6 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import (
     EmptyTracePoolError,
-    InsufficientTrajectoriesError,
 )
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -152,14 +152,14 @@ def _make_credit(
     conversation_id: str,
     turn_index: int,
     num_turns: int,
-    x_correlation_id: str = "xcorr",
+    x_correlation_id: str | None = None,
     phase: CreditPhase = CreditPhase.PROFILING,
 ) -> Credit:
     return Credit(
         id=0,
         phase=phase,
         conversation_id=conversation_id,
-        x_correlation_id=x_correlation_id,
+        x_correlation_id=x_correlation_id if x_correlation_id is not None else uuid.uuid4().hex,
         turn_index=turn_index,
         num_turns=num_turns,
         issued_at_ns=0,
@@ -330,7 +330,9 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
 
     await profiling.execute_phase()
     # All 4 trajectories are now active.
-    assert profiling._active_traces == {t.conversation_id for t in source.trajectories}
+    assert set(profiling._active_traces) == {
+        t.conversation_id for t in source.trajectories
+    }
     pre_recycle = list(log.entries)
 
     # Pick one trajectory and finalize it. The strategy discards it from
@@ -360,30 +362,30 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
 
 
 # =============================================================================
-# Test 3: concurrency > pool_size -> InsufficientTrajectoriesError at __init__
+# Test 3: concurrency > pool_size -> wrap-fill produces ``concurrency`` lanes
 # =============================================================================
 
 
-def test_concurrency_exceeds_pool_raises_insufficient_trajectories() -> None:
-    """concurrency > pool_size: TrajectorySource rejects the configuration up front."""
+def test_concurrency_exceeds_pool_wrap_fills_to_concurrency() -> None:
+    """concurrency > pool_size: TrajectorySource wrap-fills the missing
+    lanes by cycling through the distinct trajectories. Task 8 covers the
+    end-to-end recycle behavior; this test only pins the construction-time
+    contract.
+    """
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
     sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
 
-    with pytest.raises(InsufficientTrajectoriesError) as exc_info:
-        TrajectorySource(
-            dataset_metadata=dataset,
-            dataset_sampler=sampler,
-            concurrency=15,
-            random_seed=7,
-        )
+    source = TrajectorySource(
+        dataset_metadata=dataset,
+        dataset_sampler=sampler,
+        concurrency=15,
+        random_seed=7,
+    )
 
-    assert exc_info.value.concurrency == 15
-    assert exc_info.value.usable_trajectories == 4
-    assert exc_info.value.pool_size == 4
-    msg = str(exc_info.value)
-    assert "concurrency 15" in msg
-    assert "trajectory count 4" in msg
-    assert "--concurrency" in msg
+    assert len(source.trajectories) == 15
+    distinct = {t.conversation_id for t in source.trajectories}
+    assert distinct == {f"trace_{i}" for i in range(4)}
+    assert len(distinct) < 15  # wrap-fill activated
 
 
 # =============================================================================
@@ -427,8 +429,7 @@ def test_mixed_validity_pool_skips_zero_turn_traces_with_warning(caplog) -> None
     With 5 trace slots (3 valid x 2 turns + 2 empty) and concurrency=3 (matching
     the usable count), ``_build_trajectories`` visits every trace and emits a
     per-trace WARNING for each zero-turn skip; trajectories contain only the 3
-    valid trace_ids and the post-build ``InsufficientTrajectoriesError`` guard
-    does not trip.
+    valid trace_ids and wrap-fill is not triggered.
     """
     dataset = _make_dataset_with_zero_turn_traces(
         valid_count=3, zero_count=2, valid_turns=2
