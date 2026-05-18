@@ -74,7 +74,7 @@ Generate a starter configuration template
 
 ### [`kube validate`](#aiperf-kube-validate)
 
-Validate AIPerfJob YAML files against the CRD schema
+Validate AIPerfJob and AIPerfSweep YAML files against the CRD schema
 
 ### [`kube profile`](#aiperf-kube-profile)
 
@@ -118,6 +118,12 @@ Retrieve benchmark results
 
 [Parameters](#parameters) • [Kubernetes](#kubernetes)
 
+### [`kube results list-runs`](#aiperf-kube-results-list-runs)
+
+List all historical runs of a benchmark job.
+
+[Parameters](#parameters) • [Kubernetes](#kubernetes)
+
 ### [`kube show`](#aiperf-kube-show)
 
 Render an AIPerfJob CR with Jinja2/env-vars resolved
@@ -145,6 +151,18 @@ Run pre-flight checks against the target Kubernetes cluster
 Open the operator results server UI in your browser
 
 [Kubernetes](#kubernetes) • [Parameters](#parameters)
+
+### [`kube index rebuild`](#aiperf-kube-index-rebuild)
+
+Rebuild the operator's runs index from the PVC.
+
+[Parameters](#parameters) • [Kubernetes](#kubernetes)
+
+### [`kube index stats`](#aiperf-kube-index-stats)
+
+Show runs index statistics.
+
+[Parameters](#parameters) • [Kubernetes](#kubernetes)
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
@@ -2947,11 +2965,11 @@ Value for metadata.name on the generated AIPerfJob.
 
 ## `aiperf kube validate`
 
-Validate AIPerfJob YAML files against the CRD schema
+Validate AIPerfJob and AIPerfSweep YAML files against the CRD schema
 
 #### `--files` `<list>` _(Required)_
 
-One or more AIPerfJob YAML file paths to validate.
+One or more AIPerfJob or AIPerfSweep YAML file paths to validate.
 
 #### `-s`, `--strict`, `--no-strict`
 
@@ -7142,6 +7160,65 @@ Kubernetes namespace (default: aiperf-benchmarks).
 
 <hr/>
 
+## `aiperf kube results list-runs`
+
+List all historical runs of a benchmark job.
+
+Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and prints either a table (default) or the raw JSON payload. With ``--preview``, also fetches ``/api/v1/config/retention`` and annotates each row with whether the current policy would reap it (latest is always protected).
+
+**Examples:**
+
+```bash
+aiperf kube results list-runs                 # last deployed job
+aiperf kube results list-runs foo             # specific job
+aiperf kube results list-runs foo --output json
+aiperf kube results list-runs foo --preview   # mark reap candidates
+aiperf kube results list-runs my-sweep -v 7   # specific sweep child
+```
+
+### Parameters
+
+#### `--job-id` `<str>`
+
+AIPerf job ID or AIPerfSweep name to list runs for (default: last deployed job).
+
+#### `-o`, `--output` `<str>`
+
+Output format: 'text' for table, 'json' for machine-parseable.
+<br/>_Default: `text`_
+
+#### `--preview`, `--no-preview`
+
+Show which runs would be reaped under current retention settings (read-only; no deletion).
+
+#### `--operator-namespace` `<str>`
+
+Namespace where the operator is deployed. Auto-detected (cluster-wide pod search) when omitted.
+
+#### `-v`, `--variation` `<int>`
+
+When job_id is an AIPerfSweep name, target child variation index (00..99). Resolves to &lt;sweep>-v&lt;idx:02d>[-t&lt;trial>].
+
+#### `-t`, `--trial` `<int>`
+
+Trial index (0..9) within a sweep variation. Requires -v.
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `-n`, `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
+
+<hr/>
+
 ## `aiperf kube show`
 
 Render an AIPerfJob CR with Jinja2/env-vars resolved
@@ -7310,6 +7387,68 @@ Namespace where the operator is deployed. Auto-detected (cluster-wide pod search
 #### `--no-browser`, `--no-no-browser`
 
 Print the URL instead of opening a browser.
+
+<hr/>
+
+## `aiperf kube index rebuild`
+
+Rebuild the operator's runs index from the PVC.
+
+### Parameters
+
+#### `--output` `<str>`
+
+Output format.
+<br/>_Default: `text`_
+
+#### `--api-url` `<str>`
+
+Operator HTTP API base URL. Default: auto-resolve via label-selector + port-forward to the results-server container.
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `-n`, `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
+
+<hr/>
+
+## `aiperf kube index stats`
+
+Show runs index statistics.
+
+### Parameters
+
+#### `--output` `<str>`
+
+Output format.
+<br/>_Default: `text`_
+
+#### `--api-url` `<str>`
+
+Operator HTTP API base URL. Default: auto-resolve via label-selector + port-forward to the results-server container.
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `-n`, `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
 
 <hr/>
 

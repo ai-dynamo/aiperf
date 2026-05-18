@@ -256,33 +256,30 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
 def extract_commands(app: Any) -> list[tuple[str, str]]:
     """Extract command names and descriptions.
 
-    Recurses one level into subcommand-only apps (parent App that has no
-    ``@app.default``, only registered subcommands) so that ``aiperf config init``
-    and similar two-token commands are documented as their own sections.
+    Recurses into nested apps so command groups with both a default command and
+    subcommands (for example, ``aiperf kube results list-runs``) document both
+    the group default and each nested command.
     """
     skip = {"--help", "-h", "--version"}
     commands: list[tuple[str, str]] = []
-    for name, cmd in app._commands.items():
-        if name in skip:
-            continue
-        # If this is a subcommand-only app (no default), recurse one level.
-        if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
-            for sub_name, sub_cmd in cmd._commands.items():
-                if sub_name in skip:
-                    continue
-                help_text = sub_cmd.help if hasattr(sub_cmd, "help") else ""
+
+    def walk(parent: Any, prefix: str = "") -> None:
+        for name, cmd in parent._commands.items():
+            if name in skip:
+                continue
+            cmd_name = f"{prefix} {name}".strip()
+            has_default = getattr(cmd, "default_command", None) is not None
+            if has_default:
+                help_text = cmd.help if hasattr(cmd, "help") else ""
                 if callable(help_text):
                     help_text = help_text()
                 if help_text:
                     help_text = _extract_text(help_text).split("\n")[0].strip()
-                commands.append((f"{name} {sub_name}", help_text or ""))
-            continue
-        help_text = cmd.help if hasattr(cmd, "help") else ""
-        if callable(help_text):
-            help_text = help_text()
-        if help_text:
-            help_text = _extract_text(help_text).split("\n")[0].strip()
-        commands.append((name, help_text or ""))
+                commands.append((cmd_name, help_text or ""))
+            if hasattr(cmd, "_commands"):
+                walk(cmd, cmd_name)
+
+    walk(app)
     return commands
 
 
@@ -505,13 +502,20 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
 
 
 def _resolve_lazy_commands(app: Any) -> None:
-    """Resolve any lazily-loaded ``CommandSpec`` entries so the generator can
-    inspect help text and parameters."""
+    """Resolve lazily-loaded ``CommandSpec`` entries recursively.
+
+    Nested commands such as ``aiperf kube results list-runs`` can live under a
+    lazily-loaded app, so resolving only the root command table leaves the docs
+    generator unable to inspect their help text and parameters.
+    """
     from cyclopts.command_spec import CommandSpec
 
     for name, cmd in list(app._commands.items()):
         if isinstance(cmd, CommandSpec):
-            app._commands[name] = cmd.resolve(app)
+            cmd = cmd.resolve(app)
+            app._commands[name] = cmd
+        if hasattr(cmd, "_commands"):
+            _resolve_lazy_commands(cmd)
 
 
 class CLIDocsGenerator(Generator):

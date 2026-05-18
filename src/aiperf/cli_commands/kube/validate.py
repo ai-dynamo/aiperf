@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Kube validate command: validate AIPerfJob YAML files against the CRD schema."""
+"""Kube validate command: validate AIPerfJob and AIPerfSweep YAML files."""
 
 from __future__ import annotations
 
@@ -17,7 +17,8 @@ async def validate(
     files: Annotated[
         list[Path],
         Parameter(
-            negative=(), help="One or more AIPerfJob YAML file paths to validate."
+            negative=(),
+            help="One or more AIPerfJob or AIPerfSweep YAML file paths to validate.",
         ),
     ],
     *,
@@ -36,13 +37,13 @@ async def validate(
         ),
     ] = "text",
 ) -> None:
-    """Validate AIPerfJob YAML files against the CRD schema and AIPerfConfig model.
+    """Validate AIPerfJob and AIPerfSweep YAML files against the CRD schema and AIPerfConfig model.
 
     Performs comprehensive validation including:
     - YAML parsing and structure verification
     - Required fields: apiVersion, kind, metadata.name, spec (with endpoint)
     - Kubernetes resource name validation (RFC 1123)
-    - AIPerfConfig model validation via AIPerfJobSpecConverter
+    - AIPerfConfig model validation via AIPerfJobSpec or AIPerfSweepSpec
     - DeploymentConfig extraction validation
     - Worker count calculation (>= 1)
     - Unknown spec field detection (warning or error with --strict)

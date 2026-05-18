@@ -16,7 +16,7 @@ app.command(
 app.command(
     "aiperf.cli_commands.kube.validate:app",
     name="validate",
-    help="Validate AIPerfJob YAML files against the CRD schema",
+    help="Validate AIPerfJob and AIPerfSweep YAML files against the CRD schema",
 )
 app.command(
     "aiperf.cli_commands.kube.profile:app",
