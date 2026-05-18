@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.metrics import MetricsRouter
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.messages import RealtimeMetricsMessage
 from aiperf.common.models import MetricResult
 from tests.unit.api.routers.conftest import make_latency_metric
@@ -50,14 +49,9 @@ def make_metric_result(
 
 
 @pytest.fixture
-def metrics_router(
-    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
-) -> MetricsRouter:
+def metrics_router(mock_zmq, router_benchmark_run) -> MetricsRouter:
     """Create a MetricsRouter for testing."""
-    return MetricsRouter(
-        service_config=router_service_config,
-        user_config=router_user_config,
-    )
+    return MetricsRouter(run=router_benchmark_run)
 
 
 @pytest.fixture

@@ -17,6 +17,7 @@ from aiperf.common.optional_dependencies import (
     mlflow_dependency_message,
     otel_dependency_message,
 )
+from aiperf.config.mlflow import MLflowConfig
 
 # Hashable canonical form for attribute dicts used as dict keys in gauge snapshots.
 AttributeKey = tuple[tuple[str, str], ...]
@@ -73,7 +74,14 @@ class _MLflowFanoutState:
 
 @dataclass(frozen=True)
 class OTelStreamingFanoutConfig:
-    """Configuration for the dedicated OTel/MLflow streaming fanout process."""
+    """Configuration for the dedicated OTel/MLflow streaming fanout process.
+
+    Carries the native ``MLflowConfig`` (the same object the rest of AIPerf
+    uses) plus the runtime fields the fanout subprocess needs directly
+    (endpoint URL, timeouts, batch sizing, resource attributes, metadata
+    file). ``benchmark_id`` is passed separately since it belongs to
+    ``BenchmarkRun``, not ``BenchmarkConfig``.
+    """
 
     endpoint_url: str | None
     request_timeout_seconds: float
@@ -81,11 +89,7 @@ class OTelStreamingFanoutConfig:
     export_timeout_millis: int
     max_batch_records: int
     resource_attributes: dict[str, str]
-    mlflow_tracking_uri: str | None
-    mlflow_experiment: str
-    mlflow_run_name: str | None
-    mlflow_tags: dict[str, str]
-    mlflow_parent_run_id: str | None
+    mlflow: MLflowConfig
     benchmark_id: str | None
     metadata_file: Path
 
@@ -135,7 +139,7 @@ def run_otel_streaming_fanout(
     optional sinks:
 
     - **OTel Collector** (OTLP/HTTP) — when ``config.endpoint_url`` is set.
-    - **MLflow Tracking** — when ``config.mlflow_tracking_uri`` is set.
+    - **MLflow Tracking** — when ``config.mlflow.tracking_uri`` is set.
 
     Event types consumed:
 
@@ -207,22 +211,24 @@ def run_otel_streaming_fanout(
     up_down_counters: dict[str, Any] = {}
 
     mlflow_state: _MLflowFanoutState | None = None
-    if config.mlflow_tracking_uri:
+    mlflow_cfg = config.mlflow
+    if mlflow_cfg.tracking_uri:
         try:
             import mlflow
             from mlflow.entities import Metric
             from mlflow.tracking import MlflowClient
 
-            mlflow.set_tracking_uri(config.mlflow_tracking_uri)
-            mlflow.set_experiment(config.mlflow_experiment)
+            mlflow.set_tracking_uri(mlflow_cfg.tracking_uri)
+            mlflow.set_experiment(mlflow_cfg.experiment)
             start_run_kwargs: dict[str, Any] = {}
-            if config.mlflow_run_name:
-                start_run_kwargs["run_name"] = config.mlflow_run_name
-            if config.mlflow_parent_run_id:
-                start_run_kwargs["parent_run_id"] = config.mlflow_parent_run_id
+            if mlflow_cfg.run_name:
+                start_run_kwargs["run_name"] = mlflow_cfg.run_name
+            if mlflow_cfg.parent_run_id:
+                start_run_kwargs["parent_run_id"] = mlflow_cfg.parent_run_id
             run = mlflow.start_run(**start_run_kwargs)
-            if config.mlflow_tags:
-                mlflow.set_tags(config.mlflow_tags)
+            mlflow_tags = mlflow_cfg.tags_dict
+            if mlflow_tags:
+                mlflow.set_tags(mlflow_tags)
             if config.benchmark_id:
                 mlflow.set_tag("benchmark_id", config.benchmark_id)
             run_id = run.info.run_id
@@ -240,12 +246,12 @@ def run_otel_streaming_fanout(
             # stale metadata pointing to a partially-initialized run.
             _write_live_mlflow_metadata(
                 metadata_file=config.metadata_file,
-                tracking_uri=config.mlflow_tracking_uri,
-                experiment=config.mlflow_experiment,
+                tracking_uri=mlflow_cfg.tracking_uri,
+                experiment=mlflow_cfg.experiment,
                 run_id=run_id,
-                run_name=config.mlflow_run_name,
+                run_name=mlflow_cfg.run_name,
                 benchmark_id=config.benchmark_id,
-                parent_run_id=config.mlflow_parent_run_id,
+                parent_run_id=mlflow_cfg.parent_run_id,
             )
         except ImportError as exc:
             logger.warning(

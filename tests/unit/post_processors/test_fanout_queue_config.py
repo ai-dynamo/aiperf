@@ -4,12 +4,18 @@
 """Regression test: AIPERF_OTEL_MAX_BUFFERED_RECORDS controls fanout queue maxsize."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
+from aiperf.config import (
+    ArtifactsConfig,
+    BenchmarkConfig,
+    EndpointConfig,
+    OTelConfig,
+)
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.otel_metrics_results_processor import (
     OTelMetricsResultsProcessor,
@@ -20,46 +26,80 @@ from aiperf.post_processors.otel_metrics_results_processor import (
 async def test_fanout_queue_maxsize_reads_env_var(
     monkeypatch: pytest.MonkeyPatch,
     tmp_artifact_dir: Path,
-    service_config: ServiceConfig,
     fake_otel: dict[str, object],
 ) -> None:
     """Queue maxsize must equal AIPERF_OTEL_MAX_BUFFERED_RECORDS (Req 7.4)."""
     monkeypatch.setattr(Environment.OTEL, "MAX_BUFFERED_RECORDS", 1)
 
-    user_config = UserConfig(
+    cfg = BenchmarkConfig(
+        model="test-model",
         endpoint=EndpointConfig(
-            model_names=["test-model"],
+            urls=["http://localhost:8000"],
             type=EndpointType.CHAT,
         ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-        ),
-        otel_url="collector:4318",
+        dataset={"type": "synthetic"},
+        profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+        artifacts=ArtifactsConfig(dir=tmp_artifact_dir),
+        otel=OTelConfig(metrics_url="collector:4318"),
     )
 
     processor = OTelMetricsResultsProcessor(
         service_id="records-manager",
-        service_config=service_config,
-        user_config=user_config,
+        run=SimpleNamespace(cfg=cfg, benchmark_id="bench-fanout"),
     )
 
     assert processor._fanout_queue_maxsize == 1
 
-    # Mock the fanout target so we don't actually spawn a real child process.
-    with patch(
-        "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+    class _FakeProcess:
+        def __init__(
+            self,
+            *,
+            target: object = None,
+            args: tuple = (),
+            name: str = "",
+            daemon: bool = True,
+        ) -> None:
+            self.target = target
+            self.args = args
+            self.name = name
+            self.daemon = daemon
+            self._alive = False
+
+        def start(self) -> None:
+            self._alive = False
+
+        def is_alive(self) -> bool:
+            return self._alive
+
+        def terminate(self) -> None:
+            self._alive = False
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    class _FakeContext:
+        def Queue(self, maxsize: int = 0):  # noqa: N802 - mirror mp API
+            from queue import Queue
+
+            q: Queue = Queue(maxsize=maxsize)
+            q._maxsize = maxsize  # type: ignore[attr-defined]
+            return q
+
+        def Process(self, **kwargs):  # noqa: N802 - mirror mp API
+            return _FakeProcess(**kwargs)
+
+    # Patch the fanout target and the multiprocessing context so no real
+    # subprocess is forked from the unit test.
+    with (
+        patch(
+            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+        ),
+        patch(
+            "aiperf.post_processors.otel_metrics_results_processor.mp.get_context",
+            return_value=_FakeContext(),
+        ),
     ):
         await processor._start_fanout_process()
 
-    try:
-        assert processor._fanout_queue is not None
-        assert processor._fanout_queue._maxsize == 1
-    finally:
-        if (
-            processor._fanout_process is not None
-            and processor._fanout_process.is_alive()
-        ):
-            processor._fanout_process.terminate()
-            processor._fanout_process.join(timeout=5)
-        if processor._fanout_queue is not None:
-            processor._fanout_queue.close()
+    assert processor._fanout_queue is not None
+    assert processor._fanout_queue._maxsize == 1

@@ -10,7 +10,7 @@ from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import CreditPhaseStats
 
 if TYPE_CHECKING:
-    from aiperf.common.config.user_config import UserConfig
+    from aiperf.config.config import BenchmarkConfig
 
 OTelResultData = MetricRecordsData | CreditPhaseStats
 
@@ -69,7 +69,7 @@ class OTelStrategyContextProtocol(Protocol):
     """Protocol implemented by the OTel processor to support strategy execution."""
 
     @property
-    def user_config(self) -> UserConfig: ...
+    def cfg(self) -> BenchmarkConfig: ...
 
     async def get_or_create_histogram(
         self,

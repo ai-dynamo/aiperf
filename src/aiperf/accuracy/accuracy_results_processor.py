@@ -12,7 +12,6 @@ from aiperf.accuracy.models import (
     accuracy_task_tag,
     accuracy_unparsed_task_tag,
 )
-from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricResult
@@ -20,6 +19,7 @@ from aiperf.common.models import MetricResult
 if TYPE_CHECKING:
     from aiperf.common.messages.inference_messages import MetricRecordsData
     from aiperf.common.models.dataset_models import DatasetMetadata
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class AccuracyResultsProcessor(AIPerfLifecycleMixin):
@@ -31,14 +31,15 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
     overall accuracy MetricResult objects.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
-        if not user_config.accuracy.enabled:
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        acc_cfg = run.cfg.accuracy
+        if acc_cfg is None or not acc_cfg.enabled:
             raise PostProcessorDisabled(
                 "Accuracy results processor is disabled: accuracy mode is not enabled"
             )
 
-        super().__init__(user_config=user_config, **kwargs)
-        self.user_config = user_config
+        super().__init__(**kwargs)
+        self.run = run
 
         self._tasks: list[str] | None = None
         self._task_correct: dict[str, int] = defaultdict(int)

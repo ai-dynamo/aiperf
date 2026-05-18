@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: SPEED-Bench Per-Category Sweep
+# description: Sweep all 11 qualitative SPEED-Bench categories to populate the speed-bench-report matrix.
+# category: Sweep & Multi-Run
+# tags: sweep, grid, speed-bench, speculative-decoding, server-metrics
+# difficulty: intermediate
+# features: grid sweep, public dataset, server metrics
+#
+# SPEED-Bench Per-Category Sweep
+# ==============================
+# Drives the full sweep that `aiperf speed-bench-report` consumes. One run
+# per qualitative category (11 total) against a speculative-decoding-enabled
+# server, each emitting its own `profile_export_aiperf.json` and
+# `server_metrics_export.json` from which the report extracts per-category
+# acceptance length / acceptance rate / throughput.
+#
+# Output layout (one variation per category):
+#   ./artifacts/speed_bench_sweep/
+#     datasets.main.dataset=speed_bench_coding/profile_runs/run_0001/
+#     datasets.main.dataset=speed_bench_humanities/profile_runs/run_0001/
+#     ...
+#     datasets.main.dataset=speed_bench_writing/profile_runs/run_0001/
+#
+# Run:
+#   aiperf profile --config speed_bench_sweep.yaml
+#   aiperf speed-bench-report \
+#       ./artifacts/speed_bench_sweep/datasets.main.dataset=speed_bench_*/profile_runs/run_0001 \
+#       --format both
+#
+# For the throughput-tier matrix at a fixed ISL, replace the parameter list with
+# one of the throughput tier triples, e.g.:
+#   datasets.main.dataset:
+#     - speed_bench_throughput_1k_low_entropy
+#     - speed_bench_throughput_1k_mixed
+#     - speed_bench_throughput_1k_high_entropy
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+# 11 qualitative categories x 1 trial = 11 runs total. Bump multiRun.numRuns
+# if the server's acceptance-length jitter is high enough to need confidence
+# intervals around each cell.
+sweep:
+  type: grid
+  parameters:
+    # Body-rooted dot-path. Second segment matches the dataset's `name` in the
+    # `datasets:` list below; the leaf `dataset` is the public-dataset enum.
+    datasets.main.dataset:
+      - speed_bench_coding
+      - speed_bench_humanities
+      - speed_bench_math
+      - speed_bench_multilingual
+      - speed_bench_qa
+      - speed_bench_rag
+      - speed_bench_reasoning
+      - speed_bench_roleplay
+      - speed_bench_stem
+      - speed_bench_summarization
+      - speed_bench_writing
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
+    # PublicDataset has no `prompts:` block, so OSL caps and sampling params
+    # ride on the request body via `extra` instead. Drop `temperature` for
+    # reasoning models and follow the model card.
+    extra:
+      temperature: 0
+      max_completion_tokens: 4096
+
+  datasets:
+    - name: main
+      type: public
+      dataset: speed_bench_coding  # overridden by sweep
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 50
+      concurrency: 8
+
+    - name: profiling
+      type: concurrency
+      # 80 prompts per qualitative category — issue each once so the report
+      # reflects per-prompt acceptance, not random oversampling.
+      requests: 80
+      concurrency: 16
+
+  # Required for accept_length / accept_rate columns. The report fuzzy-matches
+  # vLLM (`vllm:spec_decode_*`), SGLang (`sglang:spec_accept_*`), and TRT-LLM
+  # metric names. Use `/v1/metrics` for NIM-LLM containers.
+  serverMetrics:
+    enabled: true
+    urls:
+      - ${SERVER_METRICS_URL:http://localhost:8000/metrics}
+    formats: [json]
+
+  artifacts:
+    dir: ./artifacts/speed_bench_sweep
+    summary: [json]
+    records: [jsonl]

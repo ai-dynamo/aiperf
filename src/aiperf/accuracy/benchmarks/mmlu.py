@@ -17,13 +17,15 @@ import random
 from collections import defaultdict
 from itertools import cycle
 from string import ascii_uppercase
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasets import Dataset, DatasetDict, load_dataset
 
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
-from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 DATASET_NAME = "lighteval/mmlu"
 
@@ -100,9 +102,9 @@ class MMLUBenchmark(AIPerfLoggerMixin):
     on dataset source, prompt format, few-shot split, and gold representation.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.user_config = user_config
+        self.run = run
 
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool

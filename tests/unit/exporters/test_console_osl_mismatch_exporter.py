@@ -7,9 +7,9 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import GenericMetricUnit, MetricTimeUnit
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_osl_mismatch_exporter import (
     ConsoleOSLMismatchExporter,
 )
@@ -24,14 +24,12 @@ class TestConsoleOSLMismatchExporter:
     """Tests for ConsoleOSLMismatchExporter."""
 
     @pytest.fixture
-    def mock_user_config(self):
+    def mock_cfg(self):
         """Create a mock user config."""
-        return UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="custom_endpoint",
-            )
+        return CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/custom_endpoint",
         )
 
     def _create_profile_results(
@@ -87,7 +85,7 @@ class TestConsoleOSLMismatchExporter:
         await exporter.export(console)
         return output.getvalue()
 
-    async def test_no_mismatches_no_output(self, mock_user_config):
+    async def test_no_mismatches_no_output(self, mock_cfg):
         """Test that no warning is displayed when there are no OSL mismatches."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
@@ -96,14 +94,14 @@ class TestConsoleOSLMismatchExporter:
             exporter = ConsoleOSLMismatchExporter(
                 create_exporter_config(
                     self._create_profile_results(count=0, total_records=100),
-                    mock_user_config,
+                    mock_cfg,
                 )
             )
             output = await self._get_export_output(exporter)
             assert "Output Sequence Length Mismatch Warning" not in output
             assert "requests" not in output
 
-    async def test_mismatches_display_warning(self, mock_user_config):
+    async def test_mismatches_display_warning(self, mock_cfg):
         """Test that warning is displayed when OSL mismatches exist."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
@@ -112,7 +110,7 @@ class TestConsoleOSLMismatchExporter:
             exporter = ConsoleOSLMismatchExporter(
                 create_exporter_config(
                     self._create_profile_results(count=25, total_records=100),
-                    mock_user_config,
+                    mock_cfg,
                 )
             )
             output = await self._get_export_output(exporter)
@@ -121,7 +119,7 @@ class TestConsoleOSLMismatchExporter:
             assert "(25.0%)" in output
             assert "20%" in output  # threshold
 
-    async def test_warning_includes_recommended_actions(self, mock_user_config):
+    async def test_warning_includes_recommended_actions(self, mock_cfg):
         """Test that warning includes recommended actions."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
@@ -130,7 +128,7 @@ class TestConsoleOSLMismatchExporter:
             exporter = ConsoleOSLMismatchExporter(
                 create_exporter_config(
                     self._create_profile_results(count=30, total_records=100),
-                    mock_user_config,
+                    mock_cfg,
                 )
             )
             output = await self._get_export_output(exporter)
@@ -148,7 +146,7 @@ class TestConsoleOSLMismatchExporter:
             assert "osl_mismatch_diff_pct" in output
             assert "AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD" in output
 
-    async def test_custom_threshold_displayed(self, mock_user_config):
+    async def test_custom_threshold_displayed(self, mock_cfg):
         """Test that custom threshold value is displayed in warning."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
@@ -157,14 +155,14 @@ class TestConsoleOSLMismatchExporter:
             exporter = ConsoleOSLMismatchExporter(
                 create_exporter_config(
                     self._create_profile_results(count=10, total_records=100),
-                    mock_user_config,
+                    mock_cfg,
                 )
             )
             output = await self._get_export_output(exporter)
             assert "15%" in output  # custom threshold
             assert "AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD=15" in output
 
-    async def test_high_mismatch_percentage(self, mock_user_config):
+    async def test_high_mismatch_percentage(self, mock_cfg):
         """Test warning with high percentage of OSL mismatches."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
@@ -173,27 +171,27 @@ class TestConsoleOSLMismatchExporter:
             exporter = ConsoleOSLMismatchExporter(
                 create_exporter_config(
                     self._create_profile_results(count=80, total_records=100),
-                    mock_user_config,
+                    mock_cfg,
                 )
             )
             output = await self._get_export_output(exporter)
             assert "80 of 100 requests" in output
             assert "(80.0%)" in output
 
-    async def test_no_mismatch_metric_no_output(self, mock_user_config):
+    async def test_no_mismatch_metric_no_output(self, mock_cfg):
         """Test that no warning is displayed when mismatch metric is absent."""
         exporter = ConsoleOSLMismatchExporter(
             create_exporter_config(
                 self._create_profile_results(
                     count=0, total_records=100, include_mismatch=False
                 ),
-                mock_user_config,
+                mock_cfg,
             )
         )
         output = await self._get_export_output(exporter)
         assert "Output Sequence Length Mismatch Warning" not in output
 
-    async def test_formatting_with_large_numbers(self, mock_user_config):
+    async def test_formatting_with_large_numbers(self, mock_cfg):
         """Test that large numbers are formatted with commas."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
@@ -202,7 +200,7 @@ class TestConsoleOSLMismatchExporter:
             exporter = ConsoleOSLMismatchExporter(
                 create_exporter_config(
                     self._create_profile_results(count=2500, total_records=10000),
-                    mock_user_config,
+                    mock_cfg,
                 )
             )
             output = await self._get_export_output(exporter)

@@ -27,7 +27,8 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
-        if not exporter_config.user_config.accuracy.enabled:
+        accuracy_cfg = exporter_config.cfg.accuracy
+        if accuracy_cfg is None or not accuracy_cfg.enabled:
             raise ConsoleExporterDisabled(
                 "Accuracy console exporter is disabled: accuracy mode is not enabled"
             )
@@ -104,3 +105,42 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
 
         console.print()
         console.print(table)
+
+        self._maybe_warn_all_unparsed(console, overall, unparsed_overall)
+
+    def _maybe_warn_all_unparsed(
+        self,
+        console: Console,
+        overall: Any,
+        unparsed_overall: Any,
+    ) -> None:
+        """Loud-but-actionable diagnostic for the "accuracy=0 because the server, not the model" case.
+
+        Triggers when every task reports 100% unparsed responses — almost
+        always a mock server or misconfigured endpoint, not an accuracy
+        problem. Does not gate on overall_total so it fires on tiny smoke
+        runs.
+        """
+        if not (
+            overall
+            and overall.count
+            and unparsed_overall
+            and unparsed_overall.sum is not None
+            and unparsed_overall.count
+            and int(unparsed_overall.sum) >= int(unparsed_overall.count)
+        ):
+            return
+        console.print(
+            "[bold yellow]Warning:[/bold yellow] every accuracy "
+            "response was unparsed (accuracy=0). The grader could "
+            "not extract an answer from any model output. Verify "
+            "the inference server returns valid completions for "
+            "this benchmark before trusting the accuracy CSV."
+        )
+        self.warning(
+            "All %d accuracy responses were unparsed; grader "
+            "extracted no answers. Likely the inference server "
+            "is returning unexpected output (e.g. mock server). "
+            "accuracy_results.csv will report 0%% for every task.",
+            int(unparsed_overall.count),
+        )

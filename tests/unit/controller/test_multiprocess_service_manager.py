@@ -35,17 +35,14 @@ class TestMultiProcessServiceManager:
         return mock_process
 
     @pytest.fixture
-    def service_manager(
-        self, service_config, user_config
-    ) -> MultiProcessServiceManager:
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
         """Create a MultiProcessServiceManager instance for testing."""
         return MultiProcessServiceManager(
             required_services={
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.TIMING_MANAGER: 1,
             },
-            service_config=service_config,
-            user_config=user_config,
+            run=benchmark_run,
         )
 
     @pytest.mark.asyncio
@@ -164,13 +161,10 @@ class TestWaitForProcess:
     """Test _wait_for_process graceful shutdown and SIGKILL escalation."""
 
     @pytest.fixture
-    def service_manager(
-        self, service_config, user_config
-    ) -> MultiProcessServiceManager:
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
         return MultiProcessServiceManager(
             required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
+            run=benchmark_run,
         )
 
     @pytest.fixture

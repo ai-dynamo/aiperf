@@ -15,7 +15,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.common.config.accuracy_config import AccuracyConfig
+from aiperf.config.accuracy import AccuracyConfig
 
 # Stub names match the ``is_implemented: false`` entries in plugins.yaml.
 # Update both lists together when a follow-up branch lands an
@@ -119,3 +119,57 @@ class TestRejectsStubGrader:
         """
         cfg = AccuracyConfig(benchmark="mmlu")
         assert cfg.grader is None
+
+
+class TestRequiresBenchmarkWhenAccuracyFieldsSet:
+    """Regression tests for silent no-op when ``--accuracy-tasks`` (or any
+    other ``--accuracy-*`` flag) is set without ``--accuracy-benchmark``.
+
+    Without this validator, the v2 ``AccuracyConfig`` would accept
+    ``tasks=["mmlu"]`` with ``benchmark=None``; ``enabled`` would be
+    ``False``; the entire accuracy pipeline would self-disable; and the
+    user would get a normal perf benchmark with no ``accuracy_results.csv``
+    and no warning that their flags were ignored.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            param({"tasks": ["mmlu"]}, id="tasks-only"),
+            param({"tasks": ["abstract_algebra", "anatomy"]}, id="tasks-multi"),
+            param({"n_shots": 3}, id="n_shots-only"),
+            param({"enable_cot": True}, id="enable_cot-true"),
+            param({"enable_cot": False}, id="enable_cot-false"),
+            param({"grader": "multiple_choice"}, id="grader-only"),
+            param({"system_prompt": "you are an expert"}, id="system_prompt-only"),
+            param({"verbose": True}, id="verbose-true"),
+            param({"verbose": False}, id="verbose-false"),
+            param(
+                {"tasks": ["mmlu"], "n_shots": 5, "verbose": True},
+                id="multiple-fields",
+            ),
+        ],
+    )  # fmt: skip
+    def test_accuracy_field_without_benchmark_rejected(
+        self, kwargs: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValidationError) as exc:
+            AccuracyConfig(**kwargs)
+        msg = str(exc.value)
+        assert "--accuracy-benchmark" in msg
+        assert "silently ignored" in msg
+        # Surface at least one available benchmark name so users have an
+        # immediate next step.
+        assert "mmlu" in msg
+
+    def test_empty_config_still_valid(self) -> None:
+        """No accuracy flags at all is the default and must not error."""
+        cfg = AccuracyConfig()
+        assert cfg.enabled is False
+
+    def test_benchmark_set_with_tasks_passes(self) -> None:
+        """The companion path: tasks plus a real benchmark is the
+        intended usage and must validate cleanly."""
+        cfg = AccuracyConfig(benchmark="mmlu", tasks=["abstract_algebra"])
+        assert cfg.enabled is True
+        assert cfg.tasks == ["abstract_algebra"]

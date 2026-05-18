@@ -25,12 +25,12 @@ from __future__ import annotations
 
 import csv
 import io
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from aiperf_mock_server.node_exporter_faker import NodeExporterFaker
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
@@ -51,6 +51,7 @@ from aiperf.common.models.server_metrics_models import (
     TimeRangeFilter,
     UnknownMetricData,
 )
+from aiperf.config import BenchmarkConfig, EndpointConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 from aiperf.server_metrics.csv_exporter import (
@@ -95,13 +96,17 @@ def _untyped_record(
 
 
 @pytest.fixture
-def minimal_user_config() -> UserConfig:
-    return UserConfig(
+def minimal_cfg() -> BenchmarkConfig:
+    return BenchmarkConfig(
+        model="test-model",
         endpoint=EndpointConfig(
-            model_names=["test-model"],
+            urls=["http://localhost:8000"],
             type=EndpointType.CHAT,
             streaming=False,
-        )
+        ),
+        dataset={"type": "synthetic"},
+        profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+        server_metrics={"urls": ["http://node-exporter:9100/metrics"]},
     )
 
 
@@ -179,9 +184,11 @@ class TestUnknownAccumulatorExport:
     """Accumulator produces ``UnknownMetricData`` for UNKNOWN entries."""
 
     async def test_endpoint_summary_uses_unknown_metric_data(
-        self, minimal_user_config: UserConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
-        proc = ServerMetricsAccumulator(minimal_user_config)
+        proc = ServerMetricsAccumulator(
+            SimpleNamespace(cfg=minimal_cfg, benchmark_id="bench-server-metrics")
+        )
         for i, v in enumerate([1.0, 2.0, 3.0, 4.0, 5.0]):
             await proc.process_server_metrics_record(
                 _untyped_record("node_netstat_Icmp_InErrors", v, timestamp_ns=i + 1)
@@ -240,7 +247,7 @@ class TestUnknownJsonRoundTrip:
         assert dumped["type"] == "unknown"
 
     def test_full_export_json_contains_unknown_type(
-        self, minimal_user_config: UserConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         # Build a minimal ServerMetricsResults with one UnknownMetricData entry.
         umd = UnknownMetricData(description="Statistic IcmpInErrors.")
@@ -256,7 +263,7 @@ class TestUnknownJsonRoundTrip:
         )
         exporter_config = MagicMock()
         exporter_config.server_metrics_results = results
-        exporter_config.user_config = minimal_user_config
+        exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsJsonExporter(exporter_config)
         export_data, _ = exporter._build_hybrid_metrics()
         entry = export_data["node_netstat_Icmp_InErrors"]
@@ -283,7 +290,7 @@ class TestUnknownCsvSection:
         )
 
     def test_csv_output_includes_unknown_section(
-        self, minimal_user_config: UserConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         umd = UnknownMetricData(description="Statistic IcmpInErrors.")
         # Populate with one series so the section is non-empty.
@@ -324,7 +331,7 @@ class TestUnknownCsvSection:
         )
         exporter_config = MagicMock()
         exporter_config.server_metrics_results = results
-        exporter_config.user_config = minimal_user_config
+        exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsCsvExporter(exporter_config)
         body = exporter._generate_content()
         # The unknown-section header should mention the type explicitly.
@@ -337,7 +344,7 @@ class TestUnknownCsvSection:
         assert "node_netstat_Icmp_InErrors" in joined
 
     def test_unknown_section_is_after_histogram(
-        self, minimal_user_config: UserConfig
+        self, minimal_cfg: BenchmarkConfig
     ) -> None:
         gauge = GaugeMetricData(description="Gauge metric")
         gauge.series.append(GaugeSeries(stats=GaugeStats(avg=1.0)))
@@ -379,7 +386,7 @@ class TestUnknownCsvSection:
         )
         exporter_config = MagicMock()
         exporter_config.server_metrics_results = results
-        exporter_config.user_config = minimal_user_config
+        exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsCsvExporter(exporter_config)
 
         rows = [

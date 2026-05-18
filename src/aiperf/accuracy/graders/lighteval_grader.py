@@ -36,11 +36,13 @@ Reference:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _log = logging.getLogger(__name__)
 
@@ -106,9 +108,10 @@ class _LightevalBaseGrader(BaseGrader):
 
     _CORRECTNESS_THRESHOLD = 0.5
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
         _require_lighteval()
+        self.accuracy_config = run.cfg.accuracy
         self._metric = self._build_metric()
 
     def _build_metric(self) -> Any:

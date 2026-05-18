@@ -75,14 +75,15 @@ jobs:
     name: Prepare Nightly
     runs-on: ubuntu-latest
     outputs:
-      nightly_tag:    ${{ steps.version.outputs.nightly_tag }}
-      wheel_version:  ${{ steps.version.outputs.wheel_version }}
-      container_tag:  ${{ steps.version.outputs.container_tag }}
-      wheel_filename: ${{ steps.version.outputs.wheel_filename }}
-      base_version:   ${{ steps.version.outputs.base_version }}
-      run_timestamp:  ${{ steps.version.outputs.run_timestamp }}
-      resolved_sha:   ${{ steps.version.outputs.resolved_sha }}
-      release:        ${{ steps.release.outputs.release }}
+      nightly_tag:            ${{ steps.version.outputs.nightly_tag }}
+      wheel_version:          ${{ steps.version.outputs.wheel_version }}
+      container_tag:          ${{ steps.version.outputs.container_tag }}
+      wheel_filename:         ${{ steps.version.outputs.wheel_filename }}
+      nightly_wheel_filename: ${{ steps.version.outputs.nightly_wheel_filename }}
+      base_version:           ${{ steps.version.outputs.base_version }}
+      run_timestamp:          ${{ steps.version.outputs.run_timestamp }}
+      resolved_sha:           ${{ steps.version.outputs.resolved_sha }}
+      release:                ${{ steps.release.outputs.release }}
     steps:
       # Workflow file itself must come from main on dispatch.
       - name: Require dispatch from main
@@ -158,15 +159,20 @@ jobs:
             WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
+            # PEP 491: the dist name "aiperf-nightly" escapes to "aiperf_nightly"
+            # in the wheel filename. Same version as the canonical wheel — only
+            # the dist name in METADATA + RECORD differ.
+            NIGHTLY_WHEEL_FILENAME="aiperf_nightly-${WHEEL_VERSION}-py3-none-any.whl"
           fi
 
-          echo "nightly_tag=${NIGHTLY_TAG}"         >> "$GITHUB_OUTPUT"
-          echo "wheel_version=${WHEEL_VERSION}"     >> "$GITHUB_OUTPUT"
-          echo "container_tag=${CONTAINER_TAG}"     >> "$GITHUB_OUTPUT"
-          echo "wheel_filename=${WHEEL_FILENAME}"   >> "$GITHUB_OUTPUT"
-          echo "base_version=${BASE_VERSION}"       >> "$GITHUB_OUTPUT"
-          echo "run_timestamp=${TIMESTAMP:-reused}" >> "$GITHUB_OUTPUT"
-          echo "resolved_sha=${FULL_SHA}"           >> "$GITHUB_OUTPUT"
+          echo "nightly_tag=${NIGHTLY_TAG}"                       >> "$GITHUB_OUTPUT"
+          echo "wheel_version=${WHEEL_VERSION}"                   >> "$GITHUB_OUTPUT"
+          echo "container_tag=${CONTAINER_TAG}"                   >> "$GITHUB_OUTPUT"
+          echo "wheel_filename=${WHEEL_FILENAME}"                 >> "$GITHUB_OUTPUT"
+          echo "nightly_wheel_filename=${NIGHTLY_WHEEL_FILENAME}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${BASE_VERSION}"                     >> "$GITHUB_OUTPUT"
+          echo "run_timestamp=${TIMESTAMP:-reused}"               >> "$GITHUB_OUTPUT"
+          echo "resolved_sha=${FULL_SHA}"                         >> "$GITHUB_OUTPUT"
 
           mkdir -p .nightly-version
           # Values are single-quoted because NIGHTLY_TAG contains whitespace
@@ -176,6 +182,7 @@ jobs:
             echo "WHEEL_VERSION='${WHEEL_VERSION}'"
             echo "CONTAINER_TAG='${CONTAINER_TAG}'"
             echo "WHEEL_FILENAME='${WHEEL_FILENAME}'"
+            echo "NIGHTLY_WHEEL_FILENAME='${NIGHTLY_WHEEL_FILENAME}'"
             echo "BASE_VERSION='${BASE_VERSION}'"
             echo "TIMESTAMP='${TIMESTAMP:-reused}'"
             echo "FULL_SHA='${FULL_SHA}'"
@@ -427,44 +434,134 @@ jobs:
             --output     type=local,dest=./dist/ \
             .
 
-      - name: Validate wheel (amd64 only)
+      # Repacks the canonical aiperf wheel into a second wheel whose dist name
+      # is `aiperf-nightly`. Version, tags, and module contents are unchanged;
+      # only METADATA `Name:`, the dist-info dir, RECORD hashes, and the
+      # `version("aiperf")` literals inside `aiperf/__init__.py` (and any other
+      # source files that look up the dist version) are rewritten. Lets users
+      # `pip install aiperf-nightly` without colliding with the stable
+      # `aiperf` distribution name.
+      - name: Generate aiperf-nightly wheel variant (amd64 only)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          ORIG=$(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f | head -1)
+          if [ -z "${ORIG}" ]; then
+            echo "::error::No aiperf wheel found in dist/ to rename"
+            exit 1
+          fi
+          # rename_wheel.py is stdlib-only — no `uv pip install` needed.
+          # Default --new-name = "aiperf-nightly"; writes the renamed wheel
+          # next to the original and leaves the original in place.
+          python3 tools/rename_wheel.py "${ORIG}" --output-dir dist/
+          echo "Wheels after rename:"
+          ls -la dist/
+
+      # Install each wheel into its own venv — they share the `aiperf/`
+      # top-level module so they cannot coexist. The nightly venv also
+      # exercises the source-patching performed by rename_wheel.py: the
+      # `version("aiperf")` literal in `src/aiperf/__init__.py` must have
+      # been rewritten to `version("aiperf-nightly")` for __version__ to
+      # resolve under the renamed distribution.
+      - name: Validate wheels (amd64 only)
         if: matrix.arch == 'amd64'
         env:
           EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
         run: |
           set -euo pipefail
 
-          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
-          if [ "${#WHEELS[@]}" -eq 0 ]; then
-            echo "::error::No wheel found in dist/ after build"
-            exit 1
-          fi
-          if [ "${#WHEELS[@]}" -gt 1 ]; then
-            echo "::error::Multiple wheels found in dist/ — expected exactly one:"
-            printf '  %s\n' "${WHEELS[@]}"
-            exit 1
-          fi
-          WHEEL_PATH="${WHEELS[0]}"
+          validate_wheel() {
+            local wheel="$1"
+            local venv_dir="$2"
+            uvx twine check "${wheel}"
+            uv venv "${venv_dir}"
+            uv pip install --python "${venv_dir}/bin/python" "${wheel}"
+            local got
+            got=$("${venv_dir}/bin/python" -c "import aiperf; print(aiperf.__version__)")
+            if [ "${got}" != "${EXPECTED_VERSION}" ]; then
+              echo "::error::Wheel ${wheel##*/} version mismatch: expected '${EXPECTED_VERSION}', got '${got}'"
+              exit 1
+            fi
+            "${venv_dir}/bin/aiperf" --help > /dev/null
+            echo "OK: ${wheel##*/} -> __version__=${got}"
+          }
 
-          uvx twine check "${WHEEL_PATH}"
-          uv venv .venv-check
-          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
-          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
-          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
-            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
+          ORIG=$(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f | head -1)
+          NIGHTLY=$(find dist/ -maxdepth 1 -name "aiperf_nightly-*.whl" -type f | head -1)
+          for w in "${ORIG}" "${NIGHTLY}"; do
+            if [ -z "${w}" ] || [ ! -f "${w}" ]; then
+              echo "::error::Expected both aiperf-*.whl and aiperf_nightly-*.whl in dist/"
+              ls -la dist/
+              exit 1
+            fi
+          done
+
+          validate_wheel "${ORIG}"    .venv-check-orig
+          validate_wheel "${NIGHTLY}" .venv-check-nightly
+
+      # Deeper validation than the smoke check above: install the renamed
+      # nightly wheel into a fresh venv and run the unit test suite against
+      # it. Catches wheel-only failure modes the source-tree `unit-tests`
+      # job cannot see — missing Requires-Dist, a module that did not ship
+      # in the wheel, or shipped code that accidentally imports from a
+      # dev-only test helper.
+      #
+      # Hard-fail intentional: a failure here fails build-container, which
+      # blocks the staging jobs (create-multiarch-manifest-ecr,
+      # stage-nightly-{wheel,container}, trigger-gitlab-security-scan) via
+      # their `needs:` chain. The existing `unit-tests` job stays
+      # advisory; this gate sits inside the publish path.
+      - name: Run unit tests against installed nightly wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          NIGHTLY=$(find dist/ -maxdepth 1 -name "aiperf_nightly-*.whl" -type f | head -1)
+          if [ -z "${NIGHTLY}" ]; then
+            echo "::error::No aiperf_nightly wheel found in dist/"
             exit 1
           fi
-          .venv-check/bin/aiperf --help
 
-      - name: Upload wheel to S3 (amd64 only)
+          # Fresh venv — separate from .venv-check-{orig,nightly} above so
+          # the install/uninstall state of one cannot bleed into the other.
+          uv venv .venv-wheel-tests
+          uv pip install --python .venv-wheel-tests/bin/python "${NIGHTLY}"
+          # Test deps the wheel does not carry (not in Requires-Dist).
+          # looptime is required by the auto-fixture in tests/conftest.py that
+          # makes asyncio.sleep run instantly. trustme is used by transport
+          # tests for TLS certificate fixtures. httpx is pulled in by
+          # tests/unit/api and tests/unit/server, which use Starlette/FastAPI
+          # TestClient and httpx.AsyncClient directly (collection-time import).
+          uv pip install --python .venv-wheel-tests/bin/python \
+            'pytest>=7.0.0' pytest-asyncio 'pytest-xdist>=3.8.0' \
+            'hypothesis>=6.0.0' 'looptime>=0.5' 'trustme>=1.0.0' \
+            'httpx>=0.27.0'
+          # tests/unit/conftest.py loads tests.harness, which in turn imports
+          # the `aiperf_mock_server` package. The package is dev-only and
+          # not in the wheel; install it editable from the in-tree source.
+          uv pip install --python .venv-wheel-tests/bin/python \
+            -e tests/aiperf_mock_server
+
+          # Run from the repo root. tests/ is on disk; the installed aiperf
+          # package is on sys.path via the venv; src/ is NOT on sys.path,
+          # so `import aiperf` resolves to the installed wheel rather than
+          # the source tree.
+          .venv-wheel-tests/bin/pytest tests/unit \
+            -n auto \
+            -m 'not performance and not stress' \
+            --tb=short
+
+      - name: Upload wheels to S3 (amd64 only)
         if: matrix.arch == 'amd64'
         env:
           S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
           WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
         run: |
           set -euo pipefail
-          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
+          # `aiperf*.whl` (no hyphen) matches both `aiperf-...` and
+          # `aiperf_nightly-...`.
+          for WHEEL in $(find dist/ -maxdepth 1 -name "aiperf*.whl" -type f); do
+            aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
+          done
 
       - name: Build and push ${{ matrix.arch }} image to ECR
         env:
@@ -733,40 +830,46 @@ jobs:
     environment: automated-release
     if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
     steps:
-      - name: Upload wheel from S3 to Artifactory
+      - name: Upload wheels from S3 to Artifactory
         env:
-          S3_BUCKET:         ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
-          ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
-          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          WHEEL_VERSION:     ${{ needs.prepare-nightly.outputs.wheel_version }}
-          WHEEL_FILENAME:    ${{ needs.prepare-nightly.outputs.wheel_filename }}
+          S3_BUCKET:              ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          ARTIFACTORY_URL:        ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:       ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN:      ${{ secrets.ARTIFACTORY_TOKEN }}
+          WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
+          NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "${TMPDIR}"' EXIT
 
-          # Single-object copy (no --recursive) so we only need s3:GetObject.
-          aws s3 cp \
-            "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
-            "${TMPDIR}/${WHEEL_FILENAME}"
+          # Single-object copies (no --recursive) so we only need s3:GetObject.
+          # Stage both the canonical `aiperf` wheel and the renamed
+          # `aiperf-nightly` wheel; downstream `pip install aiperf-nightly`
+          # resolves to the latter via the nightly Artifactory index.
+          for FN in "${WHEEL_FILENAME}" "${NIGHTLY_WHEEL_FILENAME}"; do
+            aws s3 cp \
+              "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${FN}" \
+              "${TMPDIR}/${FN}"
 
-          # Raw Artifactory deploy via native repo API. The PyPI handler
-          # (/api/pypi/) does not accept sub-path deploys — it expects the
-          # repo root URL. ARTIFACTORY_URL must be the generic repo base:
-          # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
-          TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${WHEEL_FILENAME}"
-          BODY_FILE=$(mktemp)
-          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
-            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
-            -T "${TMPDIR}/${WHEEL_FILENAME}" \
-            "${TARGET_URL}")
-          if [ "${HTTP_CODE}" != "201" ]; then
-            echo "::error::Artifactory deploy failed: HTTP ${HTTP_CODE} at ${TARGET_URL}"
-            cat "${BODY_FILE}" || true
-            exit 1
-          fi
-          echo "Wheel staged to Artifactory: ${TARGET_URL}"
+            # Raw Artifactory deploy via native repo API. The PyPI handler
+            # (/api/pypi/) does not accept sub-path deploys — it expects the
+            # repo root URL. ARTIFACTORY_URL must be the generic repo base:
+            # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
+            TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${FN}"
+            BODY_FILE=$(mktemp)
+            HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+              -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+              -T "${TMPDIR}/${FN}" \
+              "${TARGET_URL}")
+            if [ "${HTTP_CODE}" != "201" ]; then
+              echo "::error::Artifactory deploy failed for ${FN}: HTTP ${HTTP_CODE} at ${TARGET_URL}"
+              cat "${BODY_FILE}" || true
+              exit 1
+            fi
+            echo "Wheel staged to Artifactory: ${TARGET_URL}"
+          done
 
   # ============================================================================
   # PHASE 5: TRIGGER GITLAB SECURITY SCAN
@@ -788,6 +891,8 @@ jobs:
           GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
           NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
           WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
+          NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
           RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
@@ -813,6 +918,8 @@ jobs:
             --form "variables[SOURCE_BRANCH]=main" \
             --form "variables[NIGHTLY_TAG]=${NIGHTLY_TAG}" \
             --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[WHEEL_FILENAME]=${WHEEL_FILENAME}" \
+            --form "variables[NIGHTLY_WHEEL_FILENAME]=${NIGHTLY_WHEEL_FILENAME}" \
             --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
             --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \

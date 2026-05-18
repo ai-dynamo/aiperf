@@ -6,10 +6,9 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     CommAddress,
@@ -40,6 +39,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    BranchStats,
     CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
@@ -54,6 +54,7 @@ from aiperf.common.models import (
     WorkerProcessingStats,
 )
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -78,6 +79,9 @@ from aiperf.server_metrics.protocols import (
     ServerMetricsAccumulatorProtocol,
     ServerMetricsProcessorProtocol,
 )
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 @dataclass
@@ -105,15 +109,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         # For dual-bind mode (Kubernetes), also bind to TCP for remote record processors.
         # Controller binds to IPC + TCP; workers connect via TCP.
         additional_bind_address: str | None = None
-        comm_config = service_config.comm_config
+        comm_config = run.cfg.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host
@@ -121,8 +124,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             additional_bind_address = comm_config.records_push_pull_tcp_bind_address
 
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,
@@ -135,6 +137,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._error_tracker = ErrorTracker()
 
         self._previous_realtime_records: int | None = None
+
+        # Latest BranchStats snapshot received via CreditPhaseCompleteMessage
+        # for the PROFILING phase. None for non-DAG runs (TimingManager
+        # publishes None when no BranchOrchestrator is wired). Spliced
+        # into ProfileResults when the records pipeline finalizes.
+        self._latest_branch_stats: BranchStats | None = None
+
+        # Per-phase BranchStats snapshots. Populated on every
+        # CreditPhaseCompleteMessage that carries a non-None
+        # ``branch_stats``; ``_snapshot_branch_stats`` reads back the
+        # value for a specific phase. Used by analyzer paths that need
+        # warmup vs profiling separation.
+        self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
+        self._complete_credit_phases: set[CreditPhase] = set()
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -154,8 +170,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 results_processor = ProcessorClass(
                     service_id=self.service_id,
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+                    run=self.run,
                     pub_client=self.pub_client,
                 )
                 self.attach_child_lifecycle(results_processor)
@@ -178,7 +193,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     self._metric_results_processors.append(results_processor)
                     if (
                         entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER
-                        and self.user_config.otel_stream_timing_enabled
+                        and self.run.cfg.otel.stream_timing_enabled
                     ):
                         self._timing_results_processors.append(results_processor)
 
@@ -221,12 +236,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 record_data.metadata.benchmark_phase, record_data.error
             )
 
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            record_data.metadata.benchmark_phase
-        ):
-            await self._handle_all_records_received(
-                record_data.metadata.benchmark_phase
+        phase = record_data.metadata.benchmark_phase
+        if (
+            phase in self._complete_credit_phases
+            and self._records_tracker.check_and_set_all_records_received_for_phase(
+                phase
             )
+        ):
+            await self._handle_all_records_received(phase)
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
@@ -526,11 +543,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
         await self._send_timing_to_results_processors(message.stats)
+        self._complete_credit_phases.add(message.stats.phase)
+        # Capture per-phase BranchStats for any phase that publishes them.
+        if message.branch_stats is not None:
+            self._phase_branch_stats[message.stats.phase] = message.branch_stats
         if message.stats.phase == CreditPhase.PROFILING:
+            # Capture the BranchStats snapshot so it flows into
+            # ProfileResults when the records pipeline finalizes.
+            # Non-DAG runs publish None and leave this unset.
+            if message.branch_stats is not None:
+                self._latest_branch_stats = message.branch_stats
             phase_stats = self._records_tracker.create_stats_for_phase(
                 message.stats.phase
             )
-            # TODO
             self.info(
                 lambda: (
                     f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
@@ -548,16 +573,26 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ):
             await self._handle_all_records_received(message.stats.phase)
 
+    def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
+        """Return the orchestrator-published BranchStats for ``phase``.
+
+        Returns ``None`` for non-DAG runs or for phases where the
+        TimingManager never published sub-agent counters on
+        ``CreditPhaseCompleteMessage``.
+        """
+        return self._phase_branch_stats.get(phase)
+
     @on_message(MessageType.CREDITS_COMPLETE)
     async def _on_credits_complete(self, message: CreditsCompleteMessage) -> None:
         """Handle a credits complete message in order to track the end time, and check if all records have been received."""
         self.info(
             "All credits complete, please wait for the results to be processed..."
         )
-        # This check is to prevent a race condition where the records manager processes
-        # all records before the timing manager has sent the final completed count.
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            CreditPhase.PROFILING
+        if (
+            CreditPhase.PROFILING in self._complete_credit_phases
+            and self._records_tracker.check_and_set_all_records_received_for_phase(
+                CreditPhase.PROFILING
+            )
         ):
             await self._handle_all_records_received(CreditPhase.PROFILING)
 
@@ -616,15 +651,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_inference_metrics_task(self) -> None:
-        """Report inference metrics at regular intervals (dashboard only)."""
-        if (
-            self.service_config.ui_type != UIType.DASHBOARD
-            and not Environment.UI.REALTIME_METRICS_ENABLED
-        ):
-            return
+        """Report inference metrics at regular intervals (dashboard only).
 
+        The dashboard/realtime gate is checked inside the loop so the framework's
+        ``interval=None`` semantics (run body once and break) don't permanently
+        kill the task when the gate is currently False — see
+        ``task_manager_mixin.py`` rule for ``interval=None``.
+        """
         while not self.stop_requested:
             await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
+
+            if (
+                self.run.cfg.runtime.ui != UIType.DASHBOARD
+                and not Environment.UI.REALTIME_METRICS_ENABLED
+            ):
+                continue
+
             phase_stats = self._records_tracker.create_stats_for_phase(
                 CreditPhase.PROFILING
             )
@@ -756,6 +798,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
                 was_cancelled=cancelled,
+                successful_request_count=phase_stats.success_records,
+                error_request_count=phase_stats.error_records,
+                branch_stats=self._latest_branch_stats
+                if phase == CreditPhase.PROFILING
+                else None,
             ),
             errors=error_results,
         )
@@ -769,7 +816,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         self.debug("ProcessRecordsResultMessage published")
 
-        if self.user_config.gpu_telemetry_disabled:
+        if self.run.cfg.gpu_telemetry_disabled:
             self.debug("GPU telemetry collection is disabled, skipping publish")
         else:
             try:
@@ -779,7 +826,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Failed to publish telemetry results: {e!r}")
 
-        if self.user_config.server_metrics_disabled:
+        if self.run.cfg.server_metrics_disabled:
             self.debug("Server metrics collection is disabled, skipping publish")
         else:
             try:

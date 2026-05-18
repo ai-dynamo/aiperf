@@ -49,6 +49,7 @@ import math
 import random
 
 import numpy as np
+from numpy.typing import DTypeLike
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import InvalidStateError
@@ -119,7 +120,13 @@ class RandomGenerator:
         """Get the seed used to initialize this generator."""
         return self._seed
 
-    def integers(self, low: int, high: int | None = None, size=None, dtype=np.int64):
+    def integers(
+        self,
+        low: int,
+        high: int | None = None,
+        size: int | tuple[int, ...] | None = None,
+        dtype: DTypeLike = np.int64,
+    ) -> int | np.ndarray:
         """Generate random integers from [low, high) using NumPy.
 
         Args:
@@ -500,3 +507,22 @@ def reset() -> None:
     """
     global _manager
     _manager = None
+
+
+def derive_variation_seed(
+    root_seed: int | None,
+    variation_label: str,
+) -> int | None:
+    # Why: adaptive sweeps propose variations on the fly past plan-build, so
+    # plan.variation_seeds (length-bounded to plan.configs) can't index them.
+    # SHA-256 over `f"{root}:variation:{label}"` mirrors `_RNGManager.derive`
+    # so the same algebra produces both variation-level seeds (here) and
+    # component-level child RNGs. Stable per label: re-proposing the same
+    # parameter point yields the same seed → comparable measurements.
+    # Used only on the adaptive overflow path; grid/zip/scenario keep the
+    # additive `base + idx` derivation in `_apply_sweep_seed_derivation`.
+    if root_seed is None:
+        return None
+    seed_string = f"{root_seed}:variation:{variation_label}"
+    hash_bytes = hashlib.sha256(seed_string.encode("utf-8")).digest()
+    return int.from_bytes(hash_bytes[:8], byteorder="big")

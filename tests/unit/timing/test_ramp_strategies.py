@@ -12,23 +12,23 @@ from aiperf.timing.ramping import (
     ExponentialStrategy,
     LinearStrategy,
     PoissonStrategy,
-    RampConfig,
+    RamperConfig,
 )
 
 
-def cfg(t: RampType, s: float, tg: float, d: float, **kw) -> RampConfig:
-    return RampConfig(ramp_type=t, start=s, target=tg, duration_sec=d, **kw)
+def cfg(t: RampType, s: float, tg: float, d: float, **kw) -> RamperConfig:
+    return RamperConfig(ramp_type=t, start=s, target=tg, duration_sec=d, **kw)
 
 
-def lin(s: float, t: float, d: float, step: float | None = None) -> RampConfig:
+def lin(s: float, t: float, d: float, step: float | None = None) -> RamperConfig:
     return cfg(RampType.LINEAR, s, t, d, step_size=step)
 
 
-def exp(s: float, t: float, d: float, e: float = 2.0) -> RampConfig:
+def exp(s: float, t: float, d: float, e: float = 2.0) -> RamperConfig:
     return cfg(RampType.EXPONENTIAL, s, t, d, exponent=e)
 
 
-def poi(s: float, t: float, d: float) -> RampConfig:
+def poi(s: float, t: float, d: float) -> RamperConfig:
     return cfg(RampType.POISSON, s, t, d)
 
 
@@ -360,20 +360,22 @@ class TestPoissonValueAt:
 
 class TestEdgeCasesAndFactory:
     @pytest.mark.parametrize(
-        "strategy",
+        "strategy_factory",
         [
-            LinearStrategy(lin(1, 1_000_000, 100.0)),
-            LinearStrategy(lin(1, 1_000_000, 100.0, step=10)),
-            ExponentialStrategy(exp(1, 1_000_000, 100.0)),
-            PoissonStrategy(poi(1, 1_000, 100.0)),
+            lambda: LinearStrategy(lin(1, 1_000_000, 100.0)),
+            lambda: LinearStrategy(lin(1, 1_000_000, 100.0, step=10)),
+            lambda: ExponentialStrategy(exp(1, 1_000_000, 100.0)),
+            lambda: PoissonStrategy(poi(1, 1_000, 100.0)),
         ],
     )
-    def test_large_values(self, strategy: RampStrategy) -> None:
+    def test_large_values(self, strategy_factory) -> None:
+        strategy: RampStrategy = strategy_factory()
         r = strategy.next_step(1, elapsed_sec=0.0)
         assert r is not None and r[1] > 1 and r[0] > 0
 
-    @pytest.mark.parametrize("strategy", [LinearStrategy(lin(1, 100, 0.001)), LinearStrategy(lin(1, 100, 0.001, step=10))])  # fmt: skip
-    def test_small_duration(self, strategy: RampStrategy) -> None:
+    @pytest.mark.parametrize("strategy_factory", [lambda: LinearStrategy(lin(1, 100, 0.001)), lambda: LinearStrategy(lin(1, 100, 0.001, step=10))])  # fmt: skip
+    def test_small_duration(self, strategy_factory) -> None:
+        strategy: RampStrategy = strategy_factory()
         r = strategy.next_step(1, elapsed_sec=0.0)
         assert r is not None and r[0] <= 0.001 and r[1] > 1
 
@@ -394,7 +396,7 @@ class TestEdgeCasesAndFactory:
             (poi(1, 100, 10.0), PoissonStrategy),
         ],
     )
-    def test_plugin(self, config: RampConfig, cls: type) -> None:
+    def test_plugin(self, config: RamperConfig, cls: type) -> None:
         RampClass = plugins.get_class(PluginType.RAMP, config.ramp_type)
         s = RampClass(config=config)
         assert isinstance(s, cls)

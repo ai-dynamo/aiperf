@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Long Context Benchmark (32K+)
+# description: Test performance with long input contexts and prefill concurrency limits.
+# category: Advanced
+# tags: long-context, prefill, memory
+# difficulty: intermediate
+# features: prefill_concurrency, long ISL, concurrency ramp
+#
+# Long Context Benchmark
+# ======================
+# Tests model performance with long input contexts (32K+ tokens) using a
+# realistic RAG-style distribution of context lengths. Uses prefill
+# concurrency limits to prevent memory exhaustion when many large prompts
+# arrive simultaneously.
+#
+# Use case: Benchmark RAG systems, document analysis, or code completion
+#
+# Run: aiperf profile --config long_context.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-70B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0 # Long timeout for large context
+
+  # Mixed context lengths (realistic RAG distribution)
+  dataset:
+    type: synthetic
+    entries: 500
+    prompts:
+      sequenceDistribution:
+        - {isl: 2048, osl: 256, probability: 30} # Short queries
+        - {isl: 8192, osl: 512, probability: 35} # Medium documents
+        - {isl: 32000, osl: 512, probability: 25} # Long documents
+        - {isl: 64000, osl: 256, probability: 10} # Very long documents
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 20
+      concurrency: 4
+      prefillConcurrency: 2
+
+    - name: profiling
+      type: poisson
+      requests: 500
+      concurrency: 20
+      prefillConcurrency: 5 # Limit concurrent prefills to prevent OOM
+      prefillRamp: 30 # Ramp prefill concurrency over 30s
+      rate: 5.0
+      duration: 600
+      gracePeriod: 300
+
+  artifacts:
+    dir: ./artifacts/long_context
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 60
+
+  # Monitor GPU memory usage
+  gpuTelemetry:
+    enabled: true
+    urls:
+      - http://localhost:9400/metrics
+
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv]

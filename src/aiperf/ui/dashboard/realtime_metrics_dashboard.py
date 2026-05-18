@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import sys
 from contextlib import suppress
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -14,12 +16,14 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.models.record_models import MetricResult
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
 
@@ -37,9 +41,9 @@ class RealtimeMetricsTable(Widget):
     STATS_FIELDS = ["avg", "min", "max", "p99", "p90", "p50", "std"]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.service_config = service_config
+        self.run = run
         self.data_table: NonFocusableDataTable | None = None
         self._columns_initialized = False
         self._column_keys: dict[str, ColumnKey] = {}
@@ -193,16 +197,16 @@ class RealtimeMetricsDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.service_config = service_config
+        self.run = run
         self.metrics_table: RealtimeMetricsTable | None = None
         self.metrics: list[MetricResult] = []
         self.border_title = "Real-Time Metrics"
 
     def compose(self) -> ComposeResult:
         self.metrics_table = RealtimeMetricsTable(
-            service_config=self.service_config, id="metrics-table", classes="hidden"
+            run=self.run, id="metrics-table", classes="hidden"
         )
         yield self.metrics_table
         yield Static(

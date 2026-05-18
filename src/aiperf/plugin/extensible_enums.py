@@ -156,6 +156,25 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
         return extension_member
 
     @classmethod
+    def deregister(cls, name: str) -> None:
+        """Remove a runtime-registered enum member.
+
+        Args:
+            name: The member name passed to ``register`` (e.g. ``"CUSTOM"``).
+
+        Raises:
+            ValueError: If ``name`` belongs to a base (compile-time) member.
+            KeyError: If ``name`` was never registered as an extension.
+        """
+        if name in cls.__members__:
+            raise ValueError(
+                f"'{name}' is a base enum member of {cls.__name__} and cannot be deregistered"
+            )
+        if name not in cls._extensions:
+            raise KeyError(name)
+        del cls._extensions[name]
+
+    @classmethod
     def _create_extension_member(cls, name: str, value: str) -> Self:
         """Create an extension member that behaves like a real enum member."""
         obj = str.__new__(cls, value)

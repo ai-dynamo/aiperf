@@ -51,6 +51,7 @@ Required fields for trace replay:
 - `output_length`: Number of output tokens
 - `hash_ids`: List of block hashes (optional)
 - `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
+- `extra`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch; user-supplied keys win over `--extra-inputs`.
 
 Example entry:
 
@@ -88,6 +89,26 @@ aiperf profile \
 
 The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamps specified in the trace. This reproduces the original timing pattern.
 
+### Automatic Fixed-Schedule Promotion
+
+When you supply a trace dataset (`--custom-dataset-type mooncake_trace`, `bailian_trace`, `burst_gpt_trace`, ...) and the file's first record carries a `timestamp` field, AIPerf automatically switches the profiling phase to fixed-schedule mode and fills `--request-count` from the number of trace entries. You can pass `--fixed-schedule` explicitly for clarity, but it's no longer required.
+
+To override the auto-promotion — for example, to replay the same trace under a fresh `--concurrency` or `--request-rate` setting and ignore the captured timestamps — pass `--no-fixed-schedule`:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --input-file custom_trace.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --no-fixed-schedule \
+    --concurrency 4 \
+    --request-count 100
+```
+
+AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
+
 ## Using Pre-formatted Messages
 
 Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content.
@@ -110,6 +131,18 @@ When replaying conversations that involve tool use (function calling), include t
 ```
 
 The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter.
+
+## Per-Request Extra Inputs
+
+Use the `extra` field to inject arbitrary key-value pairs into the HTTP payload for individual trace entries. This works alongside (and after) the global `--extra-inputs` flag, so per-entry values override global defaults for the same top-level key.
+
+```json
+{"input_length": 100, "output_length": 50, "timestamp": 0, "extra": {"nvext": {"priority": 99}}}
+{"input_length": 200, "output_length": 30, "timestamp": 500}
+{"messages": [{"role": "user", "content": "Hello"}], "output_length": 50, "timestamp": 1000, "extra": {"routing": "fast"}}
+```
+
+**Merge semantics:** Merging is shallow — a per-entry `{"nvext": {...}}` replaces the entire global `nvext` key. Deep merge is not performed.
 
 ## Profile using real Mooncake Trace
 

@@ -10,6 +10,7 @@ import aiofiles
 import orjson
 
 from aiperf.common.environment import Environment
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
@@ -88,7 +89,11 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         try:
             # Serialize to bytes using orjson (faster for large records)
             # Use exclude_none=True to omit None fields (smaller output)
-            json_bytes = orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
+            # scrub_non_finite enforces "null on disk = absent" across the
+            # JSONL so per-record NaN/inf doesn't masquerade as missing.
+            json_bytes = orjson.dumps(
+                scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+            )
 
             buffer_to_flush = None
             self._buffer.append(json_bytes)

@@ -37,12 +37,10 @@ class TestPerCreditIntegration:
     """Integration tests for complete per-turn credit flow."""
 
     @pytest.mark.asyncio
-    async def test_complete_single_turn_flow(self, service_config):
+    async def test_complete_single_turn_flow(self, benchmark_run):
         """Test complete flow for a single-turn conversation."""
         # Setup StickyCreditRouter
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
         router._register_worker("worker-B")
@@ -73,11 +71,9 @@ class TestPerCreditIntegration:
         assert len(router._sticky_sessions) == 0
 
     @pytest.mark.asyncio
-    async def test_complete_multi_turn_flow(self, service_config):
+    async def test_complete_multi_turn_flow(self, benchmark_run):
         """Test complete flow for a multi-turn conversation."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
 
         async def mock_send_to(*args, **kwargs):
             return None
@@ -122,11 +118,9 @@ class TestPerCreditIntegration:
         assert instance_id not in router._sticky_sessions
 
     @pytest.mark.asyncio
-    async def test_load_balancing_across_multiple_conversations(self, service_config):
+    async def test_load_balancing_across_multiple_conversations(self, benchmark_run):
         """Test that multiple conversations are balanced across workers."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
 
         # Register 3 workers
@@ -170,7 +164,7 @@ class TestPerCreditIntegration:
             assert worker_id == expected_worker  # Sticky!
 
     @pytest.mark.asyncio
-    async def test_turn_data_embedding_simulation(self, service_config):
+    async def test_turn_data_embedding_simulation(self, benchmark_run):
         """Test simulation of turn data embedding and consumption."""
 
         # Simulate TimingManager embedding turn data
@@ -201,9 +195,7 @@ class TestPerCreditIntegration:
             }
 
         # Setup router
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-X")
 
@@ -250,11 +242,9 @@ class TestPerCreditIntegration:
         assert instance_id not in router._sticky_sessions
 
     @pytest.mark.asyncio
-    async def test_error_handling_missing_turn_data(self, service_config):
+    async def test_error_handling_missing_turn_data(self, benchmark_run):
         """Test error handling when turn data is not embedded."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-err")
 
@@ -284,11 +274,9 @@ class TestPerCreditIntegration:
             worker_process_credit(None)
 
     @pytest.mark.asyncio
-    async def test_concurrent_conversations_different_workers(self, service_config):
+    async def test_concurrent_conversations_different_workers(self, benchmark_run):
         """Test that concurrent conversations can be processed by different workers."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-1")
         router._register_worker("worker-2")
@@ -328,11 +316,9 @@ class TestPerCreditIntegration:
         assert total_in_flight == 2
 
     @pytest.mark.asyncio
-    async def test_same_session_different_instances_balanced(self, service_config):
+    async def test_same_session_different_instances_balanced(self, benchmark_run):
         """Test that same session sampled multiple times is balanced."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
         router._register_worker("worker-B")
@@ -382,11 +368,9 @@ class TestPerCreditIntegration:
         assert sorted(worker_loads.values()) == [1, 2]
 
     @pytest.mark.asyncio
-    async def test_worker_failure_and_reassignment(self, service_config):
+    async def test_worker_failure_and_reassignment(self, benchmark_run):
         """Test that conversations can be reassigned if worker fails."""
-        router = StickyCreditRouter(
-            service_config=service_config, service_id="test-service"
-        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-service")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-1")
         router._register_worker("worker-2")

@@ -520,3 +520,273 @@ class TestSymlinkEdgeCases:
         # Should find all 3 runs through symlink
         runs = mode_detector.find_run_directories([parent_symlink])
         assert len(runs) == 3
+
+
+def _write_aggregate_cell(
+    cell_dir: Path, *, concurrency: int, throughput: float
+) -> None:
+    """Write a minimal confidence-aggregate JSON to ``cell_dir``.
+
+    Mirrors the on-disk shape produced by
+    ``AggregateConfidenceJsonExporter`` in the sweep orchestrator: flat
+    ``{metric}_{stat}`` keys with ``{mean, ...}`` payloads and a metadata
+    block carrying ``variation_values``. Helpers in this file build out
+    realistic sweep layouts on top of this.
+    """
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "1.0",
+        "aiperf_version": "test",
+        "metadata": {
+            "aggregation_type": "confidence",
+            "num_profile_runs": 3,
+            "num_successful_runs": 3,
+            "variation_label": f"concurrency_{concurrency}",
+            "variation_values": {"phases.profiling.concurrency": concurrency},
+        },
+        "metrics": {
+            "output_token_throughput_avg": {
+                "mean": throughput,
+                "std": 0.5,
+                "ci_low": throughput - 0.4,
+                "ci_high": throughput + 0.4,
+                "unit": "tokens/sec",
+            },
+            "request_latency_p99": {
+                "mean": 1000.0 / max(throughput, 1.0),
+                "std": 0.1,
+                "ci_low": 0.0,
+                "ci_high": 0.0,
+                "unit": "ms",
+            },
+        },
+    }
+    (cell_dir / "profile_export_aiperf_aggregate.json").write_bytes(
+        orjson.dumps(payload)
+    )
+
+
+def _write_trial(trial_dir: Path) -> None:
+    """Write a minimal per-trial run dir (jsonl + aiperf.json)."""
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    (trial_dir / "profile_export.jsonl").write_text('{"test": "trial"}\n')
+    (trial_dir / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
+
+
+class TestAggregateAndSweepShapes:
+    """Tests covering the directory shapes the sweep orchestrator emits.
+
+    The sweep orchestrator can write five distinct trees under
+    ``<base>/`` (see the table at
+    ``src/aiperf/orchestrator/orchestrator.py`` near
+    ``_cell_artifact_dir``). Each test below targets one shape and
+    asserts that recursive discovery surfaces one "run" per cell
+    aggregate, never N×M phantom runs from per-trial dirs.
+    """
+
+    def test_aggregate_only_dir_recognized_as_run(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """A dir holding only ``profile_export_aiperf_aggregate.json`` is a run."""
+        cell = tmp_path / "concurrency_10"
+        _write_aggregate_cell(cell, concurrency=10, throughput=42.0)
+
+        assert mode_detector._is_run_directory(cell) is True
+
+        mode, runs = mode_detector.detect_mode([cell])
+        assert mode == VisualizationMode.SINGLE_RUN
+        assert runs == [cell]
+
+    def test_per_trial_subtree_skipped_during_recursion(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Trial dirs under ``<X>/profile_runs/`` are skipped when an
+        ``aggregate/`` sibling carries the canonical per-cell view.
+
+        Mirrors the INDEPENDENT trials>1 layout: ``<cell>/aggregate/`` is
+        the aggregate; ``<cell>/profile_runs/trial_NNNN/`` are the per-trial
+        runs. Without the conditional skip, every individual trial would
+        surface as a phantom run alongside the aggregate cell.
+        """
+        cell = tmp_path / "concurrency_10"
+        cell.mkdir()
+        _write_aggregate_cell(cell / "aggregate", concurrency=10, throughput=42.0)
+        for n in (1, 2, 3):
+            _write_trial(cell / "profile_runs" / f"trial_{n:04d}")
+
+        runs = mode_detector.find_run_directories([tmp_path])
+        # One run: the per-cell aggregate. Trials are NOT included
+        # because ``cell/`` has a sibling ``aggregate/``.
+        assert runs == [cell / "aggregate"]
+
+    def test_per_trial_subtree_walked_when_no_aggregate_sibling(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """No aggregate sibling → ``profile_runs/`` recursion proceeds.
+
+        Real-world adaptive BO and recipe artifacts have layouts like
+        ``<base>/search_iter_NNNN/profile_runs/run_NNNN/`` where
+        ``profile_runs/`` is the ONLY place the benchmark data lives.
+        Skipping unconditionally would silently lose every run from
+        these layouts.
+        """
+        # Mimic an adaptive BO layout: <base>/search_iter_0000/profile_runs/run_0001/
+        iteration = tmp_path / "search_iter_0000"
+        for n in (1, 2):
+            _write_trial(iteration / "profile_runs" / f"run_{n:04d}")
+
+        runs = mode_detector.find_run_directories([tmp_path])
+        # Both per-iteration runs surface; no skip because
+        # ``search_iter_0000`` has no sibling ``aggregate/``.
+        assert len(runs) == 2
+
+    def test_explicit_profile_runs_path_finds_trials(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """When a user explicitly passes ``profile_runs/``, trial dirs surface.
+
+        The skip is purely a recursion-time policy. Naming
+        ``profile_runs`` directly is the escape hatch for a per-trial
+        scatter view.
+        """
+        profile_runs = tmp_path / "concurrency_10" / "profile_runs"
+        for n in (1, 2, 3):
+            _write_trial(profile_runs / f"trial_{n:04d}")
+
+        runs = mode_detector.find_run_directories([profile_runs])
+        assert len(runs) == 3
+
+    def test_repeated_layout_root_finds_only_aggregate_cells(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """REPEATED layout: ``<base>/profile_runs/trial_NNNN/<cell>/``.
+
+        Per-cell aggregate at ``<base>/aggregate/<cell>/``. From the
+        sweep root, recursion should yield one run per aggregate cell,
+        with the trial subtree silently excluded.
+        """
+        base = tmp_path / "sweep_root"
+        # Aggregate cells (REPEATED writes them at <base>/aggregate/<cell>/).
+        for c in (10, 20, 40):
+            _write_aggregate_cell(
+                base / "aggregate" / f"concurrency_{c}",
+                concurrency=c,
+                throughput=float(c),
+            )
+        # Per-trial dirs (REPEATED writes them at <base>/profile_runs/trial_NNNN/<cell>/).
+        for trial in (1, 2):
+            for c in (10, 20, 40):
+                _write_trial(
+                    base / "profile_runs" / f"trial_{trial:04d}" / f"concurrency_{c}"
+                )
+
+        runs = mode_detector.find_run_directories([base])
+        # Three aggregate cells, no trial enrollment.
+        assert len(runs) == 3
+        names = sorted(r.name for r in runs)
+        assert names == ["concurrency_10", "concurrency_20", "concurrency_40"]
+
+    def test_independent_layout_root_finds_only_aggregate_cells(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """INDEPENDENT layout: ``<base>/<cell>/profile_runs/trial_NNNN/``.
+
+        Per-cell aggregate at ``<base>/<cell>/aggregate/``. Recursion
+        from ``<base>`` should still surface one run per cell, with
+        per-trial dirs skipped.
+        """
+        base = tmp_path / "sweep_root"
+        for c in (10, 20):
+            cell = base / f"concurrency_{c}"
+            _write_aggregate_cell(
+                cell / "aggregate", concurrency=c, throughput=float(c)
+            )
+            for trial in (1, 2, 3):
+                _write_trial(cell / "profile_runs" / f"trial_{trial:04d}")
+
+        runs = mode_detector.find_run_directories([base])
+        assert len(runs) == 2
+        # The runs are the per-cell aggregate dirs, not the cell dirs themselves.
+        for r in runs:
+            assert r.name == "aggregate"
+
+    def test_aggregate_dir_with_jsonl_takes_traditional_path(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """A dir with both jsonl + aiperf.json AND aggregate JSON is a single run.
+
+        Documents the precedence: when the canonical single-run files
+        are present, the aggregate file is treated as supplementary
+        rather than re-enrolling the dir as a second pseudo-run.
+        ``_is_run_directory`` returns True either way, so the dir
+        appears once. ``DataLoader.load_run`` reads the canonical
+        single-run files; the aggregate file is ignored on this path.
+        """
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "profile_export.jsonl").write_text('{"test": "x"}\n')
+        (run_dir / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
+        _write_aggregate_cell(run_dir, concurrency=10, throughput=42.0)
+
+        runs = mode_detector.find_run_directories([run_dir])
+        assert runs == [run_dir]
+
+    def test_repeated_trials_one_no_aggregate_shadow_duplicates(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """trials==1 REPEATED: aggregate-shadow at ``<base>/aggregate/<cell>/``
+        is suppressed when a canonical sibling at ``<base>/<cell>/`` exists.
+
+        Without this suppression, every cell would surface twice — once
+        via the single-run path and once via the aggregate-only path —
+        producing diverging ``variation_label`` strings (path walk-up
+        vs aggregate JSON metadata) and duplicate dashboard groups.
+        """
+        base = tmp_path / "sweep_root"
+        # Canonical single-run cells
+        for c in (4, 8):
+            cell = base / f"concurrency_{c}"
+            cell.mkdir(parents=True)
+            (cell / "profile_export.jsonl").write_text('{"x": 1}\n')
+            (cell / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
+        # Aggregate shadows of those same cells (single-trial passthrough)
+        for c in (4, 8):
+            _write_aggregate_cell(
+                base / "aggregate" / f"concurrency_{c}",
+                concurrency=c,
+                throughput=float(c),
+            )
+
+        runs = mode_detector.find_run_directories([base])
+        assert len(runs) == 2
+        # Each run is the single-run cell, not the aggregate shadow.
+        for r in runs:
+            assert r.parent == base, f"expected canonical sibling, got {r}"
+            assert (r / "profile_export.jsonl").exists()
+
+    def test_independent_trials_one_no_aggregate_shadow_duplicates(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """trials==1 INDEPENDENT: aggregate-shadow at ``<cell>/aggregate/``
+        is suppressed when ``<cell>/profile_export.jsonl`` exists.
+
+        Symmetric to the REPEATED case but for the alternate per-cell
+        layout. The duplicate would otherwise surface as the
+        ``run_path.name == 'aggregate'`` aggregate-only run alongside
+        the single-run cell.
+        """
+        base = tmp_path / "sweep_root"
+        for c in (4, 8):
+            cell = base / f"concurrency_{c}"
+            cell.mkdir(parents=True)
+            (cell / "profile_export.jsonl").write_text('{"x": 1}\n')
+            (cell / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
+            _write_aggregate_cell(
+                cell / "aggregate", concurrency=c, throughput=float(c)
+            )
+
+        runs = mode_detector.find_run_directories([base])
+        assert len(runs) == 2
+        for r in runs:
+            assert r.name.startswith("concurrency_")
+            assert (r / "profile_export.jsonl").exists()

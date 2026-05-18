@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import multiprocessing
 import time
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.environment import Environment
@@ -15,6 +17,9 @@ from aiperf.common.messages import SpawnWorkersCommand, WorkerHealthMessage
 from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
 from aiperf.common.models.progress_models import WorkerStats
 from aiperf.plugin.enums import ServiceType
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class WorkerStatusInfo(WorkerStats):
@@ -35,19 +40,16 @@ class WorkerManager(BaseComponentService):
     """
     The WorkerManager service is primary responsibility to manage the worker processes.
     It will spawn the workers, monitor their health, and stop them when the service is stopped.
-    In the future it will also be responsible for the auto-scaling of the workers.
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ):
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             **kwargs,
         )
@@ -58,8 +60,9 @@ class WorkerManager(BaseComponentService):
         self.cpu_count = multiprocessing.cpu_count()
         self.debug(lambda: f"Detected {self.cpu_count} CPU cores/threads")
 
-        self.max_concurrency = self.user_config.loadgen.concurrency
-        self.max_workers = self.service_config.workers.max
+        self.max_concurrency = self._max_concurrency_from_run()
+        runtime = self.run.cfg.runtime
+        self.max_workers = runtime.workers
         if self.max_workers is None:
             # Default to 75% of the CPU cores - 1, with a cap of Environment.WORKER.MAX_WORKERS_CAP, and a minimum of 1
             self.max_workers = max(
@@ -81,11 +84,29 @@ class WorkerManager(BaseComponentService):
             )
 
         # Ensure we have at least the min workers
+        workers_min = runtime.workers_min
         self.max_workers = max(
             self.max_workers,
-            self.service_config.workers.min or 1,
+            workers_min or 1,
         )
         self.initial_workers = self.max_workers
+
+    def _max_concurrency_from_run(self) -> int | None:
+        """Return the maximum profiling-phase concurrency from the run.
+
+        Worker capacity is bounded by concurrency: there is no point spawning
+        more workers than there are in-flight credit slots. Each profiling
+        phase declares its own concurrency on the BenchmarkConfig
+        (``run.cfg.phases[i].concurrency``), so take the max across them.
+        Returns ``None`` for non-concurrency phases (request-rate, fixed
+        schedule, etc.) so the workers/CPU cap below applies unchanged.
+        """
+        concurrencies = [
+            phase.concurrency
+            for phase in self.run.cfg.get_profiling_phases()
+            if getattr(phase, "concurrency", None) is not None
+        ]
+        return max(concurrencies) if concurrencies else None
 
     @on_start
     async def _start(self) -> None:

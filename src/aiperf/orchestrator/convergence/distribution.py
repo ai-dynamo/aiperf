@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Distribution convergence criterion using two-sample Kolmogorov-Smirnov test."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.stats import ks_2samp
@@ -12,6 +15,9 @@ from aiperf.orchestrator.convergence.base import (
     ConvergenceCriterion,
 )
 from aiperf.orchestrator.models import RunResult
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkPlan
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,19 @@ class DistributionConvergence(ConvergenceCriterion):
         self._p_value_threshold = p_value_threshold
         self._min_runs = min_runs
         self._jsonl_filename = jsonl_filename
+
+    @classmethod
+    def from_plan(cls, plan: BenchmarkPlan) -> DistributionConvergence:
+        convergence = plan.multi_run.convergence
+        assert convergence is not None  # gated by _build_convergence_criterion
+        kwargs: dict[str, object] = {
+            "metric": convergence.metric,
+            "jsonl_filename": plan.export_jsonl_file or DEFAULT_JSONL_FILENAME,
+            "min_runs": convergence.min_runs,
+        }
+        if convergence.threshold is not None:
+            kwargs["p_value_threshold"] = convergence.threshold
+        return cls(**kwargs)  # type: ignore[arg-type]
 
     def is_converged(self, results: list[RunResult]) -> bool:
         """Check whether the latest run's distribution matches prior runs.

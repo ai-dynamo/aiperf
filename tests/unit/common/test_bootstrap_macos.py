@@ -11,7 +11,8 @@ from aiperf.common.bootstrap import (
     _redirect_stdio_to_devnull,
     bootstrap_and_run_service,
 )
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.flags.cli_config import CLIConfig
+from tests.unit.conftest import make_run_from_cli
 
 
 class TestBootstrapMacOSRedirect:
@@ -28,19 +29,19 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_called_in_macos_child_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        service_config_no_uvloop: CLIConfig,
+        cli_config: CLIConfig,
         mock_log_queue,
         mock_darwin_child_process,
     ):
         """_redirect_stdio_to_devnull is called for Darwin child processes."""
+        run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                run=run,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
@@ -48,19 +49,19 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_not_called_in_main_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        service_config_no_uvloop: CLIConfig,
+        cli_config: CLIConfig,
         mock_log_queue,
         mock_darwin_main_process,
     ):
         """_redirect_stdio_to_devnull is NOT called in the main process."""
+        run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                run=run,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
@@ -68,19 +69,19 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_not_called_on_linux(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        service_config_no_uvloop: CLIConfig,
+        cli_config: CLIConfig,
         mock_log_queue,
         mock_linux_child_process,
     ):
         """_redirect_stdio_to_devnull is NOT called on Linux."""
+        run = make_run_from_cli(cli_config)
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                run=run,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )

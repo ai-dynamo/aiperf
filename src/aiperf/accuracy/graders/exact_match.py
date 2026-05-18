@@ -1,16 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class ExactMatchGrader(BaseGrader):
     """Grades responses by exact string matching against ground truth."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
+        super().__init__(run=run, **kwargs)
 
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs

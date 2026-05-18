@@ -69,8 +69,8 @@ def plot(
         from aiperf.plot.cli_runner import run_plot_controller
 
         run_plot_controller(
-            paths,
-            output,
+            paths=paths,
+            output=output,
             theme=theme,
             config=config,
             verbose=verbose,

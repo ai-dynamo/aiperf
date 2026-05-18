@@ -9,6 +9,7 @@ from pydantic import Field, SerializeAsAny, model_validator
 from typing_extensions import Self
 
 from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
 
@@ -333,31 +334,45 @@ class ServerMetricsEndpointInfo(AIPerfBaseModel):
 
     # Fetch statistics (all HTTP requests, including duplicates)
     total_fetches: int = Field(
-        description="Total number of HTTP fetches from this endpoint"
+        ge=0,
+        description="Total number of HTTP fetches from this endpoint",
     )
-    first_fetch_ns: int = Field(description="Timestamp of first fetch in nanoseconds")
-    last_fetch_ns: int = Field(description="Timestamp of last fetch in nanoseconds")
-    avg_fetch_latency_ms: float = Field(
-        description="Average time to fetch metrics from this endpoint in milliseconds"
+    first_fetch_ns: int = Field(
+        ge=0,
+        description="Timestamp of first fetch in nanoseconds",
+    )
+    last_fetch_ns: int = Field(
+        ge=0,
+        description="Timestamp of last fetch in nanoseconds",
+    )
+    avg_fetch_latency_ms: FiniteFloat = Field(
+        ge=0,
+        description="Average time to fetch metrics from this endpoint in milliseconds",
     )
     # Unique update statistics (only when metrics changed)
     unique_updates: int = Field(
-        description="Number of fetches that returned changed metrics"
+        ge=0,
+        description="Number of fetches that returned changed metrics",
     )
     first_update_ns: int = Field(
-        description="Timestamp of first unique update in nanoseconds"
+        ge=0,
+        description="Timestamp of first unique update in nanoseconds",
     )
     last_update_ns: int = Field(
-        description="Timestamp of last unique update in nanoseconds"
+        ge=0,
+        description="Timestamp of last unique update in nanoseconds",
     )
     duration_seconds: float = Field(
-        description="Time span from first to last unique update in seconds"
+        ge=0,
+        description="Time span from first to last unique update in seconds",
     )
     avg_update_interval_ms: float = Field(
-        description="Average time between unique metric updates in milliseconds"
+        ge=0,
+        description="Average time between unique metric updates in milliseconds",
     )
     median_update_interval_ms: float | None = Field(
         default=None,
+        ge=0,
         description="Median time between unique metric updates in milliseconds. "
         "More robust to outliers than average. None if fewer than 2 intervals.",
     )
@@ -438,17 +453,17 @@ class CounterStats(AIPerfBaseModel):
         default=None,
         description="Overall rate of counter value increase per second.",
     )
-    rate_avg: float | None = Field(
+    rate_avg: FiniteFloat | None = Field(
         default=None,
         description="Time-weighted average rate between change points (counter)",
     )
-    rate_min: float | None = Field(
+    rate_min: FiniteFloat | None = Field(
         default=None, description="Minimum point-to-point rate per second (counter)"
     )
-    rate_max: float | None = Field(
+    rate_max: FiniteFloat | None = Field(
         default=None, description="Maximum point-to-point rate per second (counter)"
     )
-    rate_std: float | None = Field(
+    rate_std: FiniteFloat | None = Field(
         default=None, description="Standard deviation of point-to-point rates (counter)"
     )
 

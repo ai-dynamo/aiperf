@@ -9,7 +9,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 
 ## Features
 
-- [**OpenAI API Compatibility**](#openai-compatible-endpoints): Chat completions, text completions, and embeddings
+- [**OpenAI API Compatibility**](#openai-compatible-endpoints): Chat completions, text completions, embeddings, model listing, and image generation
 - [**Multi-Backend Ranking**](#ranking-endpoints): NVIDIA NIM, HuggingFace TEI, and Cohere reranking
 - [**HuggingFace TGI Support**](#huggingface-tgi-endpoints): `/generate` and `/generate_stream` endpoints
 - [**Prometheus Metrics**](#prometheus-metrics): vLLM, SGLang, TensorRT-LLM, and NVIDIA Dynamo backends
@@ -30,6 +30,10 @@ A mock server for integration testing and performance benchmarking of LLM applic
 | [`/v1/chat/completions`](#chat-completions) | OpenAI chat completions (streaming supported) |
 | [`/v1/completions`](#text-completions) | OpenAI text completions (streaming supported) |
 | [`/v1/embeddings`](#embeddings) | OpenAI embeddings (768-dim) |
+| `/v1/images/generations` | OpenAI-compatible image generation |
+| `/v1/image/infer` | Image inference / retrieval-style response |
+| `/rag/api/prompt` | RAG prompt endpoint |
+| `/v1/models` | OpenAI-compatible model listing |
 | [`/v1/ranking`](#nvidia-nim-ranking) | NVIDIA NIM ranking |
 | [`/rerank`](#huggingface-tei-rerank) | HuggingFace TEI reranking |
 | [`/v2/rerank`](#cohere-rerank) | Cohere reranking |
@@ -71,7 +75,7 @@ make install-mock-server
 
 # Or standalone
 cd tests/aiperf_mock_server
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 ```
 
 ## Quick Start
@@ -108,6 +112,9 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | `--log-level` | | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
 | `--verbose` | `-v` | `false` | Debug logging (overrides log-level) |
 | `--access-logs` | | `false` | HTTP access logs |
+| `--models-ready-delay-seconds` | | `0.0` | Delay before `/v1/models` reports loaded models |
+| `--disable-models-endpoint` | | `false` | Return 404 from `/v1/models` to exercise fallback readiness probes |
+| `--inference-ready-delay-seconds` | | `0.0` | Delay before inference endpoints stop returning HTTP 503 |
 
 ### Latency Options
 
@@ -409,6 +416,92 @@ Models with `gpt-oss` or `qwen` in the name support reasoning:
 
 When `--error-rate` is set, requests randomly fail with HTTP 500. Use `--random-seed` for reproducible error sequences.
 
+## Saturation modeling (design B)
+
+By default, the mock server uses an **open-loop latency model**: every request sleeps for `ttft + itl * num_tokens` (with optional concurrency penalties layered on). This produces a smooth latency curve but no real saturation knee — throughput scales linearly with concurrency.
+
+For testing adaptive search and Pareto-front planners, enable the **batched step scheduler**:
+
+```bash
+aiperf-mock-server \
+  --scheduler-enabled \
+  --scheduler-step-ms 5 \
+  --scheduler-max-batch-size 256 \
+  --scheduler-max-prefill-chunks-per-step 8 \
+  --scheduler-prefill-chunk-tokens 512
+```
+
+### What it models
+
+- A virtual decode loop ticking every `step_ms`. Per tick, up to `max_batch_size` decoders advance one token; surplus decoders wait one or more ticks.
+- A separate prefill chunk pool. A prompt of `P` tokens splits into `ceil(P / prefill_chunk_tokens)` chunks; each chunk consumes one of the `max_prefill_chunks_per_step` per-tick slots.
+
+### Knee math
+
+- **Decode-token rate ceiling:** `max_batch_size / step_ms` tokens/sec. With defaults: `256 / 0.005 = 51,200 tok/s`.
+- **Concurrency knee:** `~max_batch_size`. Past that, every additional decoder linearly stretches all decoders' ITL.
+- **Prefill cliff:** TTFT spikes when `max_prefill_chunks_per_step` is the binding constraint. Tune low to test prefill-bound regimes.
+
+### Knob recipes
+
+| Goal | Settings |
+|---|---|
+| Knee at concurrency=32, fast iteration | `--scheduler-max-batch-size 32 --scheduler-step-ms 5` |
+| Prefill-bound regime (TTFT cliffs first) | `--scheduler-max-prefill-chunks-per-step 1 --scheduler-prefill-chunk-tokens 256` |
+| Sharp Pareto front (TTFT vs throughput) | combine prefill-bound + small `max-batch-size` |
+
+### Composition with other knobs
+
+The structural scheduler-driven latency is **additive** with the per-request penalty knobs (`ttft_per_isl_token_ms`, `ttft_concurrency_quad_ms`, `itl_per_osl_token_ms`, `itl_concurrency_lin_ms`). Those penalties layer on top of scheduler waits when both are set; in default scheduler config the penalties are 0 and only the scheduler decides timing.
+
+### Goodput collapse past the knee
+
+By default, the scheduler simply queues excess decoders past `max_batch_size` and aggregate throughput plateaus. Real continuous-batching servers exhibit *goodput collapse* under heavy oversubscription: preemption thrash, swap, and admission churn drop the *useful* tok/s once the queue grows too large. Enable this with `--scheduler-goodput-collapse-enabled`:
+
+```bash
+aiperf-mock-server \
+  --scheduler-enabled \
+  --scheduler-max-batch-size 64 \
+  --scheduler-goodput-collapse-enabled \
+  --scheduler-goodput-collapse-threshold 1.5 \
+  --scheduler-goodput-collapse-slope 0.5 \
+  --scheduler-goodput-collapse-floor 0.3
+```
+
+Effective per-step admit budget shrinks linearly past the threshold:
+
+- `ratio = decode_queue_len / max_batch_size`
+- `overload = max(0, ratio - threshold)`
+- `shrink = min(1 - floor, overload * slope)`
+- `effective_batch = max(1, max_batch_size * (1 - shrink))`
+
+With the defaults above, at 3× oversubscription the effective batch is `64 * (1 - min(0.7, 0.75)) = 64 * 0.3 ≈ 19`, so `tok/s` measured by the client *drops* past the knee instead of plateauing — exactly what knee-finding sweep recipes need to learn the right side of the cliff.
+
+### Latency jitter
+
+Open-loop and scheduler modes both support lognormal-distributed jitter, sampled fresh per token for ITL and once per request for TTFT:
+
+```bash
+aiperf-mock-server --ttft-jitter-cv 0.2 --itl-jitter-cv 0.15
+```
+
+`--ttft-jitter-cv 0.2` adds ~20% TTFT noise (lognormal mean stays at 1.0). In open-loop mode jitter is symmetric (samples can be faster or slower than nominal); in scheduler mode it is positive-only (`max(0, factor − 1) × base`) since the scheduler enforces a structural floor. Combine with `--random-seed N` for reproducible noise traces across re-runs. This is the single most useful knob for testing whether sweep recipes converge under realistic per-request variance.
+
+### Client disconnects
+
+When a streaming client (HTTP/SSE consumer) disconnects mid-response, the mock server now:
+
+- Removes the request's pending waiters from the scheduler's decode and prefill queues so they don't artificially inflate queue depth (and thus goodput-collapse / oversubscription accounting).
+- Increments the `dynamo_frontend_disconnected_clients{model="…"}` Prometheus counter so search recipes can verify their cancellation behavior.
+- Wakes any orphaned waiters cleanly so the scheduler tick loop has no leaked references.
+
+No CLI knob — this is always-on. Streaming success paths set a `_finished` flag before the final `[DONE]` sentinel so a consumer that breaks immediately after `[DONE]` does not get spuriously counted as a disconnect.
+
+### Limitations
+
+- Single-process only: `--workers > 1` runs each worker with an independent scheduler (no cross-worker batching).
+- No KV-block accounting, no preemption, no swap. For those, see design C (deferred).
+
 ## Project Structure
 
 ```
@@ -422,6 +515,10 @@ tests/aiperf_mock_server/
 ├── metrics.py       # Prometheus metric definitions
 ├── metrics_utils.py # Metric recording helpers
 ├── dcgm_faker.py    # GPU telemetry simulation
+├── scheduler.py     # Step-based batched scheduler
+├── test_scheduler.py
+├── test_scheduler_integration.py
+├── test_robustness.py
 └── README.md
 ```
 

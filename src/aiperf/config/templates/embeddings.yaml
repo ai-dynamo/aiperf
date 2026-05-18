@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Embeddings Endpoint Benchmark
+# description: Benchmark embedding models with batched text requests.
+# category: Specialized Endpoints
+# tags: embeddings, search, retrieval
+# difficulty: beginner
+# features: embeddings endpoint, batch processing
+#
+# Embeddings Endpoint Benchmark
+# =============================
+# Benchmarks embedding models used in RAG pipelines, semantic search, and
+# retrieval systems. Tests how throughput scales with batch size — servers
+# that support batching can process N texts in one GPU pass, so larger
+# batches amortize per-request overhead but increase per-request latency.
+#
+# Tune `batchSize` to match your real-world traffic shape:
+#   1   - single text per request (lowest latency)
+#   10  - typical real-time search batch
+#   50+ - bulk indexing workload
+#
+# Run: aiperf profile --config embeddings.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: BAAI/bge-small-en-v1.5
+
+  endpoint:
+    url: http://localhost:8000/v1/embeddings
+    type: embeddings
+    timeout: 60.0
+
+  # 10 texts per request — typical real-time search batch
+  dataset:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 128, stddev: 30}
+      batchSize: 10
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 50
+      concurrency: 4
+
+    - name: profiling
+      type: concurrency
+      requests: 500
+      concurrency: 16
+      duration: 120
+      gracePeriod: 30
+
+  artifacts:
+    dir: ./artifacts/embeddings
+    summary: [json]
+    records: [jsonl]

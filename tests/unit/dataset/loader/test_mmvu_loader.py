@@ -5,20 +5,21 @@ import base64
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.mmvu import MMVUDatasetLoader
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def cli_config() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
-async def loader(user_config: UserConfig) -> MMVUDatasetLoader:
+async def loader(cli_config: CLIConfig) -> MMVUDatasetLoader:
     return MMVUDatasetLoader(
-        user_config=user_config,
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="yale-nlp/MMVU",
         hf_split="validation",
         video_column="video",

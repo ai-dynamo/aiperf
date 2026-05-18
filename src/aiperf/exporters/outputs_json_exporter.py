@@ -2,15 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Aggregator that merges output fragments with metrics into final outputs.json."""
 
+from pathlib import Path
+from typing import Any
+
 import aiofiles
 import orjson
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models.record_models import MetricRecordInfo
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+
+JsonObject = dict[str, Any]
+MetricsMap = dict[str, JsonObject]
 
 
 class OutputsJsonExporter(AIPerfLoggerMixin):
@@ -25,19 +32,19 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         "request_latency",
     )
 
-    def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+    def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._user_config = exporter_config.user_config
+        self._cfg = exporter_config.cfg
 
-        if not self._user_config.output.export_outputs_json:
+        if not self._cfg.artifacts.export_outputs_json:
             raise DataExporterDisabled(
                 "OutputsJsonExporter is disabled (--export-outputs-json not set)"
             )
 
-        self._file_path = self._user_config.output.outputs_json_file
-        self._jsonl_path = self._user_config.output.profile_export_jsonl_file
+        self._file_path = self._cfg.artifacts.outputs_json_file
+        self._jsonl_path = self._cfg.artifacts.profile_export_jsonl_file
         self._fragments_dir = (
-            self._user_config.output.artifact_directory
+            self._cfg.artifacts.artifact_directory
             / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         )
 
@@ -50,7 +57,9 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
 
     async def export(self) -> None:
         """Read fragment files, merge with metrics, and write final outputs.json."""
-        fragment_files = list(self._fragments_dir.glob("output_fragments_*.jsonl"))
+        fragment_files: list[Path] = list(
+            self._fragments_dir.glob("output_fragments_*.jsonl")
+        )
         if not fragment_files:
             self.debug("No output fragment files found, skipping outputs.json export")
             return
@@ -58,7 +67,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         fragments = self._read_fragments(fragment_files)
         metrics_map = self._build_metrics_map()
 
-        records: list[dict] = []
+        records: list[JsonObject] = []
         for frag in fragments:
             key = f"{frag['session_num']}:{frag.get('turn_index', 0)}"
             metrics = metrics_map.get(key, {})
@@ -82,7 +91,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         }
 
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
-        content = orjson.dumps(output, option=orjson.OPT_INDENT_2)
+        content = orjson.dumps(scrub_non_finite(output), option=orjson.OPT_INDENT_2)
         async with aiofiles.open(self._file_path, "wb") as f:
             await f.write(content)
 
@@ -90,9 +99,9 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
 
         self._cleanup_fragments(fragment_files)
 
-    def _read_fragments(self, fragment_files: list) -> list[dict]:
+    def _read_fragments(self, fragment_files: list[Path]) -> list[JsonObject]:
         """Read all fragment JSONL files and return parsed dicts."""
-        fragments: list[dict] = []
+        fragments: list[JsonObject] = []
         for file in fragment_files:
             with open(file) as f:
                 for line in f:
@@ -102,9 +111,9 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                     fragments.append(orjson.loads(line))
         return fragments
 
-    def _build_metrics_map(self) -> dict[str, dict]:
+    def _build_metrics_map(self) -> MetricsMap:
         """Read profile_export.jsonl and build a metrics map keyed by session_num:turn_index."""
-        metrics_map: dict[str, dict] = {}
+        metrics_map: MetricsMap = {}
         if not self._jsonl_path.exists():
             self.debug("profile_export.jsonl not found, metrics will be empty")
             return metrics_map
@@ -118,7 +127,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                 if record.metadata.benchmark_phase != CreditPhase.PROFILING:
                     continue
                 key = f"{record.metadata.session_num}:{record.metadata.turn_index or 0}"
-                metrics: dict = {}
+                metrics: JsonObject = {}
                 for metric_key in self._METRIC_ALLOWLIST:
                     if metric_key in record.metrics:
                         metrics[metric_key] = record.metrics[metric_key].value
@@ -126,7 +135,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
 
         return metrics_map
 
-    def _cleanup_fragments(self, fragment_files: list) -> None:
+    def _cleanup_fragments(self, fragment_files: list[Path]) -> None:
         """Remove fragment files and directory."""
         for file in fragment_files:
             file.unlink(missing_ok=True)

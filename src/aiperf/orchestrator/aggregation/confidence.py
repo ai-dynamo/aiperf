@@ -6,9 +6,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-from scipy import stats
-
 from aiperf.common.constants import STAT_KEYS
 from aiperf.orchestrator.aggregation.base import AggregateResult, AggregationStrategy
 from aiperf.orchestrator.models import RunResult
@@ -21,31 +18,37 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ConfidenceMetric:
-    """Statistics for a single metric across runs.
-
-    Attributes:
-        mean: Sample mean
-        std: Sample standard deviation (ddof=1)
-        min: Minimum value
-        max: Maximum value
-        cv: Coefficient of variation (std/mean)
-        se: Standard error (std/sqrt(n))
-        ci_low: Lower bound of confidence interval
-        ci_high: Upper bound of confidence interval
-        t_critical: t-distribution critical value used for CI
-        unit: Unit of measurement (e.g., "ms", "requests/sec")
-    """
+    """Statistics for a single metric across runs."""
 
     mean: float
+    """Sample mean."""
+
     std: float
+    """Sample standard deviation (ddof=1)."""
+
     min: float
+    """Minimum value across runs."""
+
     max: float
+    """Maximum value across runs."""
+
     cv: float
+    """Coefficient of variation (std/mean)."""
+
     se: float
+    """Standard error (std/sqrt(n))."""
+
     ci_low: float
+    """Lower bound of the confidence interval."""
+
     ci_high: float
+    """Upper bound of the confidence interval."""
+
     t_critical: float
+    """t-distribution critical value used for CI calculation."""
+
     unit: str
+    """Unit of measurement (e.g., "ms", "requests/sec")."""
 
     def to_json_result(self) -> "JsonMetricResult":
         """Convert to JsonMetricResult for export.
@@ -112,7 +115,9 @@ class ConfidenceAggregation(AggregationStrategy):
             AggregateResult with confidence statistics
 
         Raises:
-            ValueError: If fewer than 2 successful runs
+            ValueError: If zero successful runs (all runs failed). A single
+                successful run is no longer fatal — see the single-run
+                degraded path below.
         """
         # Separate successful and failed runs
         successful = [r for r in results if r.success]
@@ -120,21 +125,47 @@ class ConfidenceAggregation(AggregationStrategy):
             {"label": r.label, "error": r.error} for r in results if not r.success
         ]
 
-        if len(successful) < 2:
-            if len(successful) == 0:
-                raise ValueError(
-                    "All runs failed - cannot compute confidence statistics. "
-                    f"Total runs: {len(results)}, Failed runs: {len(failed)}. "
-                    "Please check the error messages in the logs and ensure your "
-                    "benchmark configuration is correct."
-                )
-            else:
-                raise ValueError(
-                    f"Insufficient successful runs for confidence intervals. "
-                    f"Got {len(successful)} successful run(s), but need at least 2. "
-                    f"Total runs: {len(results)}, Failed runs: {len(failed)}. "
-                    "Consider increasing --num-profile-runs or investigating why runs are failing."
-                )
+        if len(successful) == 0:
+            raise ValueError(
+                "All runs failed - cannot compute confidence statistics. "
+                f"Total runs: {len(results)}, Failed runs: {len(failed)}. "
+                "Please check the error messages in the logs and ensure your "
+                "benchmark configuration is correct."
+            )
+
+        if len(successful) == 1:
+            # Single-run degraded mode. Confidence intervals require >= 2
+            # observations (sample variance, t-distribution df=n-1), so we
+            # cannot produce meaningful CIs from one run. But crashing the
+            # whole sweep over numRuns=1 is hostile to the common cases:
+            # (a) the user explicitly chose num_profile_runs=1 to iterate
+            # quickly; (b) an outer parameter sweep happens to bottom out at
+            # one cell. Report point estimates with std=0 and CI=[mean,mean]
+            # so downstream exporters / SLA filters still receive each
+            # metric's value, and flag the degenerate case via metadata so
+            # CI-consuming UIs can render a "n=1, no CI" badge instead of a
+            # zero-width error bar.
+            logger.warning(
+                "ConfidenceAggregation: only 1 successful run "
+                "(num_successful=%d / total=%d); reporting point estimates "
+                "with std=0 and CI collapsed to the mean. Set "
+                "num_profile_runs >= 2 for meaningful confidence intervals.",
+                len(successful),
+                len(results),
+            )
+            metrics = self._aggregate_metrics_single_run(successful[0])
+            return AggregateResult(
+                aggregation_type="confidence",
+                num_runs=len(results),
+                num_successful_runs=1,
+                failed_runs=failed,
+                metrics=metrics,
+                metadata={
+                    "confidence_level": self.confidence_level,
+                    "run_labels": [r.label for r in successful],
+                    "single_run": True,
+                },
+            )
 
         # Aggregate each metric
         metrics = self._aggregate_metrics(successful)
@@ -163,47 +194,101 @@ class ConfidenceAggregation(AggregationStrategy):
             Dict mapping flattened metric name to ConfidenceMetric
             (e.g., "time_to_first_token_avg", "time_to_first_token_p99")
         """
-        # Get all metric names from first result
         if not results or not results[0].summary_metrics:
             return {}
 
-        # Collect all unique metric names and stat keys across all runs
-        metric_stat_pairs = set()
-        for result in results:
-            for metric_name, metric_result in result.summary_metrics.items():
-                # Get all populated stat fields
-                for stat_key in STAT_KEYS:
-                    if getattr(metric_result, stat_key, None) is not None:
-                        metric_stat_pairs.add((metric_name, stat_key))
+        metric_stat_pairs = self._collect_metric_stat_pairs(results)
 
         aggregated = {}
         for metric_name, stat_key in metric_stat_pairs:
-            # Extract values for this metric+stat combination across all runs
-            values = []
-            unit = ""
-
-            for result in results:
-                if metric_name in result.summary_metrics:
-                    metric_result = result.summary_metrics[metric_name]
-                    value = getattr(metric_result, stat_key, None)
-                    if value is not None:
-                        values.append(value)
-                        # Get unit from first occurrence
-                        if not unit:
-                            unit = metric_result.unit
-
+            values, unit = self._extract_values_for_pair(results, metric_name, stat_key)
             if not values:
                 continue
 
-            # Create flattened key for output (e.g., "time_to_first_token_p99")
             flattened_key = f"{metric_name}_{stat_key}"
-
-            # Compute statistics
             aggregated[flattened_key] = self._compute_confidence_stats(
                 values, flattened_key, unit
             )
 
         return aggregated
+
+    @staticmethod
+    def _aggregate_metrics_single_run(run: RunResult) -> dict[str, ConfidenceMetric]:
+        """Build degenerate per-metric ConfidenceMetric records for a single run.
+
+        Used by the ``len(successful) == 1`` branch of :meth:`aggregate`. Each
+        populated stat surfaces as a ConfidenceMetric whose ``mean``, ``min``,
+        and ``max`` all equal the single observation; ``std``, ``cv``, ``se``
+        are 0; ``ci_low`` and ``ci_high`` collapse to the mean; ``t_critical``
+        is NaN to flag the absence of a true CI to downstream UI code.
+
+        This preserves the per-metric / per-stat keying contract of the
+        multi-run path (``"time_to_first_token_avg"``, ``"time_to_first_token_p99"``,
+        ...) so exporters and SLA-filter consumers don't need to special-case
+        the single-run shape.
+        """
+        aggregated: dict[str, ConfidenceMetric] = {}
+        if not run.summary_metrics:
+            return aggregated
+        for metric_name, metric_result in run.summary_metrics.items():
+            for stat_key in STAT_KEYS:
+                value = getattr(metric_result, stat_key, None)
+                if value is None:
+                    continue
+                v = float(value)
+                aggregated[f"{metric_name}_{stat_key}"] = ConfidenceMetric(
+                    mean=v,
+                    std=0.0,
+                    min=v,
+                    max=v,
+                    cv=0.0,
+                    se=0.0,
+                    ci_low=v,
+                    ci_high=v,
+                    t_critical=float("nan"),
+                    unit=metric_result.unit,
+                )
+        return aggregated
+
+    @staticmethod
+    def _collect_metric_stat_pairs(
+        results: list[RunResult],
+    ) -> set[tuple[str, str]]:
+        """Collect all unique (metric_name, stat_key) pairs populated across runs."""
+        pairs: set[tuple[str, str]] = set()
+        for result in results:
+            for metric_name, metric_result in result.summary_metrics.items():
+                for stat_key in STAT_KEYS:
+                    if getattr(metric_result, stat_key, None) is not None:
+                        pairs.add((metric_name, stat_key))
+        return pairs
+
+    @staticmethod
+    def _extract_values_for_pair(
+        results: list[RunResult], metric_name: str, stat_key: str
+    ) -> tuple[list[float], str]:
+        """Extract values and unit for a (metric_name, stat_key) pair across runs.
+
+        Skips ``None`` and non-finite values (NaN/+inf/-inf) so a single bad
+        observation in one trial does not poison the aggregate via
+        ``np.mean`` / ``np.std``. The metric's unit comes from the first
+        finite trial encountered.
+        """
+        from aiperf.common.finite import is_finite_value
+
+        values: list[float] = []
+        unit = ""
+        for result in results:
+            if metric_name not in result.summary_metrics:
+                continue
+            metric_result = result.summary_metrics[metric_name]
+            value = getattr(metric_result, stat_key, None)
+            if value is None or not is_finite_value(value):
+                continue
+            values.append(float(value))
+            if not unit:
+                unit = metric_result.unit
+        return values, unit
 
     def _compute_confidence_stats(
         self, values: list[float], metric_name: str, unit: str
@@ -218,16 +303,36 @@ class ConfidenceAggregation(AggregationStrategy):
         Returns:
             ConfidenceMetric with computed statistics
         """
+        import math
+
+        from scipy import stats
+
+        from aiperf.common.finite import nan_safe_mean, nan_safe_std
+
+        # Defensive filter: callers (``_extract_values_for_pair``) already
+        # skip non-finite samples, but using nan-safe aggregations here
+        # ensures the discipline survives future callsite refactors. A
+        # NaN slipping through would otherwise poison every downstream
+        # field (CV, SE, CI) and silently round-trip to JSON ``null``.
+        mean_opt = nan_safe_mean(values)
+        std_opt = nan_safe_std(values, ddof=1)
+        if mean_opt is None or std_opt is None:
+            # Should never happen because the caller drops empty value lists
+            # and the single-run branch handles n=1 separately, but degrade
+            # to NaN sentinels rather than crashing if it does.
+            mean = float("nan")
+            std = float("nan")
+        else:
+            mean = float(mean_opt)
+            std = float(std_opt)
         n = len(values)
-        mean = float(np.mean(values))
-        std = float(np.std(values, ddof=1))  # Sample std (N-1)
 
         # Coefficient of variation (handle division by zero)
         # CV is expressed as a ratio (not percentage), so no *100
         cv = std / mean if mean != 0 else float("inf")
 
         # Standard error
-        se = std / np.sqrt(n)
+        se = std / math.sqrt(n)
 
         # Confidence interval using t-distribution
         alpha = 1 - self.confidence_level

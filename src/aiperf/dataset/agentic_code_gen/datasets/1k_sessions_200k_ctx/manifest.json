@@ -1,0 +1,72 @@
+{
+  "seed": 42,
+  "num_sessions": 1205,
+  "config_name": "manifest",
+  "generation_params": {
+    "new_tokens_per_turn": {
+      "mu": 8.294049640102028,
+      "sigma": 0.9005166385005492,
+      "mean": 6000.0,
+      "median": 4000.0,
+      "min": null,
+      "max": 50000.0,
+      "bias": 1.0
+    },
+    "generation_length": {
+      "mu": 6.684611727667927,
+      "sigma": 0.6680472308365776,
+      "mean": 1000.0,
+      "median": 800.0,
+      "min": null,
+      "max": 10000.0
+    },
+    "inter_turn_delay": {
+      "agentic_fraction": 0.7,
+      "agentic_delay": {
+        "mu": 7.600902459542082,
+        "sigma": 1.3537287260556712,
+        "mean": 5000.0,
+        "median": 2000.0,
+        "min": null,
+        "max": null
+      },
+      "human_delay": {
+        "mu": 9.615805480084347,
+        "sigma": 1.1774100225154747,
+        "mean": 30000.0,
+        "median": 15000.0,
+        "min": null,
+        "max": null
+      },
+      "max": null
+    },
+    "reset": {
+      "base_probability": 0.05,
+      "context_scaling": 1.5
+    },
+    "turns": null,
+    "max_prompt_tokens": 200000,
+    "block_size": 512,
+    "cache": {
+      "layer1_tokens": 32000,
+      "layer1_5_tokens": 10000,
+      "layer2": {
+        "mu": 8.517193191416238,
+        "sigma": 1.4823038073675112,
+        "mean": 15000.0,
+        "median": 5000.0,
+        "min": null,
+        "max": 50000.0
+      },
+      "layer1_5_groups": {
+        "num_groups": 100,
+        "zipf_alpha": 0.6
+      }
+    },
+    "restart_initial_probability": 0.3,
+    "restart_turn_range": [
+      5,
+      15
+    ]
+  }
+}

@@ -1,18 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from unittest.mock import MagicMock
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import CreditPhase
-from aiperf.plugin.enums import ArrivalPattern, TimingMode, URLSelectionStrategy
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import (
     CreditPhaseConfig,
     RequestCancellationConfig,
     TimingConfig,
 )
+from tests.unit.conftest import make_run_from_cli
 
 
 def make_phase_config(**overrides) -> CreditPhaseConfig:
@@ -21,69 +22,103 @@ def make_phase_config(**overrides) -> CreditPhaseConfig:
     return CreditPhaseConfig(**defaults)
 
 
-def make_user_config(**overrides) -> UserConfig:
-    loadgen = MagicMock()
-    loadgen.concurrency = overrides.get("concurrency", 10)
-    loadgen.prefill_concurrency = overrides.get("prefill_concurrency")
-    loadgen.request_rate = overrides.get("request_rate", 10.0)
-    loadgen.user_centric_rate = overrides.get("user_centric_rate")
-    loadgen.arrival_pattern = overrides.get("arrival_pattern", ArrivalPattern.POISSON)
-    loadgen.request_count = overrides.get("request_count", 100)
-    loadgen.num_users = overrides.get("num_users")
-    loadgen.warmup_request_count = overrides.get("warmup_request_count")
-    loadgen.warmup_duration = overrides.get("warmup_duration")
-    loadgen.warmup_num_sessions = overrides.get("warmup_num_sessions")
-    loadgen.warmup_concurrency = overrides.get("warmup_concurrency")
-    loadgen.warmup_prefill_concurrency = overrides.get("warmup_prefill_concurrency")
-    loadgen.warmup_request_rate = overrides.get("warmup_request_rate")
-    loadgen.warmup_rate_mode = overrides.get("warmup_rate_mode")
-    loadgen.warmup_arrival_pattern = overrides.get(
-        "warmup_arrival_pattern", ArrivalPattern.CONSTANT
+# Fields recognized by ``make_cfg`` overrides. Each is routed to either
+# the loadgen or input section of a real v1 ``CLIConfig``; only fields the
+# caller passes flow into ``model_fields_set`` so the v1 -> v2 resolver maps
+# them faithfully.
+_LOADGEN_FIELDS: frozenset[str] = frozenset(
+    {
+        "concurrency",
+        "prefill_concurrency",
+        "request_rate",
+        "user_centric_rate",
+        "arrival_pattern",
+        "request_count",
+        "num_users",
+        "warmup_request_count",
+        "warmup_duration",
+        "warmup_num_sessions",
+        "warmup_concurrency",
+        "warmup_prefill_concurrency",
+        "warmup_request_rate",
+        "warmup_arrival_pattern",
+        "warmup_concurrency_ramp_duration",
+        "warmup_prefill_concurrency_ramp_duration",
+        "warmup_request_rate_ramp_duration",
+        "warmup_grace_period",
+        "benchmark_duration",
+        "benchmark_grace_period",
+        "request_cancellation_rate",
+        "request_cancellation_delay",
+        "concurrency_ramp_duration",
+        "prefill_concurrency_ramp_duration",
+        "request_rate_ramp_duration",
+        "arrival_smoothness",
+    }
+)
+_INPUT_FIELDS: frozenset[str] = frozenset(
+    {
+        "fixed_schedule",
+        "fixed_schedule_auto_offset",
+        "fixed_schedule_start_offset",
+        "fixed_schedule_end_offset",
+    }
+)
+
+
+def make_cfg(**overrides) -> CLIConfig:
+    """Build a real v1 ``CLIConfig`` whose ``model_fields_set`` reflects only
+    the kwargs the caller passed. The v1 -> v2 resolver depends on
+    ``model_fields_set`` to distinguish "user supplied" from "defaulted", so
+    using a real config (not MagicMock) is required for fidelity through
+    ``TimingConfig.from_run``.
+
+    ``timing_mode=FIXED_SCHEDULE`` is rewritten to ``input.fixed_schedule=True``
+    because v1 has no top-level ``timing_mode`` field — the resolver derives
+    the timing mode from input/loadgen state.
+
+    ``num_sessions`` is rewritten to ``conversation_num``.
+
+    ``turn_mean`` is rewritten to ``conversation_turn_mean`` (USER_CENTRIC
+    mode validates ``turn_mean >= 2``).
+
+    ``streaming`` flag flows to the endpoint section (prefill_concurrency
+    requires streaming=True at AIPerfConfig validation time).
+    """
+    loadgen_kwargs: dict[str, Any] = {}
+    input_kwargs: dict[str, Any] = {}
+    endpoint_kwargs: dict[str, Any] = {"model_names": ["test-model"]}
+
+    if overrides.pop("timing_mode", None) == TimingMode.FIXED_SCHEDULE:
+        input_kwargs["fixed_schedule"] = True
+
+    if "num_sessions" in overrides:
+        input_kwargs["conversation_num"] = overrides.pop("num_sessions")
+    if "turn_mean" in overrides:
+        input_kwargs["conversation_turn_mean"] = overrides.pop("turn_mean")
+
+    if overrides.pop("streaming", False):
+        endpoint_kwargs["streaming"] = True
+
+    for key, value in overrides.items():
+        if key in _LOADGEN_FIELDS:
+            loadgen_kwargs[key] = value
+        elif key in _INPUT_FIELDS:
+            input_kwargs[key] = value
+        else:
+            raise KeyError(f"unknown make_cfg override: {key!r}")
+
+    return CLIConfig(
+        **endpoint_kwargs,
+        **CLIConfig(**loadgen_kwargs).model_dump(exclude_unset=True),
+        **input_kwargs,
     )
-    loadgen.warmup_concurrency_ramp_duration = overrides.get(
-        "warmup_concurrency_ramp_duration"
-    )
-    loadgen.warmup_prefill_concurrency_ramp_duration = overrides.get(
-        "warmup_prefill_concurrency_ramp_duration"
-    )
-    loadgen.warmup_request_rate_ramp_duration = overrides.get(
-        "warmup_request_rate_ramp_duration"
-    )
-    loadgen.warmup_grace_period = overrides.get("warmup_grace_period")
-    loadgen.benchmark_duration = overrides.get("benchmark_duration")
-    loadgen.benchmark_grace_period = overrides.get("benchmark_grace_period", 30.0)
-    loadgen.request_cancellation_rate = overrides.get("request_cancellation_rate")
-    loadgen.request_cancellation_delay = overrides.get(
-        "request_cancellation_delay", 0.0
-    )
-    loadgen.concurrency_ramp_duration = overrides.get("concurrency_ramp_duration")
-    loadgen.prefill_concurrency_ramp_duration = overrides.get(
-        "prefill_concurrency_ramp_duration"
-    )
-    loadgen.request_rate_ramp_duration = overrides.get("request_rate_ramp_duration")
-    loadgen.arrival_smoothness = overrides.get("arrival_smoothness")
-    input_config = MagicMock()
-    input_config.random_seed = overrides.get("random_seed")
-    input_config.fixed_schedule_auto_offset = overrides.get(
-        "fixed_schedule_auto_offset", True
-    )
-    input_config.fixed_schedule_start_offset = overrides.get(
-        "fixed_schedule_start_offset"
-    )
-    input_config.fixed_schedule_end_offset = overrides.get("fixed_schedule_end_offset")
-    input_config.conversation = MagicMock()
-    input_config.conversation.num = overrides.get("num_sessions")
-    endpoint_config = MagicMock()
-    endpoint_config.urls = overrides.get("urls", ["localhost:8000"])
-    endpoint_config.url_selection_strategy = overrides.get(
-        "url_selection_strategy", URLSelectionStrategy.ROUND_ROBIN
-    )
-    user_config = MagicMock(spec=UserConfig)
-    user_config.timing_mode = overrides.get("timing_mode", TimingMode.REQUEST_RATE)
-    user_config.loadgen = loadgen
-    user_config.input = input_config
-    user_config.endpoint = endpoint_config
-    return user_config
+
+
+def _make_timing_config(**overrides) -> TimingConfig:
+    """Convenience: build a CLIConfig with overrides, run it through the v1
+    -> v2 resolver, and return the resulting ``TimingConfig``."""
+    return TimingConfig.from_run(make_run_from_cli(make_cfg(**overrides)))
 
 
 class TestTimingConfig:
@@ -193,24 +228,21 @@ class TestTimingConfig:
         assert {pc: "value"}[pc] == "value"
 
 
-class TestTimingConfigFromUserConfig:
+class TestTimingConfigFromCLIConfig:
     def test_maps_timing_mode(self) -> None:
-        cfg = TimingConfig.from_user_config(
-            make_user_config(timing_mode=TimingMode.FIXED_SCHEDULE)
-        )
+        cfg = _make_timing_config(timing_mode=TimingMode.FIXED_SCHEDULE)
         profiling = next(
             pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING
         )
         assert profiling.timing_mode == TimingMode.FIXED_SCHEDULE
 
     def test_maps_loadgen_fields(self) -> None:
-        cfg = TimingConfig.from_user_config(
-            make_user_config(
-                concurrency=8,
-                prefill_concurrency=4,
-                request_rate=50.0,
-                request_count=500,
-            )
+        cfg = _make_timing_config(
+            concurrency=8,
+            prefill_concurrency=4,
+            request_rate=50.0,
+            request_count=500,
+            streaming=True,
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
         assert (
@@ -221,25 +253,23 @@ class TestTimingConfigFromUserConfig:
         ) == (8, 4, 50.0, 500)
 
     def test_creates_warmup_when_configured(self) -> None:
-        cfg = TimingConfig.from_user_config(make_user_config(warmup_request_count=25))
+        cfg = _make_timing_config(warmup_request_count=25)
         phases = [pc.phase for pc in cfg.phase_configs]
         assert CreditPhase.WARMUP in phases
         assert cfg.phase_configs[0].phase == CreditPhase.WARMUP
 
     def test_no_warmup_when_not_configured(self) -> None:
-        cfg = TimingConfig.from_user_config(make_user_config())
+        cfg = _make_timing_config()
         phases = [pc.phase for pc in cfg.phase_configs]
         assert CreditPhase.WARMUP not in phases
         assert len(cfg.phase_configs) == 1
 
     def test_maps_fixed_schedule_fields(self) -> None:
-        cfg = TimingConfig.from_user_config(
-            make_user_config(
-                timing_mode=TimingMode.FIXED_SCHEDULE,
-                fixed_schedule_auto_offset=False,
-                fixed_schedule_start_offset=2000,
-                fixed_schedule_end_offset=8000,
-            )
+        cfg = _make_timing_config(
+            timing_mode=TimingMode.FIXED_SCHEDULE,
+            fixed_schedule_auto_offset=False,
+            fixed_schedule_start_offset=2000,
+            fixed_schedule_end_offset=8000,
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
         assert (
@@ -249,10 +279,8 @@ class TestTimingConfigFromUserConfig:
         ) == (False, 2000, 8000)
 
     def test_maps_cancellation_fields(self) -> None:
-        cfg = TimingConfig.from_user_config(
-            make_user_config(
-                request_cancellation_rate=25.0, request_cancellation_delay=1.5
-            )
+        cfg = _make_timing_config(
+            request_cancellation_rate=25.0, request_cancellation_delay=1.5
         )
         assert (cfg.request_cancellation.rate, cfg.request_cancellation.delay) == (
             25.0,
@@ -260,14 +288,14 @@ class TestTimingConfigFromUserConfig:
         )
 
     def test_uses_user_centric_rate_when_request_rate_is_none(self) -> None:
-        cfg = TimingConfig.from_user_config(
-            make_user_config(request_rate=None, user_centric_rate=15.0)
-        )
+        # USER_CENTRIC mode requires multi-turn sessions; the v1 -> v2 resolver
+        # rejects USER_CENTRIC with the default turn mean of 1.
+        cfg = _make_timing_config(user_centric_rate=15.0, num_users=4, turn_mean=2)
         p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
         assert p.request_rate == 15.0
 
     def test_maps_num_sessions(self) -> None:
-        cfg = TimingConfig.from_user_config(make_user_config(num_sessions=50))
+        cfg = _make_timing_config(num_sessions=50)
         p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
         assert p.expected_num_sessions == 50
 
@@ -278,10 +306,13 @@ class TestTimingConfigFromUserConfig:
     def test_warmup_grace_period(
         self, warmup_grace_period: float | None, expected: float
     ) -> None:
-        cfg = TimingConfig.from_user_config(
-            make_user_config(
-                warmup_request_count=10, warmup_grace_period=warmup_grace_period
-            )
-        )
+        # v2 phase validation requires ``duration`` whenever ``grace_period``
+        # is set, so trigger a duration-bounded warmup. ``_build_warmup_config``
+        # still defaults ``grace_period_sec`` to ``inf`` when phase.grace_period
+        # is None, which preserves the original semantics.
+        kwargs: dict[str, Any] = {"warmup_duration": 5.0}
+        if warmup_grace_period is not None:
+            kwargs["warmup_grace_period"] = warmup_grace_period
+        cfg = _make_timing_config(**kwargs)
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
         assert warmup.grace_period_sec == expected

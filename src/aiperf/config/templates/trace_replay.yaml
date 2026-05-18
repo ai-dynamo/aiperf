@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Production Trace Replay
+# description: Replay production traffic from a trace file with exact request timestamps.
+# category: Datasets
+# tags: trace, replay, production, mooncake
+# difficulty: advanced
+# features: fixed_schedule, mooncake format, trace replay
+#
+# Production Trace Replay
+# =======================
+# Replays real production traffic patterns with exact inter-request timing.
+# Unlike rate-based modes (poisson/gamma), fixed_schedule sends each request
+# at its recorded timestamp, preserving bursts, quiet periods, and
+# correlation patterns from production.
+#
+# Mooncake trace format (one JSON object per line):
+#   {"timestamp": 0,   "input_length": 512, "output_length": 128}
+#   {"timestamp": 150, "input_length": 256, "output_length": 64}
+#   {"timestamp": 155, "input_length": 1024, "output_length": 256, "hash_ids": [1,2,3]}
+#
+# Fields: timestamp (ms), input_length (tokens), output_length (tokens),
+#         hash_ids (optional, for prefix caching simulation via blockSize)
+#
+# Run: aiperf profile --config trace_replay.yaml
+#
+# Sample data: a minimal `data/production_trace.jsonl` is bundled alongside
+# this template (`src/aiperf/config/templates/data/`). For real workloads
+# replace the `path:` below with an absolute path to your captured trace.
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 300.0 # Generous timeout for long-tail requests in production traces
+
+  dataset:
+    type: file
+    path: ./data/production_trace.jsonl
+    format: mooncake_trace
+    sampling: sequential
+    synthesis:
+      speedupRatio: 2.0           # Replay at 2x speed (halves all timestamps)
+      prefixLenMultiplier: 1.0    # Scale prefix branch lengths in radix tree (1.0 = no change)
+      promptLenMultiplier: 1.0    # Scale unique prompt lengths (2.0 = double all prompts)
+      maxIsl: 8192                # Drop requests with input_length > 8K
+      maxOsl: 2048                # Cap output_length at 2K (doesn't drop, just clamps)
+
+  # fixed_schedule doesn't need requests/duration — it stops when the trace ends
+  phases:
+    type: fixed_schedule
+    autoOffset: true  # Shift timestamps so the first request starts at t=0
+    concurrency: 200  # High ceiling to handle production burst patterns
+    duration: 600     # Safety timeout — trace should finish well before this
+    gracePeriod: 120s
+
+  artifacts:
+    dir: ./artifacts/trace_replay
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 30 # See how latency varies across the trace timeline
+
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv, parquet]

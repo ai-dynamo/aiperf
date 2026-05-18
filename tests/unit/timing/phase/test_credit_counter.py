@@ -136,6 +136,49 @@ class TestCreditCounter:
         c.increment_returned(is_final_turn=True, cancelled=True)
         assert c.cancelled_sessions == 1 and c.completed_sessions == 0
 
+    def test_increment_returned_errored_bumps_request_errors(self) -> None:
+        """A request that returns with an error (non-cancelled) increments
+        ``_request_errors``. Without this, fault-injected runs logged
+        ``errors=0`` at phase-complete while the aggregate JSON correctly
+        recorded the failures — the log line was lying.
+        """
+        c = CreditCounter(cfg())
+        c.increment_sent(turn())
+        c.increment_returned(is_final_turn=False, cancelled=False, errored=True)
+        # Errored requests still count as "returned" (not "cancelled") to
+        # preserve the all-returned invariant, but ALSO bump the error counter.
+        assert c.requests_completed == 1
+        assert c.requests_cancelled == 0
+        assert c.request_errors == 1
+
+    def test_increment_returned_cancelled_with_error_flag_does_not_double_count(
+        self,
+    ) -> None:
+        """A cancelled return that also carries an error message counts as
+        cancelled (not completed) and does NOT bump request_errors —
+        cancellation is the dominant signal for the cancelled path.
+        """
+        c = CreditCounter(cfg())
+        c.increment_sent(turn())
+        c.increment_returned(is_final_turn=False, cancelled=True, errored=True)
+        assert c.requests_cancelled == 1
+        assert c.requests_completed == 0
+        assert c.request_errors == 0
+
+    def test_increment_returned_errored_freezes_into_final_errors(self) -> None:
+        """Final-error count is the frozen snapshot of request_errors at
+        phase-complete time; the phase-complete log reads from this value.
+        """
+        c = CreditCounter(cfg())
+        for _ in range(3):
+            c.increment_sent(turn())
+        c.increment_returned(is_final_turn=False, cancelled=False, errored=True)
+        c.increment_returned(is_final_turn=False, cancelled=False, errored=True)
+        c.increment_returned(is_final_turn=False, cancelled=False, errored=False)
+        c.freeze_sent_counts()
+        c.freeze_completed_counts()
+        assert c.final_request_errors == 2
+
     def test_increment_returned_all_done(self) -> None:
         c = CreditCounter(cfg())
         c.increment_sent(turn())

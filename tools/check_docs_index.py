@@ -42,6 +42,11 @@ ALLOWLIST = {
     "accuracy/accuracy_stubs.md",
 }
 
+# Path prefixes (relative to docs/) whose contents are intentionally excluded
+# from the Fern site. Used for working artifacts like implementation plans
+# and design specs that live alongside docs/ but are not user-facing.
+ALLOWLIST_PREFIXES = ("superpowers/",)
+
 
 def get_indexed_paths(index_path: Path) -> set[str]:
     """Extract all path: values from index.yml."""
@@ -78,7 +83,8 @@ def main() -> None:
 
     all_docs = get_all_docs(args.docs_dir)
     indexed = get_indexed_paths(args.index)
-    missing = sorted(all_docs - indexed - ALLOWLIST)
+    allowlisted_by_prefix = {f for f in all_docs if f.startswith(ALLOWLIST_PREFIXES)}
+    missing = sorted(all_docs - indexed - ALLOWLIST - allowlisted_by_prefix)
 
     if missing:
         print(
@@ -92,7 +98,7 @@ def main() -> None:
         sys.exit(1)
 
     print(
-        f"OK: all {len(all_docs) - len(ALLOWLIST)} docs files are listed in {args.index}"
+        f"OK: all {len(all_docs) - len(ALLOWLIST) - len(allowlisted_by_prefix)} docs files are listed in {args.index}"
     )
 
 

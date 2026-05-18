@@ -1,0 +1,6 @@
+{"session_id":"r","turns":[{"messages":[{"role":"user","content":"r0"}],"max_tokens":15,"forks":[{"child":"c1","background":true},{"child":"c2","background":true},{"child":"c3","background":true},{"child":"c4","background":true},{"child":"c5","background":true}]},{"messages":[{"role":"user","content":"r1"}],"max_tokens":15}]}
+{"session_id":"c1","turns":[{"messages":[{"role":"user","content":"c1"}],"max_tokens":15}]}
+{"session_id":"c2","turns":[{"messages":[{"role":"user","content":"c2"}],"max_tokens":15}]}
+{"session_id":"c3","turns":[{"messages":[{"role":"user","content":"c3"}],"max_tokens":15}]}
+{"session_id":"c4","turns":[{"messages":[{"role":"user","content":"c4"}],"max_tokens":15}]}
+{"session_id":"c5","turns":[{"messages":[{"role":"user","content":"c5"}],"max_tokens":15}]}

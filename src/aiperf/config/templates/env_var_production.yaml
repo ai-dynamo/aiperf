@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Environment Variable Production Config
+# description: CI/CD-friendly template where all deployment-specific values come from env vars.
+# category: Advanced
+# tags: env-vars, ci-cd, production
+# difficulty: intermediate
+# features: env var substitution, defaults, CI/CD ready
+#
+# Environment Variable-Driven Production Benchmark
+# =================================================
+# A CI/CD-friendly template where all deployment-specific values come
+# from environment variables. The distribution shapes and phases are
+# fixed (production-realistic), but server URLs, model names, and
+# run parameters are configurable without editing the YAML.
+#
+# Required env vars:
+#   INFERENCE_URL    - Server endpoint (e.g. http://gpu-server:8000/v1/chat/completions)
+#   MODEL_NAME       - Model to benchmark (e.g. meta-llama/Llama-3.1-70B-Instruct)
+#
+# Optional env vars (with defaults):
+#   BENCHMARK_SEED   - Random seed (default: 42)
+#   DURATION         - Phase duration in seconds (default: 300)
+#   TARGET_RATE      - Requests per second (default: 30.0)
+#   MAX_CONCURRENCY  - Max in-flight requests (default: 64)
+#   NUM_RUNS         - Statistical runs (default: 3)
+#   COOLDOWN         - Seconds between runs (default: 30)
+#   ARTIFACTS_DIR    - Output directory (default: ./artifacts/production)
+#   METRICS_URL      - Server metrics scrape URL (default: http://localhost:8000/metrics)
+#
+# Run: INFERENCE_URL=http://... MODEL_NAME=llama aiperf profile --config env_var_production.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: ${BENCHMARK_SEED:42}
+
+multiRun:
+  numRuns: ${NUM_RUNS:3}
+  cooldownSeconds: ${COOLDOWN:30.0}
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+  disableWarmupAfterFirst: true
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  slos:
+    request_latency: 10000
+    time_to_first_token: 1000
+    inter_token_latency: 50
+    output_token_throughput_per_user: 20.0
+
+  artifacts:
+    dir: ${ARTIFACTS_DIR:./artifacts/production}
+    summary: [json]
+    records: [jsonl]
+
+  dataset:
+    # Production-realistic: lognormal ISL (right-skewed, most requests short)
+    # with clamped output to prevent runaway generations
+    type: synthetic
+    entries: 2000
+    prompts:
+      isl:
+        peaks:
+          - {mean: 256, median: 214, weight: 70}
+          - {mean: 2048, median: 1891, weight: 30}
+      osl: {mean: 256, median: 226}
+
+  warmup:
+    type: concurrency
+    requests: 100
+    concurrency: 8
+
+  profiling:
+    type: gamma
+    rate: ${TARGET_RATE:30.0}
+    smoothness: 1.5
+    duration: ${DURATION:300}
+    concurrency: ${MAX_CONCURRENCY:64}
+    rateRamp: 30
+    gracePeriod: 60
+
+  serverMetrics:
+    enabled: true
+    urls:
+      - ${METRICS_URL:http://localhost:8000/metrics}
+    formats: [json, csv]

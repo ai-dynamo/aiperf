@@ -6,8 +6,6 @@
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.enums import ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.models.server_metrics_models import (
@@ -15,11 +13,13 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsEndpointSummary,
     ServerMetricsResults,
 )
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.csv_exporter import ServerMetricsCsvExporter
 from aiperf.server_metrics.json_exporter import ServerMetricsJsonExporter
 from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter
+from tests.unit.conftest import make_cfg_from_v1, make_run_from_cli
 
 
 @pytest.fixture
@@ -60,13 +60,11 @@ class TestServerMetricsFormatSelection:
 
     def test_default_includes_json_and_csv_only(self, tmp_path):
         """Test that default config enables JSON and CSV (not JSONL due to file size)."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
-            output={"artifact_dir": str(tmp_path)},
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
+            artifact_directory=str(tmp_path),
         )
 
         assert ServerMetricsFormat.JSON in config.server_metrics_formats
@@ -75,14 +73,12 @@ class TestServerMetricsFormatSelection:
 
     def test_single_format_selection(self, tmp_path):
         """Test selecting a single format."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[ServerMetricsFormat.JSON],
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         assert ServerMetricsFormat.JSON in config.server_metrics_formats
@@ -91,14 +87,12 @@ class TestServerMetricsFormatSelection:
 
     def test_multiple_formats_selection(self, tmp_path):
         """Test selecting multiple formats."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[ServerMetricsFormat.JSON, ServerMetricsFormat.CSV],
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         assert ServerMetricsFormat.JSON in config.server_metrics_formats
@@ -110,14 +104,12 @@ class TestServerMetricsFormatSelection:
         with pytest.raises(
             ValidationError, match="Input should be 'json', 'csv', 'jsonl' or 'parquet'"
         ):
-            UserConfig(
-                endpoint=EndpointConfig(
-                    model_names=["test-model"],
-                    type=EndpointType.CHAT,
-                    custom_endpoint="/v1/chat/completions",
-                ),
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                custom_endpoint="/v1/chat/completions",
                 server_metrics_formats=["invalid_format"],
-                output={"artifact_dir": str(tmp_path)},
+                artifact_directory=str(tmp_path),
             )
 
 
@@ -128,20 +120,17 @@ class TestJsonExporterFormatSelection:
         self, tmp_path, mock_server_metrics_results
     ):
         """Test JSON exporter is enabled when JSON format is selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[ServerMetricsFormat.JSON],
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            cfg=make_cfg_from_v1(config),
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -154,20 +143,17 @@ class TestJsonExporterFormatSelection:
         self, tmp_path, mock_server_metrics_results
     ):
         """Test JSON exporter is disabled when JSON format is not selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[ServerMetricsFormat.CSV],  # Only CSV, no JSON
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            cfg=make_cfg_from_v1(config),
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -183,20 +169,17 @@ class TestCsvExporterFormatSelection:
         self, tmp_path, mock_server_metrics_results
     ):
         """Test CSV exporter is enabled when CSV format is selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[ServerMetricsFormat.CSV],
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            cfg=make_cfg_from_v1(config),
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -209,20 +192,17 @@ class TestCsvExporterFormatSelection:
         self, tmp_path, mock_server_metrics_results
     ):
         """Test CSV exporter is disabled when CSV format is not selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[ServerMetricsFormat.JSON],  # Only JSON, no CSV
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            cfg=make_cfg_from_v1(config),
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -236,37 +216,33 @@ class TestJsonlWriterFormatSelection:
 
     def test_jsonl_writer_enabled_when_format_selected(self, tmp_path):
         """Test JSONL writer is enabled when JSONL format is selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=["jsonl"],
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         # Should not raise exception
-        writer = ServerMetricsJSONLWriter(user_config=config)
+        writer = ServerMetricsJSONLWriter(run=make_run_from_cli(config))
         assert writer is not None
 
     def test_jsonl_writer_disabled_when_format_not_selected(self, tmp_path):
         """Test JSONL writer is disabled when JSONL format is not selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[
                 ServerMetricsFormat.JSON,
                 ServerMetricsFormat.CSV,
             ],  # No JSONL
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         with pytest.raises(PostProcessorDisabled, match="format not selected"):
-            ServerMetricsJSONLWriter(user_config=config)
+            ServerMetricsJSONLWriter(run=make_run_from_cli(config))
 
 
 class TestAllExportersEnabled:
@@ -276,24 +252,21 @@ class TestAllExportersEnabled:
         self, tmp_path, mock_server_metrics_results
     ):
         """Test all exporters are enabled when all formats are selected."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
             server_metrics_formats=[
                 ServerMetricsFormat.JSON,
                 ServerMetricsFormat.CSV,
                 ServerMetricsFormat.JSONL,
             ],
-            output={"artifact_dir": str(tmp_path)},
+            artifact_directory=str(tmp_path),
         )
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            cfg=make_cfg_from_v1(config),
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -301,7 +274,7 @@ class TestAllExportersEnabled:
         # All should initialize without exceptions
         json_exporter = ServerMetricsJsonExporter(exporter_config=exporter_config)
         csv_exporter = ServerMetricsCsvExporter(exporter_config=exporter_config)
-        jsonl_writer = ServerMetricsJSONLWriter(user_config=config)
+        jsonl_writer = ServerMetricsJSONLWriter(run=make_run_from_cli(config))
 
         assert json_exporter is not None
         assert csv_exporter is not None
@@ -311,20 +284,16 @@ class TestAllExportersEnabled:
         self, tmp_path, mock_server_metrics_results
     ):
         """Test default config enables JSON and CSV (JSONL excluded due to file size)."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
-            # No server_metrics_formats specified - should default to JSON and CSV only
-            output={"artifact_dir": str(tmp_path)},
+        config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            custom_endpoint="/v1/chat/completions",
+            artifact_directory=str(tmp_path),
         )
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            cfg=make_cfg_from_v1(config),
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -338,4 +307,4 @@ class TestAllExportersEnabled:
 
         # JSONL should be disabled by default
         with pytest.raises(PostProcessorDisabled, match="format not selected"):
-            ServerMetricsJSONLWriter(user_config=config)
+            ServerMetricsJSONLWriter(run=make_run_from_cli(config))

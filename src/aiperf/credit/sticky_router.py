@@ -19,13 +19,12 @@ import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
+from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -35,6 +34,9 @@ from aiperf.credit.messages import (
     WorkerToRouterMessage,
 )
 from aiperf.credit.structs import Credit
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 # =============================================================================
 # Data Models
@@ -186,17 +188,17 @@ class StickyCreditRouter(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
+        run: "BenchmarkRun",
         service_id: str,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id, **kwargs)
+        super().__init__(run=run, service_id=service_id, **kwargs)
 
         # For dual-bind mode (Kubernetes), also bind to TCP for remote workers.
         # Controller services use IPC (fast, same-pod) but workers connect via TCP.
         # Only bind to TCP if we're in controller mode (controller_host not set).
         additional_bind_address: str | None = None
-        comm_config = service_config.comm_config
+        comm_config = run.cfg.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host

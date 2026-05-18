@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
 from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
 from aiperf.common.models.model_endpoint_info import (
@@ -16,6 +15,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 
@@ -106,16 +106,14 @@ def edge_case_inputs() -> dict[str, str]:
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    """Fixture providing a sample UserConfig."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            type=EndpointType.CHAT,
-            urls=["http://localhost:8000"],
-            timeout_seconds=600,
-            model_names=["gpt-4"],
-            api_key="test-api-key",
-        ),
+def cli_config() -> CLIConfig:
+    """Fixture providing a sample CLIConfig."""
+    return CLIConfig(
+        endpoint_type=EndpointType.CHAT,
+        urls=["http://localhost:8000"],
+        timeout_seconds=600,
+        model_names=["gpt-4"],
+        api_key="test-api-key",
     )
 
 

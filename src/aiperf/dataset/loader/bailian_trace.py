@@ -56,8 +56,8 @@ class BailianTraceDatasetLoader(BaseTraceDatasetLoader[BailianTrace]):
     # Template-method hooks (see BaseTraceDatasetLoader.load_dataset)
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, line: str) -> BailianTrace:
-        return BailianTrace.model_validate_json(line)
+    def _parse_trace(self, record: dict) -> BailianTrace:
+        return BailianTrace.model_validate(record)
 
     def _preprocess_trace(self, trace: BailianTrace) -> None:
         """Convert timestamp from seconds to milliseconds."""
