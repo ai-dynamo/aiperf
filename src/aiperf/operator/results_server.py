@@ -169,6 +169,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     from aiperf.operator.routers.config import create_config_router
     from aiperf.operator.routers.jobs import create_jobs_router
     from aiperf.operator.routers.jobs_ws import create_jobs_ws_router
+    from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
     from aiperf.operator.routers.results_analytics import (
         create_results_analytics_router,
     )
@@ -187,14 +188,16 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     _register_k8s_exception_handler(app)
 
-    app.include_router(create_jobs_router(api_holder, base_dir))
+    mutating_dependencies = mutating_route_dependencies()
+
+    app.include_router(create_jobs_router(api_holder, base_dir, mutating_dependencies))
     app.include_router(create_jobs_ws_router(api_holder))
     app.include_router(create_sweeps_router(api_holder, base_dir))
     app.include_router(create_results_files_router(base_dir))
     app.include_router(create_config_router())
     app.include_router(
         create_admin_router(
-            base_dir, base_dir / ".aiperf_index.sqlite", allow_rebuild=False
+            base_dir, base_dir / ".aiperf_index.sqlite", mutating_dependencies
         )
     )
 

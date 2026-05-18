@@ -301,6 +301,17 @@ class _OperatorEnvironment(BaseSettings):
         "pods start mounting it, preventing FailedMount races on first deployment with "
         "a freshly pulled image.",
     )
+    MUTATING_ROUTES_ENABLED: bool = Field(
+        default=False,
+        description="Enable results-server HTTP routes that mutate Kubernetes state. "
+        "Defaults false so read-only results APIs remain exposed while POST routes "
+        "fail closed unless an operator explicitly opts in.",
+    )
+    MUTATING_ROUTES_TOKEN: str = Field(
+        default="",
+        description="Bearer token required by enabled results-server mutating routes. "
+        "Leave empty to fail closed even when MUTATING_ROUTES_ENABLED is true.",
+    )
 
     CLUSTER_NAME: str = Field(
         default="",

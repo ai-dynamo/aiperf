@@ -9,12 +9,12 @@ from typing import Any
 import pytest
 
 from aiperf.common.models import RequestInfo, RequestRecord
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
 
@@ -190,7 +190,9 @@ class TestBaseTransport:
                     "Accept": "text/event-stream",
                 }
 
-        transport = CustomTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = CustomTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         request_info.endpoint_headers = {"Content-Type": "text/plain"}
 
         headers = transport.build_headers(request_info)
@@ -207,7 +209,9 @@ class TestBaseTransport:
             ) -> dict[str, str]:
                 return {"X-Priority": "transport", "Content-Type": "application/json"}
 
-        transport = CustomTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = CustomTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         request_info.endpoint_headers = {
             "X-Priority": "endpoint",
             "Authorization": "Bearer token",

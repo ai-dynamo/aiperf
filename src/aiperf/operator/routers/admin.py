@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.params import Depends as DependsParam
 from pydantic import BaseModel, Field
 
 from aiperf.operator import runs_index
@@ -111,7 +113,11 @@ async def _reject_request_body(request: Request) -> None:
 
 
 def create_admin_router(
-    base_dir: Path, db_path: Path, *, allow_rebuild: bool = True
+    base_dir: Path,
+    db_path: Path,
+    mutating_dependencies: Sequence[DependsParam] = (),
+    *,
+    allow_rebuild: bool = True,
 ) -> APIRouter:
     """Build the /admin/index router bound to ``base_dir`` and ``db_path``.
 
@@ -132,7 +138,11 @@ def create_admin_router(
         s = await runs_index.stats(db_path)
         return IndexStatsResponse(**s)
 
-    @router.post("/rebuild", response_model=IndexRebuildResponse)
+    @router.post(
+        "/rebuild",
+        response_model=IndexRebuildResponse,
+        dependencies=list(mutating_dependencies),
+    )
     async def rebuild(request: Request) -> IndexRebuildResponse:
         await _reject_request_body(request)
         if not allow_rebuild:

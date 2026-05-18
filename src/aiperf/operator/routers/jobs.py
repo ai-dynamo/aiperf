@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import orjson
 from fastapi import APIRouter, HTTPException
+from fastapi.params import Depends as DependsParam
 from fastapi.responses import Response
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
@@ -793,6 +795,7 @@ async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
 def create_jobs_router(
     api_holder: list[ApiClient | None] | None = None,
     results_dir: Path | None = None,
+    mutating_dependencies: Sequence[DependsParam] = (),
 ) -> APIRouter:
     """Create the jobs/cluster API router.
 
@@ -834,7 +837,12 @@ def create_jobs_router(
     async def list_jobs() -> ActiveJobListResponse:
         return await _list_jobs_impl(_require_api(), _results_dir)
 
-    @router.post("/jobs", response_model=CreateJobResponse, status_code=201)
+    @router.post(
+        "/jobs",
+        response_model=CreateJobResponse,
+        status_code=201,
+        dependencies=list(mutating_dependencies),
+    )
     async def create_job(body: CreateJobRequest) -> CreateJobResponse:
         return await _create_job_impl(_require_api(), body.manifest)
 
@@ -858,7 +866,11 @@ def create_jobs_router(
             _optional_api(), _results_dir, namespace, name
         )
 
-    @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
+    @router.post(
+        "/jobs/{namespace}/{name}/cancel",
+        response_model=CancelResponse,
+        dependencies=list(mutating_dependencies),
+    )
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
         return await _cancel_job_impl(_require_api(), _results_dir, namespace, name)
 
