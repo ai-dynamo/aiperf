@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import sqlite3
 import time
 from pathlib import Path
@@ -1106,7 +1107,7 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
     if not isinstance(children, list):
         return []
 
-    rows_by_idx: dict[int, list[SweepRow]] = {}
+    rows: list[SweepRow] = []
     for child in children:
         if not isinstance(child, dict):
             continue
@@ -1127,7 +1128,7 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
             if isinstance(summary.get("metrics"), dict)
             else summary
         )
-        rows_by_idx.setdefault(idx, []).append(
+        rows.append(
             (
                 idx,
                 _child_variation_values(child),
@@ -1135,7 +1136,7 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
                 {"child": child, "metrics": summary},
             )
         )
-    return [rows[0] for rows in rows_by_idx.values() if len(rows) == 1]
+    return rows
 
 
 def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
@@ -1172,6 +1173,97 @@ def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
         if idx not in duplicate_idxs:
             refs[idx] = ref
     return refs
+
+
+def _child_ref_from_row_blob(row_blob: dict[str, Any]) -> tuple[str, str, str] | None:
+    child = row_blob.get("child")
+    if not isinstance(child, dict):
+        return None
+    namespace = child.get("namespace")
+    name = child.get("name")
+    epoch = child.get("child_run_epoch")
+    if not (namespace and name and epoch):
+        return None
+    return str(namespace), str(name), str(epoch)
+
+
+def _stable_variation_values(values: dict[str, Any]) -> dict[str, Any]:
+    stable = dict(values)
+    stable.pop("trial_index", None)
+    return stable
+
+
+def _mean_finite_numeric(values: list[Any]) -> float | None:
+    numeric = [float(value) for value in values if isinstance(value, (int, float))]
+    finite = [value for value in numeric if math.isfinite(value)]
+    if not finite:
+        return None
+    return sum(finite) / len(finite)
+
+
+def _aggregate_sweep_metrics(trial_metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    aggregated: dict[str, Any] = {}
+    for name in _NARROW_METRICS:
+        metric_trials = [
+            m.get(name) for m in trial_metrics if isinstance(m.get(name), dict)
+        ]
+        if not metric_trials:
+            continue
+        entry: dict[str, Any] = {}
+        for stat in ("avg", "p50", "p99"):
+            mean = _mean_finite_numeric([m.get(stat) for m in metric_trials])
+            if mean is not None:
+                entry[stat] = mean
+        units = [m.get("unit") for m in metric_trials if m.get("unit") is not None]
+        if units and all(unit == units[0] for unit in units):
+            entry["unit"] = units[0]
+        if entry:
+            aggregated[name] = entry
+    return aggregated
+
+
+def _aggregate_sweep_rows(
+    variation_idx: int,
+    rows: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]],
+) -> tuple[dict[str, Any], dict[str, Any], tuple[str, str, str] | None, bytes]:
+    variation_values = _stable_variation_values(rows[0][0])
+    metrics = rows[0][1]
+    child_ref = _child_ref_from_row_blob(rows[0][2])
+    metrics_blob = zstandard.ZstdCompressor().compress(orjson.dumps(rows[0][2]))
+    if len(rows) == 1:
+        return variation_values, metrics, child_ref, metrics_blob
+
+    trial_entries: list[dict[str, Any]] = []
+    for values, trial_metrics, row_blob in rows:
+        trial = {
+            "variation_values": values,
+            "stable_variation_values": _stable_variation_values(values),
+            "metrics": trial_metrics,
+            "row": row_blob,
+        }
+        ref = _child_ref_from_row_blob(row_blob)
+        if ref is not None:
+            child_ns, child_job, child_epoch = ref
+            trial["child_ref"] = {
+                "namespace": child_ns,
+                "job_id": child_job,
+                "epoch": child_epoch,
+            }
+        trial_entries.append(trial)
+
+    aggregate_blob = {
+        "aggregation_method": "mean_finite_numeric_default_compare_metrics",
+        "variation_idx": variation_idx,
+        "variation_values": variation_values,
+        "trial_count": len(rows),
+        "trials": trial_entries,
+    }
+    return (
+        variation_values,
+        _aggregate_sweep_metrics([metrics for _, metrics, _ in rows]),
+        None,
+        zstandard.ZstdCompressor().compress(orjson.dumps(aggregate_blob)),
+    )
 
 
 def _variation_key(values: dict[str, Any]) -> bytes:
@@ -1216,6 +1308,96 @@ def _sweep_rankings(
     return rankings
 
 
+def _select_sweep_rows(
+    epoch_dir: Path, parent_agg: dict[str, Any]
+) -> tuple[dict[str, Any], list[SweepRow]]:
+    source_agg = parent_agg
+    rows = _legacy_sweep_rows(parent_agg)
+    if rows:
+        return source_agg, rows
+
+    strategy_agg = _load_strategy_sweep_aggregate(epoch_dir)
+    if strategy_agg is not None:
+        strategy_rows = _strategy_sweep_rows(strategy_agg)
+        if strategy_rows:
+            return strategy_agg, strategy_rows
+
+    return source_agg, _child_sweep_rows(epoch_dir)
+
+
+def _group_sweep_rows(
+    namespace: str,
+    sweep_name: str,
+    sweep_epoch: str,
+    rows: list[SweepRow],
+) -> dict[int, list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]]:
+    grouped_rows: dict[
+        int, list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]
+    ] = {}
+    for idx, variation_values, metrics, row_blob in rows:
+        try:
+            variation_idx = int(idx)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                f"sweep variation {namespace}/{sweep_name} epoch={sweep_epoch} "
+                f"idx={idx}: skipping index upsert "
+                f"({type(exc).__name__}: {exc})"
+            )
+            continue
+        grouped_rows.setdefault(variation_idx, []).append(
+            (variation_values, metrics, row_blob)
+        )
+    return grouped_rows
+
+
+async def _upsert_grouped_sweep_rows(
+    namespace: str,
+    sweep_name: str,
+    sweep_epoch: str,
+    *,
+    source_agg: dict[str, Any],
+    grouped_rows: dict[
+        int, list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]
+    ],
+) -> dict[int, dict[str, Any]]:
+    indexed_rows: dict[int, dict[str, Any]] = {}
+    for variation_idx, variation_rows in grouped_rows.items():
+        try:
+            variation_values, metrics, child_ref, metrics_blob = _aggregate_sweep_rows(
+                variation_idx, variation_rows
+            )
+            await upsert_sweep_variation(
+                namespace,
+                sweep_name,
+                sweep_epoch,
+                variation_idx,
+                variation_values=variation_values,
+                mode=_sweep_mode(source_agg),
+                phase="Succeeded",
+                metrics=metrics,
+                child_ref=child_ref,
+                metrics_blob=metrics_blob,
+            )
+        except (
+            sqlite3.Error,
+            orjson.JSONDecodeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            # One bad variation row (sqlite constraint, unencodable metric value,
+            # bogus variation_idx coercion) must not poison the rest. The
+            # backfill path retries on next call so a transient sqlite error
+            # is self-healing.
+            logger.warning(
+                f"sweep variation {namespace}/{sweep_name} epoch={sweep_epoch} "
+                f"idx={variation_idx}: skipping index upsert "
+                f"({type(exc).__name__}: {exc})"
+            )
+            continue
+        indexed_rows[variation_idx] = variation_values
+    return indexed_rows
+
+
 async def _index_sweep_from_disk(
     namespace: str, sweep_name: str, sweep_epoch: str, epoch_dir: Path
 ) -> int:
@@ -1235,54 +1417,15 @@ async def _index_sweep_from_disk(
     except (OSError, orjson.JSONDecodeError):
         return 0
 
-    source_agg = parent_agg
-    rows = _legacy_sweep_rows(parent_agg)
-    if not rows:
-        strategy_agg = _load_strategy_sweep_aggregate(epoch_dir)
-        if strategy_agg is not None:
-            strategy_rows = _strategy_sweep_rows(strategy_agg)
-            if strategy_rows:
-                source_agg = strategy_agg
-                rows = strategy_rows
-    if not rows:
-        rows = _child_sweep_rows(epoch_dir)
-
-    child_refs = _load_sweep_child_refs(epoch_dir)
-    indexed_rows: dict[int, dict[str, Any]] = {}
-    for idx, variation_values, metrics, row_blob in rows:
-        try:
-            variation_idx = int(idx)
-            await upsert_sweep_variation(
-                namespace,
-                sweep_name,
-                sweep_epoch,
-                variation_idx,
-                variation_values=variation_values,
-                mode=_sweep_mode(source_agg),
-                phase="Succeeded",
-                metrics=metrics,
-                child_ref=child_refs.get(variation_idx),
-                metrics_blob=zstandard.ZstdCompressor().compress(
-                    orjson.dumps(row_blob)
-                ),
-            )
-        except (
-            sqlite3.Error,
-            orjson.JSONDecodeError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            # One bad variation row (sqlite constraint, unencodable metric value,
-            # bogus variation_idx coercion) must not poison the rest. The
-            # backfill path retries on next call so a transient sqlite error
-            # is self-healing.
-            logger.warning(
-                f"sweep variation {namespace}/{sweep_name} epoch={sweep_epoch} "
-                f"idx={idx}: skipping index upsert "
-                f"({type(exc).__name__}: {exc})"
-            )
-            continue
-        indexed_rows[variation_idx] = variation_values
+    source_agg, rows = _select_sweep_rows(epoch_dir, parent_agg)
+    grouped_rows = _group_sweep_rows(namespace, sweep_name, sweep_epoch, rows)
+    indexed_rows = await _upsert_grouped_sweep_rows(
+        namespace,
+        sweep_name,
+        sweep_epoch,
+        source_agg=source_agg,
+        grouped_rows=grouped_rows,
+    )
 
     rankings = _sweep_rankings(source_agg, list(indexed_rows.items()))
     if rankings:

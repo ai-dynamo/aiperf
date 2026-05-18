@@ -530,10 +530,10 @@ async def test_bootstrap_indexes_k8s_sweep_children_from_real_run_artifacts(
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_skips_repeated_trial_child_only_variations(
+async def test_bootstrap_aggregates_repeated_trial_sweep_rows_by_variation_idx(
     tmp_path: Path,
 ) -> None:
-    """Child-only repeated trials are not truthful variation aggregates."""
+    """Repeated-trial children aggregate into one truthful variation row."""
     base = tmp_path / "results"
     epoch_dir = base / "ns" / "sweeps" / "satsweep" / "1714069323"
     epoch_dir.mkdir(parents=True)
@@ -600,7 +600,28 @@ async def test_bootstrap_skips_repeated_trial_child_only_variations(
     try:
         stats = await runs_index.bootstrap(base)
         rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
-        assert stats.sweep_variations_indexed == len(rows) == 0
+        assert stats.sweep_variations_indexed == len(rows) == 1
+        assert rows[0].variation_idx == 0
+        assert rows[0].child_job_id is None
+        assert rows[0].child_epoch is None
+
+        cur = await runs_index._conn().execute(
+            "SELECT request_throughput_avg, metrics_json FROM sweep_variations "
+            "WHERE namespace = ? AND sweep_name = ? AND variation_idx = ?",
+            ("ns", "satsweep", 0),
+        )
+        stored = await cur.fetchone()
+        await cur.close()
+        assert stored[0] == 110.0
+        blob = orjson.loads(runs_index.zstd_decompress(stored[1]))
+        assert (
+            blob["aggregation_method"] == "mean_finite_numeric_default_compare_metrics"
+        )
+        assert blob["trial_count"] == 2
+        assert [trial["child_ref"]["job_id"] for trial in blob["trials"]] == [
+            "satsweep-v00-t0",
+            "satsweep-v00-t1",
+        ]
     finally:
         await runs_index.close()
 
