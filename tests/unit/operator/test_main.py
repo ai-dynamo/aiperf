@@ -2604,13 +2604,13 @@ class TestRecoverTerminatedController:
     """Tests for terminated-controller salvage handling."""
 
     @pytest.fixture(autouse=True)
-    def _clear_shutdown_sent(self):
-        """Clear completion dedup state between recovery tests."""
-        from aiperf.operator.client_cache import _shutdown_sent
+    def _clear_client_cache_state(self):
+        """Clear completion and cancellation state between recovery tests."""
+        from aiperf.operator.client_cache import _reset_for_testing
 
-        _shutdown_sent.clear()
+        _reset_for_testing()
         yield
-        _shutdown_sent.clear()
+        _reset_for_testing()
 
     @pytest.mark.asyncio
     async def test_recovers_results_from_sidecar(self) -> None:
@@ -2844,6 +2844,88 @@ class TestRecoverTerminatedController:
         assert kopf_patch.status["phase"] == Phase.FAILED
         mock_failed_event.assert_called_once()
         mock_delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stops_salvage_when_cancelled_during_fetch(self) -> None:
+        """Cancellation during salvage fetch must not stamp terminal status."""
+        from aiperf.operator.client_cache import request_cancellation
+        from aiperf.operator.handlers.monitor import (
+            _maybe_recover_terminated_controller,
+        )
+        from aiperf.operator.status import StatusBuilder
+
+        class CountingStatusBuilder(StatusBuilder):
+            """StatusBuilder test double that records finalize calls."""
+
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.finalize_count = 0
+
+            def finalize(self) -> None:
+                self.finalize_count += 1
+                super().finalize()
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = CountingStatusBuilder(kopf_patch, {"workers": {"total": 1}})
+
+        controller_pod = _make_pod(
+            name="controller-0-0",
+            container_statuses_raw=[
+                {
+                    "name": "control-plane",
+                    "state": {"terminated": {"reason": "OOMKilled", "exitCode": 137}},
+                },
+                {"name": "results-sidecar", "state": {}},
+            ],
+        )
+
+        async def fake_fetch(*_args, **_kwargs):
+            request_cancellation("default/job-1")
+            return ControllerFetchResult(metrics=None, downloaded=[])
+
+        mock_delete = AsyncMock(return_value={})
+        mock_custom = MagicMock(delete_namespaced_custom_object=mock_delete)
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(
+                return_value=_V1PodList(items=[controller_pod])
+            )
+        )
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.fetch_results_with_retry",
+                side_effect=fake_fetch,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+            mock_patch("aiperf.operator.events.failed") as mock_failed_event,
+            mock_patch("aiperf.operator.events.completed") as mock_completed_event,
+        ):
+            handled = await _maybe_recover_terminated_controller(
+                AsyncMock(),
+                {},
+                "default",
+                "test-jobset",
+                "job-1",
+                status={"workers": {"total": 1}},
+                sb=sb,
+                key="default/job-1",
+                name="job-1",
+            )
+
+        assert handled is True
+        assert kopf_patch.status.get("phase") not in (Phase.FAILED, Phase.COMPLETED)
+        mock_delete.assert_not_awaited()
+        assert sb.finalize_count == 0
+        mock_failed_event.assert_not_called()
+        mock_completed_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_recovers_partial_checkpoint_when_final_export_missing(

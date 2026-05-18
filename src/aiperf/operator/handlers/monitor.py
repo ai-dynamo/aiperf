@@ -1246,6 +1246,14 @@ async def _maybe_recover_terminated_controller(
             job_id=job_id,
             result=result,
         )
+    if is_cancellation_requested(key):
+        logger.debug(
+            "Cancellation requested for %s/%s during terminated-controller salvage; "
+            "skipping recovery side effects",
+            namespace,
+            name,
+        )
+        return True
     if result.downloaded:
         # Go through the durable claim — the in-process _shutdown_sent set
         # above is a fast path, but a peer operator pod (HA) has its own

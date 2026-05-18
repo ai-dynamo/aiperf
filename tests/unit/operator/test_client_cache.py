@@ -227,19 +227,32 @@ class TestCompletionClaim:
         with pytest.raises(AssertionError):
             self._apply_claim_patch(live_body, patch_ops)
 
-    def test_missing_annotations_parent_without_resource_version_is_claimable(
+    def test_missing_annotations_parent_without_resource_version_tests_metadata(
         self,
     ) -> None:
-        """A CR with no annotations object still gets a valid claim patch."""
-        patch_ops = _build_claim_patch_ops({"metadata": {"uid": "job-uid"}})
+        """A CR with no annotations object still gets a safe claim patch."""
+        metadata = {"uid": "job-uid"}
+        patch_ops = _build_claim_patch_ops({"metadata": metadata})
 
         assert patch_ops[0] == {
             "op": "test",
-            "path": "/metadata/uid",
-            "value": "job-uid",
+            "path": "/metadata",
+            "value": metadata,
         }
         assert patch_ops[1]["op"] == "add"
         assert patch_ops[1]["path"] == "/metadata/annotations"
+
+    def test_missing_annotations_parent_uid_only_stale_patch_fails_after_annotations_added(
+        self,
+    ) -> None:
+        """Two stale uid-only absent-parent claim patches cannot both overwrite."""
+        patch_ops = _build_claim_patch_ops({"metadata": {"uid": "job-uid"}})
+        live_body = {"metadata": {"uid": "job-uid"}}
+
+        self._apply_claim_patch(live_body, patch_ops)
+
+        with pytest.raises(AssertionError):
+            self._apply_claim_patch(live_body, patch_ops)
 
     @staticmethod
     def _apply_claim_patch(

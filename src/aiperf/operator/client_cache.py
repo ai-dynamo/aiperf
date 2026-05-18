@@ -255,9 +255,6 @@ def _build_claim_patch_ops(body: dict[str, Any]) -> list[dict[str, Any]]:
         if metadata.get("resourceVersion") is not None:
             precondition_path = "/metadata/resourceVersion"
             precondition_value = metadata["resourceVersion"]
-        elif metadata.get("uid") is not None:
-            precondition_path = "/metadata/uid"
-            precondition_value = metadata["uid"]
         return [
             {
                 "op": "test",
