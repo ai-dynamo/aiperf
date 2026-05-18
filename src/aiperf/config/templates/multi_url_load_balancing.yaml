@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Multi-URL Load Balancing
+# description: Distribute requests across multiple server replicas for load balancer testing.
+# category: Load Testing
+# tags: load-balancing, multi-url, scaling
+# difficulty: intermediate
+# features: multiple URLs, round-robin
+#
+# Multi-URL Load Balancing Test
+# ==============================
+# Measures aggregate throughput across multiple server replicas.
+# AIPerf round-robins requests across URLs so each server gets equal
+# load — useful for testing horizontal scaling without an external
+# load balancer in the path.
+#
+# Pair with serverMetrics scraping all replicas to compare per-server
+# utilization and detect hot spots.
+#
+# Run: aiperf profile --config multi_url_load_balancing.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    urls:
+      - http://server1:8000/v1/chat/completions
+      - http://server2:8000/v1/chat/completions
+      - http://server3:8000/v1/chat/completions
+      - http://server4:8000/v1/chat/completions
+    urlStrategy: round_robin
+    type: chat
+    streaming: true
+    timeout: 120.0
+
+  dataset:
+    type: synthetic
+    entries: 10000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 256, stddev: 50}
+
+  warmup:
+    type: concurrency
+    requests: 200          # 50 per server
+    concurrency: 16
+
+  profiling:
+    type: concurrency
+    duration: 300
+    concurrency: 256       # 64 per server
+    concurrencyRamp: 60    # Gradual ramp avoids overwhelming cold servers
+    gracePeriod: 120
+
+  artifacts:
+    dir: ./artifacts/multi_url
+    summary: [json]
+    records: [jsonl]
+
+  # Scrape all replicas to compare per-server behavior
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://server1:8000/metrics
+      - http://server2:8000/metrics
+      - http://server3:8000/metrics
+      - http://server4:8000/metrics
+    formats: [json, csv]

@@ -16,6 +16,63 @@ aiperf profile Qwen/Qwen2.5-1.5B-Instruct \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 ```
 
+```bash
+# AIME competition math — defaults match the trt-llm benchmark recipe
+# (8-shot, chain-of-thought on, sympy-backed math grader)
+aiperf profile Qwen/Qwen2.5-7B-Instruct \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark aime \
+  --num-requests 30 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
+```
+
+## trt-llm reference alignment
+
+The `aime` benchmark is aligned with the trt-llm benchmark recipe's
+DeepEval-backed AIME path
+(`trt-llm-benchmark-recipe/src/accuracy/aime/`):
+
+- **Dataset:** `Maxwell-Jia/AIME_2024`, train split.
+- **Defaults:** `n_shots=8`, `enable_cot=True` (the recipe enforces
+  `n_shots <= 8` and aiperf raises `ValueError` if you exceed it).
+- **Prompt format:** byte-equal to `AIMETemplate.generate_output` —
+  `**Problem**: ... **Solution**: ... **Answer**: ...` blocks for
+  few-shots (Solution only when CoT is on), trailing
+  `Let's think step-by-step.` after the final `**Answer**:`.
+- **System prompt (auto-injected):**
+  `"Please reason step by step, and put your final answer within \\boxed{}."`
+  This default lives in `plugins.yaml` under the `aime` benchmark's
+  `default_system_prompt` metadata. Override it with
+  `--accuracy-system-prompt 'your prompt here'`. Pass `--accuracy-system-prompt ''`
+  to disable injection.
+- **Grader:** `MathGrader` with `_math_strip.strip_string` + sympy/
+  latex2sympy2-extended `math_equal`. Requires the `[accuracy]` extra:
+  `uv pip install 'aiperf[accuracy]'`. Without those packages installed
+  the grader falls back to a stdlib normalize+Fraction comparison and
+  emits a one-time warning; reference parity is only achieved with the
+  full sympy stack.
+
+### Per-benchmark default system prompts
+
+| Benchmark | `default_system_prompt` |
+|---|---|
+| `aime` | `Please reason step by step, and put your final answer within \boxed{}.` |
+| (others) | _none — pass via `--accuracy-system-prompt` if desired_ |
+
+The CLI's `--accuracy-system-prompt` flag always wins; the per-benchmark
+default is only consulted when the flag is unset. An empty-string default
+in metadata is treated as no default (aiperf doesn't inject a zero-length
+system message).
+
+## Available Benchmarks
+
+| Benchmark | Default grader | Default n-shots | Source |
+|---|---|---|---|
+| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
+| `aime` | `math` | 8 | `Maxwell-Jia/AIME_2024` (trt-llm reference, 8-shot CoT) |
+
 ## CLI Flags
 
 | Flag | Description | Default |
@@ -77,7 +134,45 @@ aiperf profile my-model --url http://localhost:8000 \
   --num-requests 15000 \
   --concurrency 50 \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
+
+# AIME with explicit math grader and few-shot priming
+aiperf profile my-model --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark aime \
+  --accuracy-grader math \
+  --accuracy-n-shots 4 \
+  --num-requests 30 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
 ```
+
+## Graders
+
+| Grader | Selection rule | Coverage |
+|---|---|---|
+| `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). | MMLU |
+| `math` | Extract last `\boxed{...}`, fall back to "answer is X" / last number. Apply trt-llm `strip_string` normalization, then compare via `math_equal` (lowercase string → numeric `isclose` → symbolic equivalence via sympy + latex2sympy2-extended). | AIME |
+| `exact_match` | Stub. | (unused) |
+| `code_execution` | Stub. | (unused) |
+
+The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/aime/`):
+
+1. **Extract** the model's final answer by priority:
+    - The contents of the **last** `\boxed{...}` in the response (canonical MATH/AIME format).
+    - The tail of an "the answer is X" / "answer: X" / "final answer X" phrase, recursively re-parsed for boxed/numeric content.
+    - The last numeric literal in the response.
+2. **Normalize** both prediction and gold via the recipe's `strip_string`: linebreaks/spacing/quote-style braces collapsed, `\dfrac`/`\tfrac` → `\frac`, `\left`/`\right` removed, `\text{...}` unwrapped, MathQA-derived unit tokens dropped, infinity/percent/months/dollar-sign normalization, trailing `.0` decimals trimmed, simple `a/b` rewritten as `\frac{a}{b}`.
+3. **Compare** with `math_equal` (lowercase string equality → choice-prefix unwrap → numerical `isclose` (abs_tol=1e-4) with percentage variants → brace/paren strip + lowercase compare → equation-form rewrite (`f(x) = y` ↔ `y`) → symbolic equivalence via `sympy.parsing.sympy_parser.parse_expr` and `latex2sympy2_extended.latex2sympy`).
+
+Symbolic equivalence (e.g. `\sqrt{2}` ↔ `2^{1/2}`, `\frac{1}{3}` ↔ `0.333333`, `1,2,3` ↔ `3,2,1`) requires the `[accuracy]` install:
+
+```bash
+uv pip install 'aiperf[accuracy]'
+```
+
+Without those optional dependencies (`sympy`, `latex2sympy2-extended`) the grader falls back to a stdlib normalize + `Fraction` comparison and emits a single warning the first time it runs. Reference parity with the trt-llm recipe requires the full sympy stack.
+
+When extraction fell back past the `\boxed{}` step (i.e. the model didn't follow the boxed-answer instruction), the response is flagged `unparsed=True` in the per-record output. A correct unparsed response is still scored correct, mirroring `multiple_choice`'s convention.
 
 ## Output
 

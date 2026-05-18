@@ -6,23 +6,14 @@ from unittest.mock import Mock, patch
 import pytest
 from PIL import Image
 
-from aiperf.common.config import (
-    AudioConfig,
-    AudioLengthConfig,
-    ConversationConfig,
-    EndpointConfig,
-    ImageConfig,
-    ImageHeightConfig,
-    ImageWidthConfig,
-    InputConfig,
-    InputTokensConfig,
-    PrefixPromptConfig,
-    PromptConfig,
-    TurnConfig,
-    TurnDelayConfig,
-    UserConfig,
-)
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType
+from tests.unit.conftest import make_run_from_cli
+
+
+def make_run(cli_config: CLIConfig):
+    """Build a BenchmarkRun from a v1 CLIConfig fixture for composer tests."""
+    return make_run_from_cli(cli_config)
 
 
 @pytest.fixture(autouse=True)
@@ -60,97 +51,76 @@ def mock_tokenizer(mock_tokenizer_cls):
 
 
 @pytest.fixture
-def synthetic_config() -> UserConfig:
+def synthetic_config() -> CLIConfig:
     """Basic synthetic configuration for testing."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=5),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-            ),
-        ),
+    config = CLIConfig(
+        model_names=["test-model"],
+        conversation_num_dataset_entries=5,
+        prompt_input_tokens_mean=10,
+        prompt_input_tokens_stddev=2,
     )
     return config
 
 
 @pytest.fixture
-def image_config() -> UserConfig:
+def image_config() -> CLIConfig:
     """Synthetic configuration with image generation enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=3),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-            ),
-            image=ImageConfig(
-                batch_size=1,
-                width=ImageWidthConfig(mean=10),
-                height=ImageHeightConfig(mean=10),
-            ),
-        ),
+    config = CLIConfig(
+        model_names=["test-model"],
+        conversation_num_dataset_entries=3,
+        prompt_input_tokens_mean=10,
+        prompt_input_tokens_stddev=2,
+        image_batch_size=1,
+        image_width_mean=10,
+        image_height_mean=10,
     )
     return config
 
 
 @pytest.fixture
-def audio_config() -> UserConfig:
+def audio_config() -> CLIConfig:
     """Synthetic configuration with audio generation enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=3),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-            ),
-            audio=AudioConfig(
-                batch_size=1,
-                length=AudioLengthConfig(mean=2),
-            ),
-        ),
+    config = CLIConfig(
+        model_names=["test-model"],
+        conversation_num_dataset_entries=3,
+        prompt_input_tokens_mean=10,
+        prompt_input_tokens_stddev=2,
+        audio_batch_size=1,
+        audio_length_mean=2,
     )
     return config
 
 
 @pytest.fixture
-def prefix_prompt_config() -> UserConfig:
+def prefix_prompt_config() -> CLIConfig:
     """Synthetic configuration with prefix prompts enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=5),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-                prefix_prompt=PrefixPromptConfig(pool_size=3, length=20),
-            ),
-        ),
+    config = CLIConfig(
+        model_names=["test-model"],
+        conversation_num_dataset_entries=5,
+        prompt_input_tokens_mean=10,
+        prompt_input_tokens_stddev=2,
+        prompt_prefix_pool_size=3,
+        prompt_prefix_length=20,
     )
     return config
 
 
 @pytest.fixture
-def multimodal_config() -> UserConfig:
+def multimodal_config() -> CLIConfig:
     """Synthetic configuration with multimodal data generation enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=2),
-            prompt=PromptConfig(
-                batch_size=2,
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-                prefix_prompt=PrefixPromptConfig(pool_size=2, length=15),
-            ),
-            image=ImageConfig(
-                batch_size=2,
-                width=ImageWidthConfig(mean=10),
-                height=ImageHeightConfig(mean=10),
-            ),
-            audio=AudioConfig(
-                batch_size=2,
-                length=AudioLengthConfig(mean=2),
-            ),
-        ),
+    config = CLIConfig(
+        model_names=["test-model"],
+        conversation_num_dataset_entries=2,
+        prompt_batch_size=2,
+        prompt_input_tokens_mean=10,
+        prompt_input_tokens_stddev=2,
+        prompt_prefix_pool_size=2,
+        prompt_prefix_length=15,
+        image_batch_size=2,
+        image_width_mean=10,
+        image_height_mean=10,
+        audio_batch_size=2,
+        audio_length_mean=2,
     )
     return config
 
@@ -158,23 +128,16 @@ def multimodal_config() -> UserConfig:
 @pytest.fixture
 def multiturn_config():
     """Synthetic configuration with multiturn settings."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(
-                num=3,
-                num_dataset_entries=4,
-                turn=TurnConfig(
-                    mean=2,
-                    stddev=0,
-                    delay=TurnDelayConfig(mean=1500, stddev=0),
-                ),
-            ),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-                prefix_prompt=PrefixPromptConfig(pool_size=0),
-            ),
-        ),
+    config = CLIConfig(
+        model_names=["test-model"],
+        conversation_num=3,
+        conversation_num_dataset_entries=4,
+        conversation_turn_mean=2,
+        conversation_turn_stddev=0,
+        conversation_turn_delay_mean=1500,
+        conversation_turn_delay_stddev=0,
+        prompt_input_tokens_mean=10,
+        prompt_input_tokens_stddev=2,
     )
     return config
 
@@ -185,27 +148,23 @@ def multiturn_config():
 
 
 @pytest.fixture
-def custom_config() -> UserConfig:
+def custom_config() -> CLIConfig:
     """Basic custom configuration for testing."""
     # Use model_construct to bypass validation for testing
-    return UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig.model_construct(
-            file="test_data.jsonl",
-            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
-            conversation=ConversationConfig(num_dataset_entries=5),
-        ),
+    return CLIConfig.model_construct(
+        model_names=["test-model"],
+        input_file="test_data.jsonl",
+        custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+        conversation_num_dataset_entries=5,
     )
 
 
 @pytest.fixture
-def trace_config() -> UserConfig:
+def trace_config() -> CLIConfig:
     """Configuration for TRACE dataset type."""
     # Use model_construct to bypass validation for testing
-    return UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig.model_construct(
-            file="trace_data.jsonl",
-            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-        ),
+    return CLIConfig.model_construct(
+        model_names=["test-model"],
+        input_file="trace_data.jsonl",
+        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
     )

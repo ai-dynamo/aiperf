@@ -43,6 +43,11 @@ source venv/bin/activate
 pip install aiperf
 ```
 
+Optional integrations:
+- `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
+- `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming
+- `pip install "aiperf[mlflow,otel]"` installs both extras
+
 To run a simple benchmark against your Ollama server:
 
 ```bash
@@ -51,7 +56,8 @@ aiperf profile \
   --streaming \
   --endpoint-type chat \
   --tokenizer ibm-granite/granite-4.0-micro \
-  --url http://localhost:11434
+  --url http://localhost:11434 \
+  --request-count 10
 ```
 
 
@@ -63,7 +69,7 @@ aiperf profile \
   --streaming \
   --endpoint-type chat \
   --tokenizer ibm-granite/granite-4.0-micro \
-  --url http://localhost:11434
+  --url http://localhost:11434 \
   --concurrency 5 \
   --request-count 10
 ```
@@ -101,7 +107,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ## Features
 
-- Scalable multiprocess architecture with 9 services communicating via ZMQ
+- Scalable multiprocess architecture with 10 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
 - Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
@@ -117,6 +123,8 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Getting Started
 - [Basic Tutorial](docs/tutorial.md) - Profile Qwen3-0.6B with vLLM
 - [Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md) - 5 real-world use cases
+- [YAML Configuration Files](docs/tutorials/yaml-config.md) - Drive AIPerf from a config file instead of CLI flags
+- [Sampling Distributions in YAML Configs](docs/tutorials/yaml-distributions.md) - Fixed, Normal, Log-normal, Multimodal, and Empirical shapes for ISL/OSL/turns/etc.
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
@@ -138,6 +146,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [SageMaker Data Capture](docs/tutorials/sagemaker-data-capture.md) - Replay production traffic from SageMaker endpoints
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
+- [Inline Datasets](docs/tutorials/inline-datasets.md) - Embed records directly in the YAML config (single_turn, multi_turn, multi-pool random_pool, traces)
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
 - [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning datasets (NuminaMath-TIR, NuminaMath-CoT, NuminaMath-1.5, AIME)
 - [MMStar Dataset](docs/tutorials/mmstar.md) - Profile vision language models with MMStar visual QA benchmark
@@ -158,6 +167,8 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
+- [Raw Payload Replay](docs/tutorials/raw-payload-replay.md) - Verbatim JSONL payload replay (single file or directory)
+- [Inputs JSON Replay](docs/tutorials/inputs-json-replay.md) - Verbatim multi-turn replay of AIPerf inputs.json artifacts
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
 ### Endpoint Types
@@ -168,17 +179,23 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NIM image retrieval models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
+- [SGLang Image Edit](docs/tutorials/sglang-image-edit.md) - Benchmark OpenAI-compatible image-to-image (image edit) endpoints
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis
 - [Goodput](docs/tutorials/goodput.md) - SLO-based throughput measurement
+- [Parameter Sweeps](docs/tutorials/sweeps.md) - YAML reference for grid/zip/scenarios sweeps + multi-run, with picker for choosing a sweep mode
+- [Adaptive Search](docs/tutorials/adaptive-search.md) - Bayesian-optimization walkthrough (single-objective + multi-objective Pareto)
+- [Search Recipes](docs/sweeping/search-recipes.md) - Named recipe catalog including `pareto-sweep`, `max-throughput-ttft-sla`, `max-concurrency-under-sla`
 - [HTTP Trace Metrics](docs/tutorials/http-trace-metrics.md) - DNS, TCP/TLS, TTFB timing
 - [Multi-Run Confidence](docs/tutorials/multi-run-confidence.md) - Confidence intervals across repeated runs
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
+- [Auto-Plot After Profile](docs/tutorials/auto-plot.md) - Run `aiperf plot` automatically after `aiperf profile`
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
+- [OTel + MLflow Live Telemetry](docs/tutorials/otel-mlflow.md) - Stream metrics to OTel and MLflow in real time
 - [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation
@@ -191,7 +208,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 | [Environment Variables](docs/environment-variables.md) | All `AIPERF_*` configuration variables |
 | [Plugin System](docs/plugins/plugin-system.md) | Plugin architecture, 25+ categories, creation guide |
 | [Creating Plugins](docs/plugins/creating-your-first-plugin.md) | Step-by-step plugin tutorial |
-| [Accuracy Benchmarks](docs/accuracy/accuracy_stubs.md) | Accuracy evaluation stubs and datasets |
+| [Accuracy Benchmarks](docs/accuracy/accuracy-benchmarking.md) | Accuracy evaluation against MMLU, AIME, and other benchmarks |
 | [Benchmark Modes](docs/benchmark-modes/trace-replay.md) | Trace replay and timing modes |
 | [Server Metrics](docs/server-metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
 | [Tokenizer Auto-Detection](docs/reference/tokenizer-auto-detection.md) | Pre-flight tokenizer detection |

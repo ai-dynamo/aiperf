@@ -22,6 +22,7 @@ from aiperf.common.enums import CreditPhase
 if TYPE_CHECKING:
     from aiperf.credit.messages import CreditReturn, FirstToken
     from aiperf.credit.structs import Credit
+    from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.concurrency import ConcurrencyManager
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
@@ -82,6 +83,65 @@ class CreditCallbackHandler:
         """
         self._concurrency_manager = concurrency_manager
         self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
+        self._branch_orchestrator: BranchOrchestrator | None = None
+
+    def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
+        """Inject (or detach) the DAG branch orchestrator.
+
+        Called by ``PhaseRunner`` before phase start when the dataset is
+        DAG-shaped, and again with ``None`` after the phase finalizes so a
+        subsequent non-DAG phase / cleanup doesn't dispatch into a torn-down
+        orchestrator.
+
+        Also registers a drain observer on the orchestrator so the deferred
+        completion check fires when the orchestrator's last drain step
+        lands AFTER the final ``on_credit_return`` callback (concurrency
+        race: under N>1, ``has_pending_branch_work()`` can flip False
+        between credit returns, with no further return arriving to
+        re-trigger the check).
+        """
+        # Detach observer from any previously attached orchestrator.
+        if (
+            self._branch_orchestrator is not None
+            and self._branch_orchestrator is not orchestrator
+        ):
+            self._branch_orchestrator.set_drain_observer(None)
+            self._branch_orchestrator.set_abort_observer(None)
+        self._branch_orchestrator = orchestrator
+        if orchestrator is not None:
+            orchestrator.set_drain_observer(self._on_orchestrator_drain)
+            orchestrator.set_abort_observer(self._on_orchestrator_abort)
+
+    def _on_orchestrator_drain(self) -> None:
+        """Re-evaluate completion across every active phase handler.
+
+        Fired by ``BranchOrchestrator`` after each state mutation that
+        could drain ``has_pending_branch_work()`` to False. Idempotent: if
+        the event is already set or the predicate disagrees, the per-handler
+        check no-ops.
+        """
+        for handler in self._phase_handlers.values():
+            if handler.lifecycle.is_complete:
+                continue
+            self._maybe_signal_dag_completion(handler)
+
+    def _on_orchestrator_abort(self) -> None:
+        """Cancel every active phase on FAIL_FAST.
+
+        Fired by ``BranchOrchestrator._handle_child_errored_fail_fast``
+        after parent + orphan-sibling tear-down. Cancels each phase's
+        lifecycle so the strategy loop's next ``can_send_any_turn`` check
+        returns False and no further wire credits are issued. In-flight
+        credits drain naturally; the phase completes once they return.
+        Without this hook, only the parent of the errored child was
+        aborted while unrelated roots kept firing — the wire-request
+        budget ran out as if FAIL_FAST were disabled.
+        """
+        for handler in self._phase_handlers.values():
+            if handler.lifecycle.is_complete:
+                continue
+            handler.lifecycle.cancel()
+            handler.progress.all_credits_returned_event.set()
 
     def register_phase(
         self,
@@ -142,29 +202,87 @@ class CreditCallbackHandler:
             credit_return: Return details including credit and status.
         """
         credit = credit_return.credit
-        phase = credit.phase
+        handler = self._lookup_active_phase_handler(credit, worker_id)
+        if handler is None:
+            return
 
-        # Get phase handler (returns None if phase already cleaned up)
+        self._count_and_release(credit, credit_return, handler)
+
+        # 4b. DAG child completion hook.
+        # When a child session's final turn returns, notify the orchestrator
+        # so it can decrement join refcounts, release sticky-routing entries,
+        # and dispatch the parent's gated turn (if any). Runs regardless of
+        # whether the phase can still send, because children may finish
+        # after the parent has already sent its terminal turn.
+        await self._notify_orchestrator_of_child_completion(credit, credit_return)
+
+        # 5. DAG intercept — root-credit returns may spawn child sessions.
+        # Runs BEFORE strategy dispatch so the orchestrator can take over
+        # the next-turn path when its own gated dispatch suppresses the
+        # parent's continuation.
+        intercepted = await self._intercept_for_dag(credit)
+
+        # 6. Notify timing strategy for subsequent turns. Skipped when the
+        # orchestrator intercepted (it owns the next turn now).
+        # For child non-final returns we ALWAYS call the strategy so its
+        # ``_issue_child_continuation_or_release`` can fire ``on_child_stopped``
+        # when the cap blocks dispatch — otherwise the parent's pending join
+        # would never drain. Root credits stay gated on ``can_send_any_turn``
+        # so origin/main multi-turn semantics (truncate continuation past
+        # the cap) are preserved.
+        if not intercepted:
+            is_child_non_final = credit.agent_depth > 0 and not credit.is_final_turn
+            if is_child_non_final or handler.stop_checker.can_send_any_turn():
+                await handler.strategy.handle_credit_return(credit)
+
+        # 7. Deferred all-credits-returned check. Runs on every return —
+        # the orchestrator can drain the DAG synchronously inside
+        # ``intercept`` when every spawned child gets refused at the cap
+        # gate (e.g. cap=1: root return triggers intercept, both children
+        # refused, ``has_pending_branch_work`` flips False inside the same
+        # call). If we skipped this, the event would never fire because
+        # no future credit return is coming.
+        self._maybe_signal_dag_completion(handler)
+
+    def _lookup_active_phase_handler(
+        self, credit: Credit, worker_id: str
+    ) -> PhaseCallbackContext | None:
+        """Return the active phase handler for this credit, or None.
+
+        Returns None when the phase is unregistered (logged at debug) or
+        already complete (logged at warning); callers must short-circuit on
+        a None return.
+        """
+        phase = credit.phase
         handler = self._phase_handlers.get(phase)
         if not handler:
             _logger.debug(
                 lambda: f"Credit return for unregistered phase {phase}, "
                 f"credit_id={credit.id}, worker={worker_id}"
             )
-            return
-
-        # Late arrivals after phase complete are logged but don't affect counts
+            return None
         if handler.lifecycle.is_complete:
             _logger.warning(
                 lambda: f"Credit return after phase {phase} complete, "
                 f"credit_id={credit.id}, worker={worker_id}"
             )
-            return
+            return None
+        return handler
 
+    def _count_and_release(
+        self,
+        credit: Credit,
+        credit_return: CreditReturn,
+        handler: PhaseCallbackContext,
+    ) -> None:
+        """Count this return, release any owed prefill slot, release session
+        slot on root final turn, and signal phase-final-return event when
+        appropriate. Atomic on the counter side (no awaits)."""
         # 1. ATOMIC COUNTING (no await before this!)
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
+            errored=credit_return.error is not None,
         )
 
         # 2. Track prefill release if TTFT never arrived
@@ -173,18 +291,97 @@ class CreditCallbackHandler:
 
         # 3. Release concurrency slots
         self._release_slots_for_return(
-            phase, credit, credit_return, is_final_returned, handler
+            credit.phase, credit, credit_return, is_final_returned, handler
         )
 
-        # 4. Signal completion if this was the final return
-        if is_final_returned:
+        # 4. Signal completion if this was the final return — but defer for
+        # DAG runs where ``intercept`` is about to spawn children OR there
+        # is already pending DAG work in flight. Without this defer, the
+        # phase runner unblocks at sending-complete and tears the
+        # orchestrator down before its children land. The deferred check
+        # at the bottom of ``on_credit_return`` re-evaluates and sets the
+        # event once intercept's synchronous work is done.
+        if is_final_returned and not self._dag_work_pending(credit):
             handler.progress.all_credits_returned_event.set()
 
-        # 5. Notify timing strategy for subsequent turns when phase can still send
-        # Timing strategy queues subsequent turns for rate-limited issuance.
-        # Skipped when phase can't send
-        if handler.stop_checker.can_send_any_turn():
-            await handler.strategy.handle_credit_return(credit)
+    def _dag_work_pending(self, credit: Credit) -> bool:
+        """True iff the orchestrator has work in flight or will spawn on
+        this credit return (so the all-credits-returned signal must defer
+        until after ``intercept`` runs).
+
+        ``intercept`` runs at every ``agent_depth`` (nested DAGs are
+        supported), so the branch-id lookup must run at every depth too.
+        Restricting it to root credits previously let nested grandchildren
+        be truncated when their parent's return was the final outstanding
+        credit at that moment.
+        """
+        if self._branch_orchestrator is None:
+            return False
+        if self._branch_orchestrator.has_pending_branch_work():
+            return True
+        try:
+            if self._branch_orchestrator.get_branch_ids(credit):
+                return True
+        except Exception:  # noqa: BLE001
+            return False
+        return False
+
+    def _maybe_signal_dag_completion(self, handler: PhaseCallbackContext) -> None:
+        """Set the all-credits-returned event when the orchestrator drained
+        the DAG synchronously inside ``intercept``.
+        """
+        if self._branch_orchestrator is None:
+            return
+        if (
+            not handler.progress.all_credits_returned_event.is_set()
+            and handler.progress.check_all_returned_or_cancelled()
+            and not self._branch_orchestrator.has_pending_branch_work()
+        ):
+            handler.progress.all_credits_returned_event.set()
+
+    async def _notify_orchestrator_of_child_completion(
+        self, credit: Credit, credit_return: CreditReturn
+    ) -> None:
+        """Fire the orchestrator's child-completion hook on a child final return."""
+        if (
+            not credit.is_final_turn
+            or credit.agent_depth == 0
+            or self._branch_orchestrator is None
+        ):
+            return
+        try:
+            if credit_return.error is not None:
+                await self._branch_orchestrator.on_child_errored(
+                    credit.x_correlation_id
+                )
+            else:
+                await self._branch_orchestrator.on_child_leaf_reached(
+                    credit.x_correlation_id
+                )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                lambda exc=exc: f"BranchOrchestrator child-completion "
+                f"hook failed for x_correlation_id="
+                f"{credit.x_correlation_id}: {exc}"
+            )
+
+    async def _intercept_for_dag(self, credit: Credit) -> bool:
+        """Offer a credit return to the orchestrator's intercept hook.
+
+        Returns True iff the orchestrator suppressed the strategy's next-turn
+        dispatch (parent suspended on a gated turn). Non-DAG runs return
+        False unconditionally.
+        """
+        if self._branch_orchestrator is None:
+            return False
+        try:
+            return await self._branch_orchestrator.intercept(credit)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                lambda exc=exc: f"BranchOrchestrator intercept failed for "
+                f"credit {credit.id}: {exc}"
+            )
+            return False
 
     def _release_slots_for_return(
         self,
@@ -210,8 +407,11 @@ class CreditCallbackHandler:
         """
         concurrency = handler.concurrency_manager
 
-        # Release session slot when conversation ends (final turn, whether completed or cancelled)
-        if credit.is_final_turn:
+        # Release session slot when a root conversation ends (final turn,
+        # whether completed or cancelled). DAG children (agent_depth > 0)
+        # inherit the root's session slot via the dispatch path that
+        # bypasses ``acquire_session_slot``; releasing here would underflow.
+        if credit.is_final_turn and credit.agent_depth == 0:
             concurrency.release_session_slot(phase)
 
         # On phase end, release slots for sessions still in flight.

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
@@ -13,12 +13,15 @@ from pydantic import Field
 
 from aiperf import __version__ as aiperf_version
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.mixins.realtime_metrics_mixin import RealtimeMetricsMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.config.loader.parsing import coerce_value
+from aiperf.config.phases import RatePhaseConfig
 from aiperf.metrics.prometheus_formatter import InfoLabels, format_as_prometheus
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 MetricsDep = Annotated["MetricsRouter", component_dependency("metrics")]
 
@@ -33,8 +36,12 @@ class MetricsResponse(AIPerfBaseModel):
     streaming: bool | None = Field(
         default=None, description="Whether streaming is enabled"
     )
-    concurrency: int | None = Field(default=None, description="Concurrency setting")
-    request_rate: float | None = Field(default=None, description="Request rate setting")
+    concurrency: int | None = Field(
+        default=None, ge=1, description="Concurrency setting"
+    )
+    request_rate: float | None = Field(
+        default=None, gt=0, description="Request rate setting"
+    )
     metrics: dict[str, Any] = Field(
         default_factory=dict, description="Metrics keyed by tag"
     )
@@ -48,19 +55,17 @@ class MetricsRouter(RealtimeMetricsMixin, BaseRouter):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        *,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        super().__init__(
-            service_config=service_config, user_config=user_config, **kwargs
-        )
+        super().__init__(run=run, **kwargs)
         self._info_labels: InfoLabels | None = None
 
     def get_info_labels(self) -> InfoLabels:
         """Get cached info labels for metrics."""
         if self._info_labels is None:
-            self._info_labels = build_info_labels(self.user_config)
+            self._info_labels = build_info_labels(self.run)
         return self._info_labels
 
     def get_router(self) -> APIRouter:
@@ -84,35 +89,40 @@ async def json_metrics(component: MetricsDep) -> MetricsResponse:
     return format_metrics_json(
         metrics=list(component._metrics),
         info_labels=component.get_info_labels(),
-        benchmark_id=component.user_config.benchmark_id,
+        benchmark_id=component.run.benchmark_id,
     )
 
 
-def build_info_labels(user_config: UserConfig) -> InfoLabels:
-    """Build info labels for metrics from UserConfig.
+def build_info_labels(run: BenchmarkRun) -> InfoLabels:
+    """Build info labels for metrics from a BenchmarkRun.
 
     These labels identify the benchmark and are included in Prometheus metrics.
+    Concurrency and request_rate come from the first profiling phase, which
+    represents the active variant for this run.
 
     Args:
-        user_config: The user configuration for the benchmark.
+        run: The BenchmarkRun for the active iteration.
 
     Returns:
         Dictionary of label names to values for the info metric.
     """
+    cfg = run.cfg
     labels: InfoLabels = {}
 
-    if user_config.benchmark_id:
-        labels["benchmark_id"] = user_config.benchmark_id
+    if run.benchmark_id:
+        labels["benchmark_id"] = run.benchmark_id
 
-    labels["model"] = ",".join(sorted(user_config.endpoint.model_names))
-    labels["endpoint_type"] = user_config.endpoint.type
-    labels["streaming"] = str(user_config.endpoint.streaming).lower()
+    labels["model"] = ",".join(sorted(cfg.get_model_names()))
+    labels["endpoint_type"] = cfg.endpoint.type
+    labels["streaming"] = str(cfg.endpoint.streaming).lower()
 
-    if user_config.loadgen.concurrency is not None:
-        labels["concurrency"] = str(user_config.loadgen.concurrency)
-
-    if user_config.loadgen.request_rate is not None:
-        labels["request_rate"] = str(user_config.loadgen.request_rate)
+    profiling_phases = cfg.get_profiling_phases()
+    head_phase = profiling_phases[0] if profiling_phases else None
+    if head_phase is not None:
+        if head_phase.concurrency is not None:
+            labels["concurrency"] = str(head_phase.concurrency)
+        if isinstance(head_phase, RatePhaseConfig):
+            labels["request_rate"] = str(head_phase.rate)
 
     return labels
 

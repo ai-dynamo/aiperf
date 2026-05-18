@@ -10,6 +10,7 @@ from aiperf.common.environment import (
     _APIServerSettings,
     _CompressionSettings,
     _Environment,
+    _SearchPlannerSettings,
     _ServiceSettings,
 )
 
@@ -230,3 +231,105 @@ class TestCompressionSettings:
         env = _Environment()
         assert hasattr(env, "COMPRESSION")
         assert isinstance(env.COMPRESSION, _CompressionSettings)
+
+
+class TestSearchPlannerSettings:
+    """Test _SearchPlannerSettings defaults and env-var overrides."""
+
+    def test_search_planner_defaults(self) -> None:
+        settings = _SearchPlannerSettings()
+        assert settings.SLA_PRECISION_DEFAULT == 0.05
+        assert settings.DEFAULT_WARMUP_SECONDS == 30.0
+        assert settings.FIRST_PROBE_WARMUP_FLOOR == 60.0
+        assert settings.REPLICATE_WARMUP_FLOOR == 15.0
+        assert settings.SLA_PRECISION_REQUESTS == {
+            "tight": 10000,
+            "normal": 1000,
+            "coarse": 300,
+        }
+
+    @pytest.mark.parametrize(
+        "field,env_var,value,expected",
+        [
+            param(
+                "SLA_PRECISION_DEFAULT",
+                "AIPERF_SEARCH_PLANNER_SLA_PRECISION_DEFAULT",
+                "0.10",
+                0.10,
+                id="precision_default",
+            ),
+            param(
+                "DEFAULT_WARMUP_SECONDS",
+                "AIPERF_SEARCH_PLANNER_DEFAULT_WARMUP_SECONDS",
+                "45.0",
+                45.0,
+                id="default_warmup",
+            ),
+            param(
+                "FIRST_PROBE_WARMUP_FLOOR",
+                "AIPERF_SEARCH_PLANNER_FIRST_PROBE_WARMUP_FLOOR",
+                "120.0",
+                120.0,
+                id="first_probe_floor",
+            ),
+            param(
+                "REPLICATE_WARMUP_FLOOR",
+                "AIPERF_SEARCH_PLANNER_REPLICATE_WARMUP_FLOOR",
+                "5.0",
+                5.0,
+                id="replicate_floor",
+            ),
+        ],
+    )
+    def test_search_planner_env_override_applied(
+        self, field, env_var, value, expected, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(env_var, value)
+        settings = _SearchPlannerSettings()
+        assert getattr(settings, field) == expected
+
+    def test_search_planner_sla_precision_requests_json_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AIPERF_SEARCH_PLANNER_SLA_PRECISION_REQUESTS",
+            '{"tight": 20000, "normal": 2000, "coarse": 500}',
+        )
+        settings = _SearchPlannerSettings()
+        assert settings.SLA_PRECISION_REQUESTS == {
+            "tight": 20000,
+            "normal": 2000,
+            "coarse": 500,
+        }
+
+    @pytest.mark.parametrize(
+        "env_var,bad_value",
+        [
+            param(
+                "AIPERF_SEARCH_PLANNER_SLA_PRECISION_DEFAULT",
+                "0.0",
+                id="precision_zero",
+            ),
+            param(
+                "AIPERF_SEARCH_PLANNER_SLA_PRECISION_DEFAULT",
+                "1.0",
+                id="precision_one",
+            ),
+            param(
+                "AIPERF_SEARCH_PLANNER_DEFAULT_WARMUP_SECONDS",
+                "-1.0",
+                id="warmup_negative",
+            ),
+        ],
+    )
+    def test_search_planner_out_of_range_raises_value_error(
+        self, env_var, bad_value, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(env_var, bad_value)
+        with pytest.raises(ValueError):
+            _SearchPlannerSettings()
+
+    def test_environment_search_planner_subsystem_exists(self) -> None:
+        env = _Environment()
+        assert hasattr(env, "SEARCH_PLANNER")
+        assert isinstance(env.SEARCH_PLANNER, _SearchPlannerSettings)

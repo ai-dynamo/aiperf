@@ -22,6 +22,20 @@ To migrate your previous GenAI-Perf commands to AIPerf commands, remove the abov
 
 <br/>
 
+## `--server-metrics-url` → `--gpu-telemetry` (Not `--server-metrics`)
+
+> [!WARNING]
+> **GenAI-Perf's `--server-metrics-url` is misleadingly named.** Despite the "server metrics" label, the flag points GenAI-Perf at a **Triton / DCGM telemetry endpoint** (GPU power, utilization, memory) — it is *not* a general Prometheus inference-server metrics scraper.
+
+AIPerf splits the concern into two clearly-scoped flags:
+
+- **`--gpu-telemetry`** — GPU telemetry collection. Supports both the **DCGM exporter HTTP endpoint** (default; `localhost:9400` + `localhost:9401`) and the **local `pynvml` library** (pass `pynvml`). Custom DCGM exporter URLs and a `dashboard` realtime view are also accepted.
+- **`--server-metrics`** — Prometheus inference-server metrics from the model endpoint (`base_url + /metrics`). Enabled by default; pass additional URLs to scrape extra Prometheus targets.
+
+**Porting rule:** `--server-metrics-url http://node:9400` ⇒ AIPerf `--gpu-telemetry http://node:9400`. **Do not** map it to `--server-metrics` — that would target the inference endpoint's Prometheus exporter, which is a different surface.
+
+<br/>
+
 ## Input File Format Changes
 
 The format for the `inputs.json` file, which contains the input prompts used in benchmarking, has changed slightly from GenAI-Perf to AIPerf:

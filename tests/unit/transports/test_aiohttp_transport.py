@@ -152,13 +152,58 @@ class TestAioHttpTransport:
             ),
             ("localhost:8000", "/v1/chat", "http://localhost:8000/v1/chat"),
             ("https://api.example.com", "/v1/chat", "https://api.example.com/v1/chat"),
+            # Don't double-append when the user already wrote the full URL.
+            (
+                "http://localhost:8000/v1/chat/completions",
+                "/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
+            # Trailing slash on base URL must not defeat the doubling check.
+            (
+                "http://localhost:8000/v1/chat/completions/",
+                "/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
         ],
-        ids=["http-prefix", "no-scheme", "https-prefix"],
+        ids=[
+            "http-prefix",
+            "no-scheme",
+            "https-prefix",
+            "no-double-when-base-has-full-path",
+            "no-double-with-trailing-slash",
+        ],
     )
     def test_get_url(self, base_url, custom_endpoint, expected_url):
         """Test get_url with various base URLs and endpoints."""
         model_endpoint = create_model_endpoint_info(
             base_url=base_url, custom_endpoint=custom_endpoint
+        )
+
+        transport = AioHttpTransport(model_endpoint=model_endpoint)
+        request_info = create_request_info(model_endpoint)
+        url = transport.get_url(request_info)
+        assert url == expected_url
+
+    @pytest.mark.parametrize(
+        "base_url,expected_url",
+        [
+            # Plain host: append the chat path from endpoint metadata.
+            ("http://localhost:8000", "http://localhost:8000/v1/chat/completions"),
+            # /v1 base: drop the v1/ prefix on the metadata path to avoid duplication.
+            ("http://localhost:8000/v1", "http://localhost:8000/v1/chat/completions"),
+            # User already wrote the full chat URL: do not append again.
+            (
+                "http://localhost:8000/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
+        ],
+        ids=["plain-host", "v1-base", "full-chat-url"],
+    )
+    def test_get_url_metadata_path_no_doubling(self, base_url, expected_url):
+        """Metadata-driven path resolution must not double-append the path."""
+        # custom_endpoint=None forces the metadata branch.
+        model_endpoint = create_model_endpoint_info(
+            base_url=base_url, custom_endpoint=None
         )
 
         transport = AioHttpTransport(model_endpoint=model_endpoint)
@@ -675,6 +720,61 @@ class TestAioHttpTransportCancellation:
 
         assert record.error is not None
         assert record.error.type == "RequestCancellationError"
+        await transport.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_works_with_multipart_form_data_body(
+        self, model_endpoint_non_streaming
+    ):
+        """Regression: cancel_after_ns must honor multipart bodies.
+
+        Before the fix, FormData bodies left expected_request_body_size=None,
+        so on_request_sent never fired and cancellation surfaced as
+        RequestSendTimeout instead of RequestCancellationError.
+        """
+        from aiperf.common.enums import RequestContentType
+
+        # Reuse the standard non-streaming endpoint, just flip its content-type.
+        model_endpoint_non_streaming.endpoint.request_content_type = (
+            RequestContentType.MULTIPART_FORM_DATA
+        )
+
+        transport = AioHttpTransport(model_endpoint=model_endpoint_non_streaming)
+        await transport.initialize()
+
+        capture_session, holder = self._create_mock_session_factory(
+            complete_immediately=False
+        )
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.side_effect = capture_session
+
+            cancel_after_ns = 100_000_000  # 100ms
+            request_info = create_request_info(
+                model_endpoint_non_streaming, cancel_after_ns=cancel_after_ns
+            )
+            # image_edit-shaped payload: text + base64 file field.
+            payload = {
+                "prompt": "edit",
+                "image": {
+                    "b64_data": "iVBORw0KGgoAAAANSUhEUg==",
+                    "filename": "ref.png",
+                    "content_type": "image/png",
+                },
+            }
+
+            task = asyncio.create_task(transport.send_request(request_info, payload))
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            await self._fire_request_sent_event(holder["trace_config"], body_size=4096)
+
+            record = await task
+
+        assert record.error is not None, f"Expected cancellation error, got: {record}"
+        assert record.error.type == "RequestCancellationError", (
+            f"Multipart cancellation regressed to {record.error.type!r}"
+        )
         await transport.stop()
 
     @pytest.mark.asyncio

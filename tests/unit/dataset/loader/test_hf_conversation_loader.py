@@ -7,10 +7,11 @@ import pytest
 from PIL import Image as PILImage
 from pytest import param
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.hf_conversation import HFConversationDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from tests.unit.conftest import make_run_from_cli
 
 
 def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
@@ -24,14 +25,14 @@ def _jpeg_bytes(width: int = 4, height: int = 4) -> bytes:
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def cli_config() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
-async def loader(user_config: UserConfig) -> HFConversationDatasetLoader:
+async def loader(cli_config: CLIConfig) -> HFConversationDatasetLoader:
     return HFConversationDatasetLoader(
-        user_config=user_config,
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="lmarena-ai/VisionArena-Chat",
         hf_split="train",
         conversation_column="conversation",
@@ -40,9 +41,9 @@ async def loader(user_config: UserConfig) -> HFConversationDatasetLoader:
 
 
 @pytest.fixture
-async def llava_loader(user_config: UserConfig) -> HFConversationDatasetLoader:
+async def llava_loader(cli_config: CLIConfig) -> HFConversationDatasetLoader:
     return HFConversationDatasetLoader(
-        user_config=user_config,
+        run=make_run_from_cli(cli_config),
         hf_dataset_name="lmms-lab/LLaVA-OneVision-Data",
         hf_split="train",
         hf_subset="sharegpt4o",
@@ -229,9 +230,9 @@ class TestHFConversationDatasetLoader:
         assert len(turn.images) == 1
         assert turn.images[0].contents[0].startswith("data:image/jpeg;base64,")
 
-    async def test_attaches_first_image_from_list(self, user_config):
+    async def test_attaches_first_image_from_list(self, cli_config):
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -272,10 +273,10 @@ class TestHFConversationDatasetLoader:
         ],
     )  # fmt: skip
     async def test_attaches_image_from_undecoded_hf_dict(
-        self, user_config, images_value
+        self, cli_config, images_value
     ):
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -295,9 +296,9 @@ class TestHFConversationDatasetLoader:
         assert len(turn.images) == 1
         assert turn.images[0].contents[0].startswith("data:image/jpeg;base64,")
 
-    async def test_skips_corrupt_image_bytes(self, user_config):
+    async def test_skips_corrupt_image_bytes(self, cli_config):
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -315,11 +316,11 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].images == []
 
-    async def test_path_only_dict_returns_no_images(self, user_config):
+    async def test_path_only_dict_returns_no_images(self, cli_config):
         # Locks in the documented "not handled" contract for path-only HF dicts
         # (bytes is None, path is a string). Update if path-only is ever supported.
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -337,14 +338,14 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].images == []
 
-    async def test_skips_truncated_image_at_load_time(self, user_config):
+    async def test_skips_truncated_image_at_load_time(self, cli_config):
         # Truncated valid JPEG: header passes PILImage.open (lazy) but the
         # subsequent re-encode in _pil_to_image raises OSError. Locks in the
         # widened try/except so one corrupt row can't abort the full loader run.
         full = _jpeg_bytes(256, 256)
         truncated = full[: int(len(full) * 0.95)]
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -368,7 +369,7 @@ class TestHFConversationDatasetLoader:
         assert conversations[0].turns[0].images == []
         assert len(conversations[1].turns[0].images) == 1
 
-    async def test_skips_truncated_pil_image_at_load_time(self, user_config):
+    async def test_skips_truncated_pil_image_at_load_time(self, cli_config):
         # Lazy PIL Image (from PILImage.open on truncated bytes) passes the
         # isinstance(PILImage.Image) check but raises OSError when _pil_to_image
         # forces re-encode. Locks in the symmetric try/except on the PIL branch
@@ -378,7 +379,7 @@ class TestHFConversationDatasetLoader:
         truncated_pil = PILImage.open(io.BytesIO(full[: int(len(full) * 0.95)]))
         good_pil = _make_pil_image()
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -413,15 +414,13 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations({"dataset": []})
         assert conversations == []
 
-    async def test_non_streaming_returns_all_rows(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=3),
+    async def test_non_streaming_returns_all_rows(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = HFConversationDatasetLoader(
-            user_config=config,
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
@@ -436,15 +435,13 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 10
 
-    async def test_streaming_capped_by_request_count(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=3),
+    async def test_streaming_capped_by_request_count(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            **CLIConfig(request_count=3).model_dump(exclude_unset=True),
         )
         loader = HFConversationDatasetLoader(
-            user_config=config,
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
@@ -459,18 +456,14 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 3
 
-    async def test_streaming_falls_back_to_num_dataset_entries(self, user_config):
-        from aiperf.common.config.conversation_config import ConversationConfig
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        conversation = ConversationConfig(num_dataset_entries=4)
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input={"conversation": conversation},
-            loadgen=LoadGeneratorConfig(benchmark_duration=60),
+    async def test_streaming_falls_back_to_num_dataset_entries(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=4,
+            **CLIConfig(benchmark_duration=60).model_dump(exclude_unset=True),
         )
         loader = HFConversationDatasetLoader(
-            user_config=config,
+            run=make_run_from_cli(config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
@@ -488,9 +481,9 @@ class TestHFConversationDatasetLoader:
     async def test_streaming_defaults_to_false(self, loader):
         assert loader.streaming is False
 
-    async def test_streaming_stored_when_true(self, user_config):
+    async def test_streaming_stored_when_true(self, cli_config):
         loader = HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",

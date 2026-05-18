@@ -19,7 +19,7 @@ class HttpTraceConsoleExporter(ConsoleMetricsExporter):
     console_groups = None
 
     def _check_enabled(self, exporter_config: ExporterConfig) -> None:
-        if not exporter_config.user_config.output.show_trace_timing:
+        if not exporter_config.cfg.artifacts.show_trace_timing:
             raise ConsoleExporterDisabled(
                 "HTTP trace timing is not enabled, skipping console export"
             )

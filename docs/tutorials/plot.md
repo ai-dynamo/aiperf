@@ -10,7 +10,7 @@ Generate PNG visualizations from AIPerf profiling data with automatic mode detec
 
 ## Overview
 
-The `aiperf plot` command automatically detects whether to generate multi-run comparison plots or single-run time series analysis based on your directory structure. It integrates GPU telemetry and timeslice data when available.
+The `aiperf plot` command automatically detects whether to generate multi-run comparison plots or single-run time series analysis based on your directory structure, including nested `profile_runs/run_000N` directories from multi-run profiles. It integrates GPU telemetry and timeslice data when available. Aggregate summary directories may not be directly plottable; point `aiperf plot` at the run root or concrete per-run directories that contain profile exports.
 
 **Key Features:**
 - Automatic mode detection (multi-run comparison vs single-run analysis)
@@ -18,47 +18,59 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 - Timeslice support (performance evolution across time windows)
 - Configurable plots via `~/.aiperf/plot_config.yaml`
 
-> [!WARNING]
-> **Multi-Run Profile Incompatibility**: The plot CLI is incompatible with the `--num-profile-runs > 1` option. When using multi-run confidence profiling, the directory structure includes `profile_runs/` subdirectories which the plot command does not recognize. To visualize individual profile runs, navigate into the specific run directory (e.g., `artifacts/my_run/profile_runs/trial_0001/`) and run the plot command from there.
+> [!NOTE]
+> **Multi-Run Profile Discovery**: When `--num-profile-runs > 1` produces `profile_runs/` subdirectories (e.g., `artifacts/my_run/profile_runs/run_0001/` for no-sweep multi-run and `trial_0001/` for sweep multi-run), the plot command auto-discovers them across no-sweep, REPEATED, INDEPENDENT, and adaptive Bayesian-optimization layouts. To plot a specific cell directly, you may also pass `<base>/profile_runs/` explicitly.
 
 ## Quick Start
 
 > [!WARNING]
 > **Custom export filenames not supported:** The plot command expects default export filenames (`profile_export.jsonl`, `profile_export_aiperf.json`). If you ran `aiperf profile` with `--profile-export-file` or a custom `--profile-export-prefix`, the output files will have different names and will not be detected by `aiperf plot`. To use the plot command, re-run profiling without custom export file options, or rename the files to match the default names.
 
+Analyze a single profiling run:
+
 ```bash
-# Analyze a single profiling run
 aiperf plot <single_run_name>
+```
 
 **Sample Output (Successful Run):**
-```
+
+```text
 INFO     Loading single-run data from: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 INFO     Detected mode: SINGLE_RUN
-INFO     Generating 4 time series plots
+INFO     Generating 5 time series plots
 INFO     Creating plot: ttft_over_time.png
-INFO     Creating plot: itl_over_time.png
-INFO     Creating plot: latency_over_time.png
-INFO     Creating plot: dispersed_throughput_over_time.png
-INFO     Successfully generated 4 plots
+INFO     Creating plot: ttft_timeline.png
+INFO     Creating plot: timeslices_ttft.png
+INFO     Creating plot: timeslices_itl.png
+INFO     Creating plot: gpu_utilization_and_throughput_over_time.png
+INFO     Successfully generated 5 plots
 INFO     Plots saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/plots/
 ```
 
-# Compare multiple runs in a directory
+Compare multiple runs in a directory:
+
+```bash
 aiperf plot <run_directory>
+```
 
 **Sample Output (Successful Run):**
-```
+
+```text
 INFO     Loading multi-run data from: artifacts/sweep_qwen/
 INFO     Detected mode: MULTI_RUN
 INFO     Found 3 runs to compare
-INFO     Generating 3 comparison plots
-INFO     Creating plot: ttft_vs_throughput.png
+INFO     Generating 4 comparison plots
 INFO     Creating plot: pareto_curve_throughput_per_gpu_vs_latency.png
 INFO     Creating plot: pareto_curve_throughput_per_gpu_vs_interactivity.png
-INFO     Successfully generated 3 plots
+INFO     Creating plot: ttft_vs_throughput.png
+INFO     Creating plot: latency_throughput_uncertainty.png
+INFO     Successfully generated 4 plots
 INFO     Plots saved to: artifacts/sweep_qwen/plots/
 ```
 
+Other common invocations:
+
+```bash
 # Compare all runs across multiple directories
 aiperf plot <dir1> <dir2> <dir3>
 
@@ -67,12 +79,17 @@ aiperf plot <run1> <run2> <run3>
 
 # Specify custom output location
 aiperf plot <path> --output <output_directory>
+```
 
-# Launch interactive dashboard for exploration
+Launch interactive dashboard for exploration:
+
+```bash
 aiperf plot <path> --dashboard
+```
 
 **Sample Output (Successful Run):**
-```
+
+```text
 INFO     Loading data from: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 INFO     Starting interactive dashboard
 INFO     Dash is running on http://localhost:8050/
@@ -83,19 +100,22 @@ INFO     Dashboard ready at http://localhost:8050/
 INFO     Press Ctrl+C to quit
 ```
 
-# Use dark theme
+Use dark theme:
+
+```bash
 aiperf plot <path> --theme dark
+```
 
 **Sample Output (Successful Run):**
-```
+
+```text
 INFO     Loading data from: artifacts/sweep_qwen/
 INFO     Detected mode: MULTI_RUN
 INFO     Using dark theme
 INFO     Found 3 runs to compare
-INFO     Generating 3 comparison plots
-INFO     Successfully generated 3 plots
+INFO     Generating 4 comparison plots
+INFO     Successfully generated 4 plots
 INFO     Plots saved to: artifacts/sweep_qwen/plots/
-```
 ```
 
 **Output directory logic:**
@@ -125,10 +145,11 @@ artifacts/sweep_qwen/
 └── Qwen3-0.6B-concurrency4/
 ```
 
-**Default plots (3):**
+**Default plots (4):**
 1. **TTFT vs Throughput** - Time to first token vs request throughput
 2. **Token Throughput per GPU vs Latency** - GPU efficiency vs latency (requires GPU telemetry)
 3. **Token Throughput per GPU vs Interactivity** - GPU efficiency vs TTFT (requires GPU telemetry)
+4. **Latency vs Throughput (Joint Uncertainty)** - latency vs throughput-per-GPU with 95% confidence ellipses
 
 > [!TIP]
 > Use [Experiment Classification](#experiment-classification) to assign semantic colors (grey for baselines, green for treatments) for clearer visual distinction.
@@ -160,11 +181,17 @@ artifacts/single_run/
 └── profile_export.jsonl
 ```
 
-**Default plots (4+):**
-1. **TTFT Over Time** - Time to first token per request
-2. **Inter-Token Latency Over Time** - ITL per request
-3. **Request Latency Over Time** - End-to-end latency progression
-4. **Dispersed Throughput Over Time** - Continuous token generation rate
+**Default plots (5, enabled in shipped `single_run_defaults`):**
+1. **TTFT Over Time** (`ttft_over_time`) - Time to first token per request
+2. **TTFT Timeline** (`ttft_timeline`) - Per-request TTFT plotted against request start time
+3. **TTFT Across Timeslices** (`timeslices_ttft`) - TTFT statistics per time window
+4. **ITL Across Timeslices** (`timeslices_itl`) - Inter-token latency statistics per time window
+5. **GPU Utilization and Throughput Over Time** (`gpu_utilization_and_throughput_over_time`) - Correlated GPU usage and token rate (requires GPU telemetry)
+
+**Commented-out by default** (uncomment in `~/.aiperf/plot_config.yaml` to enable):
+- **Inter-Token Latency Over Time** (`itl_over_time`) - ITL per request
+- **Request Latency Over Time** (`latency_over_time`) - End-to-end latency progression
+- **Dispersed Throughput Over Time** (`dispersed_throughput_over_time`) - Continuous token generation rate
 
 **Additional plots (when data available):**
 - Timeslice plots (when `--slice-duration` used during profiling)
@@ -372,7 +399,7 @@ aiperf plot path/to/runs --dashboard
 The dashboard automatically detects visualization mode (multi-run comparison or single-run analysis) and displays appropriate tabs and controls. Press Ctrl+C in the terminal to stop the server.
 
 > [!TIP]
-> The dashboard runs on localhost only and requires no authentication. For remote access via SSH, use port forwarding: `ssh -L 8080:localhost:8080 user@remote-host`
+> The dashboard binds to `127.0.0.1` by default and requires no authentication. For remote access, either bind on all interfaces with `aiperf plot --dashboard --host 0.0.0.0 --port 9000` (only on trusted networks) or use SSH port forwarding: `ssh -L 8050:localhost:8050 user@remote-host`
 
 > [!NOTE]
 > Dashboard mode and PNG mode are separate. To generate both static PNGs and launch the dashboard, run the commands separately.
@@ -430,6 +457,7 @@ plots/
 ├── ttft_vs_throughput.png
 ├── pareto_curve_throughput_per_gpu_vs_latency.png
 ├── pareto_curve_throughput_per_gpu_vs_interactivity.png
+├── latency_throughput_uncertainty.png
 ├── ttft_over_time.png (single-run)
 ├── dispersed_throughput_over_time.png (single-run)
 ├── gpu_utilization_and_throughput_over_time.png (if GPU telemetry)

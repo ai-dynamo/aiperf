@@ -11,8 +11,8 @@ import pytest
 import soundfile as sf
 from PIL import Image
 
-from aiperf.common.config import VideoAudioConfig, VideoConfig
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.config.dataset.video import VideoAudioConfig, VideoConfig
 from aiperf.dataset.generator.video import VideoGenerator
 
 
@@ -105,7 +105,7 @@ class TestVideoGenerator:
 
     def test_generate_with_disabled_video(self):
         """Test that generate returns empty string when video is disabled."""
-        config = VideoConfig(
+        config = VideoConfig.model_construct(
             width=None,
             height=None,
             duration=1.0,

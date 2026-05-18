@@ -50,6 +50,10 @@ from aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
+from aiperf_mock_server.node_exporter_faker import (
+    render_default as render_node_exporter,
+)
+from aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
 from aiperf_mock_server.utils import (
     RequestCtx,
     make_ctx,
@@ -58,7 +62,7 @@ from aiperf_mock_server.utils import (
     stream_tgi_completion,
     with_error_injection,
 )
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from starlette.requests import Request
@@ -132,7 +136,11 @@ async def lifespan(_: FastAPI):
             server_config.dcgm_num_gpus,
             server_config.dcgm_gpu_name,
         )
-    yield
+    await init_scheduler(server_config)
+    try:
+        yield
+    finally:
+        await shutdown_scheduler()
 
 
 app = FastAPI(title="AIPerf Mock Server", version="2.0.0", lifespan=lifespan)
@@ -311,6 +319,73 @@ async def _text_stream_wrapper(ctx: RequestCtx, req: CompletionRequest, endpoint
 
 
 # ============================================================================
+# Responses
+# ============================================================================
+
+
+def _extract_responses_prompt(payload: dict[str, Any]) -> str:
+    input_value = payload.get("input", "")
+    if isinstance(input_value, str):
+        return input_value
+    if isinstance(input_value, list):
+        parts: list[str] = []
+        for item in input_value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                content = item.get("content", "")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    parts.extend(
+                        str(part.get("text", ""))
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+        return "\n".join(part for part in parts if part)
+    return str(input_value)
+
+
+def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
+    return {
+        "id": ctx.request_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "model": ctx.model,
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": ctx.content}],
+            }
+        ],
+        "output_text": ctx.content,
+        "usage": ctx.usage,
+    }
+
+
+@app.post("/v1/responses", response_model=None)
+@with_error_injection
+async def responses(req: dict[str, Any], request: Request) -> ORJSONResponse:
+    """Mock OpenAI Responses endpoint."""
+    endpoint = "/v1/responses"
+    model = str(req.get("model") or "test-model")
+    mock_req = ChatCompletionRequest(
+        model=model,
+        messages=[{"role": "user", "content": _extract_responses_prompt(req)}],
+    )
+    ctx = make_ctx(mock_req, endpoint, request.state.start_time)
+
+    with track_llm_request(ctx, model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        response_data = _build_responses_response_data(ctx)
+        record_request_bytes(
+            endpoint, len(ctx.tokenized.text), len(orjson.dumps(response_data))
+        )
+        return ORJSONResponse(response_data)
+
+
+# ============================================================================
 # Embeddings
 # ============================================================================
 
@@ -357,6 +432,22 @@ def _build_embedding_response_data(
     }
 
 
+def _extract_chat_embedding_inputs(req: ChatCompletionRequest) -> list[str]:
+    inputs: list[str] = []
+    for message in req.messages:
+        content = message.content
+        if isinstance(content, str):
+            inputs.append(content)
+            continue
+        text = "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+        inputs.append(text)
+    return inputs or [""]
+
+
 @app.post("/v1/embeddings", response_model=None)
 @with_error_injection
 async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
@@ -381,6 +472,35 @@ async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
         )
 
         return ORJSONResponse(_build_embedding_response_data(ctx, req.inputs))
+
+
+@app.post("/v1/chat/embeddings", response_model=None)
+@with_error_injection
+async def chat_embeddings(
+    req: ChatCompletionRequest, request: Request
+) -> ORJSONResponse:
+    """Chat-shaped embedding endpoint."""
+    endpoint = "/v1/chat/embeddings"
+    start_time = request.state.start_time
+    ctx = make_ctx(req, endpoint, start_time)
+    inputs = _extract_chat_embedding_inputs(req)
+
+    with track_request(endpoint, req.model):
+        await _wait_for_processing(
+            server_config.embedding_base_latency,
+            server_config.embedding_per_input_latency,
+            len(inputs),
+        )
+
+        record_embedding_success(
+            endpoint,
+            req.model,
+            ctx.usage["prompt_tokens"],
+            len(inputs),
+            perf_counter() - start_time,
+        )
+
+        return ORJSONResponse(_build_embedding_response_data(ctx, inputs))
 
 
 # ============================================================================
@@ -548,11 +668,12 @@ def _build_image_retrieval_response_data(
     }
 
 
+@app.post("/v1/infer", response_model=None)
 @app.post("/v1/image/infer", response_model=None)
 @with_error_injection
 async def image_retrieval(req: ImageRetrievalRequest) -> ORJSONResponse:
     """Mock NIM Image Retrieval endpoint."""
-    endpoint = "/v1/image/infer"
+    endpoint = "/v1/infer"
     start_time = perf_counter()
     num_images = len(req.input)
 
@@ -676,6 +797,68 @@ async def _tgi_stream_wrapper(ctx: RequestCtx, endpoint: str, start_time: float)
 
 
 # ============================================================================
+# Video Generation
+# ============================================================================
+
+
+async def _read_video_payload(request: Request) -> dict[str, Any]:
+    content_type = request.headers.get("content-type", "")
+    if (
+        "multipart/form-data" in content_type
+        or "application/x-www-form-urlencoded" in content_type
+    ):
+        form = await request.form()
+        return dict(form.multi_items())
+    payload = await request.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+def _video_response_data(
+    video_id: str, request: Request, model: str = "test-model"
+) -> dict[str, Any]:
+    content_url = str(request.base_url).rstrip("/") + f"/v1/videos/{video_id}/content"
+    now = int(time.time())
+    return {
+        "id": video_id,
+        "object": "video",
+        "status": "completed",
+        "progress": 100,
+        "url": content_url,
+        "model": model,
+        "created_at": now,
+        "completed_at": now,
+        "inference_time_s": 0.0,
+    }
+
+
+@app.post("/v1/videos", response_model=None)
+@with_error_injection
+async def video_generation(request: Request) -> ORJSONResponse:
+    """Mock OpenAI/SGLang video generation submit endpoint."""
+    payload = await _read_video_payload(request)
+    model = str(payload.get("model") or "test-model")
+    prompt = str(payload.get("prompt") or "")
+    digest = hashlib.blake2s(prompt.encode("utf-8"), digest_size=6).hexdigest()
+    video_id = f"video-{digest}"
+    return ORJSONResponse(_video_response_data(video_id, request, model))
+
+
+@app.get("/v1/videos/{video_id}", response_model=None)
+async def video_generation_status(video_id: str, request: Request) -> ORJSONResponse:
+    """Mock OpenAI/SGLang video generation polling endpoint."""
+    return ORJSONResponse(_video_response_data(video_id, request))
+
+
+@app.get("/v1/videos/{video_id}/content", response_model=None)
+async def video_generation_content(video_id: str) -> Response:
+    """Mock OpenAI/SGLang video generation content endpoint."""
+    return Response(
+        content=f"mock-video:{video_id}".encode(),
+        media_type="application/octet-stream",
+    )
+
+
+# ============================================================================
 # Image Generation
 # ============================================================================
 
@@ -775,6 +958,72 @@ async def image_generation(
     with track_llm_request(ctx, req.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         return ORJSONResponse(_build_image_response_data(ctx, req))
+
+
+# Each parameter calls Form/File fresh so FastAPI builds an independent
+# FieldInfo per parameter (alias resolution, validators, etc.) — sharing a
+# single instance across multiple parameters lets state leak between them.
+# B008 is the FastAPI-idiomatic exception to "no function calls in defaults".
+@app.post("/v1/images/edits", response_model=None)
+@with_error_injection
+async def image_edits(
+    request: Request,
+    prompt: str = Form(...),  # noqa: B008
+    image: UploadFile | None = File(None),  # noqa: B008
+    url: str | None = Form(None),  # noqa: B008
+    model: str = Form("mock-model"),  # noqa: B008
+    n: int = Form(1),  # noqa: B008
+    response_format: str = Form("b64_json"),  # noqa: B008
+    size: str | None = Form(None),  # noqa: B008
+    num_inference_steps: int | None = Form(None),  # noqa: B008
+    guidance_scale: float | None = Form(None),  # noqa: B008
+    true_cfg_scale: float | None = Form(None),  # noqa: B008
+    seed: int | None = Form(None),  # noqa: B008
+) -> ORJSONResponse:
+    """Mock OpenAI Image Edit endpoint.
+
+    Drains the uploaded image so multipart parsing is exercised, then
+    returns a deterministic b64-encoded JPEG.
+    """
+    endpoint = "/v1/images/edits"
+    if image is None and not url:
+        raise HTTPException(
+            status_code=422, detail="Field 'image' or 'url' is required"
+        )
+
+    if image is not None:
+        upload_bytes = await image.read()
+        upload_size = len(upload_bytes)
+    else:
+        upload_size = 0
+
+    start_time = request.state.start_time
+    mock_req = ChatCompletionRequest(
+        model=model, messages=[{"role": "user", "content": prompt}]
+    )
+    ctx = make_ctx(mock_req, endpoint, start_time)
+
+    img_req = ImageGenerationRequest(
+        prompt=prompt,
+        model=model,
+        n=n,
+        response_format=response_format,
+        size=size,
+    )
+
+    with track_llm_request(ctx, model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        body = _build_image_response_data(ctx, img_req)
+        body["input_image_bytes"] = upload_size
+        if num_inference_steps is not None:
+            body["num_inference_steps"] = num_inference_steps
+        if guidance_scale is not None:
+            body["guidance_scale"] = guidance_scale
+        if true_cfg_scale is not None:
+            body["true_cfg_scale"] = true_cfg_scale
+        if seed is not None:
+            body["seed"] = seed
+        return ORJSONResponse(body)
 
 
 # ============================================================================
@@ -905,6 +1154,18 @@ async def prometheus_metrics() -> Response:
     if server_start_time > 0:
         SERVER_UPTIME_SECONDS.set(time.time() - server_start_time)
     return metrics_response(AIPERF_MOCK_REGISTRY)
+
+
+@app.get("/node_exporter/metrics")
+async def node_exporter_metrics() -> Response:
+    """Fake node-exporter Prometheus metrics endpoint.
+
+    Emits an exposition body similar to a real node-exporter scrape, covering
+    every metric type AIPerf handles (gauge, counter, histogram, summary) plus
+    multiple `# TYPE foo untyped` families and one family with no `# TYPE`
+    declaration at all. Values drift per scrape so derived stats are non-zero.
+    """
+    return Response(content=render_node_exporter(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/vllm/metrics")

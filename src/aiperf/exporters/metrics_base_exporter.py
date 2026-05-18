@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 
@@ -19,8 +20,9 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         self._results = exporter_config.results
         self._telemetry_results = exporter_config.telemetry_results
         self._server_metrics_results = exporter_config.server_metrics_results
-        self._user_config = exporter_config.user_config
-        self._output_directory = exporter_config.user_config.output.artifact_directory
+        self._cfg = exporter_config.cfg
+        self._run = exporter_config.run
+        self._output_directory = exporter_config.cfg.artifacts.artifact_directory
 
     def _prepare_metrics(
         self, metric_results: Iterable[MetricResult]
@@ -60,7 +62,9 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         Raises:
             Exception: If file writing fails
         """
-        self._output_directory.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            self._output_directory.mkdir, parents=True, exist_ok=True
+        )
 
         self.debug(lambda: f"Exporting data to file: {self._file_path}")
 

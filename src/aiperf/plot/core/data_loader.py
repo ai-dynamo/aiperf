@@ -16,11 +16,12 @@ from typing import Any
 import numpy as np
 import orjson
 import pandas as pd
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
 from aiperf.common.models.server_metrics_models import (
     CounterTimeslice,
@@ -30,6 +31,7 @@ from aiperf.common.models.server_metrics_models import (
 )
 from aiperf.plot.constants import (
     NON_METRIC_KEYS,
+    PROFILE_EXPORT_AIPERF_AGGREGATE_JSON,
     PROFILE_EXPORT_AIPERF_JSON,
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL,
     PROFILE_EXPORT_JSONL,
@@ -48,12 +50,14 @@ class RunMetadata(AIPerfBaseModel):
     run_name: str = Field(description="Name of the run (typically directory name)")
     run_path: Path = Field(description="Path to the run directory")
     model: str | None = Field(default=None, description="Model name used in the run")
-    concurrency: int | None = Field(default=None, description="Concurrency level used")
+    concurrency: int | None = Field(
+        default=None, ge=1, description="Concurrency level used"
+    )
     request_count: int | None = Field(
-        default=None, description="Total number of requests"
+        default=None, ge=0, description="Total number of requests"
     )
     duration_seconds: float | None = Field(
-        default=None, description="Duration of the run in seconds"
+        default=None, ge=0, description="Duration of the run in seconds"
     )
     endpoint_type: str | None = Field(
         default=None, description="Type of endpoint (e.g., 'chat', 'completions')"
@@ -74,6 +78,21 @@ class RunMetadata(AIPerfBaseModel):
     experiment_group: str = Field(
         default="",
         description="Experiment group identifier extracted from run name or path for grouping variants",
+    )
+    variation_label: str | None = Field(
+        default=None,
+        description=(
+            "Stable cell identity for sweep layouts — matches the orchestrator's "
+            "``SweepVariation.label`` (named scenarios like ``shape_512_128_c10``, "
+            "or the ``concurrency_10`` form for grid sweeps). Distinct "
+            "from ``run_name`` because the run directory may be a generic shell "
+            "(``aggregate/`` under INDEPENDENT trials>1) that hides the cell "
+            "identity. Resolved from the aggregate JSON's "
+            "``metadata.variation_label`` first, then by walking up the path "
+            "when ``run_name == 'aggregate'``, then falls back to ``run_name``. "
+            "Use this for grouping runs across scenarios in dashboards; never "
+            "aggregate metrics across two runs with different ``variation_label``s."
+        ),
     )
 
 
@@ -184,6 +203,41 @@ DERIVED_METRICS_REGISTRY: dict[str, callable] = {
 }
 
 
+_KNOWN_STAT_SUFFIXES: frozenset[str] = frozenset(
+    (
+        "avg",
+        "p1",
+        "p5",
+        "p10",
+        "p25",
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99",
+        "min",
+        "max",
+        "std",
+        "count",
+        "sum",
+    )
+)
+"""Stat-key suffixes that ``ConfidenceAggregation`` flattens onto metric names.
+
+The confidence-aggregate exporter writes one entry per ``(metric_name, stat_key)``
+pair under a flat key like ``"request_latency_p99"`` (see
+``ConfidenceAggregation.aggregate`` in
+``src/aiperf/orchestrator/aggregation/confidence.py``). To reverse this back into
+the single-run shape that the rest of the plot pipeline expects (one
+``MetricResult`` per metric, with stat fields nested), ``DataLoader._load_aggregate_only``
+``rpartition`` s each flat key on the last underscore and groups by the head
+when the tail is in this set. Tails not in this set are treated as a metric
+name with no stat suffix and bucketed under ``avg``.
+
+Sourced from the populated fields on ``JsonMetricResult`` (see
+``src/aiperf/common/models/export_models.py``)."""
+
+
 class DataLoader(AIPerfLoggerMixin):
     """
     Loader for AIPerf profiling data.
@@ -218,15 +272,32 @@ class DataLoader(AIPerfLoggerMixin):
         """
         Load data from a single profiling run.
 
+        Routes between two on-disk shapes:
+
+        - **Single-run / per-trial**: ``profile_export.jsonl`` +
+          ``profile_export_aiperf.json`` at ``run_path``. The traditional
+          path; reads per-request events and the per-run aggregate.
+        - **Per-cell confidence-aggregate**: only
+          ``profile_export_aiperf_aggregate.json`` is present (no JSONL,
+          because aggregates have no per-request events). Emitted by the
+          sweep orchestrator at ``<base>/aggregate/<cell>/`` (REPEATED) or
+          ``<base>/<cell>/aggregate/`` (INDEPENDENT) for trials>1 sweeps.
+          The flat-by-stat ``request_latency_p99``-style keys are
+          un-flattened into the single-run shape so downstream plotting
+          code stays uniform; CI/std/cv fields from the confidence shape
+          are dropped because :class:`MetricResult` has no slots for them.
+
         Args:
             run_path: Path to the run directory.
             load_per_request_data: Whether to load per-request data from JSONL.
                 Defaults to True. Set to False for multi-run comparisons where
-                per-request data is not needed.
+                per-request data is not needed. Ignored for the
+                aggregate-only path (no JSONL exists to read).
 
         Returns:
             RunData object containing metadata, per-request data, and aggregated
-            statistics.
+            statistics. Aggregate-only runs return RunData with
+            ``requests=None`` and no timeslices/GPU/server-metrics data.
 
         Raises:
             DataLoadError: If data cannot be loaded from the run directory.
@@ -241,6 +312,9 @@ class DataLoader(AIPerfLoggerMixin):
 
         jsonl_path = run_path / PROFILE_EXPORT_JSONL
         if not jsonl_path.exists():
+            aggregate_path = run_path / PROFILE_EXPORT_AIPERF_AGGREGATE_JSON
+            if aggregate_path.exists():
+                return self._load_aggregate_only(run_path, aggregate_path)
             raise DataLoadError("Required JSONL file not found", path=str(jsonl_path))
 
         requests_df = self._load_jsonl(jsonl_path) if load_per_request_data else None
@@ -350,6 +424,172 @@ class DataLoader(AIPerfLoggerMixin):
             server_metrics=server_metrics_df,
             server_metrics_aggregated=server_metrics_aggregated,
         )
+
+    def _load_aggregate_only(self, run_path: Path, aggregate_path: Path) -> RunData:
+        """Load a per-cell confidence-aggregate dir as a pseudo-run.
+
+        Reads ``profile_export_aiperf_aggregate.json`` (no JSONL exists for
+        aggregate cells) and re-shapes the confidence-aggregate metrics
+        into the single-run format so the rest of the plot pipeline can
+        operate uniformly. See :func:`load_run` for routing context and
+        the module-level ``_KNOWN_STAT_SUFFIXES`` for the un-flatten rule.
+
+        Args:
+            run_path: The aggregate-cell directory.
+            aggregate_path: ``run_path / profile_export_aiperf_aggregate.json``,
+                already known to exist.
+
+        Returns:
+            RunData with ``requests=None`` and only ``metadata`` +
+            ``aggregated`` populated. Timeslice / GPU / server-metrics
+            fields stay at their defaults because aggregate dirs do not
+            persist time-series data.
+        """
+        raw = self._read_aggregate_json(aggregate_path)
+        unflattened = self._unflatten_confidence_metrics(raw.get("metrics", {}) or {})
+
+        aggregated: dict[str, Any] = dict(raw)
+        aggregated["metrics"] = unflattened
+        aggregated.setdefault("aggregation_type", "confidence")
+
+        self._mirror_metrics_to_top_level(aggregated, unflattened)
+        self._plumb_variation_values_into_input_config(aggregated, raw)
+
+        self._add_all_derived_metrics(aggregated)
+        metadata = self._extract_metadata(
+            run_path, requests_df=None, aggregated=aggregated
+        )
+        self.info(f"Loaded aggregate-only run from {run_path}")
+        return RunData(metadata=metadata, requests=None, aggregated=aggregated)
+
+    def _read_aggregate_json(self, aggregate_path: Path) -> dict[str, Any]:
+        """Read+parse a confidence-aggregate JSON, raising DataLoadError on failure."""
+        try:
+            with open(aggregate_path, "rb") as f:
+                return orjson.loads(f.read())
+        except orjson.JSONDecodeError as e:
+            raise DataLoadError(
+                f"Failed to parse aggregate JSON: {e}", path=str(aggregate_path)
+            ) from e
+        except OSError as e:
+            raise DataLoadError(
+                f"Failed to read aggregate JSON: {e}", path=str(aggregate_path)
+            ) from e
+
+    def _mirror_metrics_to_top_level(
+        self,
+        aggregated: dict[str, Any],
+        unflattened: dict[str, JsonMetricResult | dict[str, Any]],
+    ) -> None:
+        """Copy un-flattened metrics to top-level keys for plot discovery.
+
+        ``MetricsJsonExporter`` writes single-run metrics as TOP-LEVEL fields
+        (one per ``metric_tag``) — see
+        ``src/aiperf/exporters/metrics_json_exporter.py``. The downstream
+        ``get_available_metrics`` iterates ``aggregated.items()`` at the top
+        level and skips the nested ``"metrics"`` key. Mirroring keeps
+        aggregate cells visible the same way single-run cells are. We mirror
+        the dump-form (plain dict with ``unit`` + stat fields) rather than
+        the ``JsonMetricResult`` instance, because ``get_available_metrics``
+        expects ``isinstance(..., dict)``. Reserved keys (``metadata``,
+        ``input_config``) are not clobbered.
+        """
+        for metric_name, parsed in unflattened.items():
+            if metric_name in aggregated:
+                continue
+            if hasattr(parsed, "model_dump"):
+                aggregated[metric_name] = parsed.model_dump(
+                    mode="json", exclude_none=True
+                )
+            elif isinstance(parsed, dict):
+                aggregated[metric_name] = parsed
+
+    def _plumb_variation_values_into_input_config(
+        self, aggregated: dict[str, Any], raw: dict[str, Any]
+    ) -> None:
+        """Surface ``variation_values["...concurrency"]`` to ``input_config.loadgen``.
+
+        The aggregate file's metadata block carries ``variation_label`` /
+        ``variation_values`` when the sweep orchestrator wrote it (see
+        ``_export_one_variation_aggregate`` in
+        ``src/aiperf/cli_runner/_sweep_aggregate.py``). The aggregate file does
+        NOT carry an ``input_config`` block, so without this plumb the
+        dashboard's per-cell concurrency labels (which read
+        ``RunMetadata.concurrency``) come back ``None``. Only triggers on
+        leaf ``concurrency`` dims; other swept fields would need their own
+        explicit plumb.
+        """
+        meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        variation_values = (
+            meta.get("variation_values")
+            if isinstance(meta.get("variation_values"), dict)
+            else {}
+        )
+        if not variation_values:
+            return
+        for key, value in variation_values.items():
+            leaf = key.rsplit(".", 1)[-1]
+            if leaf == "concurrency" and isinstance(value, int) and value >= 1:
+                aggregated.setdefault("input_config", {}).setdefault("loadgen", {})[
+                    "concurrency"
+                ] = value
+                return
+
+    def _unflatten_confidence_metrics(
+        self, flat: dict[str, Any]
+    ) -> dict[str, JsonMetricResult | dict[str, Any]]:
+        """Reverse the ``f"{metric_name}_{stat_key}"`` flattening.
+
+        Confidence aggregate JSON stores one entry per ``(metric, stat)``
+        pair under a flat key like ``"request_latency_p99"`` whose payload
+        carries ``{mean, std, min, max, cv, se, ci_low, ci_high, t_critical, unit}``.
+        :class:`JsonMetricResult` (the base shape the rest of plot
+        consumes via ``RunData.get_metric``) has fields
+        ``{unit, avg, p1..p99, min, max, std, count, sum}`` nested under
+        one entry per metric. We map ``payload["mean"]`` onto the matching
+        stat slot and drop CI/cv/se/t_critical because
+        ``JsonMetricResult`` has no place for them.
+
+        We use ``JsonMetricResult`` rather than the richer
+        ``MetricResult`` (single-run path) because the latter requires
+        ``tag``/``header`` fields that neither single-run JSON nor
+        aggregate JSON carry — the single-run loader silently falls back
+        to the raw dict on the same constraint. Building a
+        ``JsonMetricResult`` directly keeps every metric attribute-
+        accessible.
+
+        Keys whose right-side suffix is not in ``_KNOWN_STAT_SUFFIXES``
+        are bucketed under ``avg`` so they remain visible (e.g. derived
+        metrics that happen to lack a suffix).
+        """
+        nested: dict[str, dict[str, Any]] = {}
+        for flat_key, payload in flat.items():
+            if not isinstance(payload, dict):
+                continue
+            head, _, tail = flat_key.rpartition("_")
+            if tail in _KNOWN_STAT_SUFFIXES and head:
+                metric_name, stat_key = head, tail
+            else:
+                metric_name, stat_key = flat_key, "avg"
+
+            bucket = nested.setdefault(metric_name, {"unit": ""})
+            unit = payload.get("unit")
+            if unit and not bucket["unit"]:
+                bucket["unit"] = unit
+            mean_value = payload.get("mean")
+            if mean_value is not None:
+                bucket[stat_key] = mean_value
+
+        parsed: dict[str, JsonMetricResult | dict[str, Any]] = {}
+        for name, fields in nested.items():
+            try:
+                parsed[name] = JsonMetricResult(**fields)
+            except (ValidationError, TypeError, ValueError) as e:
+                self.warning(
+                    f"Failed to parse aggregate metric {name} as JsonMetricResult: {e}"
+                )
+                parsed[name] = fields
+        return parsed
 
     def load_multiple_runs(self, run_paths: list[Path]) -> list[RunData]:
         """
@@ -1433,7 +1673,18 @@ class DataLoader(AIPerfLoggerMixin):
 
         experiment_type = self._classify_experiment_type(run_path, run_name)
 
-        experiment_group = self._extract_experiment_group(run_path, run_name)
+        variation_label = self._resolve_variation_label(run_path, aggregated)
+
+        # ``experiment_group`` is what the dashboard's MULTI_RUN view
+        # uses to bucket runs. When the run dir name is a generic
+        # counter (``run_0001``, ``trial_0001``), every cell collapses
+        # into one bucket and the plot becomes unusable. Prefer the
+        # cell-identity ``variation_label`` (which walks up generic
+        # shells), and fall back to the
+        # ``_extract_experiment_group`` behavior only when no label was
+        # resolved.
+        experiment_group_fallback = self._extract_experiment_group(run_path, run_name)
+        experiment_group = variation_label or experiment_group_fallback
 
         return RunMetadata(
             run_name=run_name,
@@ -1448,4 +1699,89 @@ class DataLoader(AIPerfLoggerMixin):
             was_cancelled=was_cancelled,
             experiment_type=experiment_type,
             experiment_group=experiment_group,
+            variation_label=variation_label,
         )
+
+    def _resolve_variation_label(
+        self, run_path: Path, aggregated: dict[str, Any]
+    ) -> str | None:
+        """Recover the cell identity (``SweepVariation.label``) for this run.
+
+        Two source kinds, tried in order:
+
+        1. ``aggregated["metadata"]["variation_label"]`` — the orchestrator
+           stamps this onto the per-cell aggregate JSON (see
+           ``_export_one_variation_aggregate`` in
+           ``src/aiperf/cli_runner/_sweep_aggregate.py``). Authoritative.
+        2. **Path walk-up through generic shells.** The run directory's
+           own name is often a generic counter that hides the cell:
+           ``aggregate/`` (INDEPENDENT trials>1), ``run_NNNN``
+           (per-run inside ``profile_runs``), ``trial_NNNN`` (REPEATED /
+           INDEPENDENT trial counter), ``search_iter_NNNN`` (adaptive BO
+           iteration counter). We walk up while the segment matches the
+           generic set and stop at the first meaningful name.
+
+           Concrete current-code (``orchestrator.py`` ``_resolve_artifact_dir``
+           and ``sweep.py`` ``_format_dir_name``) examples:
+
+           - ``<base>/concurrency_10/profile_runs/trial_0001/`` →
+             ``concurrency_10``.
+           - ``<base>/concurrency_10/aggregate/`` → ``concurrency_10``.
+           - ``<base>/aggregate/concurrency_10/`` → ``concurrency_10``.
+           - ``<base>/search_iter_0000/profile_runs/run_0001/`` →
+             ``search_iter_0000`` (the BO iteration IS the cell identity
+             for adaptive runs; we stop walking when we hit this name
+             pattern only after consuming a generic ``run_NNNN`` /
+             ``profile_runs`` ancestor).
+
+        Used by the dashboard to group runs across scenarios. Per the
+        ``feedback_never_aggregate_across_runs`` rule, runs with
+        different ``variation_label``s must NOT be pooled — they are
+        independent benchmarks.
+        """
+        meta_block = (
+            aggregated.get("metadata") if isinstance(aggregated, dict) else None
+        )
+        if isinstance(meta_block, dict):
+            label = meta_block.get("variation_label")
+            if isinstance(label, str) and label:
+                return label
+
+        return self._meaningful_path_segment(run_path)
+
+    def _meaningful_path_segment(self, run_path: Path) -> str | None:
+        """Walk ``run_path`` upward through generic shell names.
+
+        Generic names current code emits as carriers, not as cell
+        identifiers (``aiperf.orchestrator.orchestrator._resolve_artifact_dir``
+        + ``aiperf.config.sweep._format_dir_name``):
+
+        - ``aggregate`` — INDEPENDENT trials>1 cell aggregate shell.
+        - ``profile_runs`` — per-trial / per-run subtree wrapper.
+        - ``run_NNNN`` — multi-run no-sweep counter.
+        - ``trial_NNNN`` — REPEATED / INDEPENDENT trial counter.
+
+        ``search_iter_NNNN`` is intentionally NOT in the generic set:
+        for adaptive BO runs, the search iteration IS the cell identity
+        (each iteration evaluates a distinct sample), so we stop at it.
+
+        Stops at the first non-generic name and returns it. Falls back
+        to ``run_path.name`` when every walked segment is generic
+        (paths consisting entirely of trial / run counters), and to
+        ``None`` only when the path itself has no name (e.g. ``"/"``).
+        """
+        import re
+
+        generic_exact = {"aggregate", "profile_runs"}
+        generic_pattern = re.compile(r"^(run|trial)_\d+$")
+
+        current = run_path
+        while current != current.parent:
+            name = current.name
+            if not name:
+                break
+            if name in generic_exact or generic_pattern.match(name):
+                current = current.parent
+                continue
+            return name
+        return run_path.name or None

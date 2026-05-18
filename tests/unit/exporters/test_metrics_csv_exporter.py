@@ -8,22 +8,20 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.models import MetricResult
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.config.artifacts import OutputDefaults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
 from aiperf.plugin.enums import EndpointType
+from tests.unit.exporters.conftest import make_exporter_config
 
 
 @pytest.fixture
-def mock_user_config():
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="custom_endpoint",
-        )
+def mock_cfg():
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        custom_endpoint="/custom_endpoint",
     )
 
 
@@ -90,7 +88,7 @@ def _read(path: Path) -> str:
 
 @pytest.mark.asyncio
 async def test_metrics_csv_exporter_writes_two_sections_and_values(
-    monkeypatch, mock_user_config, mk_metric
+    monkeypatch, mock_cfg, mk_metric
 ):
     """
     Verifies:
@@ -130,11 +128,10 @@ async def test_metrics_csv_exporter_writes_two_sections_and_values(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.output.artifact_directory = outdir
-        cfg = ExporterConfig(
+        mock_cfg.artifact_directory = outdir
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -164,7 +161,7 @@ async def test_metrics_csv_exporter_writes_two_sections_and_values(
 
 @pytest.mark.asyncio
 async def test_metrics_csv_exporter_empty_records_creates_empty_file(
-    monkeypatch, mock_user_config
+    monkeypatch, mock_cfg
 ):
     """
     With no records, exporter still creates the file but content is empty (no sections).
@@ -174,11 +171,10 @@ async def test_metrics_csv_exporter_empty_records_creates_empty_file(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.output.artifact_directory = outdir
-        cfg = ExporterConfig(
+        mock_cfg.artifact_directory = outdir
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -193,7 +189,7 @@ async def test_metrics_csv_exporter_empty_records_creates_empty_file(
 
 @pytest.mark.asyncio
 async def test_metrics_csv_exporter_deterministic_sort_order(
-    monkeypatch, mock_user_config, mk_metric
+    monkeypatch, mock_cfg, mk_metric
 ):
     """
     Ensures metrics are sorted by tag deterministically within each section.
@@ -207,11 +203,10 @@ async def test_metrics_csv_exporter_deterministic_sort_order(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.output.artifact_directory = outdir
-        cfg = ExporterConfig(
+        mock_cfg.artifact_directory = outdir
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -238,7 +233,7 @@ async def test_metrics_csv_exporter_deterministic_sort_order(
 
 @pytest.mark.asyncio
 async def test_metrics_csv_exporter_unit_aware_number_formatting(
-    monkeypatch, mock_user_config, mk_metric
+    monkeypatch, mock_cfg, mk_metric
 ):
     """
     Validates unit-aware formatting policy:
@@ -256,11 +251,10 @@ async def test_metrics_csv_exporter_unit_aware_number_formatting(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.output.artifact_directory = outdir
-        cfg = ExporterConfig(
+        mock_cfg.artifact_directory = outdir
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -279,7 +273,7 @@ async def test_metrics_csv_exporter_unit_aware_number_formatting(
 
 @pytest.mark.asyncio
 async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
-    monkeypatch, mock_user_config, mk_metric
+    monkeypatch, mock_cfg, mk_metric
 ):
     """
     On write failure, exporter.error should be called and the exception should propagate.
@@ -309,11 +303,10 @@ async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.output.artifact_directory = outdir
-        cfg = ExporterConfig(
+        mock_cfg.artifact_directory = outdir
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -347,7 +340,7 @@ async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
     ],
 )
 @pytest.mark.asyncio
-async def test_format_number_various_types(mock_user_config, value, expected):
+async def test_format_number_various_types(mock_cfg, value, expected):
     """
     Test the `_format_number` method with various input types.
 
@@ -358,10 +351,9 @@ async def test_format_number_various_types(mock_user_config, value, expected):
     - Strings as themselves
     - Boolean values as their string representation
     """
-    cfg = ExporterConfig(
+    cfg = make_exporter_config(
         results=None,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        cli_config=mock_cfg,
         telemetry_results=None,
     )
     exporter = MetricsCsvExporter(cfg)
@@ -373,14 +365,14 @@ class TestMetricsCsvExporterTelemetry:
 
     @pytest.mark.asyncio
     async def test_csv_export_with_telemetry_data(
-        self, mock_user_config, sample_telemetry_results
+        self, mock_cfg, sample_telemetry_results
     ):
         """Test that CSV export includes telemetry data section."""
         from aiperf.common.models import ProfileResults
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
             results = ProfileResults(
                 records=[
@@ -396,10 +388,9 @@ class TestMetricsCsvExporterTelemetry:
                 completed=0,
             )
 
-            cfg = ExporterConfig(
+            cfg = make_exporter_config(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_cfg,
                 telemetry_results=sample_telemetry_results,
             )
 
@@ -417,13 +408,13 @@ class TestMetricsCsvExporterTelemetry:
             assert "GPU Utilization (%)" in content or "GPU Utilization" in content
 
     @pytest.mark.asyncio
-    async def test_csv_export_without_telemetry_data(self, mock_user_config):
+    async def test_csv_export_without_telemetry_data(self, mock_cfg):
         """Test that CSV export works when telemetry_results is None."""
         from aiperf.common.models import ProfileResults
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
             results = ProfileResults(
                 records=[
@@ -439,10 +430,9 @@ class TestMetricsCsvExporterTelemetry:
                 completed=0,
             )
 
-            cfg = ExporterConfig(
+            cfg = make_exporter_config(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_cfg,
                 telemetry_results=None,
             )
 
@@ -459,21 +449,20 @@ class TestMetricsCsvExporterTelemetry:
 
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_multi_gpu(
-        self, mock_user_config, sample_telemetry_results
+        self, mock_cfg, sample_telemetry_results
     ):
         """Test that CSV export includes data for multiple GPUs."""
         from aiperf.common.models import ProfileResults
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
 
-            cfg = ExporterConfig(
+            cfg = make_exporter_config(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_cfg,
                 telemetry_results=sample_telemetry_results,
             )
 
@@ -489,7 +478,7 @@ class TestMetricsCsvExporterTelemetry:
             assert "GPU_Index" in content
 
     @pytest.mark.asyncio
-    async def test_csv_export_telemetry_metric_row_exceptions(self, mock_user_config):
+    async def test_csv_export_telemetry_metric_row_exceptions(self, mock_cfg):
         """Test that metric row write handles missing metrics gracefully."""
         from datetime import datetime
 
@@ -503,7 +492,7 @@ class TestMetricsCsvExporterTelemetry:
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
             # Create TelemetryExportData with GPU that has no metrics
             telemetry_results = TelemetryExportData(
@@ -530,10 +519,9 @@ class TestMetricsCsvExporterTelemetry:
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
 
-            cfg = ExporterConfig(
+            cfg = make_exporter_config(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_cfg,
                 telemetry_results=telemetry_results,
             )
 
@@ -545,7 +533,7 @@ class TestMetricsCsvExporterTelemetry:
             assert csv_file.exists()
 
     @pytest.mark.asyncio
-    async def test_csv_gpu_summary_metrics_check(self, mock_user_config):
+    async def test_csv_gpu_summary_metrics_check(self, mock_cfg):
         """Test that GPU metrics are checked correctly in the new structure."""
         from aiperf.common.models.export_models import (
             GpuSummary,
@@ -581,7 +569,7 @@ class TestMetricsCsvExporterTelemetry:
         assert "gpu_power_usage" not in gpu_summary_without_metric.metrics
 
     @pytest.mark.asyncio
-    async def test_csv_export_telemetry_multi_endpoint(self, mock_user_config):
+    async def test_csv_export_telemetry_multi_endpoint(self, mock_cfg):
         """Test CSV export with multiple DCGM endpoints."""
         from datetime import datetime
 
@@ -596,7 +584,7 @@ class TestMetricsCsvExporterTelemetry:
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
             # Create TelemetryExportData for two endpoints
             telemetry_results = TelemetryExportData(
@@ -656,10 +644,9 @@ class TestMetricsCsvExporterTelemetry:
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
 
-            cfg = ExporterConfig(
+            cfg = make_exporter_config(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_cfg,
                 telemetry_results=telemetry_results,
             )
 
@@ -677,7 +664,7 @@ class TestMetricsCsvExporterTelemetry:
             assert "GPU Model 2" in content
 
     @pytest.mark.asyncio
-    async def test_csv_export_telemetry_empty_metrics(self, mock_user_config):
+    async def test_csv_export_telemetry_empty_metrics(self, mock_cfg):
         """Test CSV export when GPU has no metric data."""
         from datetime import datetime
 
@@ -691,7 +678,7 @@ class TestMetricsCsvExporterTelemetry:
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
             # Create TelemetryExportData with GPU that has no metrics
             telemetry_results = TelemetryExportData(
@@ -718,10 +705,9 @@ class TestMetricsCsvExporterTelemetry:
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
 
-            cfg = ExporterConfig(
+            cfg = make_exporter_config(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                cli_config=mock_cfg,
                 telemetry_results=telemetry_results,
             )
 
@@ -738,15 +724,14 @@ class TestMetricsCsvExporterTelemetry:
             assert "Empty GPU" not in content
 
     @pytest.mark.asyncio
-    async def test_csv_format_number_small_values(self, mock_user_config):
+    async def test_csv_format_number_small_values(self, mock_cfg):
         """Test _format_number with very small values."""
         from aiperf.common.models import ProfileResults
 
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-        cfg = ExporterConfig(
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -761,17 +746,16 @@ class TestMetricsCsvExporterTelemetry:
         assert result == "0.00"
 
     @pytest.mark.asyncio
-    async def test_csv_format_number_decimal_type(self, mock_user_config):
+    async def test_csv_format_number_decimal_type(self, mock_cfg):
         """Test _format_number with Decimal type."""
         from decimal import Decimal
 
         from aiperf.common.models import ProfileResults
 
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-        cfg = ExporterConfig(
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=None,
         )
 
@@ -831,15 +815,14 @@ class TestOptionalTelemetryHeaders:
             endpoints={"node1:9400": EndpointData(gpus=gpu_dict)},
         )
 
-    def _make_exporter(self, mock_user_config, telemetry):
+    def _make_exporter(self, mock_cfg, telemetry):
         """Create exporter with given telemetry data."""
         from aiperf.common.models import ProfileResults
 
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-        cfg = ExporterConfig(
+        cfg = make_exporter_config(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            cli_config=mock_cfg,
             telemetry_results=telemetry,
         )
         return MetricsCsvExporter(cfg)
@@ -880,7 +863,7 @@ class TestOptionalTelemetryHeaders:
     )
     async def test_csv_optional_headers(
         self,
-        mock_user_config,
+        mock_cfg,
         gpus,
         expected_headers,
         expected_values,
@@ -891,9 +874,9 @@ class TestOptionalTelemetryHeaders:
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.output.artifact_directory = outdir
+            mock_cfg.artifact_directory = outdir
 
-            exporter = self._make_exporter(mock_user_config, telemetry)
+            exporter = self._make_exporter(mock_cfg, telemetry)
             await exporter.export()
 
             content = (
@@ -939,11 +922,11 @@ class TestOptionalTelemetryHeaders:
         ],
     )
     def test_get_optional_headers_and_fields(
-        self, mock_user_config, gpus, input_headers, expected_headers, expected_fields
+        self, mock_cfg, gpus, input_headers, expected_headers, expected_fields
     ):
         """Test _get_optional_headers_and_fields returns correct headers and field mappings."""
         telemetry = self._make_telemetry(gpus)
-        exporter = self._make_exporter(mock_user_config, telemetry)
+        exporter = self._make_exporter(mock_cfg, telemetry)
 
         headers, fields = exporter._get_optional_headers_and_fields(*input_headers)
 
@@ -951,15 +934,14 @@ class TestOptionalTelemetryHeaders:
         assert fields == expected_fields
 
 
-def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
+def test_metrics_csv_exporter_inherits_from_base(mock_cfg):
     """Verify MetricsCsvExporter inherits from MetricsBaseExporter."""
     from aiperf.common.models import ProfileResults
 
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-    cfg = ExporterConfig(
+    cfg = make_exporter_config(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        cli_config=mock_cfg,
         telemetry_results=None,
     )
 
@@ -971,17 +953,16 @@ def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
 
 
 @pytest.mark.asyncio
-async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
+async def test_metrics_csv_exporter_uses_base_export(mock_cfg):
     """Verify uses base class export() method."""
     from unittest.mock import AsyncMock
 
     from aiperf.common.models import ProfileResults
 
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-    cfg = ExporterConfig(
+    cfg = make_exporter_config(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        cli_config=mock_cfg,
         telemetry_results=None,
     )
 
@@ -1000,7 +981,7 @@ async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
 
 
 def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
-    mock_user_config,
+    mock_cfg,
 ):
     """Verify _generate_content() uses instance data members."""
     from aiperf.common.models import ProfileResults
@@ -1016,10 +997,9 @@ def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
     ]
 
     results = ProfileResults(records=mock_records, start_ns=0, end_ns=0, completed=0)
-    cfg = ExporterConfig(
+    cfg = make_exporter_config(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        cli_config=mock_cfg,
         telemetry_results=None,
     )
 
@@ -1032,16 +1012,15 @@ def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
 
 
 def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_instance(
-    mock_user_config, sample_telemetry_results
+    mock_cfg, sample_telemetry_results
 ):
     """Verify _generate_content() uses self._telemetry_results."""
     from aiperf.common.models import ProfileResults
 
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-    cfg = ExporterConfig(
+    cfg = make_exporter_config(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        cli_config=mock_cfg,
         telemetry_results=sample_telemetry_results,
     )
 
@@ -1055,16 +1034,15 @@ def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_insta
 
 @pytest.mark.asyncio
 async def test_metrics_csv_exporter_export_calls_generate_content_internally(
-    mock_user_config,
+    mock_cfg,
 ):
     """Verify export() calls _generate_content() internally."""
     from aiperf.common.models import ProfileResults
 
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-    cfg = ExporterConfig(
+    cfg = make_exporter_config(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        cli_config=mock_cfg,
         telemetry_results=None,
     )
 

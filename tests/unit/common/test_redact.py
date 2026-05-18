@@ -8,9 +8,6 @@ import aiohttp
 import pytest
 from pytest import param
 
-from aiperf.common.config import EndpointConfig
-from aiperf.common.config.input_config import InputConfig
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import AioHttpTraceData
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import EndpointInfo
@@ -20,7 +17,10 @@ from aiperf.common.redact import (
     redact_cli_command,
     redact_headers,
     redact_string,
+    redact_url,
 )
+from aiperf.config.endpoint import EndpointConfig
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 
 # =============================================================================
@@ -1010,40 +1010,307 @@ class TestRedactCliCommandInterleaved:
             assert value in result, f"Value {value!r} over-redacted in: {result}"
 
 
+class TestRedactCliCommandUrlFlags:
+    """URL-typed flags (--url, -u, --otel-url, --mlflow-tracking-uri) must
+    have userinfo stripped from their values. The rest of the URL and the
+    surrounding quotes/flag must be preserved.
+    """
+
+    @pytest.mark.parametrize(
+        "cmd, secrets, must_keep",
+        [
+            param(
+                "aiperf profile --url http://u1:s1@h1/v1 http://u2:s2@h2/v1",
+                ["u1:s1", "u2:s2"],
+                ["--url", "@h1/v1", "@h2/v1"],
+                id="multi-url-consume-multiple-unquoted",
+            ),
+            param(
+                "aiperf profile --url 'http://a:x@h1' 'http://b:y@h2' 'http://c:z@h3'",
+                ["a:x", "b:y", "c:z"],
+                ["@h1", "@h2", "@h3"],
+                id="multi-url-consume-multiple-quoted",
+            ),
+            # Regression: EndpointConfig.urls auto-prefixes `http://` for
+            # scheme-less values, so users commonly write `--url user:pass@host`
+            # without a scheme. The scheme-prefixed safety net misses these;
+            # the bare-userinfo safety net catches them.
+            param(
+                "aiperf profile --url user1:pass1@host1 user2:pass2@host2",
+                ["user1:pass1", "user2:pass2"],
+                ["--url", "@host1", "@host2"],
+                id="multi-url-scheme-less-bare-userinfo",
+            ),
+            param(
+                "aiperf profile --url 'user1:pass1@host1' 'user2:pass2@host2'",
+                ["user1:pass1", "user2:pass2"],
+                ["--url", "@host1", "@host2"],
+                id="multi-url-scheme-less-bare-userinfo-quoted",
+            ),
+        ],
+    )  # fmt: skip
+    def test_multi_url_consume_multiple_redacts_all(
+        self, cmd: str, secrets: list[str], must_keep: list[str]
+    ):
+        """Regression: --url / -u accept multiple values via consume_multiple=True.
+        The first value is caught by _URL_FLAG_PATTERN; later values are caught
+        by the stray-URL safety net. All userinfo must be stripped.
+        """
+        result = redact_cli_command(cmd)
+        for secret in secrets:
+            assert secret not in result, f"Secret {secret!r} leaked in: {result}"
+        for keep in must_keep:
+            assert keep in result, f"Value {keep!r} over-redacted in: {result}"
+
+    @pytest.mark.parametrize(
+        "cmd, secret, must_keep",
+        [
+            param(
+                "aiperf profile --url 'http://user:pass@host:8000/v1'",
+                "user:pass",
+                ["--url", "@host:8000/v1"],
+                id="single-quoted-url",
+            ),
+            param(
+                'aiperf profile --url "http://user:pass@host:8000/v1"',
+                "user:pass",
+                ["--url", "@host:8000/v1"],
+                id="double-quoted-url",
+            ),
+            param(
+                "aiperf profile -u http://tok@collector:4317/path",
+                "tok",
+                ["-u", "@collector:4317/path"],
+                id="short-flag-unquoted",
+            ),
+            param(
+                "aiperf profile --otel-url 'https://secret:key@otel:4318'",
+                "secret:key",
+                ["--otel-url", "@otel:4318"],
+                id="otel-url",
+            ),
+            param(
+                "aiperf profile --mlflow-tracking-uri 'http://mlflow:pw@tracker:5000'",
+                "mlflow:pw",
+                ["--mlflow-tracking-uri", "@tracker:5000"],
+                id="mlflow-tracking-uri",
+            ),
+        ],
+    )  # fmt: skip
+    def test_userinfo_redacted_in_url_flag_value(
+        self, cmd: str, secret: str, must_keep: list[str]
+    ):
+        result = redact_cli_command(cmd)
+        assert secret not in result, f"Secret {secret!r} leaked in: {result}"
+        assert REDACTED_VALUE in result
+        for keep in must_keep:
+            assert keep in result, f"Value {keep!r} over-redacted in: {result}"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            param("aiperf profile --url 'http://localhost:8000'", id="plain-url"),
+            param(
+                "aiperf profile --url 'http://host/users@example.com'",
+                id="at-in-path-no-userinfo",
+            ),
+            param(
+                "aiperf plot --paths /tmp/run@latest --output /out",
+                id="at-in-unrelated-arg",
+            ),
+            param(
+                "aiperf profile --url http://localhost:8000 --model foo@bar",
+                id="stray-safety-net-does-not-touch-non-url-arg",
+            ),
+        ],
+    )  # fmt: skip
+    def test_urls_without_userinfo_unchanged(self, cmd: str):
+        """Non-userinfo URLs and unrelated args with `@` must pass through."""
+        assert redact_cli_command(cmd) == cmd
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # --mlflow-tag: key:value pairs with `@` in value are legitimate MLflow tag
+            # metadata (owner/contact/email). They must NOT be eaten by the stray
+            # bare-userinfo safety net, because the safety net is only meaningful
+            # for 2nd+ values of `--url`/`-u` (consume_multiple=True).
+            param(
+                "aiperf profile --mlflow-tag owner:alice@acme.com",
+                id="mlflow-tag-email-value",
+            ),
+            param(
+                "aiperf profile --mlflow-tag contact:a@b",
+                id="mlflow-tag-short-email",
+            ),
+            param(
+                "aiperf profile --mlflow-tag region:us-east-1 owner:alice@acme.com",
+                id="mlflow-tag-multi-positional",
+            ),
+            # --header with a non-credential header whose value legitimately
+            # contains `@` (email, tracecontext, forwarded IPs). These headers
+            # are NOT in _SENSITIVE_HEADER_NAMES so the CLI secret patterns
+            # don't fire; the stray bare-userinfo pattern used to over-redact
+            # them. Must pass through unchanged.
+            param(
+                "aiperf profile --header X-User-Email:alice@acme.com",
+                id="header-email",
+            ),
+            param(
+                'aiperf profile --header "X-User-Email:alice@acme.com"',
+                id="header-email-double-quoted",
+            ),
+            param(
+                "aiperf profile --header 'X-User-Email:alice@acme.com'",
+                id="header-email-single-quoted",
+            ),
+            param(
+                "aiperf profile --header X-Trace-Parent:00-abc-def-01@span",
+                id="header-trace-parent",
+            ),
+            param(
+                "aiperf profile --header X-Forwarded-For:10.0.0.1@network",
+                id="header-forwarded",
+            ),
+            # --otel-resource-attributes uses `key=value` (not `:`) so not
+            # affected by the bare-userinfo pattern at all, but belt-and-suspenders.
+            param(
+                "aiperf profile --otel-url localhost:4318 "
+                "--otel-resource-attributes owner=alice@acme.com",
+                id="otel-resource-attributes-equals-email",
+            ),
+            # Typical combined CLI: URL has credentials (redacted), non-URL flags
+            # carry `@` values that must survive.
+            param(
+                "aiperf profile --model foo --url http://api.openai.com "
+                "--header X-User-Email:alice@acme.com "
+                "--mlflow-tag owner:alice@acme.com "
+                "--mlflow-tracking-uri http://mlflow.local:5000",
+                id="combined-cli-non-credential-at-preserved",
+            ),
+        ],
+    )  # fmt: skip
+    def test_non_url_flag_values_with_at_preserved(self, cmd: str):
+        """Regression for over-redaction of ``key:value@...`` on non-URL flags.
+
+        The stray bare-userinfo safety net catches 2nd+ values of
+        ``--url``/``-u`` (consume_multiple=True scheme-less leak). A global
+        sweep of that pattern used to eat legitimate ``key:value@...`` tokens
+        on ``--header`` / ``--mlflow-tag`` / ``--otel-resource-attributes``,
+        mangling email addresses, W3C trace contexts, forwarded IPs, and
+        MLflow contact tags. Scoped to the ``--url``/``-u`` consumption
+        window, so every one of these commands round-trips unchanged.
+        """
+        # For combined-cli, the URL credentials (if any) would be redacted but
+        # the non-URL `@` tokens must survive. Assert each preserved token.
+        result = redact_cli_command(cmd)
+        for must_keep in (
+            "alice@acme.com",
+            "a@b",
+            "01@span",
+            "10.0.0.1@network",
+        ):
+            if must_keep in cmd:
+                assert must_keep in result, (
+                    f"Value {must_keep!r} over-redacted in: {result}"
+                )
+
+
 # =============================================================================
 # EndpointConfig api_key protection
 # =============================================================================
 
 
 class TestEndpointConfigApiKeyProtected:
-    """Verify api_key is hidden from repr and redacted in serialization."""
+    """Verify api_key is redacted on the v2 EndpointConfig JSON dump.
 
-    def test_api_key_not_in_repr(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert "sk-secret" not in repr(config)
+    v2 only redacts in JSON mode (``model_dump_json``); dict-mode dumps return
+    the raw key so the runtime can still build authenticated requests.
+    """
 
-    def test_api_key_still_accessible_as_attribute(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert config.api_key == "sk-secret"
+    def _make(self, **kwargs):
+        from aiperf.config.endpoint import EndpointConfig as V2EndpointConfig
 
-    def test_api_key_redacted_in_model_dump(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert config.model_dump()["api_key"] == REDACTED_VALUE
+        return V2EndpointConfig(urls=["http://localhost:8000"], **kwargs)
 
     def test_api_key_redacted_in_json(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
+        config = self._make(api_key="sk-secret")
         json_str = config.model_dump_json()
         assert "sk-secret" not in json_str
         assert REDACTED_VALUE in json_str
 
-    def test_api_key_preserved_with_include_secrets_context(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        dumped = config.model_dump(context={"include_secrets": True})
-        assert dumped["api_key"] == "sk-secret"
+    def test_api_key_none_not_redacted_in_json(self):
+        config = self._make()
+        json_str = config.model_dump_json()
+        assert REDACTED_VALUE not in json_str
 
-    def test_api_key_none_not_redacted(self):
-        config = EndpointConfig(model_names=["gpt2"])
-        assert config.model_dump()["api_key"] is None
+    def test_api_key_still_accessible_as_attribute(self):
+        config = self._make(api_key="sk-secret")
+        assert config.api_key == "sk-secret"
+
+    def test_api_key_present_in_dict_dump(self):
+        """Dict-mode dump preserves raw api_key for runtime use; JSON is the redacted artifact path."""
+        config = self._make(api_key="sk-secret")
+        assert config.model_dump()["api_key"] == "sk-secret"
+
+
+# =============================================================================
+# EndpointConfig.urls userinfo protection
+# =============================================================================
+
+
+class TestEndpointConfigUrlsProtected:
+    """Verify endpoint.urls strip userinfo during serialization.
+
+    ``profile_export_aiperf.json`` is written to disk and uploaded as an MLflow
+    run artifact. Without the ``_redact_urls`` field serializer, a URL like
+    ``http://alice:s3cret@host:8000`` leaks verbatim into both the on-disk
+    export and the artifact tree.
+    """
+
+    def test_userinfo_stripped_in_model_dump(self):
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000/v1/chat"])
+        dumped_urls = config.model_dump()["urls"]
+        assert "s3cret" not in dumped_urls[0]
+        assert "alice" not in dumped_urls[0]
+        # Host/port/path survive.
+        assert "host:8000/v1/chat" in dumped_urls[0]
+        assert REDACTED_VALUE in dumped_urls[0]
+
+    def test_userinfo_stripped_in_json(self):
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000"])
+        json_str = config.model_dump_json()
+        assert "s3cret" not in json_str
+        assert "alice:s3cret" not in json_str
+
+    def test_multiple_urls_each_redacted(self):
+        config = EndpointConfig(
+            urls=[
+                "http://a:x@h1",
+                "http://b:y@h2",
+                "http://h3-no-userinfo",
+            ],
+        )
+        dumped_urls = config.model_dump()["urls"]
+        assert "a:x" not in dumped_urls[0]
+        assert "b:y" not in dumped_urls[1]
+        # URLs without userinfo pass through unchanged.
+        assert dumped_urls[2] == "http://h3-no-userinfo"
+
+    def test_urls_without_userinfo_unchanged(self):
+        config = EndpointConfig(urls=["http://host:8000/v1"])
+        assert config.model_dump()["urls"] == ["http://host:8000/v1"]
+
+    def test_urls_preserved_with_include_secrets_context(self):
+        """Runtime callers that need the real URL can opt out of redaction."""
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000"])
+        dumped = config.model_dump(context={"include_secrets": True})
+        assert "alice:s3cret" in dumped["urls"][0]
+
+    def test_urls_still_accessible_on_instance(self):
+        """Runtime code reads ``config.urls`` directly; redaction is only on serialization."""
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000"])
+        assert "alice:s3cret@host:8000" in config.urls[0]
 
 
 # =============================================================================
@@ -1077,27 +1344,15 @@ class TestEndpointInfoApiKeyExcluded:
 
 
 class TestInputConfigHeadersRedaction:
-    """Verify sensitive headers passed via --header are redacted in serialization."""
+    """Headers stored on InputConfig are passed through dict-mode dumps as-is.
+
+    Header redaction lives in the JSON artifact path and the
+    ``redact_headers`` utility — not on Pydantic dict-mode serialization.
+    """
 
     @pytest.mark.parametrize(
         "headers, expected",
         [
-            param(
-                [
-                    ("Authorization", "Bearer sk-secret-123"),
-                    ("Content-Type", "application/json"),
-                ],
-                [
-                    ("Authorization", REDACTED_VALUE),
-                    ("Content-Type", "application/json"),
-                ],
-                id="authorization-redacted-content-type-kept",
-            ),
-            param(
-                [("X-API-Key", "nvapi-my-secret")],
-                [("X-API-Key", REDACTED_VALUE)],
-                id="x-api-key-redacted",
-            ),
             param(
                 [("X-Custom-Header", "my-value"), ("Accept", "text/event-stream")],
                 [("X-Custom-Header", "my-value"), ("Accept", "text/event-stream")],
@@ -1105,31 +1360,36 @@ class TestInputConfigHeadersRedaction:
             ),
         ],
     )
-    def test_headers_redacted_in_dump(self, headers, expected):
-        config = InputConfig(headers=headers)
+    def test_headers_unchanged_in_dump(self, headers, expected):
+        config = CLIConfig(headers=headers)
         assert config.model_dump()["headers"] == expected
 
-    def test_headers_preserved_with_include_secrets_context(self):
-        config = InputConfig(headers=[("Authorization", "Bearer sk-secret")])
-        dumped = config.model_dump(context={"include_secrets": True})
-        assert dumped["headers"] == [("Authorization", "Bearer sk-secret")]
-
     def test_headers_still_accessible_as_attribute(self):
-        config = InputConfig(headers=[("Authorization", "Bearer sk-secret")])
+        config = CLIConfig(headers=[("Authorization", "Bearer sk-secret")])
         assert config.headers == [("Authorization", "Bearer sk-secret")]
 
 
 # =============================================================================
-# CLI command redaction (via UserConfig)
+# CLI command redaction (via CLIConfig)
 # =============================================================================
 
 
 class TestCliCommandRedaction:
-    """Verify --api-key and sensitive --header values are redacted in cli_command."""
+    """Verify --api-key and sensitive --header values are redacted in cli_command.
+
+    The synthesized command is stored on ``BenchmarkRun.cli_command``
+    (auto-populated via ``build_cli_command`` from sys.argv) and surfaced into
+    ``RunInfo.cli_command`` in ``profile_export_aiperf.json``.
+    """
+
+    def _build_cli_command(self, argv: list[str]) -> str:
+        from aiperf.common.redact import build_cli_command
+
+        with patch("sys.argv", argv):
+            return build_cli_command()
 
     def test_api_key_redacted_in_cli_command(self):
-        with patch(
-            "sys.argv",
+        cmd = self._build_cli_command(
             [
                 "aiperf",
                 "profile",
@@ -1139,11 +1399,10 @@ class TestCliCommandRedaction:
                 "sk-12345",
                 "--url",
                 "http://localhost:8000",
-            ],
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert "sk-12345" not in config.cli_command
-            assert f"--api-key '{REDACTED_VALUE}'" in config.cli_command
+            ]
+        )
+        assert "sk-12345" not in cmd
+        assert REDACTED_VALUE in cmd
 
     @pytest.mark.parametrize(
         "flag, header_value, secret",
@@ -1164,20 +1423,37 @@ class TestCliCommandRedaction:
         ],
     )
     def test_sensitive_header_redacted_in_cli_command(self, flag, header_value, secret):
-        with patch(
-            "sys.argv", ["aiperf", "profile", "--model", "gpt2", flag, header_value]
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert secret not in config.cli_command
+        # _build_cli_command must produce an already-redacted canonical command
+        # string — callers (e.g. JSON exporter) should not need to re-apply
+        # redact_cli_command on top.
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", flag, header_value]
+        )
+        assert secret not in cmd
+        assert REDACTED_VALUE in cmd
+
+    def test_authorization_bearer_argv_redacted_in_cli_command(self):
+        """Regression: argv with `--header Authorization:Bearer X` must be
+        redacted by _build_cli_command alone, no second pass required."""
+        cmd = self._build_cli_command(
+            [
+                "aiperf",
+                "profile",
+                "--model",
+                "gpt2",
+                "--header",
+                "Authorization:Bearer token123",
+            ]
+        )
+        assert "token123" not in cmd
+        assert REDACTED_VALUE in cmd
 
     def test_non_sensitive_args_preserved_in_cli_command(self):
-        with patch(
-            "sys.argv",
-            ["aiperf", "profile", "--model", "gpt2", "--url", "http://localhost:8000"],
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert "http://localhost:8000" in config.cli_command
-            assert "gpt2" in config.cli_command
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", "--url", "http://localhost:8000"]
+        )
+        assert "http://localhost:8000" in cmd
+        assert "gpt2" in cmd
 
 
 # =============================================================================
@@ -1278,6 +1554,103 @@ class TestAioHttpTraceRedaction:
         assert trace_data.request_headers["Authorization"] == REDACTED_VALUE
         assert trace_data.request_headers["X-API-Key"] == REDACTED_VALUE
         assert trace_data.request_headers["Content-Type"] == "application/json"
+
+
+# =============================================================================
+# redact_url
+# =============================================================================
+
+
+class TestRedactUrl:
+    """Tests for redact_url() — strip userinfo from URLs without false positives."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            param(
+                "https://user:pass@host.com/api",
+                f"https://{REDACTED_VALUE}@host.com/api",
+                id="scheme-with-userinfo",
+            ),
+            param(
+                "http://user:pass@host.com:8080",
+                f"http://{REDACTED_VALUE}@host.com:8080",
+                id="scheme-userinfo-with-port",
+            ),
+            param(
+                "https://user:pass@[::1]:8080/path",
+                f"https://{REDACTED_VALUE}@[::1]:8080/path",
+                id="scheme-userinfo-ipv6",
+            ),
+            param(
+                "user:pass@host:8080",
+                f"{REDACTED_VALUE}@host:8080",
+                id="bare-userinfo",
+            ),
+        ],
+    )  # fmt: skip
+    def test_userinfo_is_redacted(self, url: str, expected: str):
+        assert redact_url(url) == expected
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://localhost:5000", id="no-userinfo"),
+            param(
+                "https://host.com/api/users@example.com",
+                id="at-in-path",
+            ),
+            param(
+                "https://host.com/?email=a@b.com",
+                id="at-in-query",
+            ),
+            param(
+                "https://host.com/path?q=a@b.com&x=y",
+                id="at-in-query-with-extra-params",
+            ),
+            param("https://host.com/path#frag@tag", id="at-in-fragment"),
+            param("", id="empty-string"),
+        ],
+    )  # fmt: skip
+    def test_url_without_userinfo_is_unchanged(self, url: str):
+        """@ appearing in path, query, or fragment must not trigger redaction."""
+        assert redact_url(url) == url
+
+    @pytest.mark.parametrize(
+        "uri,expected",
+        [
+            param(
+                "postgresql://user:secret@db:5432/mlflow",
+                f"postgresql://{REDACTED_VALUE}@db:5432/mlflow",
+                id="postgresql-with-userinfo",
+            ),
+            param(
+                "mysql+pymysql://u:p@host/mlflow",
+                f"mysql+pymysql://{REDACTED_VALUE}@host/mlflow",
+                id="mysql-with-dialect-plus-userinfo",
+            ),
+            param(
+                "mssql://u:p@sql.internal:1433/mlflow",
+                f"mssql://{REDACTED_VALUE}@sql.internal:1433/mlflow",
+                id="mssql-with-userinfo",
+            ),
+            param(
+                "file:///tmp/mlruns",
+                "file:///tmp/mlruns",
+                id="file-no-userinfo",
+            ),
+            param(
+                "sqlite:///tmp/mlflow.db",
+                "sqlite:///tmp/mlflow.db",
+                id="sqlite-no-userinfo",
+            ),
+        ],
+    )  # fmt: skip
+    def test_redacts_userinfo_for_non_http_schemes(self, uri: str, expected: str):
+        """MLflow tracking-uri commonly uses DB URIs — userinfo must be stripped
+        regardless of scheme.
+        """
+        assert redact_url(uri) == expected
 
 
 # =============================================================================

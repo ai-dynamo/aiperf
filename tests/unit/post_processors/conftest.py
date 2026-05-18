@@ -2,14 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for testing AIPerf post processors."""
 
+import sys
+import types
 from contextlib import asynccontextmanager
+from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CreditPhase,
     ExportLevel,
@@ -44,6 +46,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
 )
 from aiperf.common.types import MetricTagT
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -59,7 +62,215 @@ from tests.unit.conftest import (
     DEFAULT_START_TIME_NS,
 )
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig
+
 T = TypeVar("T", bound=AIPerfLifecycleMixin)
+
+
+def install_fake_otel_modules(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    """Install a fake opentelemetry module tree into sys.modules."""
+    state = state if state is not None else {}
+
+    def _add_module(name: str, *, package: bool = True) -> types.ModuleType:
+        module = types.ModuleType(name)
+        if package:
+            module.__path__ = []  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, name, module)
+        return module
+
+    opentelemetry = _add_module("opentelemetry")
+    exporter = _add_module("opentelemetry.exporter")
+    otlp = _add_module("opentelemetry.exporter.otlp")
+    proto = _add_module("opentelemetry.exporter.otlp.proto")
+    http = _add_module("opentelemetry.exporter.otlp.proto.http")
+    metric_exporter = _add_module(
+        "opentelemetry.exporter.otlp.proto.http.metric_exporter", package=False
+    )
+    sdk = _add_module("opentelemetry.sdk")
+    sdk_metrics = _add_module("opentelemetry.sdk.metrics")
+    sdk_metrics_export = _add_module("opentelemetry.sdk.metrics.export", package=False)
+    sdk_resources = _add_module("opentelemetry.sdk.resources", package=False)
+
+    opentelemetry.exporter = exporter
+    exporter.otlp = otlp
+    otlp.proto = proto
+    proto.http = http
+    http.metric_exporter = metric_exporter
+
+    opentelemetry.sdk = sdk
+    sdk.metrics = sdk_metrics
+    sdk.resources = sdk_resources
+    sdk_metrics.export = sdk_metrics_export
+
+    class FakeMetricExportResult(Enum):
+        SUCCESS = "success"
+        FAILURE = "failure"
+
+    class FakeMetricExporter:
+        def __init__(self) -> None:
+            self.export_calls: list[object] = []
+            self.force_flush_calls: list[int] = []
+            self.shutdown_calls = 0
+
+        def export(
+            self, metrics_data: object, timeout_millis: float = 10000, **kwargs: object
+        ) -> FakeMetricExportResult:
+            self.export_calls.append((metrics_data, timeout_millis, kwargs))
+            return FakeMetricExportResult.SUCCESS
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            return True
+
+        def shutdown(self, timeout_millis: float = 30000, **kwargs: object) -> None:
+            self.shutdown_calls += 1
+
+    class FakeOTLPMetricExporter(FakeMetricExporter):
+        instances: ClassVar[list["FakeOTLPMetricExporter"]] = []
+
+        def __init__(self, endpoint: str, timeout: float) -> None:
+            super().__init__()
+            self.endpoint = endpoint
+            self.timeout = timeout
+            self.export_result = FakeMetricExportResult.SUCCESS
+            self.force_flush_result = True
+            FakeOTLPMetricExporter.instances.append(self)
+            state["exporter_endpoint"] = endpoint
+            state["exporter_timeout"] = timeout
+
+        def export(
+            self, metrics_data: object, timeout_millis: float = 10000, **kwargs: object
+        ) -> FakeMetricExportResult:
+            self.export_calls.append((metrics_data, timeout_millis, kwargs))
+            return self.export_result
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            return self.force_flush_result
+
+    class FakeHistogram:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.records: list[tuple[float, dict[str, object]]] = []
+
+        def record(self, value: float, attributes: dict[str, object]) -> None:
+            self.records.append((value, attributes))
+
+    class FakeCounter:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.adds: list[tuple[float, dict[str, object]]] = []
+
+        def add(self, value: float, attributes: dict[str, object]) -> None:
+            self.adds.append((value, attributes))
+
+    class FakeUpDownCounter:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.adds: list[tuple[float, dict[str, object]]] = []
+
+        def add(self, value: float, attributes: dict[str, object]) -> None:
+            self.adds.append((value, attributes))
+
+    class FakeMeter:
+        def __init__(self) -> None:
+            self.histograms: dict[str, FakeHistogram] = {}
+            self.counters: dict[str, FakeCounter] = {}
+            self.up_down_counters: dict[str, FakeUpDownCounter] = {}
+
+        def create_histogram(
+            self, name: str, unit: str, description: str
+        ) -> FakeHistogram:
+            histogram = FakeHistogram(name)
+            self.histograms[name] = histogram
+            return histogram
+
+        def create_counter(self, name: str, unit: str, description: str) -> FakeCounter:
+            counter = FakeCounter(name)
+            self.counters[name] = counter
+            return counter
+
+        def create_up_down_counter(
+            self, name: str, unit: str, description: str
+        ) -> FakeUpDownCounter:
+            up_down_counter = FakeUpDownCounter(name)
+            self.up_down_counters[name] = up_down_counter
+            return up_down_counter
+
+    class FakeMeterProvider:
+        instances: ClassVar[list["FakeMeterProvider"]] = []
+
+        def __init__(self, resource: object, metric_readers: list[object]) -> None:
+            self.resource = resource
+            self.metric_readers = metric_readers
+            self.meter = FakeMeter()
+            self.force_flush_calls: list[int] = []
+            self.shutdown_calls = 0
+            FakeMeterProvider.instances.append(self)
+            state["resource"] = resource
+            state["metric_readers"] = metric_readers
+            state["meter"] = self.meter
+            state["force_flush_calls"] = self.force_flush_calls
+            state["shutdown_calls"] = self.shutdown_calls
+
+        def get_meter(self, name: str) -> FakeMeter:
+            self.meter_name = name
+            state["meter_name"] = name
+            return self.meter
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            self.force_flush_calls.append(timeout_millis)
+            state["force_flush_calls"] = self.force_flush_calls
+            return True
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            state["shutdown_calls"] = self.shutdown_calls
+
+    class FakePeriodicExportingMetricReader:
+        instances: ClassVar[list["FakePeriodicExportingMetricReader"]] = []
+
+        def __init__(
+            self,
+            exporter: object,
+            export_interval_millis: int,
+            export_timeout_millis: int,
+        ) -> None:
+            self.exporter = exporter
+            self.export_interval_millis = export_interval_millis
+            self.export_timeout_millis = export_timeout_millis
+            FakePeriodicExportingMetricReader.instances.append(self)
+            state["reader_export_interval_millis"] = export_interval_millis
+            state["reader_export_timeout_millis"] = export_timeout_millis
+            state["reader_exporter"] = exporter
+
+    class FakeResource:
+        @staticmethod
+        def create(attributes: dict[str, str]) -> dict[str, dict[str, str]]:
+            return {"attributes": attributes}
+
+    metric_exporter.OTLPMetricExporter = FakeOTLPMetricExporter
+    sdk_metrics.MeterProvider = FakeMeterProvider
+    sdk_metrics_export.MetricExporter = FakeMetricExporter
+    sdk_metrics_export.MetricExportResult = FakeMetricExportResult
+    sdk_metrics_export.PeriodicExportingMetricReader = FakePeriodicExportingMetricReader
+    sdk_resources.Resource = FakeResource
+
+    return {
+        "MetricExportResult": FakeMetricExportResult,
+        "OTLPMetricExporter": FakeOTLPMetricExporter,
+        "MeterProvider": FakeMeterProvider,
+        "Reader": FakePeriodicExportingMetricReader,
+    }
+
+
+@pytest.fixture
+def fake_otel(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    return install_fake_otel_modules(monkeypatch)
 
 
 @asynccontextmanager
@@ -82,49 +293,96 @@ async def aiperf_lifecycle(instance: T) -> T:
 
 
 @asynccontextmanager
-async def raw_record_processor(service_id: str, user_config: UserConfig):
+async def raw_record_processor(service_id: str, run):
     """Async context manager for RawRecordWriterProcessor lifecycle.
 
     Handles initialize, start, and stop automatically.
 
     Usage:
-        async with raw_record_processor("processor-1", user_config) as processor:
+        async with raw_record_processor("processor-1", run) as processor:
             await processor.process_record(record, metadata)
     """
 
     processor = RawRecordWriterProcessor(
         service_id=service_id,
-        user_config=user_config,
+        run=run,
     )
     async with aiperf_lifecycle(processor) as proc:
         yield proc
 
 
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        )
+def mock_cfg() -> "BenchmarkConfig":
+    """Native v2 ``BenchmarkConfig`` for post-processor tests.
+
+    Built directly (no v1 CLIConfig round-trip) with the minimal required
+    sections, matching the defaults the v1 fixture used to produce.
+    """
+    from aiperf.config import BenchmarkConfig
+
+    return BenchmarkConfig.model_validate(
+        {
+            "models": ["test-model"],
+            "endpoint": {
+                "type": EndpointType.COMPLETIONS,
+                "urls": ["http://localhost:8000/v1"],
+                "streaming": False,
+            },
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                }
+            ],
+        }
     )
 
 
 @pytest.fixture
-def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
-    """Create a UserConfig for raw record testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-            export_level=ExportLevel.RAW,
-        ),
+def mock_run(mock_cfg):
+    """v2 ``BenchmarkRun`` wrapping ``mock_cfg`` (native BenchmarkConfig).
+
+    Tests should mutate ``mock_run.cfg.endpoint`` / ``mock_run.cfg.slos``
+    directly — the cfg is the native object the runtime uses.
+    """
+    import uuid
+
+    from aiperf.config import BenchmarkRun
+
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=mock_cfg,
+        artifact_dir=mock_cfg.artifacts.dir,
+        random_seed=None,
+        variables={},
     )
+
+
+@pytest.fixture
+def cfg_raw(tmp_artifact_dir: Path) -> CLIConfig:
+    """Create a CLIConfig for raw record testing."""
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        streaming=False,
+        artifact_directory=tmp_artifact_dir,
+        export_level=ExportLevel.RAW,
+    )
+
+
+@pytest.fixture
+def run_raw(cfg_raw: CLIConfig):
+    """v2 BenchmarkRun built from the cfg_raw fixture.
+
+    TODO: Replace v1 round-trip with direct BenchmarkConfig construction once
+    the raw-record export-level wiring is straightforward to set in v2.
+    """
+    from tests.unit.conftest import make_run_from_cli
+
+    return make_run_from_cli(cfg_raw)
 
 
 def _create_test_request_info(
@@ -253,11 +511,12 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
-def create_exporter_config(user_config: UserConfig) -> ExporterConfig:
+def create_exporter_config(cli_config: CLIConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
+    from tests.unit.conftest import make_cfg_from_v1
+
     return ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        cfg=make_cfg_from_v1(cli_config),
         results=ProfileResults(
             records=None,
             completed=0,
@@ -322,19 +581,19 @@ def setup_mock_registry_sequences(
 
 
 def create_results_processor_with_metrics(
-    user_config: UserConfig, *metrics: type[BaseMetric]
+    run, *metrics: type[BaseMetric]
 ) -> MetricResultsProcessor:
     """Create a MetricResultsProcessor with pre-configured metrics.
 
     Args:
-        user_config: User configuration for the processor
+        run: BenchmarkRun for the processor
         metrics: list of metric classes
 
     Returns:
         Configured MetricResultsProcessor instance
     """
 
-    processor = MetricResultsProcessor(user_config)
+    processor = MetricResultsProcessor(run)
     processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
     processor._instances_map = {metric.tag: metric() for metric in metrics}
     return processor

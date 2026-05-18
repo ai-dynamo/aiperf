@@ -4,7 +4,6 @@ import asyncio
 
 from pydantic import BaseModel
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
@@ -26,11 +25,9 @@ class KubernetesServiceManager(BaseServiceManager):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
+        super().__init__(required_services, **kwargs)
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1

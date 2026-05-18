@@ -7,32 +7,40 @@ import pytest
 from starlette.testclient import TestClient
 
 from aiperf.api.api_service import FastAPIService
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
-def api_service_config() -> ServiceConfig:
-    """Create a ServiceConfig for API service testing."""
-    return ServiceConfig(api_port=9999, api_host="127.0.0.1")
+def api_service_config() -> CLIConfig:
+    """Create a CLIConfig for API service testing."""
+    return CLIConfig(api_port=9999, api_host="127.0.0.1")
 
 
 @pytest.fixture
-def api_user_config() -> UserConfig:
-    """Create a UserConfig for API service testing."""
-    return UserConfig(
-        benchmark_id="test-bench",
-        endpoint=EndpointConfig(model_names=["test-model"]),
-    )
+def api_cfg() -> CLIConfig:
+    """Create a CLIConfig for API service testing."""
+    return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
-def mock_fastapi_service(
-    mock_zmq, api_service_config: ServiceConfig, api_user_config: UserConfig
-) -> FastAPIService:
+def api_benchmark_run(
+    api_cfg: CLIConfig, api_service_config: CLIConfig
+) -> BenchmarkRun:
+    """BenchmarkRun for API service testing, with api_host/api_port set."""
+    run = make_run_from_cli(api_cfg)
+    run.benchmark_id = "test-bench"
+    run.cfg.runtime.api_host = "127.0.0.1"
+    run.cfg.runtime.api_port = 9999
+    return run
+
+
+@pytest.fixture
+def mock_fastapi_service(mock_zmq, api_benchmark_run: BenchmarkRun) -> FastAPIService:
     """Create a FastAPIService instance for testing without starting the server."""
     return FastAPIService(
-        service_config=api_service_config,
-        user_config=api_user_config,
+        run=api_benchmark_run,
         service_id="api-test-1",
     )
 

@@ -17,12 +17,20 @@ import os
 import platform
 import signal
 import sys
+import threading
 from collections.abc import Generator
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
+
+# Limit glibc malloc arenas to avoid heap-corruption SIGABRT and OOM-killed
+# xdist workers under heavy `-n auto` load. Each component_integration test
+# runs aiperf in-process with full Pydantic / msgspec / tokenizer imports,
+# so the default 8×NCPU arenas per worker × 24 workers blows out RAM. The
+# integration conftest carries the same setting (gotcha 2026-04-21).
+os.environ.setdefault("MALLOC_ARENA_MAX", "2")
 
 import pytest
 
@@ -42,6 +50,27 @@ from tests.harness import (
 from tests.harness.fake_communication import CapturedPayload
 from tests.harness.fake_tokenizer import TOKEN, TOKEN_LEN
 from tests.harness.utils import AIPerfCLI, AIPerfRunnerFn, AIPerfRunnerResult
+
+COMPONENT_INTEGRATION_PROCESS_TITLE = "aiperf component_integration_test"
+
+
+def _set_component_integration_process_title() -> None:
+    try:
+        import setproctitle
+
+        setproctitle.setproctitle(COMPONENT_INTEGRATION_PROCESS_TITLE)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True, scope="package")
+def component_integration_process_title() -> Generator[None, None, None]:
+    _set_component_integration_process_title()
+    with patch(
+        "aiperf.common.base_service.BaseService._set_process_title",
+        lambda self: None,
+    ):
+        yield
 
 
 class TeeStream:
@@ -82,13 +111,14 @@ class ComponentIntegrationTestDefaults:
     ui: str = "simple"
 
 
+def _raise_system_exit(code: int) -> None:
+    raise SystemExit(code)
+
+
 @pytest.fixture(autouse=True, scope="package")
 def mock_os_exit():
-    """Patch os._exit to raise an exception instead of exiting the process."""
-    with patch(
-        "os._exit",
-        side_effect=lambda code: SystemExit(code),
-    ):
+    """Patch os._exit to raise SystemExit instead of exiting the process."""
+    with patch("os._exit", side_effect=_raise_system_exit):
         yield
 
 
@@ -304,11 +334,18 @@ class AIPerfRunnerResultWithSharedBus(AIPerfRunnerResult):
 def aiperf_runner(
     temp_output_dir: Path,
 ) -> AIPerfRunnerFn:
-    """AIPerf subprocess runner."""
+    """AIPerf in-process runner.
+
+    Runs the CLI synchronously in the pytest process (the harness wires
+    FakeServiceManager + FakeCommunication at max plugin priority, so no
+    subprocesses are spawned). Enforces ``timeout`` via a watchdog thread that
+    sends SIGINT to the current process if ``app(...)`` does not return in
+    time; SIGINT raises KeyboardInterrupt, which is converted to TimeoutError.
+    """
 
     def runner(
         args: list[str], timeout: float = 200.0
-    ) -> AIPerfRunnerResultWithSharedBus:  # noqa: ARG001
+    ) -> AIPerfRunnerResultWithSharedBus:
         full_args = args
         # Only add --artifact-dir for profile command (not for plot)
         if args and args[0] == "profile":
@@ -326,12 +363,34 @@ def aiperf_runner(
         stdout_tee = TeeStream(sys.stdout)
         stderr_tee = TeeStream(sys.stderr)
 
-        # CLI calls os._exit(0) on success, so we expect SystemExit
+        finished = threading.Event()
+        timed_out = False
+
+        def _watchdog() -> None:
+            nonlocal timed_out
+            if not finished.wait(timeout):
+                timed_out = True
+                os.kill(os.getpid(), signal.SIGINT)
+
+        watchdog = threading.Thread(target=_watchdog, daemon=True)
+        watchdog.start()
+
         try:
-            with redirect_stdout(stdout_tee), redirect_stderr(stderr_tee):
-                app(full_args)
-        except SystemExit as e:
-            exit_code = e.code
+            # CLI calls os._exit(0) on success, so we expect SystemExit
+            try:
+                with redirect_stdout(stdout_tee), redirect_stderr(stderr_tee):
+                    app(full_args)
+            except SystemExit as e:
+                exit_code = e.code
+            except KeyboardInterrupt:
+                if timed_out:
+                    raise TimeoutError(
+                        f"aiperf_runner: app() exceeded {timeout}s timeout"
+                    ) from None
+                raise
+        finally:
+            finished.set()
+            watchdog.join(timeout=1.0)
 
         return AIPerfRunnerResultWithSharedBus(
             exit_code=exit_code,

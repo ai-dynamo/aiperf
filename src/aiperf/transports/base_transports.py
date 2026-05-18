@@ -115,7 +115,11 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         if request_info.x_request_id:
             headers["X-Request-ID"] = request_info.x_request_id
         if request_info.x_correlation_id:
-            headers["X-Correlation-ID"] = request_info.x_correlation_id
+            correlation_header = (
+                request_info.model_endpoint.endpoint.session_header
+                or "X-Correlation-ID"
+            )
+            headers[correlation_header] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
         headers.update(self.get_transport_headers(request_info))

@@ -7,7 +7,7 @@
 
 This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
 
-**Status summary (as of PR #815):** 6 of the original stubs are now fully implemented. Use them as canonical references when adding the remaining stubs.
+**Status summary:** As of the AIME loader landing on top of PR #815, `MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `MMLUBenchmark`, and `AIMEBenchmark` are fully implemented; the remaining grader (`exact_match`) and benchmarks (`hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`) are still stubs and ship behind `NotImplementedError` until each follow-up branch lands. Use the implemented classes as canonical references when filling in the remaining stubs.
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@ graph TD
     E --> F[AccuracyConsoleExporter<br/>AccuracyDataExporter]
 ```
 
-All processors and exporters **self-disable** when `user_config.accuracy.enabled is False` by raising their respective `Disabled` exceptions in `__init__`. This is the same pattern used by `RawRecordWriterProcessor`, `ServerMetricsCsvExporter`, etc.
+All processors and exporters **self-disable** when `cfg.accuracy.enabled is False` by raising their respective `Disabled` exceptions in `__init__`. This is the same pattern used by `RawRecordWriterProcessor`, `ServerMetricsCsvExporter`, etc.
 
 ---
 
@@ -55,6 +55,7 @@ class GradingResult(AIPerfBaseModel):
     reasoning: str          # Explanation of the grading decision
     extracted_answer: str   # Answer extracted from the model response
     ground_truth: str       # Expected correct answer
+    unparsed: bool = False  # True when fallback parsing was needed
 ```
 
 ### BenchmarkProblem
@@ -67,7 +68,7 @@ class BenchmarkProblem(AIPerfBaseModel):
     ground_truth: str                 # The expected correct answer
     task: str                         # Task/subtask name within the benchmark
     metadata: dict = {}               # Additional problem metadata
-    few_shot_examples: list[dict] = [] # Few-shot examples to prepend
+    raw_messages: list[dict] | None = None # Preformatted messages, when supplied by a loader
 ```
 
 ---
@@ -81,7 +82,7 @@ class BenchmarkProblem(AIPerfBaseModel):
 ```python
 @runtime_checkable
 class AccuracyGraderProtocol(Protocol):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
     async def grade(self, response_text: str, ground_truth: str, **kwargs) -> GradingResult: ...
     def extract_answer(self, response_text: str, **kwargs) -> str: ...
 ```
@@ -91,7 +92,7 @@ class AccuracyGraderProtocol(Protocol):
 ```python
 @runtime_checkable
 class AccuracyBenchmarkProtocol(Protocol):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
     async def load_problems(self, tasks: list[str] | None, n_shots: int, enable_cot: bool) -> list[BenchmarkProblem]: ...
 ```
 
@@ -99,7 +100,7 @@ class AccuracyBenchmarkProtocol(Protocol):
 
 ## CLI Configuration
 
-**File:** `src/aiperf/common/config/accuracy_config.py`
+**File:** `src/aiperf/config/accuracy.py`
 
 All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 
@@ -107,7 +108,7 @@ All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 |----------|-------|------|---------|-------------|
 | `--accuracy-benchmark` | `benchmark` | `str \| None` | `None` | Benchmark to run (e.g., `mmlu`, `aime`). **Enables accuracy mode when set.** |
 | `--accuracy-tasks` | `tasks` | `list[str] \| None` | `None` | Subtasks to evaluate (e.g., MMLU subjects) |
-| `--accuracy-n-shots` | `n_shots` | `int` (0-8) | `0` | Number of few-shot examples |
+| `--accuracy-n-shots` | `n_shots` | `int | None` (0-32 when set) | `None` | Number of few-shot examples; `None` uses the benchmark default |
 | `--accuracy-enable-cot` | `enable_cot` | `bool` | `False` | Enable chain-of-thought prompting |
 | `--accuracy-grader` | `grader` | `str \| None` | `None` | Override benchmark's default grader |
 | `--accuracy-system-prompt` | `system_prompt` | `str \| None` | `None` | Custom system prompt override |
@@ -115,7 +116,7 @@ All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 
 **Key property:** `AccuracyConfig.enabled -> bool` returns `self.benchmark is not None`.
 
-**Stub validator** in `UserConfig.validate_accuracy_config()` is a no-op `pass` — add validation logic here (e.g., verify benchmark name is a valid `AccuracyBenchmarkType`).
+**Stub-plugin validator** lives in `AccuracyConfig._reject_stub_plugins()`, which rejects accuracy plugins that still advertise stub status. Update that validator when converting a stub into a supported plugin.
 
 ---
 
@@ -129,7 +130,7 @@ All graders inherit from `BaseGrader(AIPerfLoggerMixin)` and must implement 2 me
 
 ```python
 class BaseGrader(AIPerfLoggerMixin):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None
     async def grade(self, response_text: str, ground_truth: str, **kwargs) -> GradingResult     # raises NotImplementedError
     def extract_answer(self, response_text: str, **kwargs) -> str                               # raises NotImplementedError
 ```
@@ -139,14 +140,17 @@ class BaseGrader(AIPerfLoggerMixin):
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | **IMPLEMENTED in PR #815** — canonical reference for new graders. Matches choice labels (A/B/C/D) by regex extraction then exact comparison. |
+| 2 | `MathGrader` | `graders/math.py` | `math` | **IMPLEMENTED with the AIME loader.** Extracts the last `\boxed{...}` (balanced braces), falls back to "the answer is X" / last-number heuristics. Comparison uses a sympy + latex2sympy2-extended symbolic parsing path when the `[accuracy]` extras are installed (ported from the trt-llm benchmark recipe's `math_equal`/`strip_string`); when those packages are missing, the grader transparently falls back to a stdlib `Fraction` parsing + normalized string equality comparison and emits a one-time warning. |
+| 3 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | **IMPLEMENTED with the AIME loader.** Wraps lighteval's `codegen_metrics` to grade LCB-style code-generation responses by sandboxed execution: extracts the response's code block via lighteval's `extract_code`, runs it against the bundled public + private test cases in a `ProcessPoolExecutor` with `num_process_evaluate=8`, and reports pass@1. Requires the `[accuracy]` extras (lighteval); raises `RuntimeError` at construction if missing. Used by AIP-881 (LCB CodeGen). |
+| 4 | `LightevalExprGrader` | `graders/lighteval_grader.py` | `lighteval_expr` | **IMPLEMENTED with the AIME loader.** Wraps lighteval's `MultilingualExtractiveMatchMetric` configured with `ExprExtractionConfig` for gold and `(ExprExtractionConfig, LatexExtractionConfig(boxed_match_priority=0))` for predictions — matches the trt-llm recipe's `expr_gold_metric`. Used by AIP-875/876 (AIME24/25). Requires the `[accuracy]` extras. |
+| 5 | `LightevalLatexGrader` | `graders/lighteval_grader.py` | `lighteval_latex` | **IMPLEMENTED with the AIME loader.** Same shape as `LightevalExprGrader` but the gold extractor uses `LatexExtractionConfig` — matches the trt-llm recipe's `latex_gold_metric`. Used by AIP-879 (MATH-500). Requires the `[accuracy]` extras. |
+| 6 | `LightevalGPQAGrader` | `graders/lighteval_grader.py` | `lighteval_gpqa` | **IMPLEMENTED with the AIME loader.** Wraps `MultilingualExtractiveMatchMetric` with `IndicesExtractionConfig(prefix_for_extraction="NativeLetters")` to extract A/B/C/D in both gold and prediction — matches the trt-llm recipe's `gpqa_metric`. Used by AIP-880 (GPQA-Diamond). Requires the `[accuracy]` extras. |
 
 ### Still Stubbed
 
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | Exact string matching against ground truth |
-| 2 | `MathGrader` | `graders/math.py` | `math` | Mathematical expression equivalence |
-| 3 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | Execute code and compare output |
 
 **Each grader has 2 methods to implement:**
 
@@ -163,22 +167,22 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 
 ### Implemented
 
-| # | Class | File | Plugin Key | Default Grader | Default N-Shots |
-|---|-------|------|------------|----------------|-----------------|
+| # | Class | File | Plugin Key | Default Grader | Default N-Shots | Notes |
+|---|-------|------|------------|----------------|-----------------|-------|
 | 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 | **IMPLEMENTED in PR #815** — canonical reference for new benchmarks. Downloads via HuggingFace datasets, handles few-shot formatting and CoT. |
+| 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 8 | **IMPLEMENTED.** Loads `Maxwell-Jia/AIME_2024`, instructs the model to wrap its final integer in `\boxed{}`, supports few-shot priming and chain-of-thought. `default_enable_cot=true`. |
 
 ### Still Stubbed
 
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots |
 |---|-------|------|------------|----------------|-----------------|
-| 1 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 |
-| 2 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
-| 3 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
-| 4 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
-| 5 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
-| 6 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
-| 7 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
-| 8 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
+| 1 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
+| 2 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
+| 3 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
+| 4 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
+| 5 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
+| 6 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
+| 7 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
 
 **Each benchmark has 1 method to implement:**
 
@@ -203,7 +207,7 @@ plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, "mmlu")  # -> {"default_grad
 **Parent:** `AIPerfLifecycleMixin`
 **Implements:** `RecordProcessorProtocol`
 **Plugin key:** `accuracy_record` (under `record_processor`)
-**Disables via:** `PostProcessorDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for wiring grading into the record processing pipeline.
 
@@ -221,7 +225,7 @@ async def process_record(
 **Parent:** `AIPerfLifecycleMixin`
 **Implements:** `ResultsProcessorProtocol`
 **Plugin key:** `accuracy_results` (under `results_processor`)
-**Disables via:** `PostProcessorDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for aggregating per-task accuracy metrics.
 
@@ -242,7 +246,7 @@ async def summarize(self) -> list[MetricResult]                                #
 **Parent:** `AIPerfLoggerMixin`
 **Implements:** `ConsoleExporterProtocol`
 **Plugin key:** `accuracy` (under `console_exporter`)
-**Disables via:** `ConsoleExporterDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `ConsoleExporterDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for displaying accuracy results in the terminal.
 
@@ -258,7 +262,7 @@ async def export(self, console: Console) -> None                               #
 **Parent:** `AIPerfLoggerMixin`
 **Implements:** `DataExporterProtocol`
 **Plugin key:** `accuracy_csv` (under `data_exporter`)
-**Disables via:** `DataExporterDisabled` when `not user_config.accuracy.enabled`
+**Disables via:** `DataExporterDisabled` when `not cfg.accuracy.enabled`
 
 This class is fully implemented and serves as the canonical reference for writing accuracy results to CSV.
 
@@ -310,7 +314,7 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 | Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
-| Config Validator | 0 | 1 | 1 (`validate_accuracy_config`) | 1 |
+| Stub-plugin Validator | 0 | 1 | 1 (`AccuracyConfig._reject_stub_plugins`) | 1 |
 | **Total** | **6** | **13** | | **15** |
 
 ### Self-Disabling Pattern
@@ -323,7 +327,7 @@ The processors, exporters, and one grader/benchmark pair are already wired end-t
 
 1. **Graders** — use `MultipleChoiceGrader` as reference; implement `ExactMatchGrader` next (simplest), then `MathGrader`
 2. **Benchmarks** — use `MMLUBenchmark` as reference; implement dataset loading for each remaining benchmark
-3. **Config validator** — validate benchmark name against `AccuracyBenchmarkType` enum in `UserConfig.validate_accuracy_config()`
+3. **Stub-plugin validator** — update `AccuracyConfig._reject_stub_plugins()` when a benchmark or grader moves from stubbed to supported
 
 ### Key Files for Reference
 

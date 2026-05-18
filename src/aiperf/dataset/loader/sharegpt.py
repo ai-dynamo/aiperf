@@ -1,16 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class ShareGPTLoader(BasePublicDatasetLoader):
@@ -26,7 +30,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     - Configurable max prompt length and total sequence length
 
     Example:
-        >>> loader = ShareGPTLoader(user_config, tokenizer)
+        >>> loader = ShareGPTLoader(run, tokenizer)
         >>> dataset = await loader.load_dataset()
         >>> conversations = await loader.convert_to_conversations(dataset)
         >>> print(f"Loaded {len(conversations)} valid conversations")
@@ -37,20 +41,35 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     filename = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
     def __init__(
-        self, user_config: UserConfig, tokenizer: Tokenizer | None = None, **kwargs
+        self,
+        run: BenchmarkRun | None = None,
+        tokenizer: Tokenizer | None = None,
+        **kwargs,
     ):
         if tokenizer is None:
             raise ValueError(
                 "ShareGPTLoader requires a tokenizer; ensure the endpoint supports tokenization."
             )
         self.tokenizer = tokenizer
-        self.user_config = user_config
-        self.output_tokens_mean = self.user_config.input.prompt.output_tokens.mean
+        # Synthetic prompt OSL `mean` only exists on SyntheticDataset.prompts.osl
+        # when configured as a {mean, stddev} distribution. ShareGPT only uses
+        # this to skip the min-output-length sanity check, so a missing value
+        # collapses to None and the check stays enabled.
+        from aiperf.dataset.loader.base_loader import _default_test_run
+
+        active_run = run or _default_test_run()
+        dataset = active_run.cfg.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        osl = getattr(prompts, "osl", None) if prompts else None
+        if isinstance(osl, dict):
+            self.output_tokens_mean = osl.get("mean")
+        else:
+            self.output_tokens_mean = getattr(osl, "mean", None) if osl else None
         self.turn_count = 0
 
         self._rng = rng.derive("dataset.loader.sharegpt")
 
-        super().__init__(user_config=user_config, tokenizer=tokenizer, **kwargs)
+        super().__init__(run=run, tokenizer=tokenizer, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """
@@ -122,17 +141,24 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         return filtered_dataset
 
     def _select_model_name(self) -> str:
-        selection_strategy = self.user_config.endpoint.model_selection_strategy
+        models_cfg = self.run.cfg.models
+        model_names = self.run.cfg.get_model_names()
+        selection_strategy = models_cfg.strategy
         if selection_strategy == ModelSelectionStrategy.RANDOM:
-            return self._rng.choice(self.user_config.endpoint.model_names)
+            return self._rng.choice(model_names)
         elif selection_strategy == ModelSelectionStrategy.ROUND_ROBIN:
-            model_name = self.user_config.endpoint.model_names[
-                self.turn_count % len(self.user_config.endpoint.model_names)
-            ]
+            model_name = model_names[self.turn_count % len(model_names)]
             self.turn_count += 1
             return model_name
         else:
-            raise ValueError(f"Invalid model selection strategy: {selection_strategy}.")
+            supported = (
+                ModelSelectionStrategy.RANDOM,
+                ModelSelectionStrategy.ROUND_ROBIN,
+            )
+            raise ValueError(
+                f"Unsupported model selection strategy {selection_strategy.value!r} for ShareGPT loader; "
+                f"supported: {', '.join(s.value for s in supported)}."
+            )
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:

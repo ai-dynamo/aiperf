@@ -10,19 +10,13 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.progress import ProgressRouter
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
 
 @pytest.fixture
-def progress_router(
-    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
-) -> ProgressRouter:
-    return ProgressRouter(
-        service_config=router_service_config,
-        user_config=router_user_config,
-    )
+def progress_router(mock_zmq, router_benchmark_run) -> ProgressRouter:
+    return ProgressRouter(run=router_benchmark_run)
 
 
 @pytest.fixture

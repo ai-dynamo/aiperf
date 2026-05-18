@@ -101,8 +101,13 @@ class LLMLatencyInfo:
     """Latency measurements for LLM requests."""
 
     e2e_latency: float
+    """Total end-to-end request latency in seconds."""
+
     prefill_duration: float
+    """Time spent in the prefill (TTFT) phase in seconds."""
+
     decode_duration: float
+    """Time spent in the decode (token generation) phase in seconds."""
 
 
 def record_request_start(endpoint: str, model: str) -> None:
@@ -119,6 +124,12 @@ def record_request_end(endpoint: str) -> None:
 # Track inflight count for KV cache simulation
 _inflight_count = 0
 _total_kv_blocks = 1024  # Simulated total KV cache blocks
+
+
+def get_inflight_count() -> int:
+    """Return current LLM-request inflight count (live module read)."""
+    return _inflight_count
+
 
 # Token throughput tracking for DCGM load
 # Uses batched flushing to handle high throughput (500k+ tokens/sec)

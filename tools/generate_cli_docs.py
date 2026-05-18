@@ -254,11 +254,28 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
 
 
 def extract_commands(app: Any) -> list[tuple[str, str]]:
-    """Extract command names and descriptions."""
+    """Extract command names and descriptions.
+
+    Recurses one level into subcommand-only apps (parent App that has no
+    ``@app.default``, only registered subcommands) so that ``aiperf config init``
+    and similar two-token commands are documented as their own sections.
+    """
     skip = {"--help", "-h", "--version"}
-    commands = []
+    commands: list[tuple[str, str]] = []
     for name, cmd in app._commands.items():
         if name in skip:
+            continue
+        # If this is a subcommand-only app (no default), recurse one level.
+        if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
+            for sub_name, sub_cmd in cmd._commands.items():
+                if sub_name in skip:
+                    continue
+                help_text = sub_cmd.help if hasattr(sub_cmd, "help") else ""
+                if callable(help_text):
+                    help_text = help_text()
+                if help_text:
+                    help_text = _extract_text(help_text).split("\n")[0].strip()
+                commands.append((f"{name} {sub_name}", help_text or ""))
             continue
         help_text = cmd.help if hasattr(cmd, "help") else ""
         if callable(help_text):
@@ -411,8 +428,12 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
     for cmd_name, groups in data.items():
         lines.extend(["<hr/>", "", f"## `aiperf {cmd_name}`", ""])
 
-        # Command help text
-        cmd = app._commands.get(cmd_name)
+        # Command help text — walks dotted names like "config init".
+        cmd: Any = app
+        for part in cmd_name.split(" "):
+            cmd = cmd._commands.get(part) if hasattr(cmd, "_commands") else None
+            if cmd is None:
+                break
         if cmd and hasattr(cmd, "help"):
             help_text = cmd.help() if callable(cmd.help) else cmd.help
             if help_text:

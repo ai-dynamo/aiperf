@@ -16,11 +16,12 @@ from datasets import Dataset, Sequence
 from datasets import Image as HFImage
 from PIL import Image as PILImage
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.hf_conversation import HFConversationDatasetLoader
 from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
+from tests.unit.conftest import make_run_from_cli
 
 
 def _jpeg_bytes(width: int = 4, height: int = 4) -> bytes:
@@ -30,8 +31,8 @@ def _jpeg_bytes(width: int = 4, height: int = 4) -> bytes:
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def cli_config() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"])
 
 
 def _vision_arena_dataset(image_feature: Any) -> Dataset:
@@ -55,9 +56,9 @@ class TestHFConversationLoaderRealSchemas:
     """Run HFConversationDatasetLoader against real HF Datasets so the row
     shapes are produced by the actual ``datasets`` library, not by us."""
 
-    def _loader(self, user_config: UserConfig) -> HFConversationDatasetLoader:
+    def _loader(self, cli_config: CLIConfig) -> HFConversationDatasetLoader:
         return HFConversationDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
             hf_split="train",
             conversation_column="conversation",
@@ -65,7 +66,7 @@ class TestHFConversationLoaderRealSchemas:
             image_column="images",
         )
 
-    async def test_vision_arena_schema_decode_false_yields_image(self, user_config):
+    async def test_vision_arena_schema_decode_false_yields_image(self, cli_config):
         """The original bug: List(Image(decode=False)) → list[dict] from HF.
 
         Pre-fix, _extract_images returned [] for this shape and inputs.json
@@ -74,7 +75,7 @@ class TestHFConversationLoaderRealSchemas:
         dataset = _vision_arena_dataset(Sequence(HFImage(decode=False)))
         assert str(dataset.features["images"]) == "List(Image(mode=None, decode=False))"
 
-        loader = self._loader(user_config)
+        loader = self._loader(cli_config)
         conversations = await loader.convert_to_conversations({"dataset": dataset})
 
         assert len(conversations) == 1
@@ -85,22 +86,22 @@ class TestHFConversationLoaderRealSchemas:
         )
         assert turn.images[0].contents[0].startswith("data:image/jpeg;base64,")
 
-    async def test_vision_arena_schema_decode_false_streaming(self, user_config):
+    async def test_vision_arena_schema_decode_false_streaming(self, cli_config):
         """Streaming flag must not change image extraction behavior."""
         dataset = _vision_arena_dataset(Sequence(HFImage(decode=False)))
         streaming = dataset.to_iterable_dataset()
 
-        loader = self._loader(user_config)
+        loader = self._loader(cli_config)
         conversations = await loader.convert_to_conversations({"dataset": streaming})
 
         assert len(conversations[0].turns[0].images) == 1
 
-    async def test_decode_true_list_schema_still_works(self, user_config):
+    async def test_decode_true_list_schema_still_works(self, cli_config):
         """Regression coverage: Sequence(Image(decode=True)) keeps yielding
         PIL Images; the unified loop must handle both shapes."""
         dataset = _vision_arena_dataset(Sequence(HFImage(decode=True)))
 
-        loader = self._loader(user_config)
+        loader = self._loader(cli_config)
         conversations = await loader.convert_to_conversations({"dataset": dataset})
 
         turn = conversations[0].turns[0]
@@ -113,7 +114,7 @@ class TestHFInstructionResponseLoaderRealSchemas:
     """MMStar-style: scalar Image(decode=True). Regression coverage so the
     common decoded-PIL path never breaks while we evolve the loader."""
 
-    async def test_mmstar_schema_decode_true_yields_image(self, user_config):
+    async def test_mmstar_schema_decode_true_yields_image(self, cli_config):
         ds = Dataset.from_dict(
             {
                 "question": ["Describe this image."],
@@ -123,7 +124,7 @@ class TestHFInstructionResponseLoaderRealSchemas:
         assert str(ds.features["image"]) == "Image(mode=None, decode=True)"
 
         loader = HFInstructionResponseDatasetLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="Lin-Chen/MMStar",
             hf_split="val",
             prompt_column="question",
