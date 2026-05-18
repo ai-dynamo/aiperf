@@ -85,7 +85,7 @@ otel = [
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
 dev = [
-  "aiperf[botorch,mlflow,otel]",
+  "aiperf[mlflow,otel]",
   "black>=25.1.0",
   "httpx>=0.27.0",
   "hypothesis>=6.0.0",
