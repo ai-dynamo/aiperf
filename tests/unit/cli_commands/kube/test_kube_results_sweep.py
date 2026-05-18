@@ -422,8 +422,14 @@ class _FakeContent:
 
 
 class _FakeResponse:
-    def __init__(self, *, body: bytes = b"", json_body: dict | None = None) -> None:
-        self.status = 200
+    def __init__(
+        self,
+        *,
+        body: bytes = b"",
+        json_body: dict | None = None,
+        status: int = 200,
+    ) -> None:
+        self.status = status
         self.headers: dict[str, str] = {}
         self.content = _FakeContent(body)
         self._json_body = json_body or {}
@@ -435,7 +441,15 @@ class _FakeResponse:
         return None
 
     def raise_for_status(self) -> None:
-        return None
+        if self.status >= 400:
+            import aiohttp
+
+            raise aiohttp.ClientResponseError(
+                request_info=MagicMock(),
+                history=(),
+                status=self.status,
+                message="error",
+            )
 
     async def json(self, *, loads: object | None = None) -> dict:
         if loads is None:
@@ -508,3 +522,53 @@ class TestSweepAggregateArtifactClient:
         assert downloaded == [(artifact_name, 2)]
         assert session.requested == [list_url, file_url]
         assert (tmp_path / artifact_name).read_bytes() == b"{}"
+
+    async def test_partial_aggregate_artifact_failure_returns_none(
+        self, tmp_path: Path
+    ) -> None:
+        from aiperf.kubernetes.results_operator import (
+            _download_all_sweep_operator_files,
+        )
+
+        ok_artifact = "sweep_aggregate/profile_export_aiperf.json"
+        missing_artifact = "sweep_aggregate/profile_export_console.txt"
+        list_url = (
+            "http://operator/api/v1/sweeps/bench/my-sweep/epochs/1714069323/artifacts"
+        )
+        session = _FakeSession(
+            {
+                list_url: _FakeResponse(
+                    json_body={
+                        "files": [
+                            {"name": ok_artifact, "size_bytes": 2},
+                            {"name": missing_artifact, "size_bytes": 5},
+                        ]
+                    }
+                ),
+                f"{list_url}/{ok_artifact}": _FakeResponse(body=b"{}"),
+                f"{list_url}/{missing_artifact}": _FakeResponse(status=500),
+            }
+        )
+
+        with (
+            patch("aiohttp.ClientSession", return_value=session),
+            patch(
+                "aiperf.transports.aiohttp_client.create_tcp_connector",
+                return_value=None,
+            ),
+        ):
+            downloaded = await _download_all_sweep_operator_files(
+                api_base="http://operator",
+                namespace="bench",
+                sweep_name="my-sweep",
+                output_dir=tmp_path,
+                run="1714069323",
+            )
+
+        assert downloaded is None
+        assert session.requested == [
+            list_url,
+            f"{list_url}/{ok_artifact}",
+            f"{list_url}/{missing_artifact}",
+        ]
+        assert (tmp_path / ok_artifact).read_bytes() == b"{}"

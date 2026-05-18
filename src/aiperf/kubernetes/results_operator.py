@@ -51,10 +51,8 @@ def _result_base_url(
 ) -> str:
     """Return the results URL prefix for a job, pinned to a run when given.
 
-    When ``run`` is None, returns the "latest" prefix
-    ``<api_base>/api/v1/results/<ns>/<job_id>``. When ``run`` is an epoch
-    (or ``"legacy"``), returns the historical prefix
-    ``<api_base>/api/v1/results/<ns>/<job_id>/runs/<run>``.
+    When ``run`` is None, returns the "latest" prefix. Otherwise returns
+    the historical ``<api_base>/api/v1/results/<ns>/<job_id>/runs/<run>`` prefix.
     """
     base = f"{api_base}/api/v1/results/{namespace}/{job_id}"
     if run is not None:
@@ -360,8 +358,9 @@ async def _download_all_sweep_operator_files(
                 file_info=file_info,
                 output_dir=output_dir,
             )
-            if result is not None:
-                downloaded.append(result)
+            if result is None:
+                return None
+            downloaded.append(result)
         return downloaded
 
 

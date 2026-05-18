@@ -283,8 +283,8 @@ async def _run_sweep_results(
             kube_console.print_results_summary(str(output_dir))
         else:
             kube_console.print_error(
-                f"Sweep {resolved.namespace}/{resolved.name}: one or more children "
-                "failed to download (see per-child errors above)."
+                f"Sweep {resolved.namespace}/{resolved.name}: one or more aggregate artifacts "
+                "or children failed to download (see errors above)."
             )
     finally:
         await resolved.aclose()
