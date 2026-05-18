@@ -210,29 +210,25 @@ def _build_summary(
 
 
 def _print_summary(summary: dict[str, Any]) -> None:
-    print(f"\nRequest distribution summary ({summary['total_requests']} requests):")
-    print("-" * 88)
+    print(f"\nRequest distribution ({summary['total_requests']} requests)")
+    print("─" * 46)
     for ep, stats in summary["per_endpoint"].items():
-        isl = stats["isl"]
-        osl = stats["requested_osl"]
+        print(f"  {ep}  n={stats['count']}")
+        for label, s in (("ISL", stats["isl"]), ("OSL", stats["requested_osl"])):
+            if s is None:
+                print(f"    {label}    n/a")
+            else:
+                print(
+                    f"    {label}    mean {s['mean']:7.1f}"
+                    f"   p50 {s['p50']:5.0f}   p99 {s['p99']:5.0f}"
+                )
         mn = stats["min_tokens"]
-        isl_str = (
-            f"ISL mean={isl['mean']:7.1f} p50={isl['p50']:6.0f} p99={isl['p99']:6.0f}"
-            if isl
-            else "ISL n/a                              "
-        )
-        osl_str = (
-            f"OSL mean={osl['mean']:7.1f} p50={osl['p50']:6.0f} p99={osl['p99']:6.0f}"
-            if osl
-            else "OSL n/a"
-        )
-        print(f"  {ep:32s}  n={stats['count']:6d}  {isl_str}  {osl_str}")
         if mn is not None:
-            print(f"      min_tokens mean={mn['mean']:7.1f} p50={mn['p50']:6.0f}")
+            print(f"    min_tokens  mean {mn['mean']:7.1f}   p50 {mn['p50']:5.0f}")
         if stats["ignore_eos_count"]:
-            print(f"      ignore_eos=true: {stats['ignore_eos_count']}")
+            print(f"    ignore_eos=true: {stats['ignore_eos_count']}")
         if stats["reasoning_effort_counts"]:
-            print(f"      reasoning_effort: {stats['reasoning_effort_counts']}")
+            print(f"    reasoning_effort: {stats['reasoning_effort_counts']}")
 
 
 _GLOBAL_RECORDER: RequestRecorder | None = None
