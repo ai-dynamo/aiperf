@@ -1,0 +1,298 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Post-merge build pipeline. Fires on pushes to main and release/* branches.
+#
+# Versioning:
+#   main:        wheel = {base}a{run_number}+g{short_sha}     image = main-{short_sha}
+#   release/*:   wheel = {pyproject.toml version, untouched}  image = release-{X.Y.Z}-{short_sha}
+#
+# Release branches own their version via the project's shipping process; the
+# pipeline never rewrites pyproject.toml on release/*.
+#
+# Destinations:
+#   wheel  → S3 (build) → artifactory: post-merge/{run_id}/aiperf-...-py3-none-any.whl (stage)
+#   image  → ECR:        ${REGISTRY}/aiperf:{container_tag}
+#
+# Staging is gated by the `automated-release` GitHub environment (existing,
+# same as nightly).
+
+name: Post-merge
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/*'
+
+concurrency:
+  group: post-merge-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare Post-merge Build
+    runs-on: ubuntu-latest
+    outputs:
+      flavor:               ${{ steps.flavor.outputs.flavor }}
+      release_version:      ${{ steps.flavor.outputs.release_version }}
+      wheel_version:        ${{ steps.meta.outputs.wheel_version }}
+      wheel_filename:       ${{ steps.meta.outputs.wheel_filename }}
+      container_tag:        ${{ steps.meta.outputs.container_tag }}
+      container_image:      ${{ steps.meta.outputs.container_image }}
+      container_ref:        ${{ steps.meta.outputs.container_ref }}
+      short_sha:            ${{ steps.meta.outputs.short_sha }}
+      artifactory_subpath:  ${{ steps.meta.outputs.artifactory_subpath }}
+      skip_version_mutation: ${{ steps.meta.outputs.skip_version_mutation }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect flavor (main vs release)
+        id: flavor
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF_NAME}"
+          if [ "${REF}" = "main" ]; then
+            echo "flavor=post-merge-main" >> "$GITHUB_OUTPUT"
+            echo "release_version=" >> "$GITHUB_OUTPUT"
+          elif [[ "${REF}" == release/* ]]; then
+            VERSION="${REF#release/}"
+            if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::release branch '${REF}' does not match release/X.Y.Z"
+              exit 1
+            fi
+            echo "flavor=post-merge-release" >> "$GITHUB_OUTPUT"
+            echo "release_version=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unexpected branch '${REF}' — post-merge only handles main and release/*"
+            exit 1
+          fi
+
+      - name: Compute release metadata
+        id: meta
+        uses: ./.github/actions/release-metadata
+        with:
+          flavor:              ${{ steps.flavor.outputs.flavor }}
+          commit_sha:          ${{ github.sha }}
+          container_registry:  ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          release_version:     ${{ steps.flavor.outputs.release_version }}
+          run_id:              ${{ github.run_id }}
+          run_number:          ${{ github.run_number }}
+
+  build:
+    name: Build Post-merge Artifacts
+    needs: [prepare]
+    runs-on: prod-aiperf-default-v1
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Patch version in pyproject.toml (main only)
+        if: needs.prepare.outputs.skip_version_mutation != 'true'
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare.outputs.wheel_version }}
+
+      - name: Embed commit SHA in wheel metadata
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          REPO:       ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          from pathlib import Path
+
+          sha = os.environ["COMMIT_SHA"]
+          repo = os.environ["REPO"]
+          url = f"https://github.com/{repo}/commit/{sha}"
+
+          pyproject = Path("pyproject.toml")
+          text = pyproject.read_text()
+          entry = f'Repository = "{url}"'
+          if "[project.urls]" in text:
+              text = text.replace("[project.urls]", f"[project.urls]\n{entry}", 1)
+          else:
+              if not text.endswith("\n"):
+                  text += "\n"
+              text += f"\n[project.urls]\n{entry}\n"
+          pyproject.write_text(text)
+
+          build_info = Path("src/aiperf/_build_info.py")
+          build_info.write_text(
+              "# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n"
+              "# SPDX-License-Identifier: Apache-2.0\n"
+              '"""Build-time metadata. Generated by the post-merge pipeline; do not edit."""\n'
+              "\n"
+              f'COMMIT_SHA = "{sha}"\n'
+          )
+          print(f"Embedded commit SHA: {sha}")
+          PYEOF
+
+      - name: Bootstrap multi-arch builder
+        uses: ./.github/actions/bootstrap-buildkit
+        with:
+          builder_name: aiperf-post-merge-${{ github.run_id }}
+          arch: 'linux/amd64,linux/arm64'
+          fresh_builder: 'true'
+
+      - name: Log in to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | docker login --username AWS --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+      - name: Build and extract wheel
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   wheel-artifact \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-post-merge" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-post-merge,mode=max" \
+            --output     type=local,dest=./dist/ \
+            .
+
+      - name: Validate wheel
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
+          if [ "${#WHEELS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one wheel in dist/, found ${#WHEELS[@]}"
+            printf '  %s\n' "${WHEELS[@]}"
+            exit 1
+          fi
+          WHEEL_PATH="${WHEELS[0]}"
+          uvx twine check "${WHEEL_PATH}"
+          uv venv .venv-check
+          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
+          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
+          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
+            exit 1
+          fi
+          .venv-check/bin/aiperf --help
+
+      - name: Upload wheel to S3
+        env:
+          S3_BUCKET:           ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          ARTIFACTORY_SUBPATH: ${{ needs.prepare.outputs.artifactory_subpath }}
+          WHEEL_FILENAME:      ${{ needs.prepare.outputs.wheel_filename }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
+          aws s3 cp "${WHEEL}" \
+            "s3://${S3_BUCKET}/aiperf/${ARTIFACTORY_SUBPATH}${WHEEL_FILENAME}" \
+            --sse AES256
+
+      - name: Build and push multi-arch container to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          CONTAINER_REF:      ${{ needs.prepare.outputs.container_ref }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+          refresh_ecr_token() {
+            while sleep 21600; do
+              aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+                | docker login --username AWS --password-stdin "${REGISTRY}" 2>/dev/null || true
+            done
+          }
+          refresh_ecr_token &
+          REFRESH_PID=$!
+          trap 'kill ${REFRESH_PID} 2>/dev/null || true' EXIT
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --target   runtime \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-post-merge" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-post-merge,mode=max" \
+            --push \
+            --tag "${CONTAINER_REF}" \
+            .
+
+          DIGEST=$(docker buildx imagetools inspect "${CONTAINER_REF}" --format '{{.Manifest.Digest}}')
+          echo "Pushed ${CONTAINER_REF} — digest: ${DIGEST}"
+
+  stage-wheel:
+    name: Stage Wheel (S3 → Artifactory)
+    needs: [prepare, build]
+    runs-on: prod-aiperf-builder-amd-v1
+    environment: automated-release
+    steps:
+      - name: Upload wheel from S3 to Artifactory
+        env:
+          S3_BUCKET:           ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          ARTIFACTORY_URL:     ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:    ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN:   ${{ secrets.ARTIFACTORY_TOKEN }}
+          ARTIFACTORY_SUBPATH: ${{ needs.prepare.outputs.artifactory_subpath }}
+          WHEEL_FILENAME:      ${{ needs.prepare.outputs.wheel_filename }}
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+
+          aws s3 cp \
+            "s3://${S3_BUCKET}/aiperf/${ARTIFACTORY_SUBPATH}${WHEEL_FILENAME}" \
+            "${TMPDIR}/${WHEEL_FILENAME}"
+
+          TARGET_URL="${ARTIFACTORY_URL%/}/${ARTIFACTORY_SUBPATH}${WHEEL_FILENAME}"
+          BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "${TMPDIR}/${WHEEL_FILENAME}" \
+            "${TARGET_URL}")
+          if [ "${HTTP_CODE}" != "201" ]; then
+            echo "::error::Artifactory deploy failed: HTTP ${HTTP_CODE} at ${TARGET_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "Wheel staged to Artifactory: ${TARGET_URL}"
+
+  summary:
+    name: Post-merge Summary
+    needs: [prepare, build, stage-wheel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write summary
+        env:
+          FLAVOR:              ${{ needs.prepare.outputs.flavor }}
+          WHEEL_FILENAME:      ${{ needs.prepare.outputs.wheel_filename }}
+          CONTAINER_REF:       ${{ needs.prepare.outputs.container_ref }}
+          ARTIFACTORY_SUBPATH: ${{ needs.prepare.outputs.artifactory_subpath }}
+          BUILD_RESULT:        ${{ needs.build.result }}
+          STAGE_RESULT:        ${{ needs.stage-wheel.result }}
+        run: |
+          {
+            echo "## Post-merge Build Summary (${FLAVOR})"
+            echo ""
+            echo "| Artifact | Location |"
+            echo "|----------|----------|"
+            echo "| Wheel | \`${ARTIFACTORY_SUBPATH}${WHEEL_FILENAME}\` |"
+            echo "| Container | \`${CONTAINER_REF}\` |"
+            echo ""
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| build | ${BUILD_RESULT} |"
+            echo "| stage-wheel | ${STAGE_RESULT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
