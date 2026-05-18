@@ -20,6 +20,7 @@ import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
 import { fmtBytes, fmtNumber } from '../lib/format.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
+import { buildSweepVariations, shouldShowSweepDiagnostics } from './sweep-detail-helpers.js';
 
 // ``archived`` is included so polling stops for sweeps whose live CR
 // has been deleted but whose aggregate.json is still served from the
@@ -68,19 +69,6 @@ const PARETO_AXES = [
   },
 ];
 const DEFAULT_PARETO_AXIS_KEY = 'tps_p99';
-
-/** Compute population mean / std / cv across an array of numbers. */
-function meanStd(values) {
-  const filtered = values.filter(v => typeof v === 'number' && Number.isFinite(v));
-  if (filtered.length === 0) return null;
-  const n = filtered.length;
-  const mean = filtered.reduce((a, b) => a + b, 0) / n;
-  if (n < 2) return { mean, std: 0, cv: null, n };
-  const variance = filtered.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
-  const std = Math.sqrt(variance);
-  const cv = mean !== 0 ? std / Math.abs(mean) : null;
-  return { mean, std, cv, n };
-}
 
 function fmtKpi(value, unit) {
   if (value == null) return '---';
@@ -311,42 +299,12 @@ export function SweepDetail({ namespace, name, epoch }) {
   // Group manifest entries by variation_index and compute mean/std/cv per
   // headline metric across the available trials. ``perMetric`` is keyed
   // ``"<key>.<stat>"`` so a metric+stat selector can index it directly.
-  const variations = useMemo(() => {
-    if (manifest.length === 0) return [];
-    const groups = new Map();
-    for (const c of manifest) {
-      const idx = c.variation_index ?? 0;
-      if (!groups.has(idx)) {
-        groups.set(idx, {
-          variation_index: idx,
-          label: c.variation_label ?? '',
-          n_total: 0,
-          summaries: [],
-        });
-      }
-      const g = groups.get(idx);
-      g.n_total += 1;
-      const summary = childSummaries[c.name]?.summary ?? null;
-      if (summary) g.summaries.push(summary);
-    }
-    return [...groups.values()]
-      .sort((a, b) => a.variation_index - b.variation_index)
-      .map(g => {
-        const perMetric = {};
-        for (const m of HEADLINE_METRICS) {
-          const values = g.summaries.map(s => s?.[m.key]?.[m.stat]).filter(x => x != null);
-          const r = meanStd(values);
-          perMetric[m.key + '.' + m.stat] = r ?? { mean: null, std: null, cv: null, n: 0 };
-        }
-        return {
-          variation_index: g.variation_index,
-          label: g.label,
-          n_trials: g.summaries.length,
-          n_total: g.n_total,
-          perMetric,
-        };
-      });
-  }, [manifest, childSummaries]);
+  const variations = useMemo(() => buildSweepVariations({
+    manifest,
+    childSummaries,
+    cells,
+    headlineMetrics: HEADLINE_METRICS,
+  }), [manifest, childSummaries, cells]);
 
   // Per-metric series used by the chart: one point per variation, with
   // ``mean`` + ``std`` for the error band.
@@ -787,20 +745,22 @@ export function SweepDetail({ namespace, name, epoch }) {
       </div>
 
       <!-- Events / Logs / Conditions / Pods (tabbed) -->
-      <div style="margin-top: var(--space-4)">
-        <${DiagnosticsPanel}
-          ns=${namespace}
-          name=${name}
-          kind="sweep"
-          conditions=${conditions}
-          pods=${pods}
-          mode=${phaseLower === 'archived' ? 'archived' : (isRunning ? 'live' : 'completed')}
-          archived=${phaseLower === 'archived'}
-          eventCount=${null}
-          logSeverityCounts=${null}
-          conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
-          podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
-      </div>
+      ${shouldShowSweepDiagnostics(phase) && html`
+        <div style="margin-top: var(--space-4)">
+          <${DiagnosticsPanel}
+            ns=${namespace}
+            name=${name}
+            kind="sweep"
+            conditions=${conditions}
+            pods=${pods}
+            mode="live"
+            archived=${false}
+            eventCount=${null}
+            logSeverityCounts=${null}
+            conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
+            podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
+        </div>
+      `}
     </div>
   `;
 }
