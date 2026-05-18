@@ -406,10 +406,10 @@ async def test_bootstrap_walks_pvc_and_indexes_runs(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
+async def test_bootstrap_indexes_k8s_sweep_children_from_real_run_artifacts(
     tmp_path: Path,
 ) -> None:
-    """K8s sweep bundles put per-cell metrics under sweep_aggregate/."""
+    """K8s sweep aggregate exports are run-level; per-cell metrics come from children."""
     base = tmp_path / "results"
     epoch_dir = base / "ns" / "sweeps" / "satsweep" / "1714069323"
     aggregate_dir = epoch_dir / "sweep_aggregate"
@@ -421,6 +421,10 @@ async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
                 "totalVariations": 2,
                 "completedRuns": 2,
                 "failedRuns": 0,
+                "childRuns": [
+                    {"label": "concurrency=10", "status": "Succeeded", "error": ""},
+                    {"label": "concurrency=20", "status": "Succeeded", "error": ""},
+                ],
             }
         )
     )
@@ -434,6 +438,7 @@ async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
                         "name": "satsweep-v00",
                         "variation_index": 0,
                         "variation_label": "concurrency=10",
+                        "trial_index": None,
                         "child_run_epoch": "1714069324",
                         "status": "Succeeded",
                     },
@@ -442,6 +447,7 @@ async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
                         "name": "satsweep-v01",
                         "variation_index": 1,
                         "variation_label": "concurrency=20",
+                        "trial_index": None,
                         "child_run_epoch": "1714069325",
                         "status": "Succeeded",
                     },
@@ -449,59 +455,76 @@ async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
             }
         )
     )
+    # Shape produced by AggregateConfidenceJsonExporter: run-level metadata + metrics,
+    # not per_combination_metrics. It cannot identify per-variation rows by itself.
     (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(
         orjson.dumps(
             {
-                "aggregation_type": "sweep",
-                "metadata": {"sweep_mode": "INDEPENDENT"},
-                "per_combination_metrics": [
-                    {
-                        "parameters": {"concurrency": 10},
-                        "metrics": {
-                            "request_throughput": {
-                                "mean": 100.0,
-                                "avg": 100.0,
-                                "p50": 95.0,
-                                "p99": 110.0,
-                                "unit": "rps",
-                            }
-                        },
-                    },
-                    {
-                        "parameters": {"concurrency": 20},
-                        "metrics": {
-                            "request_throughput": {
-                                "mean": 180.0,
-                                "avg": 180.0,
-                                "p50": 175.0,
-                                "p99": 190.0,
-                                "unit": "rps",
-                            }
-                        },
-                    },
-                ],
-                "best_configurations": {
-                    "best_throughput": {
-                        "parameters": {"concurrency": 20},
-                        "metric": 180.0,
+                "schema_version": "1.0",
+                "aiperf_version": "0.8.0",
+                "metadata": {
+                    "aggregation_type": "confidence",
+                    "num_profile_runs": 2,
+                    "num_successful_runs": 2,
+                    "failed_runs": [],
+                    "sweep_mode": "INDEPENDENT",
+                },
+                "metrics": {
+                    "request_throughput": {
+                        "mean": 140.0,
+                        "std": 56.6,
+                        "min": 100.0,
+                        "max": 180.0,
+                        "cv": 0.4,
+                        "se": 40.0,
+                        "ci_low": -368.2,
+                        "ci_high": 648.2,
+                        "t_critical": 12.706,
                         "unit": "rps",
                     }
                 },
-                "pareto_optimal": [{"concurrency": 10}, {"concurrency": 20}],
             }
         )
     )
+    for child_name, child_epoch, throughput in (
+        ("satsweep-v00", "1714069324", 100.0),
+        ("satsweep-v01", "1714069325", 180.0),
+    ):
+        run_dir = base / "ns" / child_name / child_epoch
+        run_dir.mkdir(parents=True)
+        (run_dir / "profile_export_aiperf.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metrics": {
+                        "request_throughput": {
+                            "avg": throughput,
+                            "p50": throughput - 5.0,
+                            "p99": throughput + 10.0,
+                            "unit": "rps",
+                        }
+                    },
+                    "input_config": {"models": {"items": [{"name": "m"}]}},
+                }
+            )
+        )
 
     db_path = tmp_path / ".aiperf_index.sqlite"
     await runs_index.open(db_path)
     try:
         stats = await runs_index.bootstrap(base)
+        assert stats.runs_indexed == 2
         assert stats.sweep_variations_indexed == 2
         rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
         assert [r.variation_idx for r in rows] == [0, 1]
         assert rows[0].child_job_id == "satsweep-v00"
         assert rows[1].child_epoch == "1714069325"
-        assert rows[1].is_best is True
+        cur = await runs_index._conn().execute(
+            "SELECT request_throughput_avg FROM sweep_variations "
+            "WHERE namespace = ? AND sweep_name = ? AND variation_idx = ?",
+            ("ns", "satsweep", 1),
+        )
+        assert (await cur.fetchone())[0] == 180.0
+        await cur.close()
     finally:
         await runs_index.close()
 

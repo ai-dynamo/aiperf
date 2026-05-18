@@ -400,41 +400,55 @@ class TestBootstrapEdgeCases:
         assert ok == 0
 
     @pytest.mark.asyncio
-    async def test_index_sweep_from_disk_aggregate_without_pareto(
+    async def test_index_sweep_from_disk_aggregate_export_without_children_indexes_zero(
         self, tmp_path: Path, index_path: Path
     ) -> None:
-        """Aggregate present without pareto_optimal/best_configurations.
-
-        Variations must still index; mark_sweep_pareto must NOT be invoked
-        (no rankings → sweep_variations_pareto.is_best stays 0).
-        """
+        """AggregateConfidenceJsonExporter output alone has no per-variation rows."""
         epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
-        epoch_dir.mkdir(parents=True)
-        agg = {
-            "metadata": {"mode": "INDEPENDENT"},
-            "per_combination_metrics": [
+        aggregate_dir = epoch_dir / "sweep_aggregate"
+        aggregate_dir.mkdir(parents=True)
+        (epoch_dir / "aggregate.json").write_bytes(
+            orjson.dumps(
                 {
-                    "variation_idx": 0,
-                    "variation_values": {"c": 10},
+                    "phase": "Succeeded",
+                    "totalVariations": 1,
+                    "completedRuns": 1,
+                    "failedRuns": 0,
+                }
+            )
+        )
+        (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(
+                {
+                    "schema_version": "1.0",
+                    "metadata": {
+                        "aggregation_type": "confidence",
+                        "num_profile_runs": 1,
+                        "num_successful_runs": 1,
+                        "failed_runs": [],
+                    },
                     "metrics": {
                         "request_throughput": {
-                            "avg": 50.0,
-                            "p50": 50.0,
-                            "p99": 60.0,
+                            "mean": 50.0,
+                            "std": 0.0,
+                            "min": 50.0,
+                            "max": 50.0,
+                            "cv": 0.0,
+                            "se": 0.0,
+                            "ci_low": 50.0,
+                            "ci_high": 50.0,
+                            "t_critical": 0.0,
                             "unit": "rps",
                         }
                     },
-                },
-            ],
-        }
-        (epoch_dir / "aggregate.json").write_bytes(orjson.dumps(agg))
+                }
+            )
+        )
 
         ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
-        assert ok == 1
+        assert ok == 0
         rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
-        assert len(rows) == 1
-        assert rows[0].is_best is False
-        assert rows[0].pareto_rank is None
+        assert rows == []
 
     @pytest.mark.asyncio
     async def test_index_sweep_from_disk_skips_one_bad_row_indexes_rest(

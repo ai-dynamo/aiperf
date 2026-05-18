@@ -1053,6 +1053,76 @@ def _strategy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
     return rows
 
 
+def _results_base_from_sweep_epoch_dir(epoch_dir: Path) -> Path | None:
+    try:
+        return epoch_dir.parents[3]
+    except IndexError:
+        return None
+
+
+def _load_profile_export(run_path: Path) -> dict[str, Any] | None:
+    summary_path_zst = run_path / "profile_export_aiperf.json.zst"
+    summary_path_raw = run_path / "profile_export_aiperf.json"
+    try:
+        if summary_path_zst.exists():
+            return orjson.loads(zstd_decompress(summary_path_zst.read_bytes()))
+        if summary_path_raw.exists():
+            return orjson.loads(summary_path_raw.read_bytes())
+    except (OSError, orjson.JSONDecodeError, zstandard.ZstdError):
+        return None
+    return None
+
+
+def _child_variation_values(child: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    label = child.get("variation_label")
+    if label:
+        values["variation_label"] = label
+    trial_index = child.get("trial_index")
+    if trial_index is not None:
+        values["trial_index"] = trial_index
+    return values
+
+
+def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
+    base = _results_base_from_sweep_epoch_dir(epoch_dir)
+    if base is None:
+        return []
+    try:
+        doc = orjson.loads((epoch_dir / "children.json").read_bytes())
+    except (FileNotFoundError, OSError, orjson.JSONDecodeError):
+        return []
+
+    rows: list[SweepRow] = []
+    for child in doc.get("children", []) or []:
+        try:
+            idx = int(child["variation_index"])
+            namespace = child.get("namespace") or epoch_dir.parents[2].name
+            name = child["name"]
+            child_epoch = child.get("child_run_epoch") or ""
+        except (IndexError, KeyError, TypeError, ValueError):
+            continue
+        if not child_epoch:
+            continue
+        summary = _load_profile_export(base / namespace / name / child_epoch)
+        if summary is None:
+            continue
+        metrics_payload = (
+            summary.get("metrics")
+            if isinstance(summary.get("metrics"), dict)
+            else summary
+        )
+        rows.append(
+            (
+                idx,
+                _child_variation_values(child),
+                _normalize_sweep_metrics(metrics_payload),
+                {"child": child, "metrics": summary},
+            )
+        )
+    return rows
+
+
 def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
     path = epoch_dir / "children.json"
     try:
@@ -1122,10 +1192,10 @@ async def _index_sweep_from_disk(
     """Ingest <ns>/sweeps/<name>/<epoch>/ — variations + pareto if present.
 
     Returns the number of variation rows indexed. K8s sweep-controller archives
-    put parent status in ``aggregate.json`` and per-cell metrics under
-    ``sweep_aggregate/profile_export_aiperf_aggregate.json``; legacy archives
-    may use ``profile_export_aiperf_sweep.json`` or put ``per_combination_metrics``
-    directly in ``aggregate.json``.
+    put parent status in ``aggregate.json``, child linkage in ``children.json``,
+    and per-cell metrics in the child runs' ``profile_export_aiperf.json`` files;
+    legacy archives may use ``profile_export_aiperf_sweep.json`` or put
+    ``per_combination_metrics`` directly in ``aggregate.json``.
     """
     aggregate_path = epoch_dir / "aggregate.json"
     if not aggregate_path.exists():
@@ -1137,6 +1207,8 @@ async def _index_sweep_from_disk(
 
     source_agg = parent_agg
     rows = _legacy_sweep_rows(parent_agg)
+    if not rows:
+        rows = _child_sweep_rows(epoch_dir)
     if not rows:
         strategy_agg = _load_strategy_sweep_aggregate(epoch_dir)
         if strategy_agg is None:
