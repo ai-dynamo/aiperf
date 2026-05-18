@@ -48,6 +48,8 @@ from aiperf.operator.sweep_union import (
     SweepRecord,
     find_any_sweep,
     list_all_sweeps,
+    sanitize_current_child_ref,
+    sanitize_run_states,
     synthesize_sweep_status_from_aggregate,
 )
 
@@ -70,8 +72,8 @@ def _summary(rec: SweepRecord) -> SweepSummary:
         completed_at=rec.completed_at,
         api_url=rec.api_url,
         results_available=rec.results_available,
-        current_child_ref=rec.current_child_ref,
-        run_states=rec.run_states,
+        current_child_ref=sanitize_current_child_ref(rec.current_child_ref),
+        run_states=sanitize_run_states(rec.run_states),
     )
 
 
@@ -380,9 +382,6 @@ async def _get_children_impl(
     Returns 404 only when neither half has data — the prior disk-only
     implementation 404'd every live sweep regardless of CR state.
     """
-    # CR first: the live sweep-controller embeds the full children.json
-    # envelope under status.aggregate.children for any sweep that has run
-    # at least one variation, even mid-run.
     if epoch is None:
         rec = await find_any_sweep(api, base_dir, namespace, name)
         if rec is not None and rec.raw_status:
@@ -394,13 +393,6 @@ async def _get_children_impl(
                 ):
                     return _children_manifest_from_doc(children_doc, epoch=epoch)
 
-        # CR exists but the sweep_controller hasn't patched
-        # ``status.aggregate.children`` yet (mid-run before aggregation).
-        # Synthesize the manifest from live AIPerfJob CRs labelled with
-        # this sweep so the SweepDetail page (and the live-variations
-        # rollup) can render immediately as children are created. Skip
-        # when the CR itself is absent — disk fallback below handles
-        # archived (post-TTL) sweeps.
         if rec is not None:
             live = await children_manifest_from_live_aiperfjobs(api, namespace, name)
             if live is not None:

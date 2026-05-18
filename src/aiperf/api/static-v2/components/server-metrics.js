@@ -18,14 +18,14 @@ import { fmtNumber } from '../lib/format.js';
 /** Known operational guardrails. ``kind`` categorizes the color band only;
  *  it is not an assertion about the user's SLO. */
 function saturationForKvCache(ratio) {
-  if (ratio == null || typeof ratio !== 'number') return null;
+  if (ratio == null || typeof ratio !== 'number' || !isFinite(ratio)) return null;
   if (ratio < 0.70) return { kind: 'good', note: 'headroom — plenty of KV cache left' };
   if (ratio < 0.90) return { kind: 'warn', note: 'approaching saturation — queuing likely past 90%' };
   return { kind: 'bad',  note: 'saturated — expect TTFT spikes and request queueing' };
 }
 
 function saturationForQueueDepth(depth) {
-  if (depth == null || typeof depth !== 'number') return null;
+  if (depth == null || typeof depth !== 'number' || !isFinite(depth)) return null;
   if (depth < 10) return { kind: 'good', note: 'shallow queue — requests move straight through' };
   if (depth < 50) return { kind: 'warn', note: 'queue building — latency tail will start growing' };
   return { kind: 'bad',  note: 'deep queue — new requests will wait behind this backlog' };
@@ -42,7 +42,7 @@ function saturationFor(metric) {
 
 function formatValue(value, unit) {
   if (value == null) return '---';
-  if (typeof value !== 'number') return String(value);
+  if (typeof value !== 'number' || !isFinite(value)) return '---';
   const body = Math.abs(value) >= 1000
     ? Math.round(value).toLocaleString('en-US')
     : fmtNumber(value, 2);

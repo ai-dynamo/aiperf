@@ -17,13 +17,19 @@ AIPerf Operator has been installed!
      # Benchmark config lives under spec.benchmark in snake_case
      # (identical to AIPerf CLI YAML config files)
      benchmark:
-       models:
-         items:
-           - name: your-model
+       models: [your-model]
        endpoint:
          urls:
-           - http://your-inference-server:8000
+           - http://your-inference-server:8000/v1/chat/completions
          type: chat
+       datasets:
+         - name: main
+           type: synthetic
+       phases:
+         - name: profiling
+           type: concurrency
+           concurrency: 1
+           requests: 10
    EOF
 
 3. Monitor with the live dashboard:

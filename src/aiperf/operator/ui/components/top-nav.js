@@ -81,7 +81,7 @@ export function TopNav({ onSearchClick, features }) {
                 key=${item.path}
                 href=${item.path}
                 target="_blank"
-                rel="noopener"
+                rel="noopener noreferrer"
                 class="nav-tab"
                 data-testid=${item.testId || ('nav-link-' + routeSlug(item.path))}
               >

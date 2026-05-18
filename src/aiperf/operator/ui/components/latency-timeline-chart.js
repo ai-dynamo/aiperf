@@ -31,7 +31,7 @@ function recordLatencyMs(rec) {
   const m = rec.metrics?.request_latency;
   if (!m || m.value == null) return null;
   const v = Number(m.value);
-  if (!isFinite(v)) return null;
+  if (!isFinite(v) || v < 0) return null;
   const unit = m.unit ?? 'ns';
   if (unit === 'ns') return v / 1e6;
   if (unit === 'us') return v / 1e3;

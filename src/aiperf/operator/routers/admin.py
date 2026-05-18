@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from aiperf.operator import runs_index
@@ -103,6 +104,12 @@ class IndexRunRowResponse(BaseModel):
     )
 
 
+async def _reject_request_body(request: Request) -> None:
+    body = await request.body()
+    if body:
+        raise HTTPException(422, "Request body is not allowed for this endpoint.")
+
+
 def create_admin_router(
     base_dir: Path, db_path: Path, *, allow_rebuild: bool = True
 ) -> APIRouter:
@@ -117,21 +124,31 @@ def create_admin_router(
       DB falls out of sync with disk (e.g. after an external file restore).
     """
     router = APIRouter(prefix="/admin/index", tags=["admin"])
+    rebuild_lock = asyncio.Lock()
 
     @router.get("/stats", response_model=IndexStatsResponse)
-    async def stats() -> IndexStatsResponse:
+    async def stats(request: Request) -> IndexStatsResponse:
+        await _reject_request_body(request)
         s = await runs_index.stats(db_path)
         return IndexStatsResponse(**s)
 
     @router.post("/rebuild", response_model=IndexRebuildResponse)
-    async def rebuild() -> IndexRebuildResponse:
+    async def rebuild(request: Request) -> IndexRebuildResponse:
+        await _reject_request_body(request)
         if not allow_rebuild:
             raise HTTPException(
                 503,
                 "Index rebuild is disabled in the read-only results-server sidecar; "
                 "run it from the operator writer process.",
             )
-        result = await runs_index.bootstrap(base_dir, force=True)
+        if rebuild_lock.locked():
+            raise HTTPException(409, "Index rebuild already in progress")
+
+        await rebuild_lock.acquire()
+        try:
+            result = await runs_index.bootstrap(base_dir, force=True)
+        finally:
+            rebuild_lock.release()
         return IndexRebuildResponse(
             runs_indexed=result.runs_indexed,
             sweep_variations_indexed=result.sweep_variations_indexed,
@@ -139,13 +156,16 @@ def create_admin_router(
         )
 
     @router.get("/run/{namespace}/{job_id}", response_model=IndexRunRowResponse)
-    async def run_row(namespace: str, job_id: str) -> IndexRunRowResponse:
+    async def run_row(
+        namespace: str, job_id: str, request: Request
+    ) -> IndexRunRowResponse:
         """Return the narrow-column projection of the latest ``runs`` row.
 
         Used by the audit suite to verify the index's stored flat columns
         match the on-disk ``profile_export_aiperf.json``. 404 if no row
         exists for ``(namespace, job_id)`` yet.
         """
+        await _reject_request_body(request)
         narrow = await runs_index.get_run_narrow_metrics(namespace, job_id)
         if narrow is None:
             raise HTTPException(404, f"No index row for {namespace}/{job_id}")

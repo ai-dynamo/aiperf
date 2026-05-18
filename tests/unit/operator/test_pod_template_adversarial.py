@@ -114,7 +114,9 @@ async def _capture_sweep_jobset_body(
     async def _capture_create(**kwargs: Any) -> None:
         captured["body"] = kwargs["body"]
 
-    custom = MagicMock(create_namespaced_custom_object=AsyncMock(side_effect=_capture_create))
+    custom = MagicMock(
+        create_namespaced_custom_object=AsyncMock(side_effect=_capture_create)
+    )
     monkeypatch.setattr(
         "aiperf.kubernetes.client.k8s_client",
         lambda **_kwargs: _fake_k8s_client(),
@@ -167,8 +169,12 @@ class TestAIPerfJobContainerConstruction:
             "--benchmark-run",
         ]
         if expected_health_port != 9090:
-            assert ["--health-port", str(expected_health_port)] == container["args"][-2:]
-        assert env["AIPERF_CONTROLLER_POD"] == {"name": "AIPERF_CONTROLLER_POD", "value": "1"}
+            health_index = container["args"].index("--health-port")
+            assert container["args"][health_index + 1] == str(expected_health_port)
+        assert env["AIPERF_CONTROLLER_POD"] == {
+            "name": "AIPERF_CONTROLLER_POD",
+            "value": "1",
+        }
         assert env["AIPERF_UI_REALTIME_METRICS_ENABLED"]["value"] == "true"
         assert env["AIPERF_JOB_ID"]["value"] == "aiperf-bench-7f2a"
         assert "AIPERF_POD_INDEX" not in env
@@ -195,7 +201,9 @@ class TestAIPerfJobContainerConstruction:
 
         manifest = _manifest_from_spec(spec)
         worker_pod = _pod_spec(manifest, "workers")
-        containers = {container["name"]: container for container in worker_pod["containers"]}
+        containers = {
+            container["name"]: container for container in worker_pod["containers"]
+        }
 
         assert _replicated_job(manifest, "workers")["replicas"] == 2
         assert set(containers) == {
@@ -265,7 +273,9 @@ class TestPodTemplateAdversarial:
         assert _pod_spec(manifest, "controller")["shareProcessNamespace"] is True
         assert _pod_spec(manifest, "workers")["shareProcessNamespace"] is True
 
-    def test_image_and_env_metacharacters_remain_structured_not_shell_joined(self) -> None:
+    def test_image_and_env_metacharacters_remain_structured_not_shell_joined(
+        self,
+    ) -> None:
         spec = _pod_template_spec(
             env=[
                 {
@@ -286,10 +296,16 @@ class TestPodTemplateAdversarial:
         worker = _container(manifest, "workers", "worker-0")
         env = _env_by_name(control_plane)
 
-        assert control_plane["image"] == "registry.example.com/aiperf:quote space;still-a-tag"
+        assert (
+            control_plane["image"]
+            == "registry.example.com/aiperf:quote space;still-a-tag"
+        )
         assert worker["image"] == "registry.example.com/aiperf:quote space;still-a-tag"
         assert control_plane["command"] == ["aiperf"]
-        assert env["HTTP_PROXY"]["value"] == "http://proxy.internal:8080/a b?token=$(danger);rm -rf /"
+        assert (
+            env["HTTP_PROXY"]["value"]
+            == "http://proxy.internal:8080/a b?token=$(danger);rm -rf /"
+        )
         assert env["AIPERF_EXTRA_CONFIG"]["valueFrom"] == {
             "secretKeyRef": {"name": "bench-secret", "key": "payload.json"}
         }
@@ -348,7 +364,11 @@ class TestResultsSidecarAndOwnerMetadata:
         sidecar = _container(manifest, "controller", Containers.RESULTS_SIDECAR)
         env = _env_by_name(sidecar)
 
-        assert sidecar["command"] == ["python", "-m", "aiperf.kubernetes.results_sidecar"]
+        assert sidecar["command"] == [
+            "python",
+            "-m",
+            "aiperf.kubernetes.results_sidecar",
+        ]
         assert env["AIPERF_RESULTS_DIR"]["value"] == "/results"
         assert env["AIPERF_RESULTS_SIDECAR_PORT"]["value"] == str(
             K8sEnvironment.PORTS.RESULTS_SIDECAR
@@ -395,7 +415,10 @@ class TestResultsSidecarAndOwnerMetadata:
 
         assert jobset_name == "aiperf-aiperf-bench-7f2a"
         assert captured["body"]["metadata"]["ownerReferences"] == [owner_ref]
-        assert captured["body"]["metadata"]["labels"][AIPerfLabels.JOB_ID] == "aiperf-bench-7f2a"
+        assert (
+            captured["body"]["metadata"]["labels"][AIPerfLabels.JOB_ID]
+            == "aiperf-bench-7f2a"
+        )
 
     @pytest.mark.asyncio
     async def test_sweep_controller_jobset_results_sidecar_and_operator_base_url_are_rendered(
@@ -420,12 +443,19 @@ class TestResultsSidecarAndOwnerMetadata:
                 },
             },
         )
-        pod_spec = body["spec"]["replicatedJobs"][0]["template"]["spec"]["template"]["spec"]
-        containers = {container["name"]: container for container in pod_spec["containers"]}
+        pod_spec = body["spec"]["replicatedJobs"][0]["template"]["spec"]["template"][
+            "spec"
+        ]
+        containers = {
+            container["name"]: container for container in pod_spec["containers"]
+        }
         controller_env = _env_by_name(containers["sweep-controller"])
         sidecar_env = _env_by_name(containers[Containers.RESULTS_SIDECAR])
 
-        assert controller_env["AIPERF_OPERATOR_BASE_URL"]["value"] == "https://operator-results.production.example:9443"
+        assert (
+            controller_env["AIPERF_OPERATOR_BASE_URL"]["value"]
+            == "https://operator-results.production.example:9443"
+        )
         assert controller_env["AIPERF_SWEEP_NAME"]["value"] == "latency-grid"
         assert controller_env["HTTP_PROXY"]["value"] == "http://proxy.internal:8080"
         assert sidecar_env["AIPERF_RESULTS_SIDECAR_PORT"]["value"] == str(

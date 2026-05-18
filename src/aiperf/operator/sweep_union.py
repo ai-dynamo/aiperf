@@ -100,12 +100,32 @@ def _model_from_template(spec: dict[str, Any]) -> str | None:
     return None
 
 
+def sanitize_run_states(raw: Any) -> dict[str, int]:
+    """Return numeric run-state counters from an untrusted status payload."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        k: int(v)
+        for k, v in raw.items()
+        if isinstance(k, str) and isinstance(v, (int, float))
+    }
+
+
+def sanitize_current_child_ref(raw: Any) -> dict[str, Any] | None:
+    """Return a current-child reference only when all display fields exist."""
+    if not isinstance(raw, dict):
+        return None
+    if not {"name", "index", "label"}.issubset(raw):
+        return None
+    return raw
+
+
 def _record_from_live(cr: dict[str, Any]) -> SweepRecord:
     meta = cr.get("metadata") or {}
     spec = cr.get("spec") or {}
     status = cr.get("status") or {}
     created = _parse_creation_ts(meta.get("creationTimestamp"))
-    run_states = status.get("runStates") or {}
+    run_states = sanitize_run_states(status.get("runStates"))
     return SweepRecord(
         namespace=meta.get("namespace") or "",
         name=meta.get("name") or "",
@@ -121,14 +141,12 @@ def _record_from_live(cr: dict[str, Any]) -> SweepRecord:
         raw_status=status,
         raw_spec=spec,
         aggregate_doc=None,
-        current_child_ref=status.get("currentChildRef") or None,
+        current_child_ref=sanitize_current_child_ref(status.get("currentChildRef")),
         started_at=status.get("startedAt") or None,
         completed_at=status.get("completedAt") or None,
         api_url=status.get("apiUrl") or None,
         results_available=bool(status.get("resultsAvailable")),
-        run_states={
-            k: int(v) for k, v in run_states.items() if isinstance(v, (int, float))
-        },
+        run_states=run_states,
     )
 
 
@@ -177,7 +195,7 @@ def _record_from_archive(
     started_at = _parse_creation_ts(doc.get("startedAt"))
     epoch_at = datetime.fromtimestamp(int(sweep_dir.name), tz=timezone.utc)
     age_anchor = completed_at or started_at or epoch_at
-    run_states = doc.get("runStates") or {}
+    run_states = sanitize_run_states(doc.get("runStates"))
     return SweepRecord(
         namespace=namespace,
         name=name,
@@ -194,9 +212,7 @@ def _record_from_archive(
         started_at=doc.get("startedAt") or None,
         completed_at=doc.get("completedAt") or None,
         results_available=True,
-        run_states={
-            k: int(v) for k, v in run_states.items() if isinstance(v, (int, float))
-        },
+        run_states=run_states,
     )
 
 

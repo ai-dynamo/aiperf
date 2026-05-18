@@ -40,7 +40,7 @@ export function RailAction({ icon, label, onClick, href, testId, danger, target 
   const cls = 'rail-action' + (danger ? ' rail-action--danger' : '');
   if (href) {
     return html`
-      <a class=${cls} href=${href} data-testid=${testId} target=${target} onClick=${onClick}>
+      <a class=${cls} href=${href} data-testid=${testId} target=${target} rel="noopener noreferrer" onClick=${onClick}>
         <span class="rail-action__gly">${icon}</span>
         <span>${label}</span>
       </a>

@@ -15,16 +15,18 @@ Out of scope: generic AioHttpClient transport behavior, covered by
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import orjson
 import pytest
+from kubernetes_asyncio.client.exceptions import ApiException
 from pydantic import ValidationError
 from pytest import param
 
@@ -215,7 +217,9 @@ class TestReadinessProbeStatusClassification:
         ]
 
     @pytest.mark.asyncio
-    async def test_wait_inference_server_error_retries_until_non_5xx_ready(self) -> None:
+    async def test_wait_inference_server_error_retries_until_non_5xx_ready(
+        self,
+    ) -> None:
         client = _SequencedProbeClient(
             post_records=[_ProbeRecord(status=503), _ProbeRecord(status=204)]
         )
@@ -269,6 +273,49 @@ class TestReadinessProbeStatusClassification:
                 url="http://localhost:8000",
                 checked_attempts=3,
             )
+
+    @pytest.mark.parametrize(
+        "payload_text",
+        [
+            param("null", id="null-json"),
+            param("[]", id="list-root"),
+            param('{"data": null}', id="null-data"),
+            param('{"data": [{"id": "other-model"}]}', id="wrong-model"),
+            param('{"data": ["meta-llama/Llama-3-8B"]}', id="string-entry"),
+        ],
+    )  # fmt: skip
+    def test_model_in_payload_malformed_shapes_are_not_ready(
+        self, payload_text: str
+    ) -> None:
+        assert (
+            readiness_probe._model_in_payload(payload_text, "meta-llama/Llama-3-8B")
+            is False
+        )
+
+    def test_response_status_and_error_connection_error_is_explicit(self) -> None:
+        status, error = readiness_probe._response_status_and_error(
+            _ProbeRecord(
+                status=None,
+                error=_ProbeError("proxy refused localhost connection"),
+            )
+        )
+
+        assert status == "connection error"
+        assert error == "proxy refused localhost connection"
+
+    @pytest.mark.asyncio
+    async def test_sleep_until_next_attempt_uses_asyncio_sleep_not_blocking_sleep(
+        self,
+    ) -> None:
+        with patch(
+            "aiperf.common.readiness_probe.asyncio.sleep", new=AsyncMock()
+        ) as sleep:
+            await readiness_probe._sleep_until_next_attempt(
+                deadline=readiness_probe.time.monotonic() + 5.0,
+                interval_s=0.25,
+            )
+
+        sleep.assert_awaited_once_with(0.25)
 
 
 # =============================================================================
@@ -435,3 +482,31 @@ class TestEndpointUrlValidation:
 
         assert result.status == CheckStatus.WARN
         assert "Could not parse endpoint URL" in result.message
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            param(ApiException(status=403), id="permission-denied"),
+            param(asyncio.TimeoutError(), id="apiserver-timeout"),
+            param(OSError("network unreachable"), id="network-unreachable"),
+        ],
+    )  # fmt: skip
+    async def test_check_endpoint_connectivity_service_lookup_error_fails_with_hint(
+        self, exc: Exception
+    ) -> None:
+        core = MagicMock()
+        core.read_namespaced_service = AsyncMock(side_effect=exc)
+
+        with patch(
+            "aiperf.kubernetes.preflight_checks.client.CoreV1Api", return_value=core
+        ):
+            result = await check_endpoint_connectivity(
+                Mock(), endpoint_url="http://llm-service.inference.svc:8000/v1"
+            )
+
+        assert result.status == CheckStatus.FAIL
+        assert "llm-service.inference.svc" in result.message
+        assert result.hints == [
+            "Verify the service exists: kubectl get svc -A | grep llm-service"
+        ]

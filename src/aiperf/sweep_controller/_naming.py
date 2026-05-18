@@ -30,6 +30,21 @@ def needs_trial_suffix(
     return (multi_run_trials or 1) > 1
 
 
+def _validate_child_name_indexes(
+    *,
+    variation_index: int,
+    trial_index: int | None,
+) -> None:
+    if not 0 <= variation_index <= 99:
+        raise ValueError(
+            f"variation index {variation_index} is outside the supported 0..99 range"
+        )
+    if trial_index is not None and not 0 <= trial_index <= 9:
+        raise ValueError(
+            f"trial index {trial_index} is outside the supported 0..9 range"
+        )
+
+
 def derive_child_name(
     sweep_name: str,
     var_idx: int,
@@ -38,6 +53,8 @@ def derive_child_name(
     with_trial_suffix: bool,
 ) -> str:
     """Deterministic DNS-safe child name from (sweep, var_idx, trial)."""
+    trial_index = trial if with_trial_suffix else None
+    _validate_child_name_indexes(variation_index=var_idx, trial_index=trial_index)
     base = f"{sweep_name}-v{var_idx:02d}"
     if with_trial_suffix:
         return f"{base}-t{trial:01d}"
@@ -66,6 +83,10 @@ def build_child_name(
     the epoch-out-of-name refactor and is ignored.
     """
     _ = sweep_run_epoch  # back-compat shim: accepted but unused
+    _validate_child_name_indexes(
+        variation_index=variation_index,
+        trial_index=trial_index,
+    )
     suffix = f"-t{trial_index:01d}" if trial_index is not None else ""
     return f"{sweep_name}-v{variation_index:02d}{suffix}"
 

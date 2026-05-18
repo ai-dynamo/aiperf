@@ -36,14 +36,17 @@ def write_sweep_aggregate(
     sweep_run_epoch: str,
     doc: dict[str, Any],
     conditions: list[dict[str, Any]] | None = None,
+    update_latest: bool = True,
 ) -> None:
     """Atomic write of ``<base>/<ns>/sweeps/<name>/<epoch>/{aggregate,conditions}.json``.
 
-    Always writes ``latest.txt`` last so a torn read on the operator side sees
-    the prior epoch (or nothing) but never a half-written current epoch.
-    ``conditions.json`` is only written when ``conditions`` is not ``None``
-    (callers that have not yet collected the conditions list pass ``None`` and
-    the file is omitted).
+    By default, writes ``latest.txt`` last so a torn read on the operator side
+    sees the prior epoch (or nothing) but never a half-written current epoch.
+    Callers that write additional required siblings after ``aggregate.json`` can
+    pass ``update_latest=False`` and advance the pointer after their full bundle
+    is durable. ``conditions.json`` is only written when ``conditions`` is not
+    ``None`` (callers that have not yet collected the conditions list pass
+    ``None`` and the file is omitted).
 
     Args:
         base_dir: Results-server root, typically ``/results``.
@@ -54,6 +57,8 @@ def write_sweep_aggregate(
             this writer is intentionally schema-agnostic.
         conditions: Optional list of CR-style condition dicts; wrapped under a
             ``{"conditions": [...]}`` envelope on disk.
+        update_latest: Whether to advance ``latest.txt`` after this writer's own
+            files are durable.
     """
     from aiperf.operator.results_layout import write_sweep_latest
 
@@ -62,7 +67,8 @@ def write_sweep_aggregate(
     _atomic_write_json(target_dir / "aggregate.json", doc)
     if conditions is not None:
         _atomic_write_json(target_dir / "conditions.json", {"conditions": conditions})
-    write_sweep_latest(Path(base_dir), namespace, sweep_name, sweep_run_epoch)
+    if update_latest:
+        write_sweep_latest(Path(base_dir), namespace, sweep_name, sweep_run_epoch)
 
 
 def write_children_manifest(

@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import aiofiles
 from fastapi import HTTPException, Request
@@ -30,6 +31,17 @@ from aiperf.operator.routers.results_schemas import FileEntry, JobEntry
 
 CHUNK_SIZE = 64 * 1024
 PROFILE_EXPORT_FILENAME = "profile_export_aiperf.json"
+_ARTIFACT_MEDIA_TYPES = {
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".jsonl": "application/x-ndjson",
+    ".parquet": "application/vnd.apache.parquet",
+    ".png": "image/png",
+}
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,12 +77,36 @@ def _artifact_display_name(name: str) -> str:
 
 
 def _artifact_entry(artifact: FileArtifact) -> FileEntry:
+    stat = artifact.path.stat()
     return FileEntry(
         name=_artifact_display_name(artifact.name),
         stored_name=artifact.name,
-        size_bytes=artifact.path.stat().st_size,
+        size_bytes=stat.st_size,
         compressed=artifact.path.suffix == ".zst",
+        mtime_epoch=int(stat.st_mtime),
     )
+
+
+def _artifact_media_type(display_name: str) -> str:
+    """Return the browser-visible media type for a downloadable artifact."""
+    return _ARTIFACT_MEDIA_TYPES.get(
+        Path(display_name).suffix, "application/octet-stream"
+    )
+
+
+def _download_headers(display_name: str) -> dict[str, str]:
+    """Build download headers for an artifact filename."""
+    try:
+        display_name.encode("ascii")
+    except UnicodeEncodeError:
+        disposition = f"attachment; filename*=UTF-8''{quote(display_name)}"
+    else:
+        disposition = f'attachment; filename="{display_name}"'
+    return {
+        "Content-Disposition": disposition,
+        "X-Filename": display_name,
+        **_NO_CACHE_HEADERS,
+    }
 
 
 def _list_file_artifacts(
@@ -84,7 +120,11 @@ def _list_file_artifacts(
         artifacts.extend(
             FileArtifact(path=f, name=f.name)
             for f in root.iterdir()
-            if not f.is_symlink() and f.is_file() and f.name != READY_MARKER_NAME
+            if (
+                not f.is_symlink()
+                and f.is_file()
+                and f.name not in {READY_MARKER_NAME, CHECKPOINTS_DIR_NAME}
+            )
         )
     for rel_dir in relative_dirs:
         child = _safe_resolve(root, rel_dir)
@@ -95,7 +135,9 @@ def _list_file_artifacts(
             for f in child.rglob("*")
             if not f.is_symlink() and f.is_file()
         )
-    return sorted(artifacts, key=lambda item: _artifact_display_name(item.name))
+    return sorted(
+        artifacts, key=lambda item: (_artifact_display_name(item.name), item.name)
+    )
 
 
 def _list_artifact_files(
@@ -209,16 +251,13 @@ def _serve_zst_file(
     """Serve a .zst file with content negotiation."""
     accept = (request.headers.get("accept-encoding") or "").lower()
 
-    headers: dict[str, str] = {
-        "Content-Disposition": f'attachment; filename="{display_name}"',
-        "X-Filename": display_name,
-    }
+    headers = _download_headers(display_name)
 
     if "zstd" in accept:
         headers["Content-Encoding"] = "zstd"
         return StreamingResponse(
             _stream_zstd_raw(zst_path),
-            media_type="application/octet-stream",
+            media_type=_artifact_media_type(display_name),
             headers=headers,
         )
 
@@ -226,13 +265,13 @@ def _serve_zst_file(
         headers["Content-Encoding"] = "gzip"
         return StreamingResponse(
             _stream_zstd_to_gzip(zst_path),
-            media_type="application/octet-stream",
+            media_type=_artifact_media_type(display_name),
             headers=headers,
         )
 
     return StreamingResponse(
         _stream_zstd_decompress(zst_path),
-        media_type="application/octet-stream",
+        media_type=_artifact_media_type(display_name),
         headers=headers,
     )
 
@@ -248,16 +287,13 @@ def _serve_raw_file(request: Request, file_path: Path) -> StreamingResponse:
     accept = request.headers.get("accept-encoding")
     encoding = select_encoding(accept, default=CompressionEncoding.IDENTITY)
 
-    headers: dict[str, str] = {
-        "Content-Disposition": f'attachment; filename="{file_path.name}"',
-        "X-Filename": file_path.name,
-    }
+    headers = _download_headers(file_path.name)
     if encoding != CompressionEncoding.IDENTITY:
         headers["Content-Encoding"] = encoding
 
     return StreamingResponse(
         stream_file_compressed(file_path, encoding),
-        media_type="application/octet-stream",
+        media_type=_artifact_media_type(file_path.name),
         headers=headers,
     )
 
@@ -439,19 +475,19 @@ def _is_checkpoint_artifact(root: Path, path: Path) -> bool:
 
 
 def _not_ready_error(job_dir: Path) -> HTTPException:
-    return HTTPException(
-        404,
-        (
-            f"Results not ready for {job_dir.name}; marker file "
-            f"{READY_MARKER_NAME} not present — retry after completion"
-        ),
+    message = (
+        f"Results not ready for {job_dir.name}; marker file "
+        f"{READY_MARKER_NAME} not present — retry after completion"
     )
+    return HTTPException(404, message)
 
 
 def _serve_job_file(
     request: Request, job_dir: Path, filename: str
 ) -> StreamingResponse:
     """Serve ``filename`` from ``job_dir``, preferring .zst + content negotiation."""
+    if Path(filename).name == READY_MARKER_NAME:
+        raise HTTPException(404, f"File not found: {filename}")
     raw_path = _safe_resolve(job_dir, filename)
     zst_path = _safe_resolve(job_dir, filename + ".zst")
     candidate = raw_path or zst_path

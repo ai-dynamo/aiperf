@@ -31,8 +31,12 @@ function pickT0(ts) {
     'request_throughput', 'output_token_throughput',
     'request_latency', 'time_to_first_token', 'inter_token_latency',
   ]) {
-    const series = ts[tag];
-    if (series && series.length > 0 && series[0].t < t0) t0 = series[0].t;
+    const series = ts[tag] ?? [];
+    for (const sample of series) {
+      if (typeof sample?.t === 'number' && isFinite(sample.t) && sample.t < t0) {
+        t0 = sample.t;
+      }
+    }
   }
   return isFinite(t0) ? t0 : Date.now();
 }

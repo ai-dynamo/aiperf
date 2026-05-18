@@ -95,10 +95,10 @@ spec:
         lo: 1
         hi: 1000
         kind: int
-    objective:
-      metric: output_token_throughput
-      stat: avg
-      direction: maximize
+    objectives:
+      - metric: output_token_throughput
+        stat: avg
+        direction: maximize
     maxIterations: 30
     nInitialPoints: 5
     improvementPatience: 8
@@ -132,10 +132,10 @@ spec:
         lo: 1.0
         hi: 50.0
         kind: real
-    objective:
-      metric: output_token_throughput
-      stat: avg
-      direction: maximize
+    objectives:
+      - metric: output_token_throughput
+        stat: avg
+        direction: maximize
     maxIterations: 40
     nInitialPoints: 8
   multiRun:

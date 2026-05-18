@@ -93,20 +93,24 @@ function byTag(metrics) {
   return m;
 }
 
+function finiteMetricValue(value) {
+  return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
 /** Choose the best stat to report. Falls back to avg when `current` is null. */
 function pickStat(metric, key) {
   if (!metric) return null;
-  const v = metric[key];
+  const v = finiteMetricValue(metric[key]);
   if (v != null) return v;
-  if (key === 'current' && metric.avg != null) return metric.avg;
+  if (key === 'current') return finiteMetricValue(metric.avg);
   return null;
 }
 
 /** Format one numeric stat with unit; returns {body, unit} or {body: '---'}. */
 function formatStat(value, unit) {
-  if (value == null) return { body: '---', unit: '' };
-  if (typeof value !== 'number') return { body: String(value), unit: unit ?? '' };
-  const body = Math.abs(value) >= 1000 ? fmtInt(Math.round(value)) : fmtNumber(value, 2);
+  const finiteValue = finiteMetricValue(value);
+  if (finiteValue == null) return { body: '---', unit: '' };
+  const body = Math.abs(finiteValue) >= 1000 ? fmtInt(Math.round(finiteValue)) : fmtNumber(finiteValue, 2);
   return { body, unit: unit ?? '' };
 }
 
@@ -116,12 +120,13 @@ function formatStat(value, unit) {
  *  in which case no chip is rendered. No fabricated defaults.
  */
 function sloStatus(value, threshold, compare = 'lt') {
-  if (value == null || !isFinite(value)) return null;
-  if (threshold == null) return null;
-  const ok = compare === 'lt' ? value <= threshold : value >= threshold;
+  const finiteValue = finiteMetricValue(value);
+  const finiteThreshold = finiteMetricValue(threshold);
+  if (finiteValue == null || finiteThreshold == null) return null;
+  const ok = compare === 'lt' ? finiteValue <= finiteThreshold : finiteValue >= finiteThreshold;
   return {
     kind: ok ? 'good' : 'bad',
-    label: (compare === 'lt' ? '≤ ' : '≥ ') + threshold,
+    label: (compare === 'lt' ? '≤ ' : '≥ ') + finiteThreshold,
   };
 }
 
@@ -143,10 +148,11 @@ function KpiTile({ spec, metric, cfg, series }) {
     : null;
 
   const primary = formatStat(primaryVal, unit);
-  const secondaryDisplay = secondaryVal != null && typeof secondaryVal === 'number'
-    ? (Math.abs(secondaryVal) >= 1000
-        ? fmtInt(Math.round(secondaryVal))
-        : fmtNumber(secondaryVal, 2))
+  const finiteSecondary = finiteMetricValue(secondaryVal);
+  const secondaryDisplay = finiteSecondary != null
+    ? (Math.abs(finiteSecondary) >= 1000
+        ? fmtInt(Math.round(finiteSecondary))
+        : fmtNumber(finiteSecondary, 2))
     : '---';
 
   // Sparkline: prefer the same stat the tile headlines so the line
@@ -217,8 +223,8 @@ function ReliabilityTile({ byT, cfg }) {
     // Counters (request_count, good_request_count) and derived metrics (goodput)
     // populate ``avg`` with the single scalar value — ``current`` is undefined.
     // Fall back so the failed-count and pass-rate stay live during the run.
-    const goodVal = goodCount?.current ?? goodCount?.avg;
-    const reqVal = reqCount?.current ?? reqCount?.avg;
+    const goodVal = pickStat(goodCount, 'current') ?? pickStat(goodCount, 'avg');
+    const reqVal = pickStat(reqCount, 'current') ?? pickStat(reqCount, 'avg');
     const failedCount = (goodVal != null && reqVal != null)
       ? Math.max(0, Math.round(reqVal - goodVal))
       : null;
@@ -265,13 +271,15 @@ function ReliabilityTile({ byT, cfg }) {
   const errorCount = byT['error_request_count'] ?? null;
   const reqCount = byT['request_count'] ?? null;
 
-  const rate = (errorRate?.current ?? errorRate?.avg)
-    ?? (reqCount?.current != null && errorCount?.current != null && reqCount.current > 0
-        ? (errorCount.current / reqCount.current) * 100
+  const errorVal = pickStat(errorCount, 'current') ?? 0;
+  const reqVal = pickStat(reqCount, 'current');
+  const rate = pickStat(errorRate, 'current')
+    ?? (reqVal != null && errorVal != null && reqVal > 0
+        ? (errorVal / reqVal) * 100
         : null);
   if (rate == null) return null;
   const success = Math.max(0, 100 - rate);
-  const kind = (errorCount?.current ?? 0) === 0 ? 'good' : 'warn';
+  const kind = errorVal === 0 ? 'good' : 'warn';
 
   return html`
     <div class=${'kpi-tile kpi-tile--slo-' + kind} key="success-rate">
@@ -282,7 +290,7 @@ function ReliabilityTile({ byT, cfg }) {
         </div>
         <span class=${'kpi-chip kpi-chip--' + kind}>
           ${kind === 'good' ? '✓' : '✗'}
-          <span class="kpi-chip-thresh">${kind === 'good' ? '0 errors' : fmtInt(errorCount?.current ?? 0) + ' errors'}</span>
+          <span class="kpi-chip-thresh">${kind === 'good' ? '0 errors' : fmtInt(errorVal) + ' errors'}</span>
         </span>
       </div>
       <div class="kpi-big">
@@ -290,7 +298,7 @@ function ReliabilityTile({ byT, cfg }) {
       </div>
       <div class="kpi-tile-sub">
         <span>errors</span>
-        <span class="kpi-tile-sub-val">${fmtInt(errorCount?.current ?? 0)}</span>
+        <span class="kpi-tile-sub-val">${fmtInt(errorVal)}</span>
       </div>
     </div>
   `;

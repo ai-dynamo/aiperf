@@ -22,25 +22,32 @@ function shortId(id) {
   return parts.length <= 2 ? id : parts.slice(-2).join('-');
 }
 
+function safeRecord(value) {
+  return value && typeof value === 'object' ? value : {};
+}
+
 function safeStatusClass(status) {
-  return KNOWN_STATUSES.includes(status) ? status : 'idle';
+  const normalized = String(status ?? 'idle');
+  return KNOWN_STATUSES.includes(normalized) ? normalized : 'idle';
 }
 
 function displayStatus(g) {
-  const s = (g.status ?? 'idle').replace('_', ' ');
-  if (g.startupState && g.startupState !== 'ready') {
-    return `${s} (${String(g.startupState).replace(/_/g, ' ')})`;
+  const record = safeRecord(g);
+  const s = String(record.status ?? 'idle').replace(/_/g, ' ');
+  if (record.startupState && record.startupState !== 'ready') {
+    return `${s} (${String(record.startupState).replace(/_/g, ' ')})`;
   }
   return s;
 }
 
 function childRows(children) {
-  const ids = Object.keys(children).sort();
+  const childMap = safeRecord(children);
+  const ids = Object.keys(childMap).sort();
   if (ids.length === 0) {
     return [html`<tr key="empty-children"><td colspan="7" class="empty">No worker children yet.</td></tr>`];
   }
   return ids.map((id) => {
-    const w = children[id];
+    const w = safeRecord(childMap[id]);
     return html`
       <tr key=${'child-' + id} class="worker-child-row">
         <td><span class="worker-id" style="padding-left: 18px">↳ ${shortId(id)}</span></td>
@@ -56,17 +63,19 @@ function childRows(children) {
 }
 
 export function WorkerTable() {
-  const map = workerGroups.value;
+  const map = safeRecord(workerGroups.value);
   const groupIds = Object.keys(map).sort();
   const singleGroup = groupIds.length === 1;
   const [expanded, setExpanded] = useState(true);  // default open when single group
 
   const rows = groupIds.flatMap((gid) => {
-    const g = map[gid];
-    const childCount = Object.keys(g.workers ?? {}).length;
+    const g = safeRecord(map[gid]);
+    const children = safeRecord(g.workers);
+    const childCount = Object.keys(children).length;
+    const declaredWorkers = Number(g.declaredWorkers) > 0 ? g.declaredWorkers : childCount;
     const groupRow = html`
       <tr key=${'group-' + gid} class="worker-group-row">
-        <td><span class="worker-id">${shortId(gid)} <span class="text-dim">(${g.readyWorkers ?? 0}/${g.declaredWorkers ?? childCount} ready)</span></span></td>
+        <td><span class="worker-id">${shortId(gid)} <span class="text-dim">(${g.readyWorkers ?? 0}/${declaredWorkers} ready)</span></span></td>
         <td><span class=${'worker-status ' + safeStatusClass(g.status)}>${displayStatus(g)}</span></td>
         <td style="text-align: right">${fmtInt(g.inFlight ?? 0)}</td>
         <td style="text-align: right">${fmtInt(g.completed ?? 0)}</td>
@@ -76,7 +85,7 @@ export function WorkerTable() {
       </tr>
     `;
     if (singleGroup && expanded) {
-      return [groupRow, ...childRows(g.workers ?? {})];
+      return [groupRow, ...childRows(children)];
     }
     return [groupRow];
   });

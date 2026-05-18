@@ -38,6 +38,21 @@ if TYPE_CHECKING:
 
 API_RESULTS_FILES_PATH = "/api/results/files"
 API_RESULTS_LIST_PATH = "/api/results/list"
+_REDIRECT_STATUSES = {301, 302, 307, 308}
+
+
+def _get_no_redirects(
+    session: aiohttp.ClientSession,
+    url: str,
+    **kwargs: object,
+) -> object:
+    """Start a GET request without following redirects, with test-double fallback."""
+    try:
+        return session.get(url, allow_redirects=False, **kwargs)
+    except TypeError as e:
+        if "allow_redirects" not in str(e):
+            raise
+        return session.get(url, **kwargs)
 
 
 async def _response_json(response: aiohttp.ClientResponse) -> dict:
@@ -48,6 +63,34 @@ async def _response_json(response: aiohttp.ClientResponse) -> dict:
         if "loads" not in str(e):
             raise
         return await response.json()
+
+
+def _response_destination(
+    resp: aiohttp.ClientResponse, safe_filename: str
+) -> str | None:
+    raw_dest = resp.headers.get("x-filename") or safe_filename
+    dest_name = Path(raw_dest).name or safe_filename
+    if dest_name == READY_MARKER_NAME:
+        print_warning(f"Refusing reserved filename: {raw_dest!r}")
+        return None
+    return dest_name
+
+
+def _retry_incomplete_download(
+    *,
+    dest_name: str,
+    expected: int | None,
+    actual: int,
+    attempt: int,
+    max_retries: int,
+) -> bool:
+    if expected is None or actual == expected:
+        return False
+    print_warning(f"{dest_name}: expected {expected} bytes but received {actual}")
+    if attempt < max_retries:
+        return True
+    print_warning(f"Skipping {dest_name}: incomplete download after retries")
+    return False
 
 
 async def _download_artifact(
@@ -62,7 +105,6 @@ async def _download_artifact(
 
     Returns ``(dest_name, size_bytes)`` on success, ``None`` on skip/error.
     """
-    # Sanitize server-provided filename to block path traversal
     safe_filename = Path(filename).name
     if not safe_filename or safe_filename.startswith("."):
         print_warning(f"Refusing unsafe filename: {filename!r}")
@@ -71,34 +113,28 @@ async def _download_artifact(
 
     for attempt in range(1 + max_retries):
         try:
-            async with session.get(f"{files_base}/{quoted}") as resp:
+            async with _get_no_redirects(session, f"{files_base}/{quoted}") as resp:
                 if resp.status == 404:
+                    return None
+                if resp.status in _REDIRECT_STATUSES:
+                    print_warning(f"Refusing redirected download for {safe_filename}")
                     return None
                 resp.raise_for_status()
 
-                x_filename = resp.headers.get("x-filename")
-                raw_dest = x_filename or safe_filename
-                dest_name = Path(raw_dest).name or safe_filename
-                if dest_name == READY_MARKER_NAME:
-                    print_warning(f"Refusing reserved filename: {raw_dest!r}")
+                dest_name = _response_destination(resp, safe_filename)
+                if dest_name is None:
                     return None
-                dest_path = output_dir / dest_name
-
                 content = await resp.read()
-                expected = resp.content_length
-                if expected is not None and len(content) != expected:
-                    print_warning(
-                        f"{dest_name}: expected {expected} bytes "
-                        f"but received {len(content)}"
-                    )
-                    if attempt < max_retries:
-                        continue
-                    print_warning(
-                        f"Skipping {dest_name}: incomplete download after retries"
-                    )
-                    return None
+                if _retry_incomplete_download(
+                    dest_name=dest_name,
+                    expected=resp.content_length,
+                    actual=len(content),
+                    attempt=attempt,
+                    max_retries=max_retries,
+                ):
+                    continue
 
-                await asyncio.to_thread(dest_path.write_bytes, content)
+                await asyncio.to_thread((output_dir / dest_name).write_bytes, content)
                 file_size = len(content)
                 print_success(f"Downloaded: {dest_name} ({_human_size(file_size)})")
                 return (dest_name, file_size)

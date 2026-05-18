@@ -25,11 +25,13 @@ const PRIMARY_TAGS = [
 ];
 
 /** Extract (endpoint, gpuIndex, model) from a MetricResult header like
- *  ``"GPU Power Usage | localhost:9401 | GPU 0 | NVIDIA RTX 6000 Ada Generation"``. */
+ *  ``"GPU Power Usage | localhost:9401 | GPU 0 | NVIDIA RTX 6000 Ada Generation"``.
+ *  Older telemetry payloads omit the model suffix, so only the first three
+ *  fields are required for grouping. */
 function parseHeader(header) {
   if (!header || typeof header !== 'string') return null;
   const parts = header.split(' | ').map(s => s.trim());
-  if (parts.length < 4) return null;
+  if (parts.length < 3) return null;
   const [metricName, endpoint, gpuText, ...modelParts] = parts;
   const gpuMatch = /GPU\s+(\d+)/i.exec(gpuText);
   const gpuIndex = gpuMatch ? parseInt(gpuMatch[1], 10) : 0;

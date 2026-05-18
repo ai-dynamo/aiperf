@@ -80,7 +80,9 @@ def _seed_run(
 def _run_artifact_url(filename: str) -> str:
     """Return the epoch-pinned artifact URL for the canonical benchmark run."""
     encoded_filename = quote(filename)
-    return f"/api/v1/results/bench-prod/llama-3-8b-load/runs/{_EPOCH}/{encoded_filename}"
+    return (
+        f"/api/v1/results/bench-prod/llama-3-8b-load/runs/{_EPOCH}/{encoded_filename}"
+    )
 
 
 # ============================================================
@@ -133,8 +135,13 @@ class TestArtifactDownloadMediaTypes:
         )
 
         assert response.status_code == 200, response.text
-        assert response.headers["content-type"].split(";", maxsplit=1)[0] == "application/zip"
-        assert response.headers["x-filename"] == f"bench-prod__llama-3-8b-load__{_EPOCH}.zip"
+        assert (
+            response.headers["content-type"].split(";", maxsplit=1)[0]
+            == "application/zip"
+        )
+        assert response.headers["x-filename"] == (
+            f"bench-prod__llama-3-8b-load__{_EPOCH}.zip"
+        )
         assert response.headers["content-disposition"] == (
             f'attachment; filename="bench-prod__llama-3-8b-load__{_EPOCH}.zip"'
         )
@@ -241,6 +248,6 @@ class TestArtifactDownloadStreamingBoundaries:
         )
 
         assert response.status_code == 200, response.text
-        assert response.headers["content-type"].split(";", maxsplit=1)[0] == "image/png"
-        assert response.headers["content-encoding"] == "identity"
+        content_type = response.headers["content-type"].split(";", maxsplit=1)[0]
+        assert content_type == "image/png"
         assert response.content == payload

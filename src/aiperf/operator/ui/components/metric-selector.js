@@ -26,11 +26,15 @@ export function MetricSelector({ value, onSelect }) {
   const metricHelp = METRICS.find((m) => m.value === metric)?.help ?? '';
 
   function handleMetricChange(e) {
-    onSelect({ metric: e.target.value, stat });
+    const selectedMetric = METRICS.find((m) => m.value === e.target.value);
+    if (!selectedMetric) return;
+    onSelect({ metric: selectedMetric.value, stat });
   }
 
   function handleStatChange(e) {
-    onSelect({ metric, stat: e.target.value });
+    const selectedStat = STATS.find((s) => s.value === e.target.value);
+    if (!selectedStat) return;
+    onSelect({ metric, stat: selectedStat.value });
   }
 
   return html`

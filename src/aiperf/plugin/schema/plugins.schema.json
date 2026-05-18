@@ -2028,18 +2028,22 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "description": "Metadata schema for record routing in accumulator and stream exporter plugins.\n\nDefines which record types an accumulator or stream exporter accepts. Used by\nRecordsManager to build a routing table: incoming records are dispatched to all\naccumulators and stream exporters whose record_types include the matching type.\nThe role (accumulator vs stream_exporter) is determined by the plugin category.\n\nReferenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class\nUsed in: plugins.yaml accumulator and stream_exporter entries",
+          "properties": {
+            "record_types": {
+              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Record Types",
+              "type": "array"
             }
+          },
+          "required": [
+            "record_types"
           ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          "title": "RecordRoutingMetadata",
+          "type": "object"
         }
       },
       "required": [
@@ -2069,18 +2073,22 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "description": "Metadata schema for record routing in accumulator and stream exporter plugins.\n\nDefines which record types an accumulator or stream exporter accepts. Used by\nRecordsManager to build a routing table: incoming records are dispatched to all\naccumulators and stream exporters whose record_types include the matching type.\nThe role (accumulator vs stream_exporter) is determined by the plugin category.\n\nReferenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class\nUsed in: plugins.yaml accumulator and stream_exporter entries",
+          "properties": {
+            "record_types": {
+              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Record Types",
+              "type": "array"
             }
+          },
+          "required": [
+            "record_types"
           ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          "title": "RecordRoutingMetadata",
+          "type": "object"
         }
       },
       "required": [

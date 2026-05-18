@@ -312,7 +312,11 @@ export function LogsPane({ ns, name, pods }) {
               <select
                 class="ui-select ui-select--rounded ui-select--sm"
                 value=${selectedContainer ?? ''}
-                onchange=${e => setSelectedContainer(e.target.value)}
+                onchange=${e => {
+                  const c = workerContainerList.find(c => c === e.target.value);
+                  if (!c) return;
+                  setSelectedContainer(c);
+                }}
                 title="Select container to tail"
                 data-testid="run-logs-container"
               >

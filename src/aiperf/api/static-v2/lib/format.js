@@ -8,8 +8,7 @@
  */
 
 export function fmtNumber(value, decimals = 1, fallback = '---') {
-  if (value == null) return fallback;
-  if (typeof value !== 'number' || !isFinite(value)) return String(value);
+  if (value == null || typeof value !== 'number' || !isFinite(value)) return fallback;
   return value.toLocaleString('en-US', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
@@ -17,13 +16,12 @@ export function fmtNumber(value, decimals = 1, fallback = '---') {
 }
 
 export function fmtInt(value, fallback = '---') {
-  if (value == null) return fallback;
-  if (typeof value !== 'number' || !isFinite(value)) return String(value);
+  if (value == null || typeof value !== 'number' || !isFinite(value)) return fallback;
   return Math.round(value).toLocaleString('en-US');
 }
 
 export function fmtPercent(value, decimals = 1) {
-  if (value == null) return '---';
+  if (value == null || typeof value !== 'number' || !isFinite(value)) return '---';
   return fmtNumber(value, decimals) + '%';
 }
 

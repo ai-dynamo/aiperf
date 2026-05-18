@@ -165,12 +165,13 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
         return annotations
 
     def _build_pod_labels(self) -> dict[str, str]:
-        """Build pod labels: base AIPerf labels + job id + custom labels."""
-        pod_labels: dict[str, str] = {AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE}
-        if self.job_id:
-            pod_labels[AIPerfLabels.JOB_ID] = self.job_id
+        """Build pod labels with reserved AIPerf labels kept authoritative."""
+        pod_labels: dict[str, str] = {}
         if self.pod_template and self.pod_template.labels:
             pod_labels.update(self.pod_template.labels)
+        pod_labels[AIPerfLabels.APP_KEY] = AIPerfLabels.APP_VALUE
+        if self.job_id:
+            pod_labels[AIPerfLabels.JOB_ID] = self.job_id
         return pod_labels
 
     def to_k8s_spec(self) -> dict[str, Any]:

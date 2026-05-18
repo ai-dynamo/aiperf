@@ -21,7 +21,7 @@ class JobEntry(AIPerfBaseModel):
     model: str | None = Field(
         default=None,
         description="Model name extracted from the CR spec at run time. "
-        "``None`` for jobs whose ``job_spec.json`` is missing or unparseable. "
+        "``None`` for jobs whose ``job_spec.json`` is missing or unreadable. "
         "Used by the UI's `?cluster=<ns> · <model>` deep-link from the "
         "job-detail similar-runs chip.",
     )
@@ -47,6 +47,7 @@ class FileEntry(AIPerfBaseModel):
     stored_name: str = Field(description="Actual filename on disk")
     size_bytes: int = Field(description="File size on disk in bytes")
     compressed: bool = Field(description="Whether the file is stored as zstd")
+    mtime_epoch: int = Field(description="File modification-time epoch seconds")
 
 
 class FileListResponse(AIPerfBaseModel):

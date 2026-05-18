@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field
 
+from aiperf.common.finite import FiniteFloat
 from aiperf.config.base import BaseConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
 
@@ -192,7 +193,7 @@ class DeploymentConfig(BaseConfig):
         description="Maximum concurrent connections each worker handles. "
         "100 keeps the asyncio event loop responsive while amortizing per-process overhead.",
     )
-    timeout_seconds: float = Field(
+    timeout_seconds: FiniteFloat = Field(
         default=0,
         ge=0,
         description="Job timeout in seconds (0 = no timeout)",

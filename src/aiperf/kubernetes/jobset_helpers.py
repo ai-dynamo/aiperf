@@ -189,9 +189,6 @@ def build_env_vars(
             default to False and inherit offline mode.
     """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
-    has_hf_home = any(
-        (item or {}).get("name") == "HF_HOME" for item in pod_template.env
-    )
     # Give the controller enough registration headroom for workers to
     # complete their PUB/SUB connection probes plus one restart cycle if
     # the first-attempt probe fails (Kubernetes restarts on exit).
@@ -232,8 +229,7 @@ def build_env_vars(
     # controller pod's warmer, dataset-manager, and api containers all see
     # the same on-disk snapshots. Worker pods carry the mount too but never
     # write to it — they receive bundles from the operator API instead.
-    if not has_hf_home:
-        env.append({"name": "HF_HOME", "value": "/aiperf/hf_home"})
+    env.append({"name": "HF_HOME", "value": "/aiperf/hf_home"})
 
     if include_pod_index:
         # Expose the JobSet job-index as a unique pod identifier for
@@ -254,6 +250,10 @@ def build_env_vars(
     if controller_host:
         env.append({"name": "AIPERF_K8S_ZMQ_CONTROLLER_HOST", "value": controller_host})
 
-    # Add custom environment variables from pod template
-    env.extend(pod_template.env)
+    reserved_names = {item["name"] for item in env}
+    env.extend(
+        item
+        for item in pod_template.env
+        if (item or {}).get("name") not in reserved_names
+    )
     return env

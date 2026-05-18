@@ -7,15 +7,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from tests.unit.ui.node_utils import run_node
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _JOB_TABLE_PATH = (
     _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "components" / "job-table.js"
 )
-_SWEEPS_PAGE_PATH = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "sweeps.js"
+_SWEEPS_PAGE_PATH = (
+    _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "sweeps.js"
+)
 _CELLS_TABLE_PATH = (
     _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "components" / "cells-table.js"
 )
@@ -251,7 +251,12 @@ def test_job_table_duplicate_names_across_namespaces_stay_distinct_and_stable() 
     jobs = [
         {"namespace": "team-a", "name": "same", "phase": "Running", "throughputRps": 7},
         {"namespace": "team-b", "name": "same", "phase": "Running", "throughputRps": 7},
-        {"namespace": "team-c", "name": "later", "phase": "Running", "throughputRps": 7},
+        {
+            "namespace": "team-c",
+            "name": "later",
+            "phase": "Running",
+            "throughputRps": 7,
+        },
     ]
     script = _job_script(
         f"""
@@ -271,11 +276,28 @@ def test_job_table_duplicate_names_across_namespaces_stay_distinct_and_stable() 
     ]
 
 
-def test_job_table_mixed_numeric_strings_sort_numerically_with_missing_values_last() -> None:
+def test_job_table_mixed_numeric_strings_sort_numerically_with_missing_values_last() -> (
+    None
+):
     jobs = [
-        {"namespace": "bench", "name": "two", "phase": "Completed", "throughputRps": "2"},
-        {"namespace": "bench", "name": "missing", "phase": "Completed", "throughputRps": None},
-        {"namespace": "bench", "name": "ten", "phase": "Completed", "throughputRps": "10"},
+        {
+            "namespace": "bench",
+            "name": "two",
+            "phase": "Completed",
+            "throughputRps": "2",
+        },
+        {
+            "namespace": "bench",
+            "name": "missing",
+            "phase": "Completed",
+            "throughputRps": None,
+        },
+        {
+            "namespace": "bench",
+            "name": "ten",
+            "phase": "Completed",
+            "throughputRps": "10",
+        },
     ]
     script = _job_script(
         f"""
@@ -295,7 +317,9 @@ def test_job_table_mixed_numeric_strings_sort_numerically_with_missing_values_la
     ]
 
 
-def test_job_table_html_like_and_extremely_long_labels_remain_interpolated_values() -> None:
+def test_job_table_html_like_and_extremely_long_labels_remain_interpolated_values() -> (
+    None
+):
     long_label = "dim=" + ("x" * 512)
     html_like_name = "<img src=x onerror=alert(1)>"
     jobs = [
@@ -349,10 +373,6 @@ def test_sweeps_table_mixed_numeric_strings_sort_numerically() -> None:
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Sweeps table renders only snake_case rollup fields and should also accept API camelCase aliases.",
-)
 def test_sweeps_table_accepts_mixed_snake_and_camel_case_rollup_rows() -> None:
     rows = [
         {
@@ -389,13 +409,30 @@ def test_sweeps_table_accepts_mixed_snake_and_camel_case_rollup_rows() -> None:
     assert out["text"].count("1") >= 2
 
 
-def test_sweeps_table_duplicate_names_long_labels_and_html_like_text_are_preserved() -> None:
+def test_sweeps_table_duplicate_names_long_labels_and_html_like_text_are_preserved() -> (
+    None
+):
     long_name = "sweep-" + ("n" * 512)
     html_like_model = "<b>llama</b>"
     rows = [
-        {"namespace": "team-a", "name": "dupe", "phase": "Running", "model": html_like_model},
-        {"namespace": "team-b", "name": "dupe", "phase": "Running", "model": html_like_model},
-        {"namespace": "team-c", "name": long_name, "phase": "Succeeded", "model": "mixtral"},
+        {
+            "namespace": "team-a",
+            "name": "dupe",
+            "phase": "Running",
+            "model": html_like_model,
+        },
+        {
+            "namespace": "team-b",
+            "name": "dupe",
+            "phase": "Running",
+            "model": html_like_model,
+        },
+        {
+            "namespace": "team-c",
+            "name": long_name,
+            "phase": "Succeeded",
+            "model": "mixtral",
+        },
     ]
     script = _sweeps_script(
         f"""
@@ -417,7 +454,9 @@ def test_sweeps_table_duplicate_names_long_labels_and_html_like_text_are_preserv
     assert long_name in out["text"]
 
 
-def test_cells_table_mixed_snake_camel_rows_keep_input_order_and_extreme_labels() -> None:
+def test_cells_table_mixed_snake_camel_rows_keep_input_order_and_extreme_labels() -> (
+    None
+):
     long_label = "lr=" + ("0" * 512)
     cells = [
         {
@@ -457,10 +496,6 @@ def test_cells_table_mixed_snake_camel_rows_keep_input_order_and_extreme_labels(
     assert "123.5" in out["text"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CellsTable formatStat calls toFixed on numeric-looking strings and should coerce finite numbers.",
-)
 def test_cells_table_numeric_string_metrics_format_without_throwing() -> None:
     cells = [
         {

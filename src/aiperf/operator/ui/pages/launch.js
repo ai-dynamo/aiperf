@@ -15,7 +15,7 @@
  */
 
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { navigate } from '../lib/router.js';
 import { palette } from '../lib/theme.js';
@@ -386,7 +386,18 @@ export function Launch() {
     setPrefillFrom(null);
   }
 
+  const peek = peekManifest(yaml);
+  const canSubmit = state.kind !== 'submitting'
+    && state.kind !== 'ok'
+    && !peek.parseError;
+  const submitGuardRef = useRef({ canSubmit, yaml });
+  submitGuardRef.current = { canSubmit, yaml };
+
   async function launch() {
+    const guard = submitGuardRef.current;
+    if (!guard.canSubmit) return;
+    const yaml = guard.yaml;
+
     let manifest;
     try {
       manifest = parseLaunchManifest(yaml);
@@ -394,6 +405,7 @@ export function Launch() {
       setState({ kind: 'err', msg: e.message, stage: 'parse' });
       return;
     }
+    submitGuardRef.current = { canSubmit: false, yaml };
     setState({ kind: 'submitting' });
     try {
       const r = await api.createJob(manifest);
@@ -428,10 +440,6 @@ export function Launch() {
   }
 
   const activeTemplate = templates.find((t) => t.id === templateId);
-  const peek = peekManifest(yaml);
-  const canSubmit = state.kind !== 'submitting'
-    && state.kind !== 'ok'
-    && !peek.parseError;
 
   // Style helpers — keep palette colors in inline styles to match other ui-v1
   // pages that don't lean on dedicated stylesheet classes.

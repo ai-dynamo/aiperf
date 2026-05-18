@@ -107,10 +107,10 @@ class TestSweepCardinality:
                     "type": "adaptive_search",
                     "searchSpace": [
                         {
-                            "path": "benchmark.phases.profiling.concurrency",
-                            "type": "int",
-                            "low": 1,
-                            "high": 4,
+                            "path": "phases.profiling.concurrency",
+                            "kind": "int",
+                            "lo": 1,
+                            "hi": 4,
                         }
                     ],
                     "objectives": [
@@ -189,7 +189,9 @@ class TestChildMetadataRestrictions:
     ) -> None:
         child_metadata = {forbidden_key: "saturation-sweep-v00"}
 
-        with pytest.raises(ValidationError, match=rf"(?i)childMetadata|{forbidden_key}|extra"):
+        with pytest.raises(
+            ValidationError, match=rf"(?i)childMetadata|{forbidden_key}|extra"
+        ):
             AIPerfSweepSpec.model_validate(_sweep_spec(childMetadata=child_metadata))
 
     def test_aiperfjob_spec_child_metadata_rejected_with_field_name(self) -> None:
@@ -280,7 +282,9 @@ class TestStrictAndOpenBoundaries:
             "schedulingGates": [{"name": "bench-ready"}]
         }
 
-        with pytest.raises(ValidationError, match=r"(?i)podTemplate|extraPodSpect|extra"):
+        with pytest.raises(
+            ValidationError, match=r"(?i)podTemplate|extraPodSpect|extra"
+        ):
             AIPerfJobSpec.model_validate(
                 _job_spec(podTemplate={"extraPodSpect": {"schedulingGates": []}})
             )

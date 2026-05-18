@@ -22,12 +22,17 @@ import {
 /** Merge a per-phase stats update into the phases map. */
 function applyPhase(name, stats, patch = {}) {
   const prev = phases.value[name] ?? {};
+  const prevTerminal = Boolean(prev.complete || prev.failed || prev.requests_end_ns);
+  const updateTerminal = Boolean(stats?.requests_end_ns || patch.failed || stats?.failed);
+  if (prevTerminal && !updateTerminal) return;
+
   const merged = { ...prev, ...stats, ...patch, name };
   // Derived flags to drive badge/bar state.
-  merged.active = Boolean(stats?.start_ns) && !stats?.requests_end_ns;
-  merged.complete = Boolean(stats?.requests_end_ns);
+  merged.failed = Boolean(patch.failed || stats?.failed);
+  merged.complete = Boolean(stats?.requests_end_ns) && !merged.failed;
+  merged.active = Boolean(stats?.start_ns) && !stats?.requests_end_ns && !merged.failed;
   merged.grace = Boolean(stats?.timeout_triggered || stats?.grace_period_timeout_triggered)
-    && !merged.complete;
+    && !merged.complete && !merged.failed;
   phases.value = { ...phases.value, [name]: merged };
 }
 
@@ -54,6 +59,8 @@ export function normalizeEndpointSummaries(summaries) {
     return { endpoint, metrics };
   });
 }
+
+const unknownMessageTypesLogged = new Set();
 
 function shortGroupId(id) {
   if (!id) return '';
@@ -122,14 +129,15 @@ export function handleWsMessage(msg) {
     case 'credit_phase_start':
     case 'credit_phase_progress':
     case 'credit_phase_sending_complete':
-    case 'credit_phase_complete': {
+    case 'credit_phase_complete':
+    case 'credit_phase_failed': {
       // Real aiperf server nests the phase name inside `stats.phase` (the
       // CreditPhaseStats model); our test harness sometimes passes it at
       // the top level. Check both.
       const stats = msg.stats ?? {};
       const name = msg.phase ?? msg.phase_name ?? msg.credit_phase
         ?? stats.phase ?? stats.phase_name ?? 'unknown';
-      applyPhase(name, msg.stats ?? msg);
+      applyPhase(name, msg.stats ?? msg, type === 'credit_phase_failed' ? { failed: true } : {});
       if (type === 'credit_phase_start') {
         markRunStarted();
         log({ severity: 'info', category: 'phase', message: `Phase started: ${name}` });
@@ -139,6 +147,9 @@ export function handleWsMessage(msg) {
       }
       if (type === 'credit_phase_complete') {
         log({ severity: 'info', category: 'phase', message: `Phase complete: ${name}` });
+      }
+      if (type === 'credit_phase_failed') {
+        log({ severity: 'error', category: 'phase', message: `Phase failed: ${name}` });
       }
       // Any grace-period transition is worth surfacing.
       const s = msg.stats ?? msg;
@@ -207,6 +218,10 @@ export function handleWsMessage(msg) {
       return;
 
     default:
+      if (type && !unknownMessageTypesLogged.has(type)) {
+        unknownMessageTypesLogged.add(type);
+        log({ severity: 'info', category: 'ws', message: `Unknown WS message type: ${type}` });
+      }
       return;
   }
 }

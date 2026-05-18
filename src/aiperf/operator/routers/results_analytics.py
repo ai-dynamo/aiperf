@@ -118,6 +118,47 @@ async def _get_run_spec_from_index(
         return None
 
 
+def _redact_exposed_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    redacted = deepcopy(spec)
+    benchmark = redacted.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return redacted
+    endpoint = benchmark.get("endpoint")
+    if not isinstance(endpoint, dict):
+        return redacted
+    if endpoint.get("api_key") is not None:
+        endpoint["api_key"] = REDACTED_VALUE
+    headers = endpoint.get("headers")
+    if isinstance(headers, dict):
+        endpoint["headers"] = redact_headers(headers) or {}
+    return redacted
+
+
+async def _get_live_cr_config(
+    api: ApiClient, namespace: str, job_id: str
+) -> dict[str, Any] | None:
+    try:
+        raw = await get_raw_aiperfjob(api, namespace, job_id, suppress_api_errors=False)
+    except TypeError as exc:
+        if "suppress_api_errors" not in str(exc):
+            raise
+        raw = await get_raw_aiperfjob(api, namespace, job_id)
+    except ApiException as exc:
+        status = exc.status or 0
+        reason = f" {exc.reason}" if exc.reason else ""
+        raise HTTPException(
+            503,
+            f"Could not read live AIPerfJob config for {namespace}/{job_id}: "
+            f"Kubernetes API returned {status}{reason}",
+        ) from exc
+    if not raw:
+        return None
+    spec = raw.get("spec")
+    if not isinstance(spec, dict) or not spec:
+        return None
+    return _redact_exposed_spec(spec)
+
+
 def _register_leaderboard_route(
     router: APIRouter, get_db: Callable[[], ResultsDB]
 ) -> None:
@@ -312,9 +353,9 @@ def _register_index_routes(
 
         api = api_holder[0] if api_holder else None
         if api is not None:
-            raw = await get_raw_aiperfjob(api, namespace, job_id)
-            if raw and raw.get("spec"):
-                return {"source": "cr", "spec": raw["spec"]}
+            spec = await _get_live_cr_config(api, namespace, job_id)
+            if spec is not None:
+                return {"source": "cr", "spec": spec}
 
         raise HTTPException(404, f"No config found for {namespace}/{job_id}")
 

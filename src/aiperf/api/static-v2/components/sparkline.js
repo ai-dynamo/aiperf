@@ -28,14 +28,19 @@ export function Sparkline({
   stroke = 'var(--accent)',
   fill = 'var(--accent-dim)',
 }) {
-  if (!points || points.length < 2) {
+  const cleanPoints = (points ?? [])
+    .filter(p => typeof p?.t === 'number' && isFinite(p.t)
+      && typeof p?.v === 'number' && isFinite(p.v))
+    .sort((a, b) => a.t - b.t);
+
+  if (cleanPoints.length < 2) {
     // Stable placeholder so the tile reserves the space even when empty.
     return html`<svg class="sparkline" width=${width} height=${height} aria-hidden="true"></svg>`;
   }
 
   let minV = Infinity, maxV = -Infinity;
   let minT = Infinity, maxT = -Infinity;
-  for (const p of points) {
+  for (const p of cleanPoints) {
     if (p.v < minV) minV = p.v;
     if (p.v > maxV) maxV = p.v;
     if (p.t < minT) minT = p.t;
@@ -50,7 +55,7 @@ export function Sparkline({
   const innerH = height - PADDING * 2;
 
   // Map each point to SVG coords; y is inverted.
-  const coords = points.map((p) => {
+  const coords = cleanPoints.map((p) => {
     const x = PADDING + ((p.t - minT) / tSpan) * innerW;
     const y = PADDING + innerH - ((p.v - minV) / vSpan) * innerH;
     return [x, y];

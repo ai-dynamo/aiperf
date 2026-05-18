@@ -319,13 +319,13 @@ class TestBuildEnvVars:
         assert len(hf) == 1
         assert hf[0]["value"] == "/aiperf/hf_home"
 
-    def test_hf_home_not_added_when_pod_template_sets_it(self) -> None:
-        """User-supplied HF_HOME must not be duplicated by the default injection."""
+    def test_hf_home_stays_authoritative_when_pod_template_sets_it(self) -> None:
+        """User-supplied HF_HOME must not shadow the shared tokenizer-cache mount."""
         template = PodTemplateConfig(env=[{"name": "HF_HOME", "value": "/data/hf"}])
         env = build_env_vars(job_id="j", namespace="n", pod_template=template)
         hf = [item for item in env if item["name"] == "HF_HOME"]
         assert len(hf) == 1
-        assert hf[0]["value"] == "/data/hf"
+        assert hf[0]["value"] == "/aiperf/hf_home"
 
     def test_pod_index_included_by_default(self) -> None:
         """AIPERF_POD_INDEX uses a fieldRef to the jobset job-index label."""

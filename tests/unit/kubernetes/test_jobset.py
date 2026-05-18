@@ -181,8 +181,8 @@ class TestReplicatedJobSpec:
         assert pod_meta["labels"]["app"] == "aiperf"
         assert pod_meta["labels"]["aiperf.nvidia.com/job-id"] == "my-benchmark"
 
-    def test_to_k8s_spec_custom_labels_override(self) -> None:
-        """Test that custom labels can override base labels."""
+    def test_to_k8s_spec_custom_labels_preserve_reserved_labels(self) -> None:
+        """Test that custom labels cannot override reserved AIPerf labels."""
         container = AIPerfContainerSpec(name="worker", image="nginx:latest")
         custom = PodTemplateConfig(labels={"app": "custom-app", "team": "platform"})
         job = AIPerfReplicatedJobSpec(
@@ -193,8 +193,7 @@ class TestReplicatedJobSpec:
         )
         spec = job.to_k8s_spec()
         pod_meta = spec["template"]["spec"]["template"]["metadata"]
-        # Custom labels override base labels
-        assert pod_meta["labels"]["app"] == "custom-app"
+        assert pod_meta["labels"]["app"] == "aiperf"
         assert pod_meta["labels"]["team"] == "platform"
         assert pod_meta["labels"]["aiperf.nvidia.com/job-id"] == "test-job"
 

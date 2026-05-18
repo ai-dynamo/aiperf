@@ -13,13 +13,22 @@
 export const MAX_POINTS = 120;         // ≈ 2 minutes at 1 Hz
 export const MAX_AGE_MS = 5 * 60_000;  // 5 minutes hard ceiling regardless of rate
 
+function finiteTimestamp(value) {
+  return typeof value === 'number' && isFinite(value);
+}
+
 /** Append one sample, pruning anything older than the window. */
 export function pushSample(series, sample) {
-  const now = sample.t ?? Date.now();
-  const cutoff = now - MAX_AGE_MS;
-  // In-place filter then append. Small arrays so this is cheap.
-  const next = series.filter(s => s.t >= cutoff);
-  next.push(sample);
+  const candidates = series.filter(s => finiteTimestamp(s.t));
+  if (finiteTimestamp(sample?.t)) candidates.push(sample);
+
+  const newest = candidates.reduce((mx, s) => Math.max(mx, s.t), -Infinity);
+  if (!isFinite(newest)) return [];
+
+  const cutoff = newest - MAX_AGE_MS;
+  const next = candidates
+    .filter(s => s.t >= cutoff)
+    .sort((a, b) => a.t - b.t);
   if (next.length > MAX_POINTS) next.splice(0, next.length - MAX_POINTS);
   return next;
 }
@@ -29,9 +38,9 @@ export function pluck(series, statKey) {
   const out = [];
   for (const s of series) {
     const v = s.values?.[statKey];
-    if (typeof v === 'number' && isFinite(v)) out.push({ t: s.t, v });
+    if (finiteTimestamp(s.t) && typeof v === 'number' && isFinite(v)) out.push({ t: s.t, v });
   }
-  return out;
+  return out.sort((a, b) => a.t - b.t);
 }
 
 /** Min / max over the pluck()ed series, ignoring empty. */

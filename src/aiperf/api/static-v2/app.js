@@ -32,31 +32,33 @@ function Dashboard() {
   useEffect(() => {
     const ac = new AbortController();
 
-    connectWebSocket({
-      onOpen: async (epoch) => {
-        // Bootstrap three HTTP endpoints in parallel; ignore responses from
-        // stale connections so a reconnect doesn't clobber fresh state.
-        const safe = async (fn, apply) => {
-          try {
-            const data = await fn(ac.signal);
-            if (epoch === currentEpoch()) apply(data);
-          } catch (e) {
-            if (e?.name === 'AbortError') return;
-            log(`fetch failed: ${e.message}`);
-          }
-        };
+    const safe = async (fn, apply, epoch = null) => {
+      try {
+        const data = await fn(ac.signal);
+        if (epoch === null || epoch === currentEpoch()) apply(data);
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+        log(`fetch failed: ${e.message}`);
+      }
+    };
 
-        await Promise.all([
-          safe((s) => api.getConfig(s),       (d) => { if (d) config.value = d; }),
-          safe((s) => api.getProgress(s),     (d) => { if (d) bootstrapProgress(d); }),
-          safe((s) => api.getServerMetrics(s), (d) => {
-            // Warm-start before the first WS push lands. WS still drives updates.
-            if (d?.endpoint_summaries) {
-              serverMetrics.value = normalizeEndpointSummaries(d.endpoint_summaries);
-            }
-          }),
-        ]);
-      },
+    const warmStart = (epoch = null) => Promise.all([
+      safe((s) => api.getConfig(s),       (d) => { if (d) config.value = d; }, epoch),
+      safe((s) => api.getProgress(s),     (d) => { if (d) bootstrapProgress(d); }, epoch),
+      safe((s) => api.getServerMetrics(s), (d) => {
+        // Warm-start before the first WS push lands. WS still drives updates.
+        if (d?.endpoint_summaries) {
+          serverMetrics.value = normalizeEndpointSummaries(d.endpoint_summaries);
+        }
+      }, epoch),
+    ]);
+
+    // REST boot must not depend on the event stream: the immutable config and
+    // latest snapshots are still useful when WS is temporarily unavailable.
+    warmStart();
+
+    connectWebSocket({
+      onOpen: (epoch) => warmStart(epoch),
     });
 
     const onBeforeUnload = () => teardownWebSocket();

@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
 
-from aiperf.config.kube import KubeOptions
 from aiperf.config.flags import CLIConfig
+from aiperf.config.kube import KubeOptions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -186,6 +186,9 @@ def _build_sweep_cr_dict(
             or benchmark_raw.pop("multi_run", None)
             or benchmark_raw.pop("multiRun", None)
         )
+        child_metadata = cr_spec.pop("childMetadata", None) or cr_spec.pop(
+            "child_metadata", None
+        )
         for env_key in (
             "variables",
             "random_seed",
@@ -199,6 +202,7 @@ def _build_sweep_cr_dict(
     else:
         sweep_cfg = raw.pop("sweep", None)
         multirun_cfg_from_yaml = raw.pop("multi_run", None) or raw.pop("multiRun", None)
+        child_metadata = None
         # Envelope-only fields that don't belong on the benchmark body.
         for env_key in (
             "variables",
@@ -249,6 +253,8 @@ def _build_sweep_cr_dict(
     }
     if sweep_cfg is not None:
         spec["sweep"] = sweep_cfg
+    if child_metadata is not None:
+        spec["childMetadata"] = child_metadata
     # Envelope-level fields (variables, random_seed) flow onto the spec
     # directly, mirroring AIPerfConfig's shape.
     if envelope_extras:
@@ -281,6 +287,13 @@ def _build_sweep_cr_dict(
         }
 
     if multirun_cfg:
+        if (
+            isinstance(sweep_cfg, dict)
+            and "convergence" in multirun_cfg
+            and "iteration_order" not in sweep_cfg
+            and "iterationOrder" not in sweep_cfg
+        ):
+            sweep_cfg["iterationOrder"] = "independent"
         spec["multiRun"] = multirun_cfg
 
     name = kube_options.name or _name_from_config_file(config_file)

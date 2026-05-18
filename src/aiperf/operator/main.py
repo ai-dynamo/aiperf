@@ -273,6 +273,7 @@ async def on_pod_container_status_change(
 )
 @track_handler("on_jobset_conditions")
 async def on_jobset_conditions(
+    *,
     old: list[dict[str, Any]] | None,
     new: list[dict[str, Any]] | None,
     namespace: str,

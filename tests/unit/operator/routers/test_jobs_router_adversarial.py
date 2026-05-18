@@ -459,6 +459,62 @@ class TestJobsRouterListSchema:
 
 
 # ============================================================
+# Detail schema and sweep children
+# ============================================================
+
+
+class TestJobsRouterDetailSchema:
+    """Job detail keeps sweep-child fields stable alongside raw status."""
+
+    @pytest.mark.asyncio
+    async def test_get_job_live_sweep_child_preserves_linkage_and_status(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.operator.routers import jobs as jobs_module
+
+        async def fake_find(
+            api: object,
+            results_dir: Path,
+            namespace: str,
+            name: str,
+            *,
+            epoch: str | None = None,
+        ) -> AIPerfJobInfo:
+            del api, results_dir, epoch
+            return _live_job_info(
+                namespace=namespace,
+                name=name,
+                source="both",
+                sweep_name="llama-throughput-sweep",
+                variation_index=11,
+                variation_label="temperature=0.2",
+            )
+
+        raw_status = {
+            "phase": "Running",
+            "subPhase": "profiling",
+            "runEpoch": int(_EPOCH),
+            "summary": {"request_throughput": {"avg": 1500.0}},
+        }
+        monkeypatch.setattr(jobs_module, "find_any_job", fake_find)
+        monkeypatch.setattr(
+            jobs_module, "get_raw_aiperfjob_status", AsyncMock(return_value=raw_status)
+        )
+        monkeypatch.setattr(jobs_module, "get_pods", AsyncMock(return_value=[]))
+
+        response = await client.get("/api/v1/jobs/aiperf-sweeps/llama-sweep-v11")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["job"]["source"] == "both"
+        assert body["job"]["sweepName"] == "llama-throughput-sweep"
+        assert body["job"]["variationIndex"] == 11
+        assert body["job"]["variationLabel"] == "temperature=0.2"
+        assert body["status"] == raw_status
+        assert body["pods"] == []
+
+
+# ============================================================
 # Cancel patch shape
 # ============================================================
 

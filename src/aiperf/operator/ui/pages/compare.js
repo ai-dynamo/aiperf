@@ -592,6 +592,7 @@ export function Compare() {
     setNsFilter(new Set());
     setModelFilter(new Set());
     setEndpointFilter(new Set());
+    setSearch('');
   }
 
   function toggleFacetExpanded(dim) {
@@ -613,15 +614,16 @@ export function Compare() {
     }
   }
 
+  const normalizedSearch = search.trim();
   const facets = useMemo(
-    () => extractCrossFacets(storedJobs, { nsFilter, modelFilter, endpointFilter, search }),
-    [storedJobs, nsFilter, modelFilter, endpointFilter, search],
+    () => extractCrossFacets(storedJobs, { nsFilter, modelFilter, endpointFilter, search: normalizedSearch }),
+    [storedJobs, nsFilter, modelFilter, endpointFilter, normalizedSearch],
   );
   const filtered = useMemo(
-    () => applyJobFilters(storedJobs, { nsFilter, modelFilter, endpointFilter, search }),
-    [storedJobs, nsFilter, modelFilter, endpointFilter, search],
+    () => applyJobFilters(storedJobs, { nsFilter, modelFilter, endpointFilter, search: normalizedSearch }),
+    [storedJobs, nsFilter, modelFilter, endpointFilter, normalizedSearch],
   );
-  const anyFilterActive = nsFilter.size > 0 || modelFilter.size > 0 || endpointFilter.size > 0;
+  const anyFilterActive = nsFilter.size > 0 || modelFilter.size > 0 || endpointFilter.size > 0 || normalizedSearch.length > 0;
 
   const entries = compareData?.entries ?? [];
   // Display keys match composite values-map keys from the backend.

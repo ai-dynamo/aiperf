@@ -11,7 +11,7 @@ import { html } from 'htm/preact';
 import { phases } from '../lib/state.js';
 import { fmtInt, fmtPercent, fmtDuration, fmtNumber } from '../lib/format.js';
 
-function computeProgress(p) {
+export function computeProgress(p) {
   const total = p.total_expected_requests ?? p.expected_requests ?? null;
   const completed = p.final_requests_completed ?? p.requests_completed ?? p.completed ?? 0;
   if (total && total > 0) {
@@ -56,6 +56,7 @@ function computeTiming(p) {
 }
 
 function badgeClass(p) {
+  if (p.failed) return 'phase-badge--failed';
   if (p.complete) return 'phase-badge--complete';
   if (p.grace) return 'phase-badge--grace';
   if (p.active) return 'phase-badge--running';
@@ -63,6 +64,7 @@ function badgeClass(p) {
 }
 
 function badgeText(p) {
+  if (p.failed) return 'Failed';
   if (p.complete) return 'Complete';
   if (p.grace) return 'Grace';
   if (p.active) return 'Running';
@@ -71,7 +73,8 @@ function badgeText(p) {
 
 function cardClass(p) {
   const classes = ['phase-card'];
-  if (p.complete) classes.push('complete');
+  if (p.failed) classes.push('failed');
+  else if (p.complete) classes.push('complete');
   else if (p.grace) classes.push('grace');
   return classes.join(' ');
 }

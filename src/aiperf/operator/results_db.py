@@ -95,7 +95,7 @@ class ResultsDB:
             return disk_rows
         try:
             index_rows = await runs_index.compare(*args, **kwargs)
-        except (RuntimeError, sqlite3.Error) as exc:
+        except (RuntimeError, ValueError, sqlite3.Error) as exc:
             logger.debug("runs_index compare unavailable: %s", exc)
             return disk_rows
         return self._merge_latest_rows(
@@ -309,6 +309,21 @@ class ResultsDB:
         rows.sort(key=lambda row: row.get("start_time") or "")
         return rows[:limit]
 
+    def _compare_metric_cells(
+        self, summary: dict[str, Any], metrics: list[str]
+    ) -> dict[str, Any] | None:
+        row: dict[str, Any] = {}
+        for metric in metrics:
+            metric_data = summary.get(metric)
+            if metric_data is None:
+                metric_data = {}
+            elif not isinstance(metric_data, dict):
+                return None
+            for metric_stat in ("avg", "p50", "p99"):
+                row[f"{metric}_{metric_stat}"] = metric_data.get(metric_stat)
+            row[f"{metric}_unit"] = metric_data.get("unit")
+        return row
+
     def _compare_from_disk(
         self,
         job_ids: list[str],
@@ -338,22 +353,22 @@ class ResultsDB:
             gpu_count, gpu_name = runs_index._summarize_telemetry(
                 summary.get("telemetry_data")
             )
-            row: dict[str, Any] = {
-                "namespace": namespace,
-                "job_id": job_id,
-                "epoch": run_epoch,
-                "start_time": summary.get("start_time"),
-                "model": row_model,
-                "endpoint": row_endpoint,
-                "gpu_count": gpu_count,
-                "gpu_name": gpu_name,
-            }
-            for metric in metrics:
-                metric_data = summary.get(metric) or {}
-                for metric_stat in ("avg", "p50", "p99"):
-                    row[f"{metric}_{metric_stat}"] = metric_data.get(metric_stat)
-                row[f"{metric}_unit"] = metric_data.get("unit")
-            rows.append(row)
+            metrics_row = self._compare_metric_cells(summary, metrics)
+            if metrics_row is None:
+                continue
+            rows.append(
+                {
+                    "namespace": namespace,
+                    "job_id": job_id,
+                    "epoch": run_epoch,
+                    "start_time": summary.get("start_time"),
+                    "model": row_model,
+                    "endpoint": row_endpoint,
+                    "gpu_count": gpu_count,
+                    "gpu_name": gpu_name,
+                    **metrics_row,
+                }
+            )
         return rows
 
     def _iter_disk_summaries(

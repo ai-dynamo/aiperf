@@ -30,6 +30,7 @@ const RECONNECT_DELAY_MS = 2000;
 let currentWs = null;
 let connectionEpoch = 0;
 let reconnectTimer = null;
+let reconnectEnabled = true;
 
 /** Bump before each connect; stale async fetches check this to avoid clobbering fresh state. */
 export function currentEpoch() {
@@ -37,6 +38,7 @@ export function currentEpoch() {
 }
 
 export function connectWebSocket({ onOpen } = {}) {
+  reconnectEnabled = true;
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -62,14 +64,22 @@ export function connectWebSocket({ onOpen } = {}) {
   };
 
   ws.onclose = () => {
-    connection.value = 'disconnected';
+    if (currentWs !== ws) return;
+    if (connection.value !== 'error') connection.value = 'disconnected';
     resetLiveState();
-    log('Disconnected, reconnecting...');
     currentWs = null;
+    if (!reconnectEnabled) {
+      log('Disconnected');
+      return;
+    }
+    log('Disconnected, reconnecting...');
     reconnectTimer = setTimeout(() => connectWebSocket({ onOpen }), RECONNECT_DELAY_MS);
   };
 
-  ws.onerror = () => { log('WebSocket error'); };
+  ws.onerror = () => {
+    connection.value = 'error';
+    log({ severity: 'error', category: 'connection', message: 'WebSocket error' });
+  };
 
   ws.onmessage = (event) => {
     try {
@@ -82,6 +92,7 @@ export function connectWebSocket({ onOpen } = {}) {
 
 /** Tear down the current WS (used by window beforeunload). */
 export function teardownWebSocket() {
+  reconnectEnabled = false;
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;

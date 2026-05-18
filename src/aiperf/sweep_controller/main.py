@@ -235,6 +235,7 @@ def _write_sweep_parent_aggregate(
     Conditions are owned by the operator and not yet collected here, so we
     pass ``conditions=None`` and the ``conditions.json`` sibling is omitted.
     """
+    from aiperf.operator.results_layout import write_sweep_latest
     from aiperf.sweep_controller.aggregator import (
         write_children_manifest,
         write_sweep_aggregate,
@@ -270,6 +271,7 @@ def _write_sweep_parent_aggregate(
         sweep_run_epoch=sweep_run_epoch,
         doc=doc,
         conditions=None,
+        update_latest=False,
     )
     # Build children manifest by walking the actual results stream, not
     # plan.variations. For adaptive search plan.variations is a length-1
@@ -318,6 +320,7 @@ def _write_sweep_parent_aggregate(
         sweep_run_epoch=sweep_run_epoch,
         children=children,
     )
+    write_sweep_latest(Path(base_dir), namespace, name, sweep_run_epoch)
 
 
 def _load_aggregate_for_cr(

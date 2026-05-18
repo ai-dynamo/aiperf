@@ -169,6 +169,7 @@ a:hover { text-decoration: underline; }
 .status-dot.connected { background: var(--green); box-shadow: 0 0 8px rgba(118, 185, 0, 0.5); animation: pulse 2s infinite; }
 .status-dot.connecting { background: var(--amber); }
 .status-dot.disconnected { background: var(--red); }
+.status-dot.error { background: var(--red); box-shadow: 0 0 8px rgba(255, 78, 78, 0.45); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -250,6 +251,7 @@ a:hover { text-decoration: underline; }
 .phase-badge--pending    { background: rgba(117, 117, 117, 0.15); color: var(--muted); }
 .phase-badge--complete   { background: rgba(118, 185, 0, 0.15); color: var(--green); }
 .phase-badge--grace      { background: rgba(255, 193, 7, 0.15); color: var(--amber); }
+.phase-badge--failed     { background: rgba(239, 83, 80, 0.15); color: var(--red); }
 
 .phase-track {
   height: 6px;
@@ -265,6 +267,7 @@ a:hover { text-decoration: underline; }
 }
 .phase-card.complete .phase-fill { background: var(--green); }
 .phase-card.grace    .phase-fill { background: var(--amber); }
+.phase-card.failed   .phase-fill { background: var(--red); }
 
 .phase-stats {
   display: grid;
@@ -787,7 +790,7 @@ a:hover { text-decoration: underline; }
 .log-cat--worker  { background: rgba(171, 71, 188, 0.12); color: var(--pink); }
 .log-cat--records { background: rgba(118, 185, 0, 0.12); color: var(--green); }
 
-.log-msg { font-family: var(--font-mono); }
+.log-msg { font-family: var(--font-mono); overflow-wrap: anywhere; }
 
 /* ───── Worker group toggle ───── */
 .group-toggle {

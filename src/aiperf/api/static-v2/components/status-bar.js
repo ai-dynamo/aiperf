@@ -17,12 +17,19 @@ export function StatusBar() {
 
   const phaseCount = Object.keys(phaseMap).length;
   const activePhase = Object.values(phaseMap).find(p => p.active);
+  const statusText = conn === 'connected'
+    ? 'Connected'
+    : conn === 'connecting'
+      ? 'Connecting...'
+      : conn === 'error'
+        ? 'Error'
+        : 'Disconnected';
 
   return html`
     <div class="status-bar" role="status">
       <div class="status-item">
         <span class=${'status-dot ' + conn}></span>
-        <span>${conn === 'connected' ? 'Connected' : conn === 'connecting' ? 'Connecting...' : 'Disconnected'}</span>
+        <span>${statusText}</span>
       </div>
       <span class="status-sep">|</span>
       <div class="status-item">

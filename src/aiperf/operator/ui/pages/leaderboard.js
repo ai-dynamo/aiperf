@@ -85,17 +85,21 @@ export function Leaderboard() {
   }, [selected.metric, selected.stat]);
 
   const entries = data?.entries ?? [];
+  const rankableEntries = useMemo(
+    () => entries.filter((entry) => entry.value != null),
+    [entries],
+  );
 
   // Cross-filter chips: each dimension's facet map is recomputed from
   // entries filtered by the OTHER active dimensions, so clicking one
   // narrows the rest to only what still co-occurs.
   const facets = useMemo(
-    () => extractCrossFacets(entries, { nsFilter, modelFilter, endpointFilter, search: '' }),
-    [entries, nsFilter, modelFilter, endpointFilter],
+    () => extractCrossFacets(rankableEntries, { nsFilter, modelFilter, endpointFilter, search: '' }),
+    [rankableEntries, nsFilter, modelFilter, endpointFilter],
   );
   const filtered = useMemo(
-    () => applyJobFilters(entries, { nsFilter, modelFilter, endpointFilter, search: '' }),
-    [entries, nsFilter, modelFilter, endpointFilter],
+    () => applyJobFilters(rankableEntries, { nsFilter, modelFilter, endpointFilter, search: '' }),
+    [rankableEntries, nsFilter, modelFilter, endpointFilter],
   );
   const anyFilterActive = nsFilter.size + modelFilter.size + endpointFilter.size > 0;
   const clearAll = () => {
@@ -169,7 +173,7 @@ export function Leaderboard() {
     datasets: [
       {
         label: selected.metric,
-        data: top10.map((e) => e.value ?? 0),
+        data: top10.map((e) => e.value),
         backgroundColor: top10.map((_, i) => CHART_COLORS[i % CHART_COLORS.length] + 'cc'),
         borderColor: top10.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
         borderWidth: 1,

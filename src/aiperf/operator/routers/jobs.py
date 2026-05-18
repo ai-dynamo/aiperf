@@ -731,7 +731,18 @@ async def _list_events_impl(
 
     pod_event_lists: list[list[Any]] = []
     for pod_name in pod_names:
-        pod_event_lists.append(await list_events_for_object(api, namespace, pod_name))
+        try:
+            pod_event_lists.append(
+                await list_events_for_object(api, namespace, pod_name)
+            )
+        except ApiException as e:
+            logger.warning(
+                "Failed to list events for pod %s/%s (apiserver %s): %s",
+                namespace,
+                pod_name,
+                e.status,
+                e,
+            )
 
     raw_events: list[Any] = [*cr_events]
     for lst in pod_event_lists:
