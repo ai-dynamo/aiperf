@@ -347,6 +347,10 @@ async def test_main_marks_cancelled_when_cancel_requested(
         fake_plan = MagicMock()
         fake_plan.configs = [object()]
         fake_plan.is_adaptive_search = False
+        fake_plan.confidence_level = 0.95
+        fake_plan.cooldown_seconds = 0.0
+        fake_plan.use_adaptive = False
+        fake_plan.export_jsonl_file = None
         monkeypatch.setattr(
             "aiperf.sweep_controller.plan_builder.build_plan_from_sweep",
             lambda cr: fake_plan,
@@ -368,9 +372,11 @@ async def test_main_marks_cancelled_when_cancel_requested(
         async def _aggregate_and_export(all_results, *args, **kwargs) -> None:
             calls["aggregated_results"] = list(all_results)
 
-        monkeypatch.setattr(
-            "aiperf.cli_runner._aggregate.aggregate_and_export", _aggregate_and_export
-        )
+        if results:
+            monkeypatch.setattr(
+                "aiperf.cli_runner._aggregate.aggregate_and_export",
+                _aggregate_and_export,
+            )
         monkeypatch.setattr(main_mod, "_write_aggregate_manifest", lambda *a: None)
         monkeypatch.setattr(
             main_mod, "_mirror_strategy_aggregate_to_sweep_dir", lambda **kw: None
@@ -437,4 +443,7 @@ async def test_main_marks_cancelled_when_cancel_requested(
 
     assert rc == 0
     assert calls["terminal_phase"] == "Cancelled"
-    assert calls["aggregated_results"] == results
+    if results:
+        assert calls["aggregated_results"] == results
+    else:
+        assert "aggregated_results" not in calls

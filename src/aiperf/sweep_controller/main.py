@@ -574,13 +574,19 @@ async def main() -> int:
                 strategy = build_strategy(plan, aiperf_logger)
                 aggregate_dir = strategy.get_aggregate_path(RESULTS_DIR)
                 aggregate_dir.mkdir(parents=True, exist_ok=True)
-                await aggregate_and_export(
-                    all_results,
-                    plan,
-                    strategy=strategy,
-                    base_dir=RESULTS_DIR,
-                    logger=aiperf_logger,
-                )
+                if cancel_flag["requested"] and completed_count == 0:
+                    logger.info(
+                        "cancellation requested before any successful child results; "
+                        "skipping confidence aggregation"
+                    )
+                else:
+                    await aggregate_and_export(
+                        all_results,
+                        plan,
+                        strategy=strategy,
+                        base_dir=RESULTS_DIR,
+                        logger=aiperf_logger,
+                    )
                 _write_aggregate_manifest(aggregate_dir, sweep_cr, all_results, plan)
                 _mirror_strategy_aggregate_to_sweep_dir(
                     base_dir=RESULTS_DIR,
