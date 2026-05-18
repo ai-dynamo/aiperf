@@ -20,9 +20,10 @@ import orjson
 
 from aiperf.operator.handlers.completion import _record_results_on_status
 from aiperf.operator.models import ControllerFetchResult
-from aiperf.operator.results_layout import write_latest
+from aiperf.operator.results_layout import epoch_key_from_body, write_latest
 
 FIXTURE_EPOCH = "1714064523"
+INT64_MAX = 9_223_372_036_854_775_807
 
 # Match the shape MetricsSummary.from_metrics walks: a top-level "metrics"
 # dict keyed by metric tag, each entry holding {avg, p50, p99}. This is
@@ -200,3 +201,41 @@ class TestSummaryFallbackFromFiles:
             )
         sb.set_results.assert_not_called()
         sb.set_summary.assert_not_called()
+
+    def test_uid_disambiguated_run_epoch_status_is_int64_safe(
+        self, tmp_path: Path
+    ) -> None:
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "creationTimestamp": "2024-04-25T17:02:03Z",
+                "uid": "11111111-1111-4111-8111-111111111111",
+            }
+        }
+        epoch = epoch_key_from_body(body)
+        job_dir = tmp_path / "ns" / "test-job" / epoch
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "profile_export_aiperf.json").write_bytes(
+            orjson.dumps(FILE_METRICS_PAYLOAD)
+        )
+        sb = MagicMock()
+        result = ControllerFetchResult(
+            metrics=None,
+            downloaded=["profile_export_aiperf.json"],
+        )
+
+        with _patch_results_dir(tmp_path):
+            _record_results_on_status(
+                body=body,
+                namespace="ns",
+                job_id="test-job",
+                result=result,
+                sb=sb,
+                has_metrics=False,
+                has_files=True,
+            )
+
+        run_epoch = sb.set_run_epoch.call_args.args[0]
+        assert isinstance(run_epoch, int)
+        assert run_epoch == int(epoch)
+        assert run_epoch <= INT64_MAX

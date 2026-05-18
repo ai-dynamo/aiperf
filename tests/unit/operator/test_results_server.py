@@ -1115,6 +1115,25 @@ def test_readonly_list_runs_does_not_schedule_lazy_backfill(
     lazy_backfill.assert_not_called()
 
 
+def test_readonly_sidecar_missing_index_does_not_schedule_lazy_backfill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator import runs_index as runs_index_mod
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
+    lazy_backfill = AsyncMock()
+    monkeypatch.setattr(runs_index_mod, "lazy_backfill_run", lazy_backfill)
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results/ns/job/runs")
+
+    assert r.status_code == 200
+    lazy_backfill.assert_not_called()
+
+
 def test_config_retention_endpoint_returns_current_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

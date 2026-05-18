@@ -37,6 +37,7 @@ from aiperf.operator.results_layout import (
 EPOCH_A = "1714064523"
 EPOCH_B = "1714064589"
 EPOCH_C = "1714150923"
+INT64_MAX = 9_223_372_036_854_775_807
 
 
 def test_write_latest_atomic(tmp_path: Path) -> None:
@@ -359,6 +360,8 @@ def test_epoch_key_from_body_disambiguates_same_second_k8s_uids() -> None:
     assert first_key != second_key
     assert first_key.startswith("1714069323")
     assert second_key.startswith("1714069323")
+    assert int(first_key) <= INT64_MAX
+    assert int(second_key) <= INT64_MAX
     assert EPOCH_RE.match(first_key) is not None
     assert EPOCH_RE.match(second_key) is not None
 

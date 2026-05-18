@@ -39,6 +39,7 @@ LATEST_POINTER = "latest.txt"
 # 9-20 digits covers legacy epoch-seconds directories, fractional-second
 # run keys, and whole-second Kubernetes keys with a uid-derived suffix.
 EPOCH_RE = re.compile(r"^\d{9,20}$")
+_UID_SUFFIX_MODULUS = 1_000_000_000
 
 __all__ = [
     "EPOCH_RE",
@@ -530,7 +531,7 @@ def _schedule_lazy_backfill_runs(
     except ImportError as exc:  # pragma: no cover - defensive
         logger.warning("runs_index unavailable for lazy backfill: %s", exc)
         return
-    if _runs_index.is_readonly():
+    if not _runs_index.is_open() or _runs_index.is_readonly():
         return
     for entry in runs:
         try:
@@ -570,7 +571,7 @@ def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
     except ImportError as exc:  # pragma: no cover - defensive
         logger.warning("runs_index unavailable for retention drop: %s", exc)
         return
-    if _runs_index.is_readonly():
+    if not _runs_index.is_open() or _runs_index.is_readonly():
         return
     try:
         loop.create_task(_runs_index.delete_run(namespace, name, epoch))
@@ -608,5 +609,5 @@ def epoch_key_from_body(body: dict) -> str:
     uid = metadata.get("uid")
     if not uid:
         return str(seconds)
-    suffix = zlib.crc32(str(uid).encode("utf-8"))
-    return f"{seconds}{suffix:010d}"
+    suffix = zlib.crc32(str(uid).encode("utf-8")) % _UID_SUFFIX_MODULUS
+    return f"{seconds}{suffix:09d}"
