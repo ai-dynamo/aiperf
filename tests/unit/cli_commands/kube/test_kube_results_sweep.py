@@ -200,6 +200,13 @@ class TestDefaultSweepOutputDir:
         b = _default_sweep_output_dir("ns", "sweep-b")
         assert a != b
 
+    def test_run_pinned_downloads_include_epoch(self) -> None:
+        path = _default_sweep_output_dir("bench-ns", "my-sweep", run="1714069323")
+        s = str(path)
+        assert "bench-ns" in s
+        assert "my-sweep" in s
+        assert "1714069323" in s
+
 
 # ============================================================
 # Fan-out: retrieve_sweep_results_from_operator
@@ -277,6 +284,51 @@ class TestRetrieveSweepResultsFromOperator:
         assert mock_aggregate_get.await_args.kwargs["run"] == "1714069323"
         # Manifest persisted alongside per-cell dirs.
         assert (tmp_path / "sweep_manifest.json").is_file()
+
+    async def test_aggregate_failure_returns_false_after_children_attempted(
+        self, tmp_path: Path
+    ) -> None:
+        """A failed aggregate fetch makes epoch download fail after children run."""
+        from aiperf.kubernetes.results import retrieve_sweep_results_from_operator
+
+        manifest = {
+            "sweepRunEpoch": "1714069323",
+            "children": [
+                {
+                    "namespace": "ns",
+                    "name": "sweep-c0",
+                    "variationIndex": 0,
+                    "variationLabel": "v0",
+                    "trialIndex": None,
+                    "childRunEpoch": "1",
+                }
+            ],
+        }
+        get = AsyncMock(return_value=True)
+
+        with (
+            patch(
+                "aiperf.kubernetes.results._fetch_children_manifest",
+                new=AsyncMock(return_value=manifest),
+            ),
+            patch("aiperf.kubernetes.results.retrieve_results_from_operator", new=get),
+            patch(
+                "aiperf.kubernetes.results.retrieve_sweep_aggregate_artifacts_from_operator",
+                new=AsyncMock(return_value=False),
+            ) as mock_aggregate_get,
+        ):
+            ok = await retrieve_sweep_results_from_operator(
+                "my-sweep",
+                "ns",
+                tmp_path,
+                MagicMock(),
+                local_port=0,
+                operator_namespace="aiperf-system",
+            )
+
+        assert ok is False
+        assert get.await_count == 1
+        mock_aggregate_get.assert_awaited_once()
 
     async def test_partial_failure_returns_false_after_all_attempted(
         self, tmp_path: Path
@@ -385,7 +437,9 @@ class _FakeResponse:
     def raise_for_status(self) -> None:
         return None
 
-    async def json(self) -> dict:
+    async def json(self, *, loads: object | None = None) -> dict:
+        if loads is None:
+            raise AssertionError("aiohttp response JSON must pass orjson.loads")
         return self._json_body
 
 

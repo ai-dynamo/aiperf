@@ -679,7 +679,7 @@ async def retrieve_sweep_results_from_operator(
         )
         return False
 
-    await retrieve_sweep_aggregate_artifacts_from_operator(
+    aggregate_ok = await retrieve_sweep_aggregate_artifacts_from_operator(
         sweep_name,
         namespace,
         output_dir,
@@ -693,7 +693,7 @@ async def retrieve_sweep_results_from_operator(
     )
 
     print_step(f"Sweep {sweep_name}: downloading {len(children)} children...")
-    return await _download_sweep_children(
+    children_ok = await _download_sweep_children(
         children=children,
         namespace=namespace,
         output_dir=output_dir,
@@ -703,3 +703,4 @@ async def retrieve_sweep_results_from_operator(
         kubeconfig=kubeconfig,
         kube_context=kube_context,
     )
+    return aggregate_ok and children_ok

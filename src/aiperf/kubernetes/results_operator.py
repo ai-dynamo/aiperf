@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import aiofiles
 import aiohttp
+import orjson
 
 from aiperf.kubernetes.client import find_operator_pod
 from aiperf.kubernetes.console import (
@@ -266,7 +267,7 @@ async def _list_sweep_operator_files(
                 )
                 return None
             resp.raise_for_status()
-            list_data = await resp.json()
+            list_data = await resp.json(loads=orjson.loads)
     except aiohttp.ClientError as e:
         print_warning(f"Failed to list sweep aggregate artifacts: {e}")
         return None

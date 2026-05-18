@@ -117,13 +117,17 @@ def _default_output_dir(
     return Path(f"./artifacts/{job_name}")
 
 
-def _default_sweep_output_dir(namespace: str, sweep_name: str) -> Path:
+def _default_sweep_output_dir(
+    namespace: str, sweep_name: str, *, run: str | None = None
+) -> Path:
     """Default per-sweep output directory.
 
     Sweeps span many child jobs, so the default path embeds both the namespace
-    and the sweep name to avoid colliding with single-job artifact dirs.
+    and the sweep name to avoid colliding with single-job artifact dirs. When a
+    historical run is pinned, include the epoch to avoid overwriting prior runs.
     """
-    return Path(f"./artifacts/sweep__{namespace}__{sweep_name}")
+    suffix = f"__{run}" if run is not None else ""
+    return Path(f"./artifacts/sweep__{namespace}__{sweep_name}{suffix}")
 
 
 async def _resolve_op_ns(
@@ -260,7 +264,7 @@ async def _run_sweep_results(
             return
         op_ns = await _resolve_op_ns(resolved.api, explicit=operator_namespace)
         output_dir = output or _default_sweep_output_dir(
-            resolved.namespace, resolved.name
+            resolved.namespace, resolved.name, run=run
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
