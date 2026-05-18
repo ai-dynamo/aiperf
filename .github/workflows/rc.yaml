@@ -1,0 +1,354 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Release-candidate pipeline. Manually dispatched. Promotes an already-built
+# post-merge artifact (from a release/X.Y.Z branch) to RC locations on NGC
+# staging and Artifactory.
+#
+# This workflow does NOT rebuild. The post-merge pipeline produced the
+# container at ECR `aiperf:release-X.Y.Z-{short_sha}` and the wheel at
+# Artifactory `post-merge/{run_id}/aiperf-X.Y.Z-py3-none-any.whl` when the
+# commit landed. RC just re-tags and re-publishes those bits.
+#
+# Wheel naming: the wheel filename is literally what the release branch
+# committed (`aiperf-X.Y.Z-py3-none-any.whl` — no rc suffix). RC-ness is
+# encoded in the artifactory path, not the filename. Container tag in NGC
+# does carry the suffix (`aiperf:X.Y.Z-rc{N}`) so RCs are addressable.
+#
+# Required GitHub environment: `manual-release-approval` (configure in
+# Settings > Environments with the release reviewer list).
+
+name: Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version X.Y.Z (must match the release/X.Y.Z branch the commit lives on)'
+        required: true
+        type: string
+      rc_number:
+        description: 'RC number (non-negative integer)'
+        required: true
+        type: string
+        default: '0'
+      commit_sha:
+        description: 'Full 40-char commit SHA to promote (must be on release/X.Y.Z, must have a successful post-merge run)'
+        required: true
+        type: string
+      skip_security_scan:
+        description: 'Skip GitLab security scan. Emergency use only.'
+        type: boolean
+        default: false
+
+concurrency:
+  group: rc-${{ inputs.release_version }}-rc${{ inputs.rc_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    name: Prepare RC Promotion
+    runs-on: ubuntu-latest
+    outputs:
+      release_version:           ${{ inputs.release_version }}
+      rc_number:                 ${{ inputs.rc_number }}
+      commit_sha:                ${{ inputs.commit_sha }}
+      short_sha:                 ${{ steps.compute.outputs.short_sha }}
+      source_container_tag:      ${{ steps.compute.outputs.source_container_tag }}
+      target_container_tag:      ${{ steps.compute.outputs.target_container_tag }}
+      wheel_filename:            ${{ steps.compute.outputs.wheel_filename }}
+      target_artifactory_subpath: ${{ steps.compute.outputs.target_artifactory_subpath }}
+      source_artifactory_subpath: ${{ steps.discover.outputs.source_artifactory_subpath }}
+      post_merge_run_id:         ${{ steps.discover.outputs.post_merge_run_id }}
+    steps:
+      - name: Validate inputs
+        env:
+          VERSION:    ${{ inputs.release_version }}
+          RC_NUMBER:  ${{ inputs.rc_number }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_version '${VERSION}' must match X.Y.Z"; exit 1
+          fi
+          if [[ ! "${RC_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::rc_number '${RC_NUMBER}' must be a non-negative integer"; exit 1
+          fi
+          if [[ ! "${COMMIT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::commit_sha '${COMMIT_SHA}' must be a 40-char hex SHA"; exit 1
+          fi
+
+      - name: Compute static metadata
+        id: compute
+        env:
+          VERSION:    ${{ inputs.release_version }}
+          RC_NUMBER:  ${{ inputs.rc_number }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          SOURCE_CONTAINER_TAG="release-${VERSION}-${SHORT_SHA}"
+          TARGET_CONTAINER_TAG="${VERSION}-rc${RC_NUMBER}"
+          WHEEL_FILENAME="aiperf-${VERSION}-py3-none-any.whl"
+          TARGET_SUBPATH="rc/${VERSION}/rc${RC_NUMBER}/"
+          {
+            echo "short_sha=${SHORT_SHA}"
+            echo "source_container_tag=${SOURCE_CONTAINER_TAG}"
+            echo "target_container_tag=${TARGET_CONTAINER_TAG}"
+            echo "wheel_filename=${WHEEL_FILENAME}"
+            echo "target_artifactory_subpath=${TARGET_SUBPATH}"
+          } >> "$GITHUB_OUTPUT"
+
+      # The wheel lives at Artifactory `post-merge/{run_id}/` where {run_id}
+      # is the GitHub Actions run ID of the post-merge workflow that built
+      # this commit. Look it up via the GitHub API. There may be multiple
+      # successful runs for the same commit (manual reruns) — take the
+      # most recent.
+      - name: Discover post-merge run for commit
+        id: discover
+        env:
+          GH_TOKEN:   ${{ github.token }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          RESPONSE=$(gh api -X GET \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/post-merge.yaml/runs" \
+            -f "head_sha=${COMMIT_SHA}" \
+            -f "status=success" \
+            -f "per_page=10")
+
+          RUN_ID=$(echo "${RESPONSE}" | jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[0].id // empty')
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::No successful post-merge run found for commit ${COMMIT_SHA}. Run post-merge.yaml against this commit first."
+            exit 1
+          fi
+          echo "Found post-merge run ${RUN_ID} for commit ${COMMIT_SHA}"
+          echo "post_merge_run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "source_artifactory_subpath=post-merge/${RUN_ID}/" >> "$GITHUB_OUTPUT"
+
+  approve:
+    name: Manual Release Approval Gate
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    environment: manual-release-approval
+    steps:
+      - name: Approval recorded
+        run: |
+          echo "Approval recorded by ${GITHUB_ACTOR}"
+          echo "Promoting commit ${{ needs.prepare.outputs.commit_sha }}"
+          echo "  source container: aiperf:${{ needs.prepare.outputs.source_container_tag }}"
+          echo "  target container: aiperf:${{ needs.prepare.outputs.target_container_tag }}"
+          echo "  source wheel:     ${{ needs.prepare.outputs.source_artifactory_subpath }}${{ needs.prepare.outputs.wheel_filename }}"
+          echo "  target wheel:     ${{ needs.prepare.outputs.target_artifactory_subpath }}${{ needs.prepare.outputs.wheel_filename }}"
+
+  stage-container:
+    name: Stage Container (ECR → NGC Staging)
+    needs: [prepare, approve]
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    env:
+      CRANE_VERSION: v0.20.2
+    steps:
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
+            -o "${TARBALL}"
+          tar -xzf "${TARBALL}" crane
+          sudo mv crane /usr/local/bin/crane
+          rm "${TARBALL}"
+
+      - name: Log in to ECR and NGC staging
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_TOKEN:          ${{ secrets.NGC_PUBLISH_TOKEN }}
+          NGC_USERNAME:       ${{ secrets.NGC_PUBLISH_USERNAME }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | crane auth login \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com" \
+                --username AWS --password-stdin
+          echo "${NGC_TOKEN}" | crane auth login nvcr.io \
+            --username "${NGC_USERNAME}" --password-stdin
+
+      # The container in ECR is a multi-arch OCI index produced by the
+      # post-merge buildx --push. `crane copy` moves the whole index — both
+      # platform manifests + their blobs — in one call, retagging on
+      # destination.
+      - name: Verify source exists and copy ECR → NGC staging
+        env:
+          AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          SOURCE_TAG:             ${{ needs.prepare.outputs.source_container_tag }}
+          TARGET_TAG:             ${{ needs.prepare.outputs.target_container_tag }}
+        run: |
+          set -euo pipefail
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          SOURCE_REF="${ECR_REGISTRY}/aiperf:${SOURCE_TAG}"
+          TARGET_REF="${NGC_STAGING_IMAGE_BASE}/aiperf:${TARGET_TAG}"
+
+          if ! crane manifest "${SOURCE_REF}" > /dev/null 2>&1; then
+            echo "::error::Source container ${SOURCE_REF} not found in ECR. Did post-merge run for this commit?"
+            exit 1
+          fi
+          crane copy "${SOURCE_REF}" "${TARGET_REF}"
+          echo "Container promoted: ${SOURCE_REF} -> ${TARGET_REF}"
+
+  stage-wheel:
+    name: Stage Wheel (Artifactory post-merge → Artifactory rc)
+    needs: [prepare, approve]
+    runs-on: ubuntu-latest
+    environment: automated-release
+    steps:
+      - name: Copy wheel within Artifactory
+        env:
+          ARTIFACTORY_URL:    ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:   ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN:  ${{ secrets.ARTIFACTORY_TOKEN }}
+          SOURCE_SUBPATH:     ${{ needs.prepare.outputs.source_artifactory_subpath }}
+          TARGET_SUBPATH:     ${{ needs.prepare.outputs.target_artifactory_subpath }}
+          WHEEL_FILENAME:     ${{ needs.prepare.outputs.wheel_filename }}
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+
+          SOURCE_URL="${ARTIFACTORY_URL%/}/${SOURCE_SUBPATH}${WHEEL_FILENAME}"
+          TARGET_URL="${ARTIFACTORY_URL%/}/${TARGET_SUBPATH}${WHEEL_FILENAME}"
+
+          # Pull from post-merge path.
+          HTTP_CODE=$(curl -sSL -o "${TMPDIR}/${WHEEL_FILENAME}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            "${SOURCE_URL}")
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "::error::Source wheel ${SOURCE_URL} not reachable (HTTP ${HTTP_CODE}). Did post-merge stage this wheel?"
+            exit 1
+          fi
+
+          # Push to rc path.
+          BODY_FILE=$(mktemp)
+          PUT_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "${TMPDIR}/${WHEEL_FILENAME}" \
+            "${TARGET_URL}")
+          if [ "${PUT_CODE}" != "201" ]; then
+            echo "::error::Artifactory deploy failed: HTTP ${PUT_CODE} at ${TARGET_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "Wheel promoted: ${SOURCE_URL} -> ${TARGET_URL}"
+
+  trigger-gitlab-security-scan:
+    name: Trigger GitLab Security Scan
+    needs: [prepare, stage-container, stage-wheel]
+    runs-on:
+      group: gitlab_ci_runners
+    environment: automated-release
+    if: ${{ inputs.skip_security_scan != 'true' }}
+    steps:
+      - name: Trigger GitLab pipeline
+        env:
+          GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
+          WHEEL_FILENAME:         ${{ needs.prepare.outputs.wheel_filename }}
+          TARGET_CONTAINER_TAG:   ${{ needs.prepare.outputs.target_container_tag }}
+          COMMIT_SHA:             ${{ needs.prepare.outputs.commit_sha }}
+          RELEASE_VERSION:        ${{ needs.prepare.outputs.release_version }}
+          RC_NUMBER:              ${{ needs.prepare.outputs.rc_number }}
+          ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
+        run: |
+          set -euo pipefail
+          TOKEN_FILE=$(mktemp)
+          echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
+          trap 'rm -f "${TOKEN_FILE}"' EXIT
+
+          RESPONSE=$(curl -fsSL \
+            --request POST \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=main" \
+            --form "variables[PIPELINE_TYPE]=security" \
+            --form "variables[RELEASE_TYPE]=rc" \
+            --form "variables[PROJECT]=aiperf" \
+            --form "variables[SOURCE_BRANCH]=release/${RELEASE_VERSION}" \
+            --form "variables[WHEEL_VERSION]=${RELEASE_VERSION}" \
+            --form "variables[RC_NUMBER]=${RC_NUMBER}" \
+            --form "variables[CONTAINER_TAG]=${TARGET_CONTAINER_TAG}" \
+            --form "variables[COMMIT_SHA]=${COMMIT_SHA}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
+            --form "variables[ARTIFACTS]=wheel,container" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
+            --form "variables[ENABLE_PULSE_SCAN]=true" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            --form "variables[ENABLE_SONARQUBE]=true" \
+            --form "variables[SONAR_REPO]=aiperf" \
+            --form "variables[SONAR_BRANCH]=release/${RELEASE_VERSION}" \
+            "${GITLAB_TRIGGER_URL}")
+
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger GitLab pipeline or parse response"
+            exit 1
+          fi
+          echo "GitLab security scan triggered: pipeline ID ${PIPELINE_ID}"
+
+  summary:
+    name: RC Pipeline Summary
+    needs:
+      - prepare
+      - approve
+      - stage-container
+      - stage-wheel
+      - trigger-gitlab-security-scan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write summary
+        env:
+          RELEASE_VERSION:    ${{ needs.prepare.outputs.release_version }}
+          RC_NUMBER:          ${{ needs.prepare.outputs.rc_number }}
+          COMMIT_SHA:         ${{ needs.prepare.outputs.commit_sha }}
+          SOURCE_TAG:         ${{ needs.prepare.outputs.source_container_tag }}
+          TARGET_TAG:         ${{ needs.prepare.outputs.target_container_tag }}
+          WHEEL_FILENAME:     ${{ needs.prepare.outputs.wheel_filename }}
+          SOURCE_SUBPATH:     ${{ needs.prepare.outputs.source_artifactory_subpath }}
+          TARGET_SUBPATH:     ${{ needs.prepare.outputs.target_artifactory_subpath }}
+          POST_MERGE_RUN_ID:  ${{ needs.prepare.outputs.post_merge_run_id }}
+        run: |
+          {
+            echo "## RC Promotion Summary"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Release version | \`${RELEASE_VERSION}\` |"
+            echo "| RC number | \`${RC_NUMBER}\` |"
+            echo "| Commit | \`${COMMIT_SHA}\` |"
+            echo "| Source post-merge run | \`${POST_MERGE_RUN_ID}\` |"
+            echo ""
+            echo "### Container"
+            echo "| | Reference |"
+            echo "|-|-----------|"
+            echo "| Source (ECR) | \`aiperf:${SOURCE_TAG}\` |"
+            echo "| Target (NGC staging) | \`aiperf:${TARGET_TAG}\` |"
+            echo ""
+            echo "### Wheel"
+            echo "| | Path |"
+            echo "|-|------|"
+            echo "| Source | \`${SOURCE_SUBPATH}${WHEEL_FILENAME}\` |"
+            echo "| Target | \`${TARGET_SUBPATH}${WHEEL_FILENAME}\` |"
+            echo ""
+            echo "### Job Results"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| approve | ${{ needs.approve.result }} |"
+            echo "| stage-container | ${{ needs.stage-container.result }} |"
+            echo "| stage-wheel | ${{ needs.stage-wheel.result }} |"
+            echo "| trigger-gitlab-security-scan | ${{ needs.trigger-gitlab-security-scan.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
