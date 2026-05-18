@@ -122,16 +122,31 @@ def _resolve_tasks(tasks: list[str] | None) -> list[Any]:
 
     DeepEval evaluates one task at a time (see
     ``HellaSwag.evaluate``). Aiperf accepts either:
-      - ``None`` / empty / ``["all"]`` → every HellaSwagTask enum.
+      - ``None`` / empty / ``["all"]`` (case-insensitive) → every
+        HellaSwagTask enum.
       - A list of activity_label strings (case-insensitive,
         space-separated as in the dataset, e.g. ``"Applying sunscreen"``
         or ``"applying sunscreen"``).
 
+    Mixing ``"all"`` with other task names is rejected so typos like
+    ``["all", "NOT_A_TASK"]`` don't silently bypass validation — that
+    used to slip through and return every task while swallowing the
+    invalid entry.
+
     Unknown tasks raise ``ValueError`` listing the valid set so typos
     fail loudly.
     """
-    if not tasks or "all" in {t.lower() for t in tasks}:
+    if not tasks:
         return list(HellaSwagTask)
+    lowered = [t.lower() for t in tasks]
+    if "all" in lowered:
+        if lowered == ["all"]:
+            return list(HellaSwagTask)
+        raise ValueError(
+            "'all' cannot be mixed with other task names. Pass 'all' "
+            "by itself (or omit --accuracy-tasks) to select every task, "
+            f"or list specific activity labels. Got: {tasks!r}"
+        )
     # Build a lowercased-value lookup so the docstring's promise of
     # case-insensitive activity_label matching is actually honoured —
     # the previous ``name in {t.value for t in HellaSwagTask}`` check

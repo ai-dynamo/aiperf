@@ -144,6 +144,37 @@ class TestResolveTasks:
         result = _resolve_tasks(["all"])
         assert len(result) > 100
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            param("all", id="lowercase"),
+            param("ALL", id="uppercase"),
+            param("All", id="titlecase"),
+            param("aLl", id="mixed_case"),
+        ],
+    )  # fmt: skip
+    def test_all_alone_is_case_insensitive(self, name: str) -> None:
+        """Any casing of the bare ``"all"`` sentinel selects every task."""
+        result = _resolve_tasks([name])
+        assert len(result) > 100
+
+    @pytest.mark.parametrize(
+        "tasks",
+        [
+            param(["all", "NOT_A_REAL_TASK"], id="all_with_typo"),
+            param(["ALL", "Applying sunscreen"], id="all_with_real_task"),
+            param(["Applying sunscreen", "all"], id="all_after_other"),
+            param(["all", "all"], id="duplicate_all"),
+        ],
+    )  # fmt: skip
+    def test_all_mixed_with_other_selectors_raises(self, tasks: list[str]) -> None:
+        """``"all"`` mixed with any other selector raises rather than
+        silently returning every task. Pin the regression: previously
+        ``["all", "NOT_A_REAL_TASK"]`` returned all 192 tasks and the
+        typo was swallowed."""
+        with pytest.raises(ValueError, match="'all' cannot be mixed"):
+            _resolve_tasks(tasks)
+
     def test_activity_label_value_resolves(self) -> None:
         result = _resolve_tasks(["Applying sunscreen"])
         assert len(result) == 1
