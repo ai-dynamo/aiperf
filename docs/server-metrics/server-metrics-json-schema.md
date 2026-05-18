@@ -60,7 +60,7 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 ```json
 {
   "schema_version": "1.0",
-  "aiperf_version": "0.8.0",
+  "aiperf_version": "0.10.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
   "summary": { ... },
   "metrics": { ... },
@@ -71,7 +71,7 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 | Field | Type | Description |
 |-------|------|-------------|
 | `schema_version` | string | Schema version for this export format (e.g., `"1.0"`) |
-| `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.8.0"`). `null` if version unavailable. |
+| `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.10.0"`). `null` if version unavailable. |
 | `benchmark_id` | string or null | Unique UUID identifying this benchmark run. `null` if not available. |
 | [`summary`](#summary-section) | object | Collection metadata and endpoint information |
 | [`metrics`](#metrics-section) | object | Metrics keyed by name, each containing type info and series data |
@@ -878,7 +878,7 @@ for series in metric["series"]:
 ```json
 {
   "schema_version": "1.0",
-  "aiperf_version": "0.8.0",
+  "aiperf_version": "0.10.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
   "summary": {
     "endpoints_configured": [
