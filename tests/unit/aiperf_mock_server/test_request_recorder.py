@@ -5,7 +5,11 @@
 from collections import Counter, defaultdict
 
 import pytest
-from aiperf_mock_server.request_recorder import _build_summary, _histogram
+from aiperf_mock_server.request_recorder import (
+    _build_summary,
+    _histogram,
+    _render_histogram,
+)
 from pytest import param
 
 
@@ -131,3 +135,36 @@ class TestBuildSummary:
         mn = summary["per_endpoint"]["/v1/chat/completions"]["min_tokens"]
         assert "histogram" not in mn
         assert "unique_values" not in mn
+
+
+class TestRenderHistogram:
+    def test_header_line(self) -> None:
+        hist = {"bin_edges": [0.0, 5.0, 10.0], "counts": [1, 3]}
+        lines = _render_histogram("ISL", hist, count=4, unique=4)
+        assert lines[0] == "    ISL histogram (2 bins, n=4, 4 unique)"
+
+    def test_row_count_matches_bins(self) -> None:
+        hist = {"bin_edges": [0.0, 5.0, 10.0, 15.0], "counts": [1, 2, 1]}
+        lines = _render_histogram("ISL", hist, count=4, unique=4)
+        assert len(lines) == 1 + 3  # header + 3 bin rows
+
+    def test_bars_scaled_to_tallest_bin(self) -> None:
+        hist = {"bin_edges": [0.0, 1.0, 2.0], "counts": [10, 5]}
+        lines = _render_histogram("ISL", hist, count=15, unique=2)
+        # First bin (max) should be fully filled — 20 block chars.
+        assert lines[1].count("█") == 20
+        # Second bin: 5/10 = 50% -> 10 filled, 10 unfilled.
+        assert lines[2].count("█") == 10
+        assert lines[2].count("░") == 10
+
+    def test_empty_counts_returns_only_header(self) -> None:
+        hist = {"bin_edges": [0.0, 0.0], "counts": []}
+        lines = _render_histogram("ISL", hist, count=0, unique=0)
+        assert lines == ["    ISL histogram (0 bins, n=0, 0 unique)"]
+
+    def test_single_bin_renders(self) -> None:
+        hist = {"bin_edges": [42.0, 42.0], "counts": [3]}
+        lines = _render_histogram("ISL", hist, count=3, unique=1)
+        assert len(lines) == 2
+        # label_width=2 (from "42"), count_width=3 (floor), bar fully filled.
+        assert lines[1] == "      42- 42    3 " + "█" * 20

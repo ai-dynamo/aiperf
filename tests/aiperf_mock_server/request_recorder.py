@@ -196,6 +196,40 @@ def _histogram(values: list[int]) -> dict[str, list[float] | list[int]] | None:
     return {"bin_edges": edges, "counts": counts}
 
 
+def _render_histogram(
+    metric: str,
+    hist: dict[str, list[float]],
+    count: int,
+    unique: int,
+) -> list[str]:
+    """Render a histogram as 4-/6-space-indented stdout lines (header + bin rows).
+
+    Bars are 20 chars wide, scaled so the tallest bin is full width. Bin range
+    labels and the count column align within the histogram.
+    """
+    edges = hist["bin_edges"]
+    counts = hist["counts"]
+    num_bins = len(counts)
+    header = f"    {metric} histogram ({num_bins} bins, n={count}, {unique} unique)"
+    if not counts:
+        return [header]
+    max_count = max(counts) or 1
+    bar_width = 20
+    label_width = max(len(str(round(e))) for e in edges)
+    count_width = max(3, len(str(max_count)))
+    lines = [header]
+    for i, c in enumerate(counts):
+        filled = round(bar_width * c / max_count)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        lo = round(edges[i])
+        hi = round(edges[i + 1])
+        lines.append(
+            f"      {lo:>{label_width}d}- {hi:>{label_width}d}"
+            f"  {c:>{count_width}d} {bar}"
+        )
+    return lines
+
+
 def _quantiles(values: list[int]) -> dict[str, float] | None:
     if not values:
         return None
