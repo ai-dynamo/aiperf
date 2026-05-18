@@ -29,8 +29,19 @@ from aiperf.operator.routers.results_schemas import (
 )
 
 
+def _compare_response_key(
+    job_id: str, namespace: str, qualified_jobs: set[str], bare_jobs: set[str]
+) -> str:
+    qualified_key = f"{namespace}/{job_id}" if namespace else job_id
+    if qualified_key in qualified_jobs:
+        return qualified_key
+    if job_id in bare_jobs:
+        return job_id
+    return qualified_key
+
+
 def _pivot_compare_rows(
-    rows: list[dict[str, Any]], metric_list: list[str]
+    rows: list[dict[str, Any]], metric_list: list[str], requested_jobs: list[str]
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Pivot raw DuckDB rows (one per job) into the format the UI expects.
 
@@ -42,6 +53,8 @@ def _pivot_compare_rows(
     model — so the UI can normalize throughput to per-GPU values and color
     runs by hardware (the InferenceX-style correlation).
     """
+    qualified_jobs = {job for job in requested_jobs if "/" in job}
+    bare_jobs = {job for job in requested_jobs if "/" not in job}
     stats = ["avg", "p50", "p99"]
     entries: list[dict[str, Any]] = []
     for metric in metric_list:
@@ -54,9 +67,9 @@ def _pivot_compare_rows(
             for row in rows:
                 job_id = row.get("job_id", "")
                 namespace = row.get("namespace", "")
-                # Include namespace in key to disambiguate identical
-                # job_ids from different namespaces.
-                key = f"{namespace}/{job_id}" if namespace else job_id
+                key = _compare_response_key(
+                    job_id, namespace, qualified_jobs, bare_jobs
+                )
                 val = row.get(col)
                 if val is not None:
                     has_value = True
@@ -77,7 +90,7 @@ def _pivot_compare_rows(
     for row in rows:
         job_id = row.get("job_id", "")
         namespace = row.get("namespace", "")
-        key = f"{namespace}/{job_id}" if namespace else job_id
+        key = _compare_response_key(job_id, namespace, qualified_jobs, bare_jobs)
         meta[key] = {
             "gpu_count": row.get("gpu_count"),
             "gpu_name": row.get("gpu_name"),
@@ -204,7 +217,7 @@ def _register_compare_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
                 f"Ambiguous compare job name; use namespace/job syntax: {detail}",
             )
         metric_list = metrics or list(DEFAULT_COMPARE_METRICS)
-        entries, meta = _pivot_compare_rows(rows, metric_list)
+        entries, meta = _pivot_compare_rows(rows, metric_list, jobs)
         return CompareResponse(
             job_ids=jobs,
             metrics=metric_list,

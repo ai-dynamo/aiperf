@@ -692,6 +692,41 @@ class TestCompareEndpoint:
         assert "job-2" in data["job_ids"]
 
     @pytest.mark.asyncio
+    async def test_compare_unambiguous_bare_jobs_preserves_bare_keys(
+        self, results_dir: Path, client: httpx.AsyncClient
+    ) -> None:
+        _create_result_file(
+            results_dir,
+            "ns",
+            "job-1",
+            "profile_export_aiperf.json",
+            _summary_json(metric_val=100.0),
+        )
+        _create_result_file(
+            results_dir,
+            "ns",
+            "job-2",
+            "profile_export_aiperf.json",
+            _summary_json(metric_val=200.0),
+        )
+        await _ingest_runs(results_dir)
+
+        resp = await client.get(
+            "/api/v1/analytics/compare",
+            params={"jobs": ["job-1", "job-2"]},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["meta"].keys() == {"job-1", "job-2"}
+        value_entries = [
+            entry
+            for entry in data["entries"]
+            if entry["metric"] == "request_throughput" and entry["stat"] == "avg"
+        ]
+        assert value_entries[0]["values"] == {"job-1": 100.0, "job-2": 200.0}
+
+    @pytest.mark.asyncio
     async def test_compare_empty_jobs_returns_empty(
         self, client: httpx.AsyncClient
     ) -> None:
@@ -1105,6 +1140,7 @@ def test_readonly_list_runs_does_not_schedule_lazy_backfill(
 
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
     lazy_backfill = AsyncMock()
+    monkeypatch.setattr(runs_index_mod, "is_open", lambda: True, raising=False)
     monkeypatch.setattr(runs_index_mod, "is_readonly", lambda: True, raising=False)
     monkeypatch.setattr(runs_index_mod, "lazy_backfill_run", lazy_backfill)
 
