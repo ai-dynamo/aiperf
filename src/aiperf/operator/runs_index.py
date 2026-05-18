@@ -1618,6 +1618,37 @@ async def history(
     return await _select_dicts(sql, tuple(params))
 
 
+def _split_compare_job_ids(
+    job_ids: list[str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    bare_job_ids: list[str] = []
+    qualified_refs: list[tuple[str, str]] = []
+    for job_id in job_ids:
+        if "/" in job_id:
+            namespace, name = job_id.split("/", 1)
+            if namespace and name:
+                qualified_refs.append((namespace, name))
+        else:
+            bare_job_ids.append(job_id)
+    return bare_job_ids, qualified_refs
+
+
+def _compare_identity_filter(job_ids: list[str]) -> tuple[str | None, list[Any]]:
+    bare_job_ids, qualified_refs = _split_compare_job_ids(job_ids)
+    identity_clauses: list[str] = []
+    params: list[Any] = []
+    if bare_job_ids:
+        placeholders = ", ".join("?" * len(bare_job_ids))
+        identity_clauses.append(f"job_id IN ({placeholders})")
+        params.extend(bare_job_ids)
+    for namespace, name in qualified_refs:
+        identity_clauses.append("(namespace = ? AND job_id = ?)")
+        params.extend([namespace, name])
+    if not identity_clauses:
+        return None, []
+    return f"({' OR '.join(identity_clauses)})", params
+
+
 async def compare(
     job_ids: list[str],
     metrics: list[str] | None = None,
@@ -1646,9 +1677,11 @@ async def compare(
             cols.append(f"{m}_{stat}")
         cols.append(f"{m}_unit")
 
-    placeholders = ", ".join("?" * len(job_ids))
-    where = [f"job_id IN ({placeholders})"]
-    params: list[Any] = list(job_ids)
+    identity_filter, params = _compare_identity_filter(job_ids)
+    if identity_filter is None:
+        return []
+
+    where = [identity_filter]
     if epoch is None:
         where.append("is_latest = 1")
     else:
