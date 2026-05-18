@@ -241,7 +241,7 @@ test-ci-unit: #? run unit tests only with coverage (for parallel CI workflow).
 
 test-ci-component-integration: #? run component integration tests only with coverage (for parallel CI workflow).
 	@printf "$(bold)$(blue)Running component integration tests (CI mode)...$(reset)\n"
-	$(activate_venv) && pytest tests/component_integration --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args) $(component_args) -n 0
+	$(activate_venv) && pytest tests/component_integration --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args) $(component_args)
 	@printf "$(bold)$(green)AIPerf component integration tests (CI mode) passed!$(reset)\n"
 
 stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
