@@ -675,6 +675,54 @@ class TestBootstrapEdgeCases:
         )
 
     @pytest.mark.asyncio
+    async def test_index_sweep_from_disk_skips_scalar_combination_rows(
+        self, tmp_path: Path, index_path: Path
+    ) -> None:
+        """Malformed scalar per_combination_metrics entries are skipped."""
+        epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
+        aggregate_dir = epoch_dir / "sweep_aggregate"
+        aggregate_dir.mkdir(parents=True)
+        (epoch_dir / "aggregate.json").write_bytes(
+            orjson.dumps({"phase": "Succeeded", "completedRuns": 1})
+        )
+        (aggregate_dir / "profile_export_aiperf_sweep.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metadata": {"mode": "INDEPENDENT"},
+                    "per_combination_metrics": [
+                        "not-a-row",
+                        ["also", "not", "a", "row"],
+                        {
+                            "variation_idx": 3,
+                            "variation_values": {"concurrency": 30},
+                            "metrics": {
+                                "request_throughput": {
+                                    "avg": 33.0,
+                                    "p50": 30.0,
+                                    "p99": 36.0,
+                                    "unit": "rps",
+                                }
+                            },
+                        },
+                    ],
+                }
+            )
+        )
+
+        ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
+
+        assert ok == 1
+        rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
+        assert [r.variation_idx for r in rows] == [3]
+        cur = await runs_index._conn().execute(
+            "SELECT request_throughput_avg FROM sweep_variations "
+            "WHERE namespace = ? AND sweep_name = ? AND variation_idx = ?",
+            ("ns", "s", 3),
+        )
+        assert (await cur.fetchone())[0] == 33.0
+        await cur.close()
+
+    @pytest.mark.asyncio
     async def test_index_sweep_from_disk_skips_variations_missing_idx(
         self, tmp_path: Path, index_path: Path
     ) -> None:

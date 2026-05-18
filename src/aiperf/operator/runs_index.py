@@ -1012,6 +1012,8 @@ def _sweep_mode(agg: dict[str, Any]) -> str:
 def _legacy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
     rows: list[SweepRow] = []
     for row in agg.get("per_combination_metrics", []) or []:
+        if not isinstance(row, dict):
+            continue
         idx = row.get("variation_idx")
         if idx is None:
             continue
@@ -1049,6 +1051,8 @@ def _load_strategy_sweep_aggregate(epoch_dir: Path) -> dict[str, Any] | None:
 def _strategy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
     rows: list[SweepRow] = []
     for fallback_idx, row in enumerate(agg.get("per_combination_metrics", []) or []):
+        if not isinstance(row, dict):
+            continue
         idx = row.get("variation_idx", fallback_idx)
         rows.append(
             (
@@ -1092,6 +1096,28 @@ def _child_variation_values(child: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+def _parse_child_sweep_manifest(
+    epoch_dir: Path, children: list[Any]
+) -> tuple[list[tuple[int, str, str, str, dict[str, Any]]], dict[int, int]]:
+    parsed_children: list[tuple[int, str, str, str, dict[str, Any]]] = []
+    manifest_counts: dict[int, int] = {}
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        try:
+            idx = int(child["variation_index"])
+            namespace = str(child.get("namespace") or epoch_dir.parents[2].name)
+            name = str(child["name"])
+            child_epoch = str(child.get("child_run_epoch") or "")
+        except (IndexError, KeyError, TypeError, ValueError):
+            continue
+        if not child_epoch:
+            continue
+        parsed_children.append((idx, namespace, name, child_epoch, child))
+        manifest_counts[idx] = manifest_counts.get(idx, 0) + 1
+    return parsed_children, manifest_counts
+
+
 def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
     base = _results_base_from_sweep_epoch_dir(epoch_dir)
     if base is None:
@@ -1107,19 +1133,11 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
     if not isinstance(children, list):
         return []
 
+    parsed_children, manifest_counts = _parse_child_sweep_manifest(epoch_dir, children)
+
     rows: list[SweepRow] = []
-    for child in children:
-        if not isinstance(child, dict):
-            continue
-        try:
-            idx = int(child["variation_index"])
-            namespace = child.get("namespace") or epoch_dir.parents[2].name
-            name = child["name"]
-            child_epoch = child.get("child_run_epoch") or ""
-        except (IndexError, KeyError, TypeError, ValueError):
-            continue
-        if not child_epoch:
-            continue
+    loaded_counts: dict[int, int] = {}
+    for idx, namespace, name, child_epoch, child in parsed_children:
         summary = _load_profile_export(base / namespace / name / child_epoch)
         if summary is None:
             continue
@@ -1136,6 +1154,15 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
                 {"child": child, "metrics": summary},
             )
         )
+        loaded_counts[idx] = loaded_counts.get(idx, 0) + 1
+
+    incomplete_repeated_idxs = {
+        idx
+        for idx, manifest_count in manifest_counts.items()
+        if manifest_count > 1 and loaded_counts.get(idx, 0) != manifest_count
+    }
+    if incomplete_repeated_idxs:
+        rows = [row for row in rows if int(row[0]) not in incomplete_repeated_idxs]
     return rows
 
 

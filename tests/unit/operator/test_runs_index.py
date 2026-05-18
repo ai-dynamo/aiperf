@@ -627,6 +627,81 @@ async def test_bootstrap_aggregates_repeated_trial_sweep_rows_by_variation_idx(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_skips_incomplete_repeated_trial_variation(
+    tmp_path: Path,
+) -> None:
+    """Duplicate child variation_idx must not become a false single-row aggregate."""
+    base = tmp_path / "results"
+    epoch_dir = base / "ns" / "sweeps" / "satsweep" / "1714069323"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(
+        orjson.dumps(
+            {
+                "phase": "Succeeded",
+                "totalVariations": 1,
+                "completedRuns": 1,
+                "failedRuns": 1,
+            }
+        )
+    )
+    (epoch_dir / "children.json").write_bytes(
+        orjson.dumps(
+            {
+                "sweep_run_epoch": "1714069323",
+                "children": [
+                    {
+                        "namespace": "ns",
+                        "name": "satsweep-v00-t0",
+                        "variation_index": 0,
+                        "variation_label": "concurrency=10",
+                        "trial_index": 0,
+                        "child_run_epoch": "1714069324",
+                        "status": "Succeeded",
+                    },
+                    {
+                        "namespace": "ns",
+                        "name": "satsweep-v00-t1",
+                        "variation_index": 0,
+                        "variation_label": "concurrency=10",
+                        "trial_index": 1,
+                        "child_run_epoch": "1714069325",
+                        "status": "Failed",
+                    },
+                ],
+            }
+        )
+    )
+    run_dir = base / "ns" / "satsweep-v00-t0" / "1714069324"
+    run_dir.mkdir(parents=True)
+    (run_dir / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "metrics": {
+                    "request_throughput": {
+                        "avg": 100.0,
+                        "p50": 100.0,
+                        "p99": 100.0,
+                        "unit": "rps",
+                    }
+                }
+            }
+        )
+    )
+    # The t1 profile is intentionally missing: idx=0 is a repeated-trial group,
+    # so indexing only t0 would misrepresent it as a complete variation aggregate.
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        stats = await runs_index.bootstrap(base)
+        rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
+        assert stats.sweep_variations_indexed == 0
+        assert rows == []
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_ingests_legacy_runs_without_ready_marker(
     tmp_path: Path,
 ) -> None:
