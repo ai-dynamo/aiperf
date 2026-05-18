@@ -450,6 +450,114 @@ class TestBootstrapEdgeCases:
         rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
         assert rows == []
 
+    @pytest.mark.parametrize(
+        "children_doc", [[{"not": "a mapping envelope"}], "scalar"]
+    )
+    @pytest.mark.asyncio
+    async def test_index_sweep_from_disk_skips_nondict_children_json_top_level(
+        self, tmp_path: Path, index_path: Path, children_doc: Any
+    ) -> None:
+        """children.json must be a mapping; list/scalar top-level shapes are ignored."""
+        epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
+        epoch_dir.mkdir(parents=True)
+        (epoch_dir / "aggregate.json").write_bytes(
+            orjson.dumps({"phase": "Succeeded", "completedRuns": 1})
+        )
+        (epoch_dir / "children.json").write_bytes(orjson.dumps(children_doc))
+
+        ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
+
+        assert ok == 0
+        assert await runs_index.list_sweep_variations("ns", "s", "1714069323") == []
+
+    @pytest.mark.parametrize(
+        "children_value",
+        [
+            {"variation_index": 0, "name": "s-v00", "child_run_epoch": "1714069324"},
+            "not-a-list",
+            42,
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_index_sweep_from_disk_requires_children_list(
+        self, tmp_path: Path, index_path: Path, children_value: Any
+    ) -> None:
+        """children.json.children must be a list; other shapes degrade to zero rows."""
+        epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
+        epoch_dir.mkdir(parents=True)
+        (epoch_dir / "aggregate.json").write_bytes(
+            orjson.dumps({"phase": "Succeeded", "completedRuns": 1})
+        )
+        (epoch_dir / "children.json").write_bytes(
+            orjson.dumps({"children": children_value})
+        )
+
+        ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
+
+        assert ok == 0
+        assert await runs_index.list_sweep_variations("ns", "s", "1714069323") == []
+
+    @pytest.mark.asyncio
+    async def test_index_sweep_from_disk_skips_nondict_child_entries(
+        self, tmp_path: Path, index_path: Path
+    ) -> None:
+        """Non-mapping entries in children.json.children are skipped, not indexed."""
+        base = tmp_path
+        epoch_dir = base / "ns" / "sweeps" / "s" / "1714069323"
+        epoch_dir.mkdir(parents=True)
+        child_run = base / "ns" / "s-v00" / "1714069324"
+        child_run.mkdir(parents=True)
+        (child_run / "profile_export_aiperf.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metrics": {
+                        "request_throughput": {
+                            "avg": 11.0,
+                            "p50": 10.0,
+                            "p99": 12.0,
+                            "unit": "rps",
+                        }
+                    }
+                }
+            )
+        )
+        (epoch_dir / "aggregate.json").write_bytes(
+            orjson.dumps({"phase": "Succeeded", "completedRuns": 1})
+        )
+        (epoch_dir / "children.json").write_bytes(
+            orjson.dumps(
+                {
+                    "children": [
+                        "junk",
+                        123,
+                        ["not", "a", "mapping"],
+                        {
+                            "namespace": "ns",
+                            "name": "s-v00",
+                            "variation_index": 0,
+                            "variation_label": "concurrency=10",
+                            "child_run_epoch": "1714069324",
+                        },
+                    ]
+                }
+            )
+        )
+
+        ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
+
+        assert ok == 1
+        rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
+        assert len(rows) == 1
+        assert rows[0].variation_idx == 0
+        assert rows[0].child_job_id == "s-v00"
+        cur = await runs_index._conn().execute(
+            "SELECT request_throughput_avg FROM sweep_variations "
+            "WHERE namespace = ? AND sweep_name = ? AND variation_idx = ?",
+            ("ns", "s", 0),
+        )
+        assert (await cur.fetchone())[0] == 11.0
+        await cur.close()
+
     @pytest.mark.asyncio
     async def test_index_sweep_from_disk_skips_one_bad_row_indexes_rest(
         self, tmp_path: Path, index_path: Path, monkeypatch

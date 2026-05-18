@@ -530,6 +530,85 @@ async def test_bootstrap_indexes_k8s_sweep_children_from_real_run_artifacts(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_counts_repeated_trial_sweep_rows_by_variation_idx(
+    tmp_path: Path,
+) -> None:
+    """Repeated-trial children share a variation row keyed by variation_idx."""
+    base = tmp_path / "results"
+    epoch_dir = base / "ns" / "sweeps" / "satsweep" / "1714069323"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(
+        orjson.dumps(
+            {
+                "phase": "Succeeded",
+                "totalVariations": 1,
+                "completedRuns": 2,
+                "failedRuns": 0,
+            }
+        )
+    )
+    (epoch_dir / "children.json").write_bytes(
+        orjson.dumps(
+            {
+                "sweep_run_epoch": "1714069323",
+                "children": [
+                    {
+                        "namespace": "ns",
+                        "name": "satsweep-v00-t0",
+                        "variation_index": 0,
+                        "variation_label": "concurrency=10",
+                        "trial_index": 0,
+                        "child_run_epoch": "1714069324",
+                        "status": "Succeeded",
+                    },
+                    {
+                        "namespace": "ns",
+                        "name": "satsweep-v00-t1",
+                        "variation_index": 0,
+                        "variation_label": "concurrency=10",
+                        "trial_index": 1,
+                        "child_run_epoch": "1714069325",
+                        "status": "Succeeded",
+                    },
+                ],
+            }
+        )
+    )
+    for child_name, child_epoch, throughput in (
+        ("satsweep-v00-t0", "1714069324", 100.0),
+        ("satsweep-v00-t1", "1714069325", 120.0),
+    ):
+        run_dir = base / "ns" / child_name / child_epoch
+        run_dir.mkdir(parents=True)
+        (run_dir / "profile_export_aiperf.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metrics": {
+                        "request_throughput": {
+                            "avg": throughput,
+                            "p50": throughput,
+                            "p99": throughput,
+                            "unit": "rps",
+                        }
+                    }
+                }
+            )
+        )
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        stats = await runs_index.bootstrap(base)
+        rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
+        assert stats.sweep_variations_indexed == len(rows) == 1
+        assert rows[0].variation_idx == 0
+        assert rows[0].child_job_id == "satsweep-v00-t1"
+        assert rows[0].child_epoch == "1714069325"
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_ingests_legacy_runs_without_ready_marker(
     tmp_path: Path,
 ) -> None:

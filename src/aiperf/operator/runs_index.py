@@ -1093,8 +1093,16 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
     except (FileNotFoundError, OSError, orjson.JSONDecodeError):
         return []
 
+    if not isinstance(doc, dict):
+        return []
+    children = doc.get("children")
+    if not isinstance(children, list):
+        return []
+
     rows: list[SweepRow] = []
-    for child in doc.get("children", []) or []:
+    for child in children:
+        if not isinstance(child, dict):
+            continue
         try:
             idx = int(child["variation_index"])
             namespace = child.get("namespace") or epoch_dir.parents[2].name
@@ -1130,8 +1138,16 @@ def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
     except (FileNotFoundError, OSError, orjson.JSONDecodeError):
         return {}
 
+    if not isinstance(doc, dict):
+        return {}
+    children = doc.get("children")
+    if not isinstance(children, list):
+        return {}
+
     refs: dict[int, tuple[str, str, str]] = {}
-    for child in doc.get("children", []) or []:
+    for child in children:
+        if not isinstance(child, dict):
+            continue
         try:
             idx = int(child["variation_index"])
             refs[idx] = (
@@ -1217,7 +1233,7 @@ async def _index_sweep_from_disk(
         rows = _strategy_sweep_rows(strategy_agg)
 
     child_refs = _load_sweep_child_refs(epoch_dir)
-    indexed_rows: list[tuple[int, dict[str, Any]]] = []
+    indexed_rows: dict[int, dict[str, Any]] = {}
     for idx, variation_values, metrics, row_blob in rows:
         try:
             variation_idx = int(idx)
@@ -1251,9 +1267,9 @@ async def _index_sweep_from_disk(
                 f"({type(exc).__name__}: {exc})"
             )
             continue
-        indexed_rows.append((variation_idx, variation_values))
+        indexed_rows[variation_idx] = variation_values
 
-    rankings = _sweep_rankings(source_agg, indexed_rows)
+    rankings = _sweep_rankings(source_agg, list(indexed_rows.items()))
     if rankings:
         await mark_sweep_pareto(
             namespace,
