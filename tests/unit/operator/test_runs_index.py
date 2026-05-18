@@ -449,7 +449,7 @@ async def test_bootstrap_indexes_k8s_sweep_aggregate_bundle_variations(
             }
         )
     )
-    (aggregate_dir / "profile_export_aiperf_sweep.json").write_bytes(
+    (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(
         orjson.dumps(
             {
                 "aggregation_type": "sweep",

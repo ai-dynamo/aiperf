@@ -1026,11 +1026,16 @@ def _legacy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
 
 
 def _load_strategy_sweep_aggregate(epoch_dir: Path) -> dict[str, Any] | None:
-    path = epoch_dir / "sweep_aggregate" / "profile_export_aiperf_sweep.json"
-    try:
-        return orjson.loads(path.read_bytes())
-    except (FileNotFoundError, OSError, orjson.JSONDecodeError):
-        return None
+    aggregate_dir = epoch_dir / "sweep_aggregate"
+    for filename in (
+        "profile_export_aiperf_aggregate.json",
+        "profile_export_aiperf_sweep.json",
+    ):
+        try:
+            return orjson.loads((aggregate_dir / filename).read_bytes())
+        except (FileNotFoundError, OSError, orjson.JSONDecodeError):
+            continue
+    return None
 
 
 def _strategy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
@@ -1118,9 +1123,9 @@ async def _index_sweep_from_disk(
 
     Returns the number of variation rows indexed. K8s sweep-controller archives
     put parent status in ``aggregate.json`` and per-cell metrics under
-    ``sweep_aggregate/profile_export_aiperf_sweep.json``; legacy in-process
-    sweep archives may put ``per_combination_metrics`` directly in
-    ``aggregate.json``.
+    ``sweep_aggregate/profile_export_aiperf_aggregate.json``; legacy archives
+    may use ``profile_export_aiperf_sweep.json`` or put ``per_combination_metrics``
+    directly in ``aggregate.json``.
     """
     aggregate_path = epoch_dir / "aggregate.json"
     if not aggregate_path.exists():
