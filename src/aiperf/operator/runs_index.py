@@ -374,8 +374,11 @@ def _metric_stat_value(payload: dict[str, Any]) -> Any:
     return payload.get("avg", payload.get("mean"))
 
 
-def _normalize_sweep_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+def _normalize_sweep_metrics(metrics: Any) -> dict[str, Any]:
     """Normalize sweep per-combination stats for narrow-column extraction."""
+    if not isinstance(metrics, dict):
+        return {}
+
     normalized: dict[str, Any] = {}
     for name in _NARROW_METRICS:
         direct = metrics.get(name)
@@ -1338,16 +1341,16 @@ def _sweep_rankings(
 def _select_sweep_rows(
     epoch_dir: Path, parent_agg: dict[str, Any]
 ) -> tuple[dict[str, Any], list[SweepRow]]:
-    source_agg = parent_agg
-    rows = _legacy_sweep_rows(parent_agg)
-    if rows:
-        return source_agg, rows
-
     strategy_agg = _load_strategy_sweep_aggregate(epoch_dir)
     if strategy_agg is not None:
         strategy_rows = _strategy_sweep_rows(strategy_agg)
         if strategy_rows:
             return strategy_agg, strategy_rows
+
+    source_agg = parent_agg
+    rows = _legacy_sweep_rows(parent_agg)
+    if rows:
+        return source_agg, rows
 
     return source_agg, _child_sweep_rows(epoch_dir)
 
