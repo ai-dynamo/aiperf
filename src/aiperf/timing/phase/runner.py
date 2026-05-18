@@ -206,9 +206,25 @@ class PhaseRunner(TaskManagerMixin):
         self._on_phase_complete = callback
 
     def cancel(self) -> None:
-        """Cancel the phase runner (external cancellation like Ctrl+C)."""
+        """Cancel the phase runner (external cancellation like Ctrl+C
+        or threshold-triggered ProfileCancelCommand).
+
+        Sets `all_credits_sent_event` and `all_credits_returned_event`
+        so the outer `_wait_for_sending_complete` / `_wait_for_returning_complete`
+        awaits return immediately and the runner can take the
+        `if self._was_cancelled:` graceful exit path. Without this,
+        external cancel only cancels the credit-issuance task — the
+        runner's outer awaits keep blocking on the unset events until
+        the phase's full timeout elapses (up to `--benchmark-duration`,
+        ~1800s for default profiling phases), making cancel-triggered
+        teardown indistinguishable from a normal phase timeout from a
+        user perspective. Mirrors the event-set order in the
+        `except Exception` recovery path (runner.py:363-373).
+        """
         self._was_cancelled = True
         self._lifecycle.cancel()
+        self._progress.all_credits_sent_event.set()
+        self._progress.all_credits_returned_event.set()
         if self._execution_task:
             self._execution_task.cancel()
         if self._progress_task:
