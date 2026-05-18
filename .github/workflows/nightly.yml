@@ -306,8 +306,14 @@ jobs:
   # but the `if:` condition only hard-gates on prepare-nightly + pre-commit.
   # Unit/integration test failures are visible but non-blocking — the rest of
   # the pipeline continues to build, stage, and scan.
+  #
+  # Single multi-platform buildx job: one `docker buildx build --platform
+  # linux/amd64,linux/arm64 --push` produces the multi-arch manifest natively
+  # against a builder attached to per-arch K8s BuildKit pods (see
+  # .github/actions/bootstrap-buildkit). Replaces the prior per-arch matrix
+  # + create-multiarch-manifest-ecr job topology.
   build-container:
-    name: Build Container (${{ matrix.arch }})
+    name: Build Container
     needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end]
     if: >-
       ${{ always()
@@ -315,17 +321,7 @@ jobs:
           && needs.pre-commit.result == 'success' }}
     # 90 min covers cold registry cache on both archs plus license extraction.
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: prod-aiperf-builder-amd-v1
-          - arch: arm64
-            platform: linux/arm64
-            runner: prod-aiperf-builder-arm-v1
-    runs-on: ${{ matrix.runner }}
+    runs-on: prod-aiperf-default-v1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -392,8 +388,12 @@ jobs:
           print(f"Repository URL: {url}")
           PYEOF
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Bootstrap multi-arch builder
+        uses: ./.github/actions/bootstrap-buildkit
+        with:
+          builder_name: aiperf-nightly-${{ github.run_id }}
+          arch: 'linux/amd64,linux/arm64'
+          fresh_builder: 'true'
 
       - name: Log in to ECR
         env:
@@ -404,31 +404,27 @@ jobs:
             | docker login --username AWS --password-stdin \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
-      # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
-      # The wheel-builder layer is cached into aiperf:cache-amd64 and reused
-      # by the runtime build below.
+      # Wheel is pure Python (py3-none-any); build once on amd64.
+      #
+      # Nightly does NOT use registry cache — it is the rigorous build that
+      # validates the Dockerfile from scratch against the BuildKit pod's
+      # native cache only. Drift in pinned base images, system packages, or
+      # transitive Python deps surfaces here rather than being masked by a
+      # cache layer reused from a stale PR or post-merge build.
       #
       # Target `wheel-artifact` is a scratch-based export stage that contains
       # only the wheel file, so `--output type=local` writes a few MB instead
       # of the full wheel-builder filesystem (~400 MB).
-      - name: Build and extract wheel (amd64 only)
-        if: matrix.arch == 'amd64'
-        env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      - name: Build and extract wheel
         run: |
           set -euo pipefail
-          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           docker buildx build \
             --platform linux/amd64 \
             --target   wheel-artifact \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
-            --output     type=local,dest=./dist/ \
+            --output   type=local,dest=./dist/ \
             .
 
-      - name: Validate wheel (amd64 only)
-        if: matrix.arch == 'amd64'
+      - name: Validate wheel
         env:
           EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
         run: |
@@ -456,8 +452,7 @@ jobs:
           fi
           .venv-check/bin/aiperf --help
 
-      - name: Upload wheel to S3 (amd64 only)
-        if: matrix.arch == 'amd64'
+      - name: Upload wheel to S3
         env:
           S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
           WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
@@ -466,7 +461,7 @@ jobs:
           WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
 
-      - name: Build and push ${{ matrix.arch }} image to ECR
+      - name: Build and push multi-arch container to ECR
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
@@ -474,7 +469,6 @@ jobs:
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
 
           refresh_ecr_token() {
             while sleep 21600; do
@@ -487,17 +481,15 @@ jobs:
           trap 'kill ${REFRESH_PID} 2>/dev/null || true' EXIT
 
           docker buildx build \
-            --platform "${{ matrix.platform }}" \
+            --platform linux/amd64,linux/arm64 \
             --target   runtime \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
             --push \
-            --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+            --tag "${REGISTRY}/aiperf:${CONTAINER_TAG}" \
             .
 
-          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${CONTAINER_TAG}" \
             --format '{{.Manifest.Digest}}')
-          echo "Pushed ${REGISTRY}/aiperf:${IMAGE_TAG} — digest: ${DIGEST}"
+          echo "Pushed ${REGISTRY}/aiperf:${CONTAINER_TAG} — digest: ${DIGEST}"
 
       # -------------------------------------------------------------------------
       # Compliance: extract attribution artifacts from the licenses-artifact
@@ -507,24 +499,16 @@ jobs:
       # filesystem. The stage emits python/, dpkg/, ffmpeg/* at the root —
       # pip-licenses JSON, ATTRIBUTIONS-Python.md, per-ecosystem deps CSVs,
       # and a CycloneDX SBOM.
-      # --cache-from hits the registry cache warmed by the runtime build above
-      # so this step streams cached layers without re-building.
       # amd64 only: Python deps are pure-Python so identical across archs; dpkg
       # deps only differ for ffmpeg-linked .so files, covered in a follow-up.
       # -------------------------------------------------------------------------
-      - name: Extract license artifacts (amd64 only)
-        if: matrix.arch == 'amd64'
-        env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      - name: Extract license artifacts
         run: |
           set -euo pipefail
-          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           docker buildx build \
             --platform linux/amd64 \
             --target   licenses-artifact \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
-            --output     "type=local,dest=./license-raw" \
+            --output   "type=local,dest=./license-raw" \
             .
           mkdir -p license-artifacts
           cp -r ./license-raw/. license-artifacts/
@@ -541,7 +525,6 @@ jobs:
       # branch (no prior artifact) doesn't fail the pipeline — diff just shows
       # every package as "added".
       - name: Download prior nightly deps.csv (best-effort)
-        if: matrix.arch == 'amd64'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -573,7 +556,6 @@ jobs:
           fi
 
       - name: Compute deps diff
-        if: matrix.arch == 'amd64'
         run: |
           set -euo pipefail
           python3 - <<'PYEOF'
@@ -618,7 +600,6 @@ jobs:
           PYEOF
 
       - name: Upload license artifacts
-        if: matrix.arch == 'amd64'
         uses: actions/upload-artifact@v4
         with:
           name: license-artifacts-${{ needs.prepare-nightly.outputs.wheel_version }}
@@ -629,31 +610,6 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
-  create-multiarch-manifest-ecr:
-    name: Create Multi-arch Manifest (ECR)
-    needs: [prepare-nightly, build-container]
-    runs-on: prod-aiperf-default-v1
-    timeout-minutes: 15
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
-
-      # aws-ecr-region makes the composite action fetch the ECR token
-      # internally and pipe it to crane over stdin — the token is never
-      # written to a job output or env var.
-      - name: Create multi-arch manifest on ECR
-        uses: ./.github/actions/create-multiarch-manifest
-        with:
-          registry:       ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
-          aws-ecr-region: ${{ secrets.AWS_DEFAULT_REGION }}
-          target-image: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}
-          source-images: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-amd64
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-arm64
-
   # ============================================================================
   # PHASE 4: STAGE
   # Both jobs run under automated-release, which requires human approval before
@@ -663,7 +619,7 @@ jobs:
 
   stage-nightly-container:
     name: Stage Container (ECR → NGC Staging)
-    needs: [prepare-nightly, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly, build-container]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
@@ -701,7 +657,9 @@ jobs:
           echo "${NGC_TOKEN}" | crane auth login nvcr.io \
             --username "${NGC_USERNAME}" --password-stdin
 
-      - name: Copy multi-arch images ECR → NGC staging
+      # Multi-arch manifest is already produced by the buildx --push step in
+      # build-container; crane copy moves the whole OCI index in one call.
+      - name: Copy multi-arch image ECR → NGC staging
         env:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
@@ -710,23 +668,14 @@ jobs:
         run: |
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-
-          for ARCH in amd64 arm64; do
-            crane copy \
-              "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-${ARCH}"
-          done
-
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}" 2>/dev/null || true
-          crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+          crane copy \
+            "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}" \
+            "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
           echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
-    needs: [prepare-nightly, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly, build-container]
     # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
     # the wheels bucket. Revisit when IAM is widened.
     runs-on: prod-aiperf-builder-amd-v1
@@ -846,7 +795,6 @@ jobs:
       - integration-tests
       - test-docs-end-to-end
       - build-container
-      - create-multiarch-manifest-ecr
       - stage-nightly-container
       - stage-nightly-wheel
       - trigger-gitlab-security-scan
@@ -884,8 +832,7 @@ jobs:
             echo "### Build + Upload"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
-            echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
+            echo "| build-container (multi-arch → ECR + S3 wheel) | ${{ needs.build-container.result }} |"
             echo ""
             echo "### Stage + Scan"
             echo "| Job | Result |"
