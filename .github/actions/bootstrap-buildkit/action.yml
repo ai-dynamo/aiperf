@@ -148,7 +148,7 @@ runs:
             '--driver-opt=requests.cpu=${{ inputs.requests_cpu }}'
             '--driver-opt=requests.memory=${{ inputs.requests_memory }}'
             '--driver-opt=limits.memory=${{ inputs.limits_memory }}'
-            "--driver-opt=\"nodeselector=kubernetes.io/arch=${arch},purpose=aiperf-build\""
+            "--driver-opt=\"nodeselector=kubernetes.io/arch=${arch},purpose=build\""
             '--driver-opt="tolerations=${{ inputs.tolerations }}"'
           )
           if $FIRST; then
