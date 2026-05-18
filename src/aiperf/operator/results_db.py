@@ -53,22 +53,44 @@ class ResultsDB:
         return True
 
     async def leaderboard(self, *args, **kwargs):
+        disk_rows = self._leaderboard_from_disk(*args, **kwargs)
         if not await self._ensure_readonly_index():
-            return self._leaderboard_from_disk(*args, **kwargs)
-        rows = await runs_index.leaderboard(*args, **kwargs)
-        return rows or self._leaderboard_from_disk(*args, **kwargs)
+            return disk_rows
+        try:
+            index_rows = await runs_index.leaderboard(*args, **kwargs)
+        except (RuntimeError, sqlite3.Error) as exc:
+            logger.debug("runs_index leaderboard unavailable: %s", exc)
+            return disk_rows
+        rows = self._merge_latest_rows(index_rows, disk_rows, kwargs.get("epoch"))
+        order = kwargs.get("order", "desc")
+        limit = kwargs.get("limit", 20)
+        rows.sort(key=lambda row: row["value"], reverse=(order.lower() == "desc"))
+        return rows[:limit]
 
     async def history(self, *args, **kwargs):
+        disk_rows = self._history_from_disk(*args, **kwargs)
         if not await self._ensure_readonly_index():
-            return self._history_from_disk(*args, **kwargs)
-        rows = await runs_index.history(*args, **kwargs)
-        return rows or self._history_from_disk(*args, **kwargs)
+            return disk_rows
+        try:
+            index_rows = await runs_index.history(*args, **kwargs)
+        except (RuntimeError, sqlite3.Error) as exc:
+            logger.debug("runs_index history unavailable: %s", exc)
+            return disk_rows
+        rows = self._merge_latest_rows(index_rows, disk_rows, kwargs.get("epoch"))
+        limit = kwargs.get("limit", 100)
+        rows.sort(key=lambda row: row.get("start_time") or "")
+        return rows[:limit]
 
     async def compare(self, *args, **kwargs):
+        disk_rows = self._compare_from_disk(*args, **kwargs)
         if not await self._ensure_readonly_index():
-            return self._compare_from_disk(*args, **kwargs)
-        rows = await runs_index.compare(*args, **kwargs)
-        return rows or self._compare_from_disk(*args, **kwargs)
+            return disk_rows
+        try:
+            index_rows = await runs_index.compare(*args, **kwargs)
+        except (RuntimeError, sqlite3.Error) as exc:
+            logger.debug("runs_index compare unavailable: %s", exc)
+            return disk_rows
+        return self._merge_latest_rows(index_rows, disk_rows, kwargs.get("epoch"))
 
     async def summary(
         self,
@@ -91,6 +113,78 @@ class ResultsDB:
         if blob:
             return orjson.loads(runs_index.zstd_decompress(blob))
         return await self._summary_from_disk(namespace, job_id, epoch)
+
+    async def index_entries(self) -> list[dict[str, Any]]:
+        disk_rows = self._index_from_disk()
+        if not await self._ensure_readonly_index():
+            return disk_rows
+        try:
+            index_rows = await runs_index.list_all_latest()
+        except (RuntimeError, sqlite3.Error) as exc:
+            logger.debug("runs_index list_all_latest unavailable: %s", exc)
+            return disk_rows
+        keyed = {
+            (row.namespace, row.job_id): {
+                "namespace": row.namespace,
+                "job_id": row.job_id,
+                "epoch": row.epoch,
+                "phase": row.phase,
+                "model": row.model,
+                "endpoint": row.endpoint,
+                "start_time": row.start_time,
+                "end_time": row.end_time,
+                "error": row.error,
+                "file_count": row.file_count,
+            }
+            for row in index_rows
+        }
+        for row in disk_rows:
+            keyed[(row["namespace"], row["job_id"])] = row
+        return list(keyed.values())
+
+    def _merge_latest_rows(
+        self,
+        index_rows: list[dict[str, Any]],
+        disk_rows: list[dict[str, Any]],
+        epoch: str | None,
+    ) -> list[dict[str, Any]]:
+        key_fields = (
+            ("namespace", "job_id", "epoch")
+            if epoch is not None
+            else ("namespace", "job_id")
+        )
+        keyed = {
+            tuple(row.get(field) for field in key_fields): row for row in index_rows
+        }
+        for row in disk_rows:
+            keyed[tuple(row.get(field) for field in key_fields)] = row
+        return list(keyed.values())
+
+    def _index_from_disk(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for namespace, job_id, run_epoch, summary in self._iter_disk_summaries(None):
+            model, endpoint = runs_index._extract_model_endpoint(
+                {"benchmark": summary.get("input_config", {}) or {}}
+            )
+            run_path = resolve_run_dir(self._results_dir, namespace, job_id, run_epoch)
+            file_count = 0
+            if run_path is not None:
+                file_count = sum(1 for child in run_path.iterdir() if child.is_file())
+            rows.append(
+                {
+                    "namespace": namespace,
+                    "job_id": job_id,
+                    "epoch": run_epoch,
+                    "phase": "Succeeded",
+                    "model": model,
+                    "endpoint": endpoint,
+                    "start_time": summary.get("start_time"),
+                    "end_time": summary.get("end_time"),
+                    "error": None,
+                    "file_count": file_count,
+                }
+            )
+        return rows
 
     def _leaderboard_from_disk(
         self,

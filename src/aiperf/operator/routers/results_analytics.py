@@ -9,6 +9,7 @@ job-index and per-job config lookups.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,15 @@ def _pivot_compare_rows(
             "endpoint": row.get("endpoint"),
         }
     return entries, meta
+
+
+async def _get_run_spec_from_index(
+    namespace: str, job_id: str
+) -> dict[str, Any] | None:
+    try:
+        return await runs_index.get_run_spec(namespace, job_id)
+    except (RuntimeError, sqlite3.Error):
+        return None
 
 
 def _register_leaderboard_route(
@@ -256,21 +266,10 @@ def _register_index_routes(
     @router.get("/index")
     async def get_index() -> dict[str, Any]:
         """Get the full job index for fast lookups."""
-        rows = await runs_index.list_all_latest()
+        rows = await get_db().index_entries()
         out: dict[str, Any] = {}
-        for r in rows:
-            out[f"{r.namespace}/{r.job_id}"] = {
-                "namespace": r.namespace,
-                "job_id": r.job_id,
-                "epoch": r.epoch,
-                "phase": r.phase,
-                "model": r.model,
-                "endpoint": r.endpoint,
-                "start_time": r.start_time,
-                "end_time": r.end_time,
-                "error": r.error,
-                "file_count": r.file_count,
-            }
+        for row in rows:
+            out[f"{row['namespace']}/{row['job_id']}"] = row
         return out
 
     @router.get("/config/{namespace}/{job_id}")
@@ -286,7 +285,7 @@ def _register_index_routes(
            whose artifacts haven't been persisted yet (e.g. dashboard hero
            SLO chips for the currently-running CR).
         """
-        spec = await runs_index.get_run_spec(namespace, job_id)
+        spec = await _get_run_spec_from_index(namespace, job_id)
         if spec is not None:
             return {"source": "index", "spec": spec}
 
