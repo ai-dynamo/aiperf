@@ -24,6 +24,8 @@ import pytest
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.component_integration
 @pytest.mark.asyncio

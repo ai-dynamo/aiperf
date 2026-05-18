@@ -20,6 +20,8 @@ import pytest
 from aiperf.config.flags._converter_telemetry import build_mlflow
 from aiperf.config.flags.cli_config import CLIConfig
 
+pytestmark = pytest.mark.slow
+
 
 def _make_cli(**overrides) -> CLIConfig:
     base = {

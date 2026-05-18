@@ -27,6 +27,8 @@ from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.plugin.enums import EndpointType
 
+pytestmark = pytest.mark.slow
+
 
 def _write_artifact(path: Path, content: str = "test") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

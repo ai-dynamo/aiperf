@@ -31,6 +31,8 @@ import pytest
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
+pytestmark = pytest.mark.slow
+
 
 def _parse_mlflow_metric_file(metric_file: Path) -> list[tuple[int, float, int]]:
     """Parse an MLflow filesystem-store metric file.

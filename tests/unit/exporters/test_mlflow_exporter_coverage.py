@@ -20,6 +20,8 @@ from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.exporters.mlflow_metadata import normalize_mlflow_uri
 from aiperf.plugin.enums import EndpointType
 
+pytestmark = pytest.mark.slow
+
 
 def _make_config(
     tmp_path: Path,
