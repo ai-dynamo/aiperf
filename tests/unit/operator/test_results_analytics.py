@@ -9,6 +9,9 @@ for running jobs with no on-disk artifacts.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import orjson
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -26,6 +29,116 @@ async def _open_runs_index(tmp_path):
     await runs_index.open(tmp_path / ".aiperf_index.sqlite")
     yield
     await runs_index.close()
+
+
+def _write_profile_export(
+    base: Path,
+    namespace: str,
+    job_id: str,
+    *,
+    epoch: str = "1714064523",
+    metric_val: float = 100.0,
+    model: str = "llama-7b",
+) -> None:
+    from aiperf.operator.results_layout import run_dir, write_latest
+
+    payload = orjson.dumps(
+        {
+            "request_throughput": {
+                "avg": metric_val,
+                "p50": metric_val * 0.9,
+                "p99": metric_val * 1.5,
+                "unit": "req/s",
+            },
+            "request_latency": {
+                "avg": 50.0,
+                "p50": 45.0,
+                "p99": 120.0,
+                "unit": "ms",
+            },
+            "start_time": "2026-01-15T10:00:00Z",
+            "end_time": "2026-01-15T10:05:00Z",
+            "input_config": {
+                "models": {"items": [{"name": model}]},
+                "endpoint": {"urls": ["http://localhost:8000"]},
+            },
+        }
+    )
+    path = run_dir(base, namespace, job_id, epoch)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "profile_export_aiperf.json").write_bytes(payload)
+    write_latest(base, namespace, job_id, epoch)
+
+
+@pytest.mark.asyncio
+async def test_results_db_leaderboard_falls_back_to_disk_without_index(tmp_path):
+    await runs_index.close()
+    _write_profile_export(tmp_path, "ns", "job-1", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.leaderboard(metric="request_throughput", stat="avg")
+
+    assert rows == [
+        {
+            "namespace": "ns",
+            "job_id": "job-1",
+            "epoch": "1714064523",
+            "value": 123.0,
+            "unit": "req/s",
+            "start_time": "2026-01-15T10:00:00Z",
+            "end_time": "2026-01-15T10:05:00Z",
+            "model": "llama-7b",
+            "endpoint": "http://localhost:8000",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_results_db_history_falls_back_to_disk_without_index(tmp_path):
+    await runs_index.close()
+    _write_profile_export(tmp_path, "ns", "job-1", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.history(metric="request_throughput", stat="avg")
+
+    assert rows == [
+        {
+            "namespace": "ns",
+            "job_id": "job-1",
+            "epoch": "1714064523",
+            "value": 123.0,
+            "unit": "req/s",
+            "start_time": "2026-01-15T10:00:00Z",
+            "model": "llama-7b",
+            "endpoint": "http://localhost:8000",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_results_db_compare_falls_back_to_disk_without_index(tmp_path):
+    await runs_index.close()
+    _write_profile_export(tmp_path, "ns", "job-1", metric_val=123.0)
+    db = ResultsDB(tmp_path)
+
+    rows = await db.compare(job_ids=["job-1"], metrics=["request_throughput"])
+
+    assert rows == [
+        {
+            "namespace": "ns",
+            "job_id": "job-1",
+            "epoch": "1714064523",
+            "start_time": "2026-01-15T10:00:00Z",
+            "model": "llama-7b",
+            "endpoint": "http://localhost:8000",
+            "gpu_count": 0,
+            "gpu_name": None,
+            "request_throughput_avg": 123.0,
+            "request_throughput_p50": 110.7,
+            "request_throughput_p99": 184.5,
+            "request_throughput_unit": "req/s",
+        }
+    ]
 
 
 @pytest.mark.asyncio
