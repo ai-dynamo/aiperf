@@ -44,7 +44,7 @@ flowchart LR
     duck --> pvc
 ```
 
-The sidecar reads result files from the shared PVC and queries the Kubernetes API (via in-cluster RBAC) for live job/cluster state. There is no per-request authentication layer; see [Auth / security](#auth--security).
+The sidecar reads result files from the shared PVC and queries the Kubernetes API (via in-cluster RBAC) for live job/cluster state. Read-only routes have no per-request authentication layer; mutating routes are disabled by default and require explicit bearer-token configuration when enabled. See [Auth / security](#auth--security).
 
 ---
 
@@ -54,8 +54,9 @@ The sidecar reads result files from the shared PVC and queries the Kubernetes AP
 |--------|------|--------|---------|
 | GET | `/healthz` | root | Liveness probe |
 | GET | `/api/v1/jobs` | jobs | List active AIPerfJob CRs |
+| POST | `/api/v1/jobs` | jobs | Create an AIPerfJob CR (mutating route; bearer token required when enabled) |
 | GET | `/api/v1/jobs/{namespace}/{name}` | jobs | Single CR + pods + raw status |
-| POST | `/api/v1/jobs/{namespace}/{name}/cancel` | jobs | Set `spec.cancel=true` |
+| POST | `/api/v1/jobs/{namespace}/{name}/cancel` | jobs | Set `spec.cancel=true` (mutating route; bearer token required when enabled) |
 | WS  | `/api/v1/jobs/{namespace}/{name}/ws` | jobs-ws | Live realtime feed (proxied to controller pod) |
 | GET | `/api/v1/cluster` | jobs | Node count, GPU total, K8s version |
 | GET | `/api/v1/results` | results-files | List every stored job |
@@ -66,6 +67,8 @@ The sidecar reads result files from the shared PVC and queries the Kubernetes AP
 | GET | `/api/v1/analytics/compare` | results-analytics | Side-by-side job compare |
 | GET | `/api/v1/analytics/summary/{namespace}/{job_id}` | results-analytics | Full aggregated summary |
 | GET | `/api/v1/index` | results-analytics | Fast job index |
+| GET | `/admin/index/stats` | admin | Runs-index row counts, DB size, and schema version |
+| POST | `/admin/index/rebuild` | admin | Rebuild the runs index from disk (mutating route; bearer token required when enabled) |
 | GET | `/api/v1/config/{namespace}/{job_id}` | results-analytics | Original CR spec/config |
 | GET | `/dashboard/` | dashboard (WSGI) | Plotly Dash app (returns `503` until the first run lands on the PVC) |
 
@@ -171,7 +174,9 @@ Request cancellation of a running benchmark by patching the CR's `spec.cancel` t
 **This endpoint is asynchronous.** It returns immediately after the patch; the kopf operator observes the change and drives workers to a stopped state over the next several seconds. Poll `GET /api/v1/jobs/{namespace}/{name}` and wait for `status.phase` to become `Cancelled`, `Failed`, or `Succeeded` if you need to confirm termination.
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/jobs/aiperf-benchmarks/aiperf-bench-7f2a/cancel
+curl -X POST \
+  -H "Authorization: Bearer ${AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN}" \
+  http://localhost:8081/api/v1/jobs/aiperf-benchmarks/aiperf-bench-7f2a/cancel
 ```
 
 ```json
@@ -514,10 +519,12 @@ curl http://localhost:8081/api/v1/config/aiperf-benchmarks/aiperf-bench-7f2a
 
 ## Auth / security
 
-The results server **does not authenticate individual HTTP requests**. Security is delegated to the surrounding cluster layers:
+Read-only results-server routes do not authenticate individual HTTP requests. Mutating routes are disabled by default and require an explicit bearer token when enabled.
 
+- **Mutating-route gate.** `POST /api/v1/jobs`, `POST /api/v1/jobs/{namespace}/{name}/cancel`, and `POST /admin/index/rebuild` return `403` unless `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=true` is set on the results-server. When enabled, `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` must also be set and callers must send `Authorization: Bearer <token>`. Missing or invalid credentials return `401`.
+- **Helm configuration.** In chart installs, set `resultsServer.mutatingRoutes.enabled=true` and point `resultsServer.mutatingRoutes.tokenSecretName` / `tokenSecretKey` at a Secret key containing the bearer token. The chart maps those values to `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` in the results-server container.
 - **In-cluster RBAC.** The sidecar uses its ServiceAccount token to call the Kubernetes API. Every `/api/v1/jobs/*` and `/api/v1/cluster` call runs with those permissions, so `list aiperfjobs`, `get pods`, `patch aiperfjobs/spec`, and `list nodes` must be granted in the operator's ClusterRole. RBAC failures surface as `401` / `403` propagated from `kubernetes_asyncio`.
-- **Network isolation.** The Service is typically `ClusterIP` only. External access is expected to come via `kubectl port-forward` (trusted user), `aiperf kube dashboard` (trusted user), or an ingress controller that terminates auth in front of the pod. Add a `NetworkPolicy` if your cluster requires stricter pod-to-pod controls.
+- **Network isolation.** The Service is typically `ClusterIP` only. External access is expected to come via `kubectl port-forward` (trusted user), `aiperf kube dashboard` (trusted user), or an ingress controller. Add a `NetworkPolicy` if your cluster requires stricter pod-to-pod controls.
 - **Path traversal.** File-serving endpoints resolve every `{namespace}/{job_id}/{filename}` under the results directory and reject resolved paths that escape the base (`404`). Callers cannot read files outside the PVC.
 
-Do **not** expose the results server directly to the public internet without a proxy that enforces authentication — the endpoints that mutate state (`POST /api/v1/jobs/.../cancel`) trust the network path.
+Do **not** expose the results server directly to the public internet without a proxy that enforces authentication in front of the read-only routes too.

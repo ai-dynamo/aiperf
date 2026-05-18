@@ -251,10 +251,18 @@ A sidecar that serves stored results via HTTP (used by `aiperf kube results` by 
 ```yaml
 resultsServer:
   port: 8081
+  mutatingRoutes:
+    enabled: false
+    tokenSecretName: ""
+    tokenSecretKey: token
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: 500m, memory: 1Gi }
 ```
+
+`resultsServer.mutatingRoutes.enabled` controls POST routes on the results-server that create or cancel `AIPerfJob` resources or rebuild mutable operator indexes. It defaults to `false`, so exposing the results-server for read-only APIs does not also grant clients write access through the operator ServiceAccount.
+
+To enable these routes, create a Kubernetes Secret containing the bearer token and set `resultsServer.mutatingRoutes.tokenSecretName` plus `tokenSecretKey`. The chart projects those values into the results-server as `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`; clients must send `Authorization: Bearer <token>` on protected POST requests.
 
 ### `dashboard`
 
