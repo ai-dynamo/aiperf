@@ -299,10 +299,12 @@ class K8sChildJobExecutor(RunExecutor):
                 artifacts_path=run.artifact_dir,
             )
         result = await self._collect_run_result(terminal, run)
-        await self._record_terminal_child(child_name, run)
+        await self._record_terminal_child(child_name, run, terminal)
         return result
 
-    async def _record_terminal_child(self, child_name: str, run: BenchmarkRun) -> None:
+    async def _record_terminal_child(
+        self, child_name: str, run: BenchmarkRun, child: dict[str, Any]
+    ) -> None:
         """Append a terminal child to ``status.aggregate.children`` incrementally.
 
         Without this, ``status.aggregate.children`` only appears after
@@ -316,6 +318,7 @@ class K8sChildJobExecutor(RunExecutor):
         """
         var_idx = run.variation.index if run.variation else 0
         var_label = run.variation.label if run.variation else ""
+        child_run_epoch = str((child.get("status") or {}).get("runEpoch") or "")
         self._terminal_children.append(
             {
                 "namespace": self.sweep_namespace,
@@ -323,7 +326,7 @@ class K8sChildJobExecutor(RunExecutor):
                 "variation_index": var_idx,
                 "variation_label": var_label,
                 "trial_index": run.trial,
-                "child_run_epoch": self.sweep_run_epoch or "",
+                "child_run_epoch": child_run_epoch,
             }
         )
         if self._status_writer is None:
@@ -493,6 +496,7 @@ class K8sChildJobExecutor(RunExecutor):
                 success=False,
                 error=status.get("message") or f"child terminal phase={phase}",
                 artifacts_path=run.artifact_dir,
+                child_run_epoch=str(status.get("runEpoch") or ""),
             )
         metrics = await self._pull_summary_metrics(child)
         # A terminal-success child with empty summary is still a success — the
@@ -505,6 +509,7 @@ class K8sChildJobExecutor(RunExecutor):
             success=True,
             summary_metrics=metrics,
             artifacts_path=run.artifact_dir,
+            child_run_epoch=str(status.get("runEpoch") or ""),
         )
 
     async def _pull_summary_metrics(self, child: dict[str, Any]) -> dict[str, Any]:

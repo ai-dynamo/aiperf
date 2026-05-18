@@ -95,7 +95,7 @@ async def children_manifest_from_live_aiperfjobs(
                 variation_index=variation_index,
                 variation_label=labels.get(_VARIATION_LABEL_LABEL) or "",
                 trial_index=trial_index,
-                child_run_epoch=labels.get(_SWEEP_RUN_EPOCH_LABEL) or "",
+                child_run_epoch=str((child.get("status") or {}).get("runEpoch") or ""),
             )
         )
     if not children:

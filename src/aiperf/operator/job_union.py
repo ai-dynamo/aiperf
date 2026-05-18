@@ -15,6 +15,7 @@ This module joins the two by `(namespace, name)` and stamps each entry with a
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -337,6 +338,16 @@ def synthesize_status_from_summary(
     }
 
 
+def _parse_sort_ts(ts: str | None) -> float:
+    if not ts:
+        return 0.0
+    candidate = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+    try:
+        return datetime.fromisoformat(candidate).astimezone(timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
 async def list_all_jobs(
     api: ApiClient | None,
     results_dir: Path,
@@ -394,7 +405,7 @@ async def list_all_jobs(
                     break
         else:
             out.append(pj)
-    return out
+    return sorted(out, key=lambda j: _parse_sort_ts(j.created), reverse=True)
 
 
 async def find_any_job(

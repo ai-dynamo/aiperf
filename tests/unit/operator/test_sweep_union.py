@@ -108,6 +108,59 @@ async def test_list_all_sweeps_archived_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_all_sweeps_archived_records_use_epoch_dir_when_timestamps_missing(
+    tmp_path: Path,
+) -> None:
+    from aiperf.operator import sweep_union
+
+    _write_aggregate(
+        tmp_path,
+        "bench",
+        "old-sweep",
+        {
+            "phase": "Succeeded",
+            "totalVariations": 1,
+            "completedRuns": 1,
+            "failedRuns": 0,
+        },
+        epoch="1714069100",
+    )
+    _write_aggregate(
+        tmp_path,
+        "bench",
+        "new-sweep",
+        {
+            "phase": "Succeeded",
+            "totalVariations": 1,
+            "completedRuns": 1,
+            "failedRuns": 0,
+        },
+        epoch="1714069200",
+    )
+    api = MagicMock()
+    with (
+        patch(
+            "aiperf.operator.sweep_union.list_aiperfsweeps",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            sweep_union,
+            "_now_utc",
+            return_value=sweep_union.datetime.fromtimestamp(
+                1714069300, tz=sweep_union.timezone.utc
+            ),
+        ),
+    ):
+        records = await sweep_union.list_all_sweeps(api, tmp_path, all_namespaces=True)
+
+    assert [r.name for r in records] == ["new-sweep", "old-sweep"]
+    assert {r.name: r.age_seconds for r in records} == {
+        "new-sweep": 100,
+        "old-sweep": 200,
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_all_sweeps_both(tmp_path: Path) -> None:
     from aiperf.operator import sweep_union
 

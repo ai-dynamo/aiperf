@@ -652,6 +652,7 @@ async def retrieve_sweep_results_from_operator(
             operator_namespace=operator_namespace,
             kubeconfig=kubeconfig,
             kube_context=kube_context,
+            run=entry.get("childRunEpoch") or entry.get("child_run_epoch"),
         )
         if ok:
             print_success(f"{cell_id} ({child_name}): OK")

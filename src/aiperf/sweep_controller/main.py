@@ -296,7 +296,7 @@ def _write_sweep_parent_aggregate(
                 "variation_index": var_idx,
                 "variation_label": r.variation_label,
                 "trial_index": trial_idx if with_trial_suffix else None,
-                "child_run_epoch": sweep_run_epoch,
+                "child_run_epoch": getattr(r, "child_run_epoch", "") or sweep_run_epoch,
                 "label": r.label,
                 "status": "Succeeded" if r.success else "Failed",
             }

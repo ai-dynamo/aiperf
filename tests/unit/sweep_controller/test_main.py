@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import orjson
 
@@ -14,6 +15,7 @@ from aiperf.sweep_controller.main import (
     _adaptive_search_log_summary,
     _load_aggregate_for_cr,
     _mirror_strategy_aggregate_to_sweep_dir,
+    _write_sweep_parent_aggregate,
     aggregate_marker_exists,
     write_aggregate_marker,
 )
@@ -90,6 +92,32 @@ def test_mirror_strategy_aggregate_to_sweep_dir_copies_files_only(tmp_path: Path
         "profile_export_aiperf_aggregate.csv",
         "profile_export_aiperf_aggregate.json",
     ]
+
+
+def test_write_sweep_parent_aggregate_uses_child_run_epoch(tmp_path: Path) -> None:
+    result = SimpleNamespace(
+        label="cell-0",
+        success=True,
+        error=None,
+        variation_values={"index": 0},
+        variation_label="search_iter_0000",
+        trial_index=0,
+        child_run_epoch="1714000042",
+    )
+
+    _write_sweep_parent_aggregate(
+        base_dir=tmp_path,
+        sweep_cr={"metadata": {"namespace": "ns", "name": "s"}},
+        spec=SimpleNamespace(model_dump=lambda mode: {}),
+        results=[result],
+        plan=SimpleNamespace(configs=[object()]),
+        sweep_run_epoch="1714000000",
+        with_trial_suffix=False,
+    )
+
+    children_path = tmp_path / "ns" / "sweeps" / "s" / "1714000000" / "children.json"
+    doc = orjson.loads(children_path.read_bytes())
+    assert doc["children"][0]["child_run_epoch"] == "1714000042"
 
 
 def test_load_aggregate_for_cr_loads_all_three_keys(tmp_path: Path):

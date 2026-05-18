@@ -259,6 +259,8 @@ class TestRetrieveSweepResultsFromOperator:
         assert names == ["sweep-c0", "sweep-c1"]
         assert out_dirs[0] == tmp_path / "v0-t0"
         assert out_dirs[1] == tmp_path / "v1-t2"
+        run_kwargs = [c.kwargs["run"] for c in mock_get.await_args_list]
+        assert run_kwargs == ["1714069300", "1714069310"]
         # Manifest persisted alongside per-cell dirs.
         assert (tmp_path / "sweep_manifest.json").is_file()
 

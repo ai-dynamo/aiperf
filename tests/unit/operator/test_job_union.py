@@ -170,6 +170,37 @@ async def test_list_all_jobs_pvc_only(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_all_jobs_orders_archived_records_by_newest_timestamp(
+    tmp_path,
+    monkeypatch,
+):
+    from aiperf.operator import job_union
+
+    async def fake_list(api, *, all_namespaces=True, namespace=None, **_):
+        return []
+
+    monkeypatch.setattr(job_union, "list_aiperf_jobs", fake_list)
+    _write_summary(
+        tmp_path,
+        "ns",
+        "a-old-archive",
+        start_time="2026-04-22T10:00:00Z",
+        end_time="2026-04-22T10:01:00Z",
+    )
+    _write_summary(
+        tmp_path,
+        "ns",
+        "z-new-archive",
+        start_time="2026-04-22T11:00:00Z",
+        end_time="2026-04-22T11:01:00Z",
+    )
+
+    out = await job_union.list_all_jobs(api=None, results_dir=tmp_path)
+
+    assert [e.name for e in out] == ["z-new-archive", "a-old-archive"]
+
+
+@pytest.mark.asyncio
 async def test_list_all_jobs_overlap_marks_both(tmp_path, monkeypatch):
     from aiperf.operator import job_union
 

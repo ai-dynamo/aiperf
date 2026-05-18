@@ -6,9 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.config import BenchmarkRun
-from aiperf.config import BenchmarkConfig
-from aiperf.config import SweepVariation
+from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
 from aiperf.sweep_controller.k8s_executor import (
     ChildNameConflictError,
     K8sChildJobExecutor,
@@ -306,6 +304,36 @@ async def test_execute_raises_when_stale_child_deletion_exceeds_deadline(monkeyp
     with pytest.raises(ChildNameConflictError, match="still mid-deletion"):
         await executor.execute(_benchmark_run())
     custom.create_namespaced_custom_object.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_records_terminal_child_run_epoch() -> None:
+    """Terminal child manifest entries use AIPerfJob status.runEpoch."""
+    executor = K8sChildJobExecutor(
+        api=None,
+        sweep=_sweep_cr(),
+        with_trial_suffix=True,
+        sweep_run_epoch="1714000000",
+    )
+    terminal_child = {
+        "metadata": {"name": "s-v07-t2"},
+        "status": {"phase": "Succeeded", "runEpoch": "1714000042"},
+    }
+    status_writer = MagicMock()
+    status_writer.current_cell = AsyncMock()
+    status_writer.partial_children = AsyncMock()
+    executor._status_writer = status_writer
+    executor._get_or_create = AsyncMock(return_value={})  # type: ignore[method-assign]
+    executor._wait_until_terminal = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    executor._try_read_child = AsyncMock(return_value=terminal_child)  # type: ignore[method-assign]
+    executor._collect_run_result = AsyncMock(  # type: ignore[method-assign]
+        return_value=MagicMock(success=True)
+    )
+
+    await executor.execute(_benchmark_run())
+
+    children = status_writer.partial_children.await_args.kwargs["children"]
+    assert children[0]["child_run_epoch"] == "1714000042"
 
 
 @pytest.mark.asyncio

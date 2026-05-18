@@ -97,11 +97,13 @@ class TestHealthServerMixin:
     """Test HealthServerMixin functionality."""
 
     @pytest.mark.asyncio
-    async def test_start_and_stop_server(self, mock_env_settings) -> None:
+    async def test_start_and_stop_server(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test starting and stopping the health server."""
         service = MockServiceWithHealthServer()
 
-        with mock_env_settings(enabled=True, port=18080):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             assert service._health_server is not None
@@ -122,107 +124,121 @@ class TestHealthServerMixin:
             service.info.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_healthz_returns_ok_when_healthy(self, mock_env_settings) -> None:
+    async def test_healthz_returns_ok_when_healthy(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test /healthz returns 200 when service is healthy."""
         service = MockServiceWithHealthServer(LifecycleState.RUNNING)
 
-        with mock_env_settings(enabled=True, port=18081):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18081, "/healthz")
+                status, body = await make_http_request(unused_tcp_port, "/healthz")
                 assert status == 200
                 assert body == "ok"
             finally:
                 await service._health_server_stop()
 
     @pytest.mark.asyncio
-    async def test_healthz_returns_503_when_failed(self, mock_env_settings) -> None:
+    async def test_healthz_returns_503_when_failed(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test /healthz returns 503 when service has failed."""
         service = MockServiceWithHealthServer(LifecycleState.FAILED)
 
-        with mock_env_settings(enabled=True, port=18082):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18082, "/healthz")
+                status, body = await make_http_request(unused_tcp_port, "/healthz")
                 assert status == 503
                 assert body == "unhealthy"
             finally:
                 await service._health_server_stop()
 
     @pytest.mark.asyncio
-    async def test_readyz_returns_ok_when_running(self, mock_env_settings) -> None:
+    async def test_readyz_returns_ok_when_running(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test /readyz returns 200 when service is running."""
         service = MockServiceWithHealthServer(LifecycleState.RUNNING)
 
-        with mock_env_settings(enabled=True, port=18083):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18083, "/readyz")
+                status, body = await make_http_request(unused_tcp_port, "/readyz")
                 assert status == 200
                 assert body == "ok"
             finally:
                 await service._health_server_stop()
 
     @pytest.mark.asyncio
-    async def test_readyz_returns_503_when_not_ready(self, mock_env_settings) -> None:
+    async def test_readyz_returns_503_when_not_ready(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test /readyz returns 503 when service is not ready."""
         service = MockServiceWithHealthServer(LifecycleState.INITIALIZING)
 
-        with mock_env_settings(enabled=True, port=18084):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18084, "/readyz")
+                status, body = await make_http_request(unused_tcp_port, "/readyz")
                 assert status == 503
                 assert body == "not ready"
             finally:
                 await service._health_server_stop()
 
     @pytest.mark.asyncio
-    async def test_unknown_path_returns_404(self, mock_env_settings) -> None:
+    async def test_unknown_path_returns_404(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test unknown paths return 404."""
         service = MockServiceWithHealthServer()
 
-        with mock_env_settings(enabled=True, port=18085):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18085, "/unknown")
+                status, body = await make_http_request(unused_tcp_port, "/unknown")
                 assert status == 404
                 assert body == "Not Found"
             finally:
                 await service._health_server_stop()
 
     @pytest.mark.asyncio
-    async def test_custom_host_and_port(self, mock_env_settings) -> None:
+    async def test_custom_host_and_port(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test health server starts on custom host and port."""
         service = MockServiceWithHealthServer()
 
-        with mock_env_settings(enabled=True, host="127.0.0.1", port=18086):
+        with mock_env_settings(enabled=True, host="127.0.0.1", port=unused_tcp_port):
             await service._health_server_start()
 
             assert service._health_server is not None
             # Verify we can connect
-            status, body = await make_http_request(18086, "/healthz")
+            status, body = await make_http_request(unused_tcp_port, "/healthz")
             assert status == 200
             assert body == "ok"
 
             await service._health_server_stop()
 
     @pytest.mark.asyncio
-    async def test_state_change_affects_responses(self, mock_env_settings) -> None:
+    async def test_state_change_affects_responses(
+        self, mock_env_settings, unused_tcp_port
+    ) -> None:
         """Test that changing state affects health responses."""
         service = MockServiceWithHealthServer(LifecycleState.INITIALIZING)
 
-        with mock_env_settings(enabled=True, port=18087):
+        with mock_env_settings(enabled=True, port=unused_tcp_port):
             await service._health_server_start()
 
             try:
                 # Initially not ready
-                status, _ = await make_http_request(18087, "/readyz")
+                status, _ = await make_http_request(unused_tcp_port, "/readyz")
                 assert status == 503
 
                 # Change to RUNNING

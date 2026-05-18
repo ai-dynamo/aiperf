@@ -127,7 +127,7 @@ def _record_from_live(cr: dict[str, Any]) -> SweepRecord:
         api_url=status.get("apiUrl") or None,
         results_available=bool(status.get("resultsAvailable")),
         run_states={
-            k: int(v) for k, v in run_states.items() if isinstance(v, int | float)
+            k: int(v) for k, v in run_states.items() if isinstance(v, (int, float))
         },
     )
 
@@ -174,6 +174,9 @@ def _record_from_archive(
             aggregate_doc=None,
         )
     completed_at = _parse_creation_ts(doc.get("completedAt"))
+    started_at = _parse_creation_ts(doc.get("startedAt"))
+    epoch_at = datetime.fromtimestamp(int(sweep_dir.name), tz=timezone.utc)
+    age_anchor = completed_at or started_at or epoch_at
     run_states = doc.get("runStates") or {}
     return SweepRecord(
         namespace=namespace,
@@ -184,7 +187,7 @@ def _record_from_archive(
         completed_runs=int(doc.get("completedRuns") or 0),
         failed_runs=int(doc.get("failedRuns") or 0),
         cancelled_runs=int(run_states.get("cancelled") or 0),
-        age_seconds=_age_seconds(completed_at),
+        age_seconds=_age_seconds(age_anchor),
         model=doc.get("model"),
         aggregate_path=str(agg_path),
         aggregate_doc=doc,
@@ -192,7 +195,7 @@ def _record_from_archive(
         completed_at=doc.get("completedAt") or None,
         results_available=True,
         run_states={
-            k: int(v) for k, v in run_states.items() if isinstance(v, int | float)
+            k: int(v) for k, v in run_states.items() if isinstance(v, (int, float))
         },
     )
 
@@ -260,7 +263,7 @@ def _merge(live: list[SweepRecord], archived: list[SweepRecord]) -> list[SweepRe
             run_states=live_rec.run_states or existing.run_states,
         )
         by_key[key] = merged
-    return sorted(by_key.values(), key=lambda r: (r.namespace, r.name))
+    return sorted(by_key.values(), key=lambda r: r.age_seconds)
 
 
 async def list_all_sweeps(
