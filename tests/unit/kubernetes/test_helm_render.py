@@ -169,6 +169,25 @@ class TestOperatorBaseUrlEnvInjection:
         assert "AIPERF_OPERATOR_RESULTS_BASE_URL" not in env_names
 
 
+class TestNoRuntimeUiOverride:
+    """The operator UI is served only from the packaged static bundle."""
+
+    def test_deployment_has_no_ui_override_runtime_plumbing(self) -> None:
+        docs = _helm_template()
+        deploy = _find(docs, "Deployment", "aiperf-operator")
+        pod_spec = deploy["spec"]["template"]["spec"]
+        assert "initContainers" not in pod_spec
+        assert "ui-override" not in {v["name"] for v in pod_spec.get("volumes", [])}
+
+        results_server = next(
+            c for c in pod_spec["containers"] if c["name"] == "results-server"
+        )
+        env_names = {e["name"] for e in results_server.get("env", [])}
+        volume_mount_names = {m["name"] for m in results_server.get("volumeMounts", [])}
+        assert "AIPERF_DEV_UI_OVERRIDE_DIR" not in env_names
+        assert "ui-override" not in volume_mount_names
+
+
 # ============================================================
 # Service / ServiceMonitor / NetworkPolicy metrics-port wiring
 # ============================================================

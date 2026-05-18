@@ -196,23 +196,6 @@ dashboard:
       memory: 1Gi
     limits: {}
 
-# developer toggles non-production conveniences. None of these should be on
-# in a production deployment — they relax security or trade durability for
-# faster iteration.
-developer:
-  # uiOverride wires a writable emptyDir-backed override for the operator
-  # web UI (``ui``), so devs can ``kubectl cp`` JS/CSS/HTML changes
-  # into a running pod and refresh the browser instead of rebuilding the
-  # image. An initContainer seeds the override dir from the bundled UI on
-  # every pod boot, so the pod works out-of-the-box; ``make ui-sync``
-  # overlays local changes on top. Off by default.
-  uiOverride:
-    enabled: false
-    # Path inside the results-server container the override dir is mounted
-    # at. Read by ``AIPERF_DEV_UI_OVERRIDE_DIR``. Override only if it
-    # collides with another volume in your setup.
-    mountPath: /var/aiperf/ui-override
-
 # rbac controls RBAC resource creation.
 # A ClusterRole is required because the operator:
 # - Watches AIPerfJob CRDs across all namespaces (or a configured subset)

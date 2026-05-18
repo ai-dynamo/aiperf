@@ -216,15 +216,8 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     app.include_router(create_dashboard_proxy_router())
 
-    # AIPERF_DEV_UI_OVERRIDE_DIR points at a writable directory (typically
-    # an emptyDir mount seeded by an initContainer) so devs can ``kubectl cp``
-    # UI changes into the running pod without rebuilding the image. The
-    # bundled package path is the production fallback.
-    ui_override = os.environ.get("AIPERF_DEV_UI_OVERRIDE_DIR") or None
-    ui_dir = Path(ui_override) if ui_override else Path(__file__).parent / "ui"
+    ui_dir = Path(__file__).parent / "ui"
     if ui_dir.is_dir():
-        if ui_override:
-            logger.info("Serving ui from override dir: %s", ui_dir)
         app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
     return app
