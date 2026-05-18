@@ -2,53 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-import importlib.metadata as importlib_metadata
-from pathlib import Path
-from typing import Any
-
 import pytest
 
-from aiperf.common.models import RequestInfo, RequestRecord
-from aiperf.config import BenchmarkConfig, BenchmarkRun
+from aiperf import __version__ as aiperf_version
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
+from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import TransportType
+from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
-AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
-
-_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
-    "models": ["test-model"],
-    "endpoint": {
-        "type": "chat",
-        "urls": ["http://localhost:8000"],
-        "path": "/v1/chat/completions",
-    },
-    "datasets": [
-        {
-            "name": "default",
-            "type": "synthetic",
-            "entries": 1,
-            "prompts": {"isl": 128, "osl": 64},
-        }
-    ],
-    "phases": [
-        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-    ],
-}
-
-
-def _make_config(**overrides: Any) -> BenchmarkConfig:
-    """Create a BenchmarkConfig with minimal defaults."""
-    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
-    return BenchmarkConfig(**kwargs)
-
-
-def _make_run(**overrides: Any) -> BenchmarkRun:
-    """Create a BenchmarkRun wrapping a BenchmarkConfig with minimal defaults."""
-    cfg = _make_config(**overrides)
-    return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
+AIPERF_USER_AGENT = f"aiperf/{aiperf_version}"
 
 
 def _ensure_scheme(url: str) -> str:
@@ -69,10 +39,12 @@ class FakeTransport(BaseTransport):
         )
 
     def get_url(self, request_info: RequestInfo) -> str:
-        ep = self.run.cfg.endpoint
-        base_url = _ensure_scheme(ep.urls[0]) if ep.urls else ""
-        if ep.path:
-            return f"{base_url}{ep.path}"
+        endpoint_info = request_info.model_endpoint.endpoint
+        base_url = (
+            _ensure_scheme(endpoint_info.base_url) if endpoint_info.base_url else ""
+        )
+        if endpoint_info.custom_endpoint:
+            return f"{base_url}{endpoint_info.custom_endpoint}"
         return base_url
 
     async def send_request(
@@ -81,40 +53,44 @@ class FakeTransport(BaseTransport):
         return RequestRecord()
 
 
-def _make_request_info(cfg: BenchmarkConfig, **overrides) -> RequestInfo:
-    """Create a basic RequestInfo for transport tests."""
-    defaults = {
-        "turns": [],
-        "endpoint_headers": {},
-        "endpoint_params": {},
-        "turn_index": 0,
-        "credit_num": 1,
-        "credit_phase": "profiling",
-        "x_request_id": "test-request-id",
-        "x_correlation_id": "test-correlation-id",
-        "conversation_id": "test-conversation-id",
-    }
-    defaults.update(overrides)
-    return RequestInfo(**defaults)
-
-
 class TestBaseTransport:
     """Comprehensive tests for BaseTransport functionality."""
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test BenchmarkRun."""
-        return _make_run()
+        """Create a test ModelEndpointInfo."""
+        return ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000"],
+                custom_endpoint="/v1/chat/completions",
+            ),
+        )
 
     @pytest.fixture
     def transport(self, model_endpoint):
         """Create a FakeTransport instance."""
-        return FakeTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        return FakeTransport(model_endpoint=model_endpoint)
 
     @pytest.fixture
     def request_info(self, model_endpoint):
         """Create a basic RequestInfo."""
-        return _make_request_info(model_endpoint.cfg)
+        return RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[],
+            endpoint_headers={},
+            endpoint_params={},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
+        )
 
     def test_metadata(self, transport):
         """Test metadata method returns correct information."""
@@ -176,9 +152,7 @@ class TestBaseTransport:
         assert headers["Custom-Header"] == "custom-value"
         assert headers["User-Agent"] == AIPERF_USER_AGENT
 
-    def test_build_headers_transport_headers_override(
-        self, request_info, model_endpoint
-    ):
+    def test_build_headers_transport_headers_override(self, request_info):
         """Test that transport headers can override endpoint headers."""
 
         class CustomTransport(FakeTransport):
@@ -190,7 +164,7 @@ class TestBaseTransport:
                     "Accept": "text/event-stream",
                 }
 
-        transport = CustomTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = CustomTransport(model_endpoint=request_info.model_endpoint)
         request_info.endpoint_headers = {"Content-Type": "text/plain"}
 
         headers = transport.build_headers(request_info)
@@ -198,7 +172,7 @@ class TestBaseTransport:
         assert headers["Content-Type"] == "application/json"
         assert headers["Accept"] == "text/event-stream"
 
-    def test_build_headers_priority_order(self, request_info, model_endpoint):
+    def test_build_headers_priority_order(self, request_info):
         """Test header merge priority: universal < endpoint < transport."""
 
         class CustomTransport(FakeTransport):
@@ -207,7 +181,7 @@ class TestBaseTransport:
             ) -> dict[str, str]:
                 return {"X-Priority": "transport", "Content-Type": "application/json"}
 
-        transport = CustomTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = CustomTransport(model_endpoint=request_info.model_endpoint)
         request_info.endpoint_headers = {
             "X-Priority": "endpoint",
             "Authorization": "Bearer token",
@@ -235,14 +209,30 @@ class TestBaseTransport:
 
     def test_build_url_preserves_existing_params(self, transport):
         """Test that existing URL params are preserved."""
-        run = _make_run(
-            endpoint={
-                "type": "chat",
-                "urls": ["http://localhost:8000/v1/chat/completions?existing=param"],
-            }
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000/v1/chat/completions?existing=param"],
+                custom_endpoint=None,
+            ),
         )
-        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
-        request_info = _make_request_info(run.cfg, endpoint_params={"new": "value"})
+        transport = FakeTransport(model_endpoint=model_endpoint)
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[],
+            endpoint_headers={},
+            endpoint_params={"new": "value"},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
+        )
 
         url = transport.build_url(request_info)
         assert "existing=param" in url
@@ -250,15 +240,29 @@ class TestBaseTransport:
 
     def test_build_url_endpoint_params_override_existing(self, transport):
         """Test that endpoint params override existing URL params."""
-        run = _make_run(
-            endpoint={
-                "type": "chat",
-                "urls": ["http://localhost:8000/v1/chat/completions?key=original"],
-            }
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000/v1/chat/completions?key=original"],
+                custom_endpoint=None,
+            ),
         )
-        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
-        request_info = _make_request_info(
-            run.cfg, endpoint_params={"key": "overridden"}
+        transport = FakeTransport(model_endpoint=model_endpoint)
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[],
+            endpoint_headers={},
+            endpoint_params={"key": "overridden"},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
         )
 
         url = transport.build_url(request_info)
@@ -288,15 +292,29 @@ class TestBaseTransport:
 
     def test_build_url_complex_query_string(self, transport):
         """Test complex query string handling."""
-        run = _make_run(
-            endpoint={
-                "type": "chat",
-                "urls": ["http://localhost:8000/api?a=1&b=2&c=3"],
-            }
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000/api?a=1&b=2&c=3"],
+                custom_endpoint=None,
+            ),
         )
-        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
-        request_info = _make_request_info(
-            run.cfg, endpoint_params={"d": "4", "b": "overridden"}
+        transport = FakeTransport(model_endpoint=model_endpoint)
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[],
+            endpoint_headers={},
+            endpoint_params={"d": "4", "b": "overridden"},  # Override 'b'
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
         )
 
         url = transport.build_url(request_info)
@@ -308,6 +326,202 @@ class TestBaseTransport:
 
     @pytest.mark.asyncio
     async def test_send_request_abstract_implemented(self, transport, request_info):
-        """Test that send_request is callable on concrete implementation."""
+        """Test that send_request can be called on concrete implementation."""
         record = await transport.send_request(request_info, {"test": "payload"})
         assert isinstance(record, RequestRecord)
+
+    def test_get_url_abstract_implemented(self, transport, request_info):
+        """Test that get_url can be called on concrete implementation."""
+        url = transport.get_url(request_info)
+        assert isinstance(url, str)
+        assert url == "http://localhost:8000/v1/chat/completions"
+
+
+class TestSessionHeader:
+    """Tests for --session-header rename of X-Correlation-ID."""
+
+    def _make_transport(self, session_header: str | None = None) -> FakeTransport:
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000"],
+                session_header=session_header,
+            ),
+        )
+        return FakeTransport(model_endpoint=model_endpoint)
+
+    def _make_request_info(
+        self, transport: FakeTransport, x_correlation_id: str = "conv-uuid-123"
+    ) -> RequestInfo:
+        return RequestInfo(
+            model_endpoint=transport.model_endpoint,
+            turns=[],
+            endpoint_headers={},
+            endpoint_params={},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-id",
+            x_correlation_id=x_correlation_id,
+            conversation_id="conv-id",
+        )
+
+    def test_default_sends_x_correlation_id(self):
+        """Without --session-header, X-Correlation-ID is used as before."""
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert "X-Session-ID" not in headers
+
+    def test_session_header_replaces_x_correlation_id(self):
+        """With --session-header, the configured name is used instead of X-Correlation-ID."""
+        transport = self._make_transport(session_header="X-Session-ID")
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert "X-Correlation-ID" not in headers
+
+    def test_session_header_custom_name(self):
+        """Any header name is accepted."""
+        transport = self._make_transport(session_header="My-Pod-Affinity-Key")
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["My-Pod-Affinity-Key"] == "conv-uuid-123"
+        assert "X-Correlation-ID" not in headers
+
+    def test_different_conversations_get_different_values(self):
+        """Two conversations with different UUIDs produce different header values."""
+        transport = self._make_transport(session_header="X-Session-ID")
+        ri_a = self._make_request_info(transport, x_correlation_id="uuid-aaa")
+        ri_b = self._make_request_info(transport, x_correlation_id="uuid-bbb")
+
+        headers_a = transport.build_headers(ri_a)
+        headers_b = transport.build_headers(ri_b)
+
+        assert headers_a["X-Session-ID"] == "uuid-aaa"
+        assert headers_b["X-Session-ID"] == "uuid-bbb"
+        assert headers_a["X-Session-ID"] != headers_b["X-Session-ID"]
+
+    def test_static_headers_unaffected(self):
+        """Static --header values appear alongside the session header."""
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000"],
+                headers=[("Authorization", "Bearer tok"), ("X-Custom", "val")],
+                session_header="X-Session-ID",
+            ),
+        )
+        transport = FakeTransport(model_endpoint=model_endpoint)
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[],
+            endpoint_headers={"Authorization": "Bearer tok", "X-Custom": "val"},
+            endpoint_params={},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-id",
+            x_correlation_id="conv-uuid-123",
+            conversation_id="conv-id",
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers["X-Custom"] == "val"
+        assert "X-Correlation-ID" not in headers
+
+
+class TestTransportMetadata:
+    """Tests for TransportMetadata model."""
+
+    def test_transport_metadata_creation(self):
+        """Test creating TransportMetadata instance."""
+        metadata = TransportMetadata(
+            transport_type=TransportType.HTTP, url_schemes=["http", "https"]
+        )
+        assert metadata.transport_type == TransportType.HTTP
+        assert metadata.url_schemes == ["http", "https"]
+
+    def test_transport_metadata_single_scheme(self):
+        """Test metadata with single URL scheme."""
+        metadata = TransportMetadata(
+            transport_type=TransportType.HTTP, url_schemes=["grpc"]
+        )
+        assert len(metadata.url_schemes) == 1
+        assert "grpc" in metadata.url_schemes
+
+
+class TestBaseTransportAbstractMethods:
+    """Test that BaseTransport enforces abstract methods."""
+
+    def test_cannot_instantiate_base_transport(self):
+        """Test that BaseTransport cannot be instantiated directly."""
+        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+            BaseTransport()
+
+    def test_must_implement_metadata(self):
+        """Test that subclasses must implement metadata()."""
+
+        class IncompleteTransport(BaseTransport):
+            def get_url(self, request_info: RequestInfo) -> str:
+                return ""
+
+            async def send_request(
+                self, request_info: RequestInfo, payload: dict
+            ) -> RequestRecord:
+                return RequestRecord()
+
+        with pytest.raises(TypeError):
+            IncompleteTransport()
+
+    def test_must_implement_get_url(self):
+        """Test that subclasses must implement get_url()."""
+
+        class IncompleteTransport(BaseTransport):
+            @classmethod
+            def metadata(cls) -> TransportMetadata:
+                return TransportMetadata(
+                    transport_type=TransportType.HTTP, url_schemes=["http"]
+                )
+
+            async def send_request(
+                self, request_info: RequestInfo, payload: dict
+            ) -> RequestRecord:
+                return RequestRecord()
+
+        with pytest.raises(TypeError):
+            IncompleteTransport()
+
+    def test_must_implement_send_request(self):
+        """Test that subclasses must implement send_request()."""
+
+        class IncompleteTransport(BaseTransport):
+            @classmethod
+            def metadata(cls) -> TransportMetadata:
+                return TransportMetadata(
+                    transport_type=TransportType.HTTP, url_schemes=["http"]
+                )
+
+            def get_url(self, request_info: RequestInfo) -> str:
+                return ""
+
+        with pytest.raises(TypeError):
+            IncompleteTransport()
