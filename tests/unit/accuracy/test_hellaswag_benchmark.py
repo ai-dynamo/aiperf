@@ -177,6 +177,27 @@ class TestResolveTasks:
             _resolve_tasks(["NOT_A_REAL_TASK"])
 
 
+class TestTaskValidationPrecedesDatasetDownload:
+    """Pin that an invalid ``--accuracy-tasks`` value fails BEFORE the
+    HuggingFace dataset is fetched.
+
+    Previously ``load_problems`` called ``load_dataset()`` before
+    ``_resolve_tasks(tasks)``, so a typo in ``--accuracy-tasks`` would
+    trigger a multi-MB HellaSwag download (and could fail on a
+    network/cache error) just to surface the validation error.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unknown_task_does_not_call_load_dataset(self) -> None:
+        with patch("aiperf.accuracy.benchmarks.hellaswag.load_dataset") as mock_load:
+            bench = HellaSwagBenchmark(run=_make_run())
+            with pytest.raises(ValueError, match="Unknown HellaSwag task"):
+                await bench.load_problems(
+                    tasks=["NOT_A_REAL_TASK"], n_shots=0, enable_cot=False
+                )
+            mock_load.assert_not_called()
+
+
 class TestPromptByteEqualWithDeepEval:
     """The flat prompt must be byte-equal to what
     ``HellaSwagTemplate.generate_output`` produces — same template, same

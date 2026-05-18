@@ -192,8 +192,12 @@ class HellaSwagBenchmark(AIPerfLoggerMixin):
                 f"examples (got {n_shots}); DeepEval asserts "
                 "``n_shots <= 15``."
             )
-        ds: DatasetDict = await asyncio.to_thread(load_dataset, DATASET_NAME)
+        # Validate ``tasks`` BEFORE the HF download: an invalid
+        # ``--accuracy-tasks`` value would otherwise trigger a
+        # multi-MB ``load_dataset`` call (and potential network/cache
+        # failure) just to surface the user's typo.
         selected_tasks = _resolve_tasks(tasks)
+        ds: DatasetDict = await asyncio.to_thread(load_dataset, DATASET_NAME)
         return await asyncio.to_thread(
             self._build_problems, ds, selected_tasks, n_shots
         )
