@@ -63,6 +63,35 @@ def test_archived_sweep_variations_use_cell_metrics_when_child_jobs_are_gone() -
     }
 
 
+def test_manifest_falls_back_to_archived_detail_children() -> None:
+    script = f"""
+        import {{ resolveSweepManifest }} from {SWEEP_DETAIL_HELPERS_PATH.as_uri()!r};
+        const manifest = resolveSweepManifest({{
+          detail: {{
+            children: [{{
+              name: 'sweep-v00',
+              namespace: 'bench',
+              phase: 'Archived',
+              variationIndex: 0,
+              variationLabel: 'latin_hypercube_0000',
+            }}],
+          }},
+          archivedChildren: [],
+        }});
+        console.log(JSON.stringify(manifest));
+    """
+
+    assert json.loads(_run_node(script)) == [
+        {
+            "name": "sweep-v00",
+            "namespace": "bench",
+            "phase": "Archived",
+            "variationIndex": 0,
+            "variationLabel": "latin_hypercube_0000",
+        }
+    ]
+
+
 def test_archived_sweep_detail_hides_diagnostics_panel() -> None:
     script = f"""
         import {{ shouldShowSweepDiagnostics }} from {SWEEP_DETAIL_HELPERS_PATH.as_uri()!r};

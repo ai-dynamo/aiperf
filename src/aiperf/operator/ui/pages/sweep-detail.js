@@ -20,7 +20,7 @@ import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
 import { fmtBytes, fmtNumber } from '../lib/format.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
-import { buildSweepVariations, shouldShowSweepDiagnostics } from './sweep-detail-helpers.js';
+import { buildSweepVariations, resolveSweepManifest, shouldShowSweepDiagnostics } from './sweep-detail-helpers.js';
 
 // ``archived`` is included so polling stops for sweeps whose live CR
 // has been deleted but whose aggregate.json is still served from the
@@ -258,17 +258,10 @@ export function SweepDetail({ namespace, name, epoch }) {
   // ``/sweeps/<ns>/<name>/children`` endpoint synthesizes a live manifest
   // from labelled AIPerfJob CRs in that case, so the live-variations
   // rollup card has data to render immediately as children appear.
-  const manifest = useMemo(() => {
-    const raw = detail?.status?.aggregate?.children;
-    if (Array.isArray(raw) && raw.length > 0) return raw;
-    if (raw && Array.isArray(raw.children) && raw.children.length > 0) {
-      return raw.children;
-    }
-    if (Array.isArray(archivedChildren) && archivedChildren.length > 0) {
-      return archivedChildren;
-    }
-    return [];
-  }, [detail, archivedChildren]);
+  const manifest = useMemo(
+    () => resolveSweepManifest({ detail, archivedChildren }),
+    [detail, archivedChildren],
+  );
 
   // Fetch each child's status (summary + phase + progressPercent) once per
   // manifest snapshot, so the headline cells, the live-variations card, and

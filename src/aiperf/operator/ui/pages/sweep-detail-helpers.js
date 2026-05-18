@@ -45,6 +45,21 @@ function indexCells(cells) {
   return out;
 }
 
+export function resolveSweepManifest({ detail, archivedChildren }) {
+  const raw = detail?.status?.aggregate?.children;
+  if (Array.isArray(raw) && raw.length > 0) return raw;
+  if (raw && Array.isArray(raw.children) && raw.children.length > 0) {
+    return raw.children;
+  }
+  if (Array.isArray(archivedChildren) && archivedChildren.length > 0) {
+    return archivedChildren;
+  }
+  if (Array.isArray(detail?.children) && detail.children.length > 0) {
+    return detail.children;
+  }
+  return [];
+}
+
 export function buildSweepVariations({
   manifest,
   childSummaries,

@@ -22,8 +22,7 @@
 import { html } from 'htm/preact';
 import { palette } from '../lib/theme.js';
 import { fmtNumber } from '../lib/format.js';
-
-const PHASE_DONE = new Set(['Succeeded', 'Completed']);
+import { trialContributesMetrics } from './live-variations-helpers.js';
 const PHASE_FAIL = new Set(['Failed', 'PartiallyFailed', 'Cancelled']);
 const PHASE_RUN = new Set(['Running', 'Profiling', 'Processing']);
 
@@ -163,7 +162,7 @@ function chipStyle() {
 
 function trialPill(trial) {
   const { phase, progressPercent } = trial;
-  if (PHASE_DONE.has(phase)) {
+  if (trialContributesMetrics(phase)) {
     return html`<span style=${
       `display:inline-block;padding:2px 8px;border-radius:9px;` +
       `background:${palette.green}33;color:${palette.green};` +
@@ -247,7 +246,7 @@ export function LiveVariationsCard({ manifest, childData }) {
           </thead>
           <tbody>
             ${groups.map(g => {
-              const completed = g.trials.filter(t => PHASE_DONE.has(t.phase));
+              const completed = g.trials.filter(t => trialContributesMetrics(t.phase));
               const tpsValues = completed.map(t => summaryMetric(t.summary, METRIC_THROUGHPUT.camel, METRIC_THROUGHPUT.tag, METRIC_THROUGHPUT.stat));
               const p99Values = completed.map(t => summaryMetric(t.summary, METRIC_P99.camel, METRIC_P99.tag, METRIC_P99.stat));
               const ttftValues = completed.map(t => summaryMetric(t.summary, METRIC_TTFT.camel, METRIC_TTFT.tag, METRIC_TTFT.stat));
