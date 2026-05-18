@@ -22,6 +22,14 @@ const COLUMNS = [
 // children table on /sweeps/<ns>/<name>; matches the way users
 // expect "I hid latency, leave it hidden" to behave globally.
 const HIDDEN_COLS_STORAGE_KEY = 'aiperf-ui-v1.job-table.hidden-cols';
+const NUMERIC_SORT_KEYS = new Set(['workers', 'progress', 'throughput', 'latency', 'age']);
+
+function finiteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function loadHiddenCols() {
   if (typeof localStorage === 'undefined') return new Set();
@@ -50,11 +58,11 @@ function jobValue(job, key) {
     case 'name': return job.name ?? '';
     case 'namespace': return job.namespace ?? '';
     case 'phase': return job.phase ?? '';
-    case 'workers': return job.workersTotal ?? 0;
-    case 'progress': return job.progressPercent ?? 0;
-    case 'throughput': return job.throughputRps ?? 0;
-    case 'latency': return job.latencyP99Ms ?? 0;
-    case 'age': return job.created ? new Date(job.created).getTime() : 0;
+    case 'workers': return job.workersTotal ?? null;
+    case 'progress': return job.progressPercent ?? null;
+    case 'throughput': return job.throughputRps ?? null;
+    case 'latency': return job.latencyP99Ms ?? null;
+    case 'age': return job.created ? new Date(job.created).getTime() : null;
     default: return '';
   }
 }
@@ -128,8 +136,15 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
     : (jobs ?? []);
 
   const sorted = [...filtered].sort((a, b) => {
-    const av = jobValue(a, sortKey);
-    const bv = jobValue(b, sortKey);
+    let av = jobValue(a, sortKey);
+    let bv = jobValue(b, sortKey);
+    if (NUMERIC_SORT_KEYS.has(sortKey)) {
+      av = finiteNumber(av);
+      bv = finiteNumber(bv);
+    }
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
     if (av < bv) return -sortDir;
     if (av > bv) return sortDir;
     return 0;
@@ -139,7 +154,7 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
   const maxThroughput = useMemo(() => {
     let max = 0;
     for (const j of (jobs ?? [])) {
-      const val = j.throughputRps ?? 0;
+      const val = finiteNumber(j.throughputRps) ?? 0;
       if (val > max) max = val;
     }
     return max;
@@ -178,11 +193,12 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
   // Feature 9: Throughput with inline relative bar
   function renderThroughput(job) {
     const val = job.throughputRps;
-    if (val == null) return html`<span class="text-dim">---</span>`;
+    const numericVal = finiteNumber(val);
+    if (numericVal == null) return html`<span class="text-dim">---</span>`;
 
     const phase = (job.phase ?? '').toLowerCase();
     const isComplete = phase === 'completed' || phase === 'succeeded';
-    const pct = maxThroughput > 0 ? (val / maxThroughput) * 100 : 0;
+    const pct = maxThroughput > 0 ? (numericVal / maxThroughput) * 100 : 0;
 
     return html`
       <div style="display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 120px">
@@ -201,7 +217,7 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
   }
 
   function renderLatency(job) {
-    const val = job.latencyP99Ms;
+    const val = finiteNumber(job.latencyP99Ms);
     if (val == null) return html`<span class="text-dim">---</span>`;
     if (val > 1000) return html`<span>${fmtNumber(val / 1000, 1)} s</span>`;
     return html`<span>${fmtNumber(val, 0)} ms</span>`;
@@ -231,6 +247,8 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
                    onclick=${e => { e.stopPropagation(); navigate(`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`); e.preventDefault(); }}>
                   ↳ sweep: ${job.sweepName}
                 </a>
+                ${job.variationLabel && html`<span> · ${job.variationLabel}</span>`}
+                ${job.trialIndex != null && html`<span> · trial ${job.trialIndex}</span>`}
               </div>
             `}
           </td>

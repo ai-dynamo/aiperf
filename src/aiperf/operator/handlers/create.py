@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import aiohttp
@@ -368,10 +369,13 @@ async def _create_resources(
     job_id: str,
     status: StatusBuilder,
     patch: kopf.Patch,
+    is_cancelled: Callable[[], bool],
 ) -> dict[str, Any]:
     """Build deployment, run preflight checks, and create all k8s resources."""
     validated_spec = _validate_spec(spec, body, status)
     await _check_endpoint_reachable(validated_spec, body, status)
+    if is_cancelled():
+        return {}
 
     deployment, total_workers = _build_deployment(spec, name, namespace, job_id)
     deploy_config = deployment.deployment
@@ -391,13 +395,23 @@ async def _create_resources(
             name=name,
             status=status,
         )
+        if is_cancelled():
+            return {}
 
         await _create_rbac(api, deployment, namespace, owner_ref_dict)
+        if is_cancelled():
+            return {}
         configmap_name = await _create_configmap(
             api, deployment, namespace, owner_ref_dict
         )
+        if is_cancelled():
+            return {}
         await _persist_spec_and_index(spec, namespace, name, job_id, body=body)
+        if is_cancelled():
+            return {}
         jobset_name = await _create_jobset(api, deployment, namespace, owner_ref_dict)
+        if is_cancelled():
+            return {}
 
         return _finalize_success(
             patch=patch,
@@ -429,9 +443,14 @@ async def on_create(
     # CR with the same name. Without this, deleting and recreating a CR of
     # the same name inherits the sticky cancel flag and the new CR can
     # never exit Pending.
-    from aiperf.operator.client_cache import clear_cancellation, job_key
+    from aiperf.operator.client_cache import (
+        clear_cancellation,
+        is_cancellation_requested,
+        job_key,
+    )
 
-    clear_cancellation(job_key(namespace, job_id))
+    key = job_key(namespace, job_id)
+    clear_cancellation(key)
 
     status = StatusBuilder(patch)
 
@@ -445,6 +464,7 @@ async def on_create(
             job_id=job_id,
             status=status,
             patch=patch,
+            is_cancelled=lambda: is_cancellation_requested(key),
         )
     except (kopf.PermanentError, kopf.TemporaryError):
         raise

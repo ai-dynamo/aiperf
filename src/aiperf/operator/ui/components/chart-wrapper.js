@@ -19,6 +19,15 @@ function dataFingerprint(data) {
   ).join('|');
 }
 
+function optionsFingerprint(value, seen = new WeakSet()) {
+  if (typeof value === 'function') return `function:${value.toString()}`;
+  if (value == null || typeof value !== 'object') return String(value);
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  if (Array.isArray(value)) return `[${value.map(item => optionsFingerprint(item, seen)).join(',')}]`;
+  return `{${Object.keys(value).sort().map(key => `${key}:${optionsFingerprint(value[key], seen)}`).join(',')}}`;
+}
+
 /**
  * Chart.js lifecycle wrapper for Preact.
  * Chart.js is loaded as UMD via <script> in index.html, accessed as window.Chart.
@@ -60,7 +69,7 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
       },
     });
     prevFingerprintRef.current = dataFingerprint(data);
-    prevOptionsRef.current = JSON.stringify(options);
+    prevOptionsRef.current = optionsFingerprint(options);
 
     return () => {
       if (chartRef.current) {
@@ -80,10 +89,10 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
     chartRef.current.update();
   }, [data]);
 
-  // Update options only when serialized form changes
+  // Update options when callbacks or plain option values change.
   useEffect(() => {
     if (!chartRef.current) return;
-    const optStr = JSON.stringify(options);
+    const optStr = optionsFingerprint(options);
     if (optStr === prevOptionsRef.current) return;
     prevOptionsRef.current = optStr;
     chartRef.current.options = { responsive: true, maintainAspectRatio: false, animation: { duration: 300 }, ...options };

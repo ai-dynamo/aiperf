@@ -34,9 +34,9 @@ export function RecordProcessing({ phases }) {
     totalSuccess += p.recordsSuccess ?? 0;
     totalError += p.recordsError ?? 0;
     totalRequestsCompleted += p.requestsCompleted ?? 0;
-    const sendingComplete = p.sendingComplete ?? false;
-    const recPct = p.recordsProgressPercent ?? 0;
-    const isActive = !sendingComplete || recPct < 100;
+    const isRequestsComplete = p.isRequestsComplete ?? false;
+    const isRecordsComplete = p.isRecordsComplete ?? false;
+    const isActive = !isRequestsComplete || !isRecordsComplete;
     if (isActive) {
       activeRps += p.recordsPerSecond ?? p.records_per_second ?? 0;
       const eta = p.recordsEtaSeconds ?? p.records_eta_seconds ?? null;
@@ -115,13 +115,14 @@ export function RecordProcessing({ phases }) {
             const rps = p.recordsPerSecond ?? 0;
             const recPct = p.recordsProgressPercent ?? 0;
             const phaseRecords = rs + re;
-            const sendingComplete = p.sendingComplete ?? false;
+            const isRequestsComplete = p.isRequestsComplete ?? false;
+            const isRecordsComplete = p.isRecordsComplete ?? false;
             const wasCancelled = p.wasCancelled ?? false;
             const timedOut = p.timeoutTriggered ?? false;
-            const isActive = !sendingComplete || recPct < 100;
+            const isActive = !isRequestsComplete || !isRecordsComplete;
             const rowState = wasCancelled ? 'cancelled'
               : timedOut ? 'timeout'
-              : (sendingComplete && recPct >= 100) ? 'done'
+              : (isRequestsComplete && isRecordsComplete) ? 'done'
               : isActive ? 'active'
               : 'pending';
 

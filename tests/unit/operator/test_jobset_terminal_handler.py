@@ -10,8 +10,36 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest import param
 
-from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.constants import AIPerfLabels, Annotations
+from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 from aiperf.operator.handlers.jobset_terminal import handle_jobset_conditions
+
+
+def _aiperfjob_body(*, annotations: dict[str, str] | None = None) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"name": "ajob", "uid": "uid-ajob"}
+    if annotations is not None:
+        metadata["annotations"] = annotations
+    return {"metadata": metadata, "status": {}}
+
+
+def _trusted_jobset_body() -> dict[str, Any]:
+    return {
+        "metadata": {
+            "name": "aiperf-ajob",
+            "labels": {
+                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+                AIPerfLabels.JOB_ID: "ajob",
+            },
+            "ownerReferences": [
+                {
+                    "apiVersion": AIPERF_JOB_API_VERSION,
+                    "kind": "AIPerfJob",
+                    "name": "ajob",
+                    "uid": "uid-ajob",
+                }
+            ],
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -23,12 +51,7 @@ async def test_completed_condition_triggers_annotation_patch() -> None:
     with (
         patch(
             "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
-            new=AsyncMock(
-                return_value={
-                    "metadata": {"name": "ajob", "annotations": {}},
-                    "status": {},
-                }
-            ),
+            new=AsyncMock(return_value=_aiperfjob_body(annotations={})),
         ),
         patch(
             "aiperf.operator.handlers.jobset_terminal._set_benchmark_complete_annotation",
@@ -36,7 +59,11 @@ async def test_completed_condition_triggers_annotation_patch() -> None:
         ) as setter,
     ):
         await handle_jobset_conditions(
-            old=[], new=new_conditions, namespace="ns", jobset_name="aiperf-ajob"
+            old=[],
+            new=new_conditions,
+            namespace="ns",
+            jobset_name="aiperf-ajob",
+            jobset_body=_trusted_jobset_body(),
         )
     setter.assert_awaited_once_with("ns", "ajob")
 
@@ -125,13 +152,7 @@ async def test_already_completed_in_old_conditions_skips() -> None:
 async def test_existing_annotation_skips_redundant_patch() -> None:
     """If the controller pod already set BENCHMARK_COMPLETE, skip the redundant patch."""
     new = [{"type": "Completed", "status": "True"}]
-    body = {
-        "metadata": {
-            "name": "ajob",
-            "annotations": {Annotations.BENCHMARK_COMPLETE: "true"},
-        },
-        "status": {},
-    }
+    body = _aiperfjob_body(annotations={Annotations.BENCHMARK_COMPLETE: "true"})
     with (
         patch(
             "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -143,7 +164,11 @@ async def test_existing_annotation_skips_redundant_patch() -> None:
         ) as setter,
     ):
         await handle_jobset_conditions(
-            old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+            old=[],
+            new=new,
+            namespace="ns",
+            jobset_name="aiperf-ajob",
+            jobset_body=_trusted_jobset_body(),
         )
     setter.assert_not_awaited()
 
@@ -235,7 +260,7 @@ class TestJobsetTerminalAdversarial:
             {"type": "Failed", "status": "True"},
             {"type": "Completed", "status": "True"},
         ]
-        body = {"metadata": {"name": "ajob", "annotations": {}}, "status": {}}
+        body = _aiperfjob_body(annotations={})
         with (
             patch(
                 "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -247,7 +272,11 @@ class TestJobsetTerminalAdversarial:
             ) as setter,
         ):
             await handle_jobset_conditions(
-                old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                old=[],
+                new=new,
+                namespace="ns",
+                jobset_name="aiperf-ajob",
+                jobset_body=_trusted_jobset_body(),
             )
         setter.assert_awaited_once()
 
@@ -274,7 +303,7 @@ class TestJobsetTerminalAdversarial:
             junk_entry,
             {"type": "Completed", "status": "True"},
         ]
-        body = {"metadata": {"name": "ajob", "annotations": {}}, "status": {}}
+        body = _aiperfjob_body(annotations={})
         with (
             patch(
                 "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -286,7 +315,11 @@ class TestJobsetTerminalAdversarial:
             ) as setter,
         ):
             await handle_jobset_conditions(
-                old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                old=[],
+                new=new,
+                namespace="ns",
+                jobset_name="aiperf-ajob",
+                jobset_body=_trusted_jobset_body(),
             )
         setter.assert_awaited_once()
 
@@ -348,7 +381,7 @@ class TestJobsetTerminalAdversarial:
         treat that as "no prior annotation" and proceed to patch."""
         new = [{"type": "Completed", "status": "True"}]
         # Note: metadata has no "annotations" key at all.
-        body = {"metadata": {"name": "ajob"}, "status": {}}
+        body = _aiperfjob_body()
         with (
             patch(
                 "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -360,7 +393,11 @@ class TestJobsetTerminalAdversarial:
             ) as setter,
         ):
             await handle_jobset_conditions(
-                old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                old=[],
+                new=new,
+                namespace="ns",
+                jobset_name="aiperf-ajob",
+                jobset_body=_trusted_jobset_body(),
             )
         setter.assert_awaited_once_with("ns", "ajob")
 
@@ -369,10 +406,8 @@ class TestJobsetTerminalAdversarial:
         """``metadata.annotations = None`` (apiserver merge-patch artifact):
         existing-annotation check must coerce to {} and proceed to patch."""
         new = [{"type": "Completed", "status": "True"}]
-        body = {
-            "metadata": {"name": "ajob", "annotations": None},
-            "status": {},
-        }
+        body = _aiperfjob_body()
+        body["metadata"]["annotations"] = None
         with (
             patch(
                 "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -384,19 +419,17 @@ class TestJobsetTerminalAdversarial:
             ) as setter,
         ):
             await handle_jobset_conditions(
-                old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                old=[],
+                new=new,
+                namespace="ns",
+                jobset_name="aiperf-ajob",
+                jobset_body=_trusted_jobset_body(),
             )
         setter.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_aiperfjob_body_with_no_metadata_handled(self) -> None:
-        """An AIPerfJob body with no metadata at all (defensive) → coerce
-        to {} → no-existing-annotation → patch fires.
-
-        While the apiserver shouldn't ever return a body without metadata,
-        the guard pattern ``(body.get("metadata") or {}).get("annotations")
-        or {}`` should accept it without crashing.
-        """
+        """An AIPerfJob body with no metadata cannot prove ownership and skips."""
         new = [{"type": "Completed", "status": "True"}]
         body: dict[str, Any] = {"status": {}}  # NO metadata
         with (
@@ -410,9 +443,13 @@ class TestJobsetTerminalAdversarial:
             ) as setter,
         ):
             await handle_jobset_conditions(
-                old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                old=[],
+                new=new,
+                namespace="ns",
+                jobset_name="aiperf-ajob",
+                jobset_body=_trusted_jobset_body(),
             )
-        setter.assert_awaited_once()
+        setter.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_set_annotation_swallows_apiexception_404(self) -> None:
@@ -505,7 +542,7 @@ class TestJobsetTerminalAdversarial:
         import asyncio
 
         new = [{"type": "Completed", "status": "True"}]
-        body = {"metadata": {"name": "ajob", "annotations": {}}, "status": {}}
+        body = _aiperfjob_body(annotations={})
         with (
             patch(
                 "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -518,10 +555,18 @@ class TestJobsetTerminalAdversarial:
         ):
             await asyncio.gather(
                 handle_jobset_conditions(
-                    old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                    old=[],
+                    new=new,
+                    namespace="ns",
+                    jobset_name="aiperf-ajob",
+                    jobset_body=_trusted_jobset_body(),
                 ),
                 handle_jobset_conditions(
-                    old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                    old=[],
+                    new=new,
+                    namespace="ns",
+                    jobset_name="aiperf-ajob",
+                    jobset_body=_trusted_jobset_body(),
                 ),
             )
         # Both pass the existing-annotation check (still empty in mocked

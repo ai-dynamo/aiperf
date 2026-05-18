@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from cyclopts import App, Parameter
@@ -32,6 +33,7 @@ __all__ = [
 ]
 
 app = App(name="debug")
+logger = logging.getLogger("aiperf.kube")
 
 
 async def _get_namespace_events(
@@ -58,7 +60,11 @@ async def _get_namespace_events(
     serializer = _get_serializer(api)
     result = []
     for event in event_list.items:
-        raw = serializer.sanitize_for_serialization(event) or {}
+        try:
+            raw = serializer.sanitize_for_serialization(event) or {}
+        except Exception:  # noqa: BLE001 - diagnostics best-effort; skip malformed events
+            logger.debug("Skipping malformed Kubernetes event during debug aggregation", exc_info=True)
+            continue
         involved = raw.get("involvedObject", {})
         result.append(
             {
@@ -95,7 +101,11 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
     serializer = _get_serializer(api)
     result = []
     for node in node_list.items:
-        raw = serializer.sanitize_for_serialization(node) or {}
+        try:
+            raw = serializer.sanitize_for_serialization(node) or {}
+        except Exception:  # noqa: BLE001 - diagnostics best-effort; skip malformed nodes
+            logger.debug("Skipping malformed Kubernetes node during debug aggregation", exc_info=True)
+            continue
         status = raw.get("status", {})
         capacity = status.get("capacity", {})
         allocatable = status.get("allocatable", {})

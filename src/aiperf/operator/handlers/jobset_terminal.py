@@ -21,7 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.constants import AIPerfLabels, Annotations
+from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +74,43 @@ async def _lookup_aiperfjob_body(
                 plural=AIPERF_PLURAL,
                 name=ajob_name,
             )
-    except ApiException:
-        return None
+    except ApiException as e:
+        if e.status == 404:
+            return None
+        raise
     except Exception:  # noqa: BLE001 - best-effort lookup; absent CR means sweep-owned or already deleted
         return None
+
+
+def _is_trusted_aiperf_jobset(
+    *,
+    jobset_body: dict[str, Any] | None,
+    parent_body: dict[str, Any],
+    jobset_name: str,
+) -> bool:
+    """Return True when the JobSet body proves AIPerfJob ownership."""
+    metadata = (jobset_body or {}).get("metadata") or {}
+    parent_metadata = parent_body.get("metadata") or {}
+    parent_name = parent_metadata.get("name")
+    parent_uid = parent_metadata.get("uid")
+    if not isinstance(parent_name, str) or not isinstance(parent_uid, str):
+        return False
+    labels = metadata.get("labels") or {}
+    if metadata.get("name") != jobset_name:
+        return False
+    if labels.get(AIPerfLabels.APP_KEY) != AIPerfLabels.APP_VALUE:
+        return False
+    if labels.get(AIPerfLabels.JOB_ID) != parent_name:
+        return False
+    owner_refs = metadata.get("ownerReferences") or []
+    return any(
+        isinstance(ref, dict)
+        and ref.get("apiVersion") == AIPERF_JOB_API_VERSION
+        and ref.get("kind") == "AIPerfJob"
+        and ref.get("name") == parent_name
+        and ref.get("uid") == parent_uid
+        for ref in owner_refs
+    )
 
 
 async def _set_benchmark_complete_annotation(
@@ -132,6 +166,7 @@ async def handle_jobset_conditions(
     new: list[dict[str, Any]] | None,
     namespace: str,
     jobset_name: str,
+    jobset_body: dict[str, Any] | None = None,
 ) -> None:
     """React to a JobSet conditions transition; success annotates the parent AIPerfJob.
 
@@ -146,6 +181,12 @@ async def handle_jobset_conditions(
     body = await _lookup_aiperfjob_body(namespace, jobset_name)
     if body is None:
         return  # sweep-owned or missing
+    if not _is_trusted_aiperf_jobset(
+        jobset_body=jobset_body,
+        parent_body=body,
+        jobset_name=jobset_name,
+    ):
+        return  # name collision or non-AIPerf JobSet
     existing = (body.get("metadata") or {}).get("annotations") or {}
     if existing.get(Annotations.BENCHMARK_COMPLETE) == "true":
         return  # controller pod already annotated; on_benchmark_complete is in flight

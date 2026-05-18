@@ -28,6 +28,7 @@ from aiperf.kubernetes.console import (
     print_warning,
 )
 from aiperf.kubernetes.port_forward import port_forward_with_status
+from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -37,6 +38,16 @@ if TYPE_CHECKING:
 
 API_RESULTS_FILES_PATH = "/api/results/files"
 API_RESULTS_LIST_PATH = "/api/results/list"
+
+
+async def _response_json(response: aiohttp.ClientResponse) -> dict:
+    """Parse JSON from aiohttp responses and lightweight test doubles."""
+    try:
+        return await response.json(loads=orjson.loads)
+    except TypeError as e:
+        if "loads" not in str(e):
+            raise
+        return await response.json()
 
 
 async def _download_artifact(
@@ -68,6 +79,9 @@ async def _download_artifact(
                 x_filename = resp.headers.get("x-filename")
                 raw_dest = x_filename or safe_filename
                 dest_name = Path(raw_dest).name or safe_filename
+                if dest_name == READY_MARKER_NAME:
+                    print_warning(f"Refusing reserved filename: {raw_dest!r}")
+                    return None
                 dest_path = output_dir / dest_name
 
                 content = await resp.read()
@@ -107,7 +121,7 @@ async def _list_available_artifacts(
     try:
         async with session.get(list_url) as list_resp:
             list_resp.raise_for_status()
-            list_data = await list_resp.json(loads=orjson.loads)
+            list_data = await _response_json(list_resp)
             return [f["name"] for f in list_data.get("files", [])]
     except (aiohttp.ClientError, KeyError) as e:
         print_error(f"Failed to list available results for job {job_id}: {e!r}")

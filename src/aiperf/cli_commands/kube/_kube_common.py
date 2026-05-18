@@ -35,6 +35,10 @@ def resolve_child_name(
     Returns:
         Child AIPerfJob name, or ``None`` when ``variation`` is ``None``.
 
+    Raises:
+        ValueError: If the selector cannot map to the operator's child-name
+            cardinality budget.
+
     Examples:
         >>> resolve_child_name("my-sweep")
         None
@@ -43,8 +47,23 @@ def resolve_child_name(
         >>> resolve_child_name("my-sweep", variation=5, trial=0)
         'my-sweep-v05-t0'
     """
+    if trial is not None and variation is None:
+        raise ValueError(
+            "Invalid sweep child selector: trial requires variation. "
+            "Pass --variation with --trial."
+        )
     if variation is None:
         return None
+    if not 0 <= variation <= 99:
+        raise ValueError(
+            f"Invalid sweep child selector: variation {variation} is outside "
+            "the supported range 0..99."
+        )
+    if trial is not None and not 0 <= trial <= 9:
+        raise ValueError(
+            f"Invalid sweep child selector: trial {trial} is outside the "
+            "supported range 0..9."
+        )
     suffix = f"-t{trial:01d}" if trial is not None else ""
     return f"{parent}-v{variation:02d}{suffix}"
 

@@ -16,6 +16,35 @@ import { html } from 'htm/preact';
 import { navigate } from '../lib/router.js';
 import { palette } from '../lib/theme.js';
 
+const SENSITIVE_CONFIG_KEYS = [
+  'api_key',
+  'apiKey',
+  'authorization',
+  'bearerToken',
+  'client_secret',
+  'password',
+  'secret',
+  'secretRef',
+  'token',
+];
+
+function isSensitiveConfigKey(key) {
+  const normalized = String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return SENSITIVE_CONFIG_KEYS.some(example => {
+    const needle = example.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return normalized === needle || normalized.includes(needle);
+  });
+}
+
+export function redactConfigForYaml(value) {
+  if (Array.isArray(value)) return value.map(item => redactConfigForYaml(item));
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    isSensitiveConfigKey(key) ? '[REDACTED]' : redactConfigForYaml(item),
+  ]));
+}
+
 /**
  * Minimal YAML serializer — AIPerfJob specs only. Handles strings, numbers,
  * bools, null, lists, objects. Quotes strings that contain YAML-significant
@@ -35,6 +64,10 @@ export function serializeYaml(obj, indent = 0) {
   if (typeof obj === 'number') return String(obj);
   if (typeof obj === 'string') {
     if (obj === '') return "''";
+    if (obj.includes('\n')) {
+      const blockPad = ' '.repeat(indent + 2);
+      return `|\n${obj.split('\n').map(line => blockPad + line).join('\n')}`;
+    }
     if (/^[\w./@\-+]+$/.test(obj) && !/^(true|false|null|~)$/i.test(obj) && !/^-?\d+(\.\d+)?$/.test(obj)) {
       return obj;
     }
@@ -79,8 +112,12 @@ export function suggestRetryName(orig) {
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   const stamp = `${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const base = orig.replace(/-retry-\d{6}-\d{4}$/, '');
-  return `${base}-retry-${stamp}`;
+  const base = orig.replace(/-retry-\d{6}-\d{4}(?:-\d+)?$/, '');
+  const retryKey = `${base}:${stamp}`;
+  const retrySequence = retryKey === suggestRetryName.lastRetryKey ? suggestRetryName.retrySequence + 1 : 0;
+  suggestRetryName.lastRetryKey = retryKey;
+  suggestRetryName.retrySequence = retrySequence;
+  return `${base}-retry-${stamp}${retrySequence ? '-' + (retrySequence + 1) : ''}`;
 }
 
 /**
@@ -90,7 +127,7 @@ export function suggestRetryName(orig) {
  */
 export function RelaunchButton({ namespace, name, config }) {
   const spec = config?.spec;
-  if (!spec || Object.keys(spec).length === 0) return null;
+  if (!spec || Object.keys(spec).length === 0 || !namespace || !name) return null;
   return html`
     <button
       class="btn btn--primary"
@@ -98,11 +135,12 @@ export function RelaunchButton({ namespace, name, config }) {
         const manifest = {
           apiVersion: config.apiVersion ?? 'aiperf.nvidia.com/v1alpha1',
           kind: config.kind ?? 'AIPerfJob',
+          // Relaunch drops server-owned metadata: creationTimestamp, generation, managedFields, resourceVersion, selfLink, uid.
           metadata: {
             name: suggestRetryName(name),
             namespace,
           },
-          spec,
+          spec: redactConfigForYaml(spec),
         };
         const yaml = serializeYaml(manifest) + '\n';
         try {
@@ -112,7 +150,10 @@ export function RelaunchButton({ namespace, name, config }) {
             sourceName: name,
             at: Date.now(),
           }));
-        } catch (_e) { /* quota/private-mode — fall through to navigate */ }
+        } catch (err) {
+          console.warn('Unable to prepare launch prefill', err);
+          return;
+        }
         navigate('/launch');
       }}
       style=${'background: ' + palette.green + '22; color: ' + palette.green + '; border: 1px solid ' + palette.green + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}

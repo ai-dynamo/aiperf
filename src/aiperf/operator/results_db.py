@@ -127,7 +127,16 @@ class ResultsDB:
 
         blob = await runs_index.get_summary_blob(namespace, job_id, epoch)
         if blob:
-            return orjson.loads(runs_index.zstd_decompress(blob))
+            try:
+                return orjson.loads(runs_index.zstd_decompress(blob))
+            except (orjson.JSONDecodeError, zstandard.ZstdError) as exc:
+                logger.warning(
+                    "cannot read summary blob from runs_index for %s/%s/%s: %s",
+                    namespace,
+                    job_id,
+                    epoch,
+                    exc,
+                )
         return await self._summary_from_disk(namespace, job_id, epoch)
 
     async def index_entries(self) -> list[dict[str, Any]]:

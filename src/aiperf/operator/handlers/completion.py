@@ -16,6 +16,7 @@ import zstandard
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.common.finite import scrub_non_finite
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.jobset import controller_dns_name
@@ -249,7 +250,7 @@ async def _apply_completion_results(
         sb=sb,
         phase=phase,
         summary_blob=summary_blob,
-        metrics=result.metrics,
+        metrics=scrub_non_finite(result.metrics),
         downloaded_files=result.downloaded,
         error=result.error or None,
         mtime_epoch=mtime_epoch,
@@ -283,13 +284,13 @@ def _gather_index_inputs(
     try:
         if summary_zst.exists():
             blob = summary_zst.read_bytes()
-            summary_blob = blob
             metrics = orjson.loads(runs_index.zstd_decompress(blob))
+            summary_blob = blob
             end_time = metrics.get("end_time")
         elif summary_raw.exists():
             raw = summary_raw.read_bytes()
-            summary_blob = zstandard.ZstdCompressor().compress(raw)
             metrics = orjson.loads(raw)
+            summary_blob = zstandard.ZstdCompressor().compress(raw)
             end_time = metrics.get("end_time")
     except (OSError, orjson.JSONDecodeError, zstandard.ZstdError) as exc:
         logger.warning(
@@ -407,9 +408,10 @@ def _record_results_on_status(
     """Populate metrics/summary/resultsPath on the status patch."""
     epoch = epoch_key_from_body(body)
     if has_metrics:
-        sb.set_results(result.metrics)
-        summary = MetricsSummary.from_metrics(result.metrics)
-        summary_dict = summary.to_status_dict()
+        metrics_for_status = scrub_non_finite(result.metrics)
+        sb.set_results(metrics_for_status)
+        summary = MetricsSummary.from_metrics(metrics_for_status)
+        summary_dict = scrub_non_finite(summary.to_status_dict())
         if summary_dict:
             sb.set_summary(summary_dict)
     elif has_files:
@@ -419,14 +421,15 @@ def _record_results_on_status(
             result.downloaded, namespace, job_id, epoch=epoch
         )
         if file_metrics:
-            sb.set_results(file_metrics)
+            file_metrics_for_status = scrub_non_finite(file_metrics)
+            sb.set_results(file_metrics_for_status)
             # Also derive ``status.summary`` from file_metrics so kube-list /
             # operator UI show throughput / latency on jobs that finished
             # before the controller progress poll could land. Without this,
             # ``status.summary`` stays empty even when ``status.results`` is
             # fully populated, and kube-list shows '-' for THROUGHPUT/LATENCY.
-            file_summary = MetricsSummary.from_metrics(file_metrics)
-            file_summary_dict = file_summary.to_status_dict()
+            file_summary = MetricsSummary.from_metrics(file_metrics_for_status)
+            file_summary_dict = scrub_non_finite(file_summary.to_status_dict())
             if file_summary_dict:
                 sb.set_summary(file_summary_dict)
             logger.info(f"Parsed metrics from result files for {job_id}")

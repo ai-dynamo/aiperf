@@ -93,6 +93,9 @@ def load_package_metadata(
     """
     if dist is not None:
         pkg_metadata = dist.metadata
+        if pkg_metadata is None:
+            _logger.warning(f"Failed to load package metadata for {package}")
+            return PackageInfo(name=package)
     else:
         try:
             import importlib.metadata

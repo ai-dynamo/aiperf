@@ -28,21 +28,36 @@ const SERIES_COLORS = [
   palette.sapphire,
 ];
 
+function cellVariationIndex(cell, fallback) {
+  return cell?.variation_index ?? cell?.variationIndex ?? fallback;
+}
+
+function cellVariationLabel(cell, fallback) {
+  return cell?.variation_label ?? cell?.variationLabel ?? `v${cellVariationIndex(cell, fallback)}`;
+}
+
 export function CellsChart({ dimensions, cells, metric, stat }) {
-  const { data, options, hasData } = useMemo(() => {
-    if (!dimensions || dimensions.length === 0 || !cells || cells.length === 0) {
-      return { data: null, options: null, hasData: false };
+  const { data, options, hasData, dimensionCount } = useMemo(() => {
+    if (!cells || cells.length === 0) {
+      return { data: null, options: null, hasData: false, dimensionCount: 0 };
     }
 
-    const primaryDim = dimensions[0];
+    const sourceDimensions = Array.isArray(dimensions) ? dimensions : [];
+    const isDimensionless = sourceDimensions.length === 0;
+    const effectiveDimensions = isDimensionless
+      ? [{ name: 'variation', values: cells.map((cell, idx) => cellVariationLabel(cell, idx)) }]
+      : sourceDimensions;
+    const primaryDim = effectiveDimensions[0];
     const xValues = Array.isArray(primaryDim?.values) ? primaryDim.values : [];
     const datasets = [];
 
-    if (dimensions.length <= 1) {
-      const ys = xValues.map(v => {
-        const cell = cells.find(c => (c.values?.[primaryDim.name] === v));
-        return cell?.metrics?.[metric]?.[stat] ?? null;
-      });
+    if (effectiveDimensions.length <= 1) {
+      const ys = isDimensionless
+        ? cells.map(cell => cell?.metrics?.[metric]?.[stat] ?? null)
+        : xValues.map(v => {
+            const cell = cells.find(c => (c.values?.[primaryDim.name] === v));
+            return cell?.metrics?.[metric]?.[stat] ?? null;
+          });
       const c = SERIES_COLORS[0];
       datasets.push({
         label: `${metric} (${stat})`,
@@ -56,7 +71,7 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
         spanGaps: true,
       });
     } else {
-      const secondDim = dimensions[1];
+      const secondDim = effectiveDimensions[1];
       const secondValues = Array.isArray(secondDim?.values) ? secondDim.values : [];
       secondValues.forEach((sv, idx) => {
         const ys = xValues.map(xv => {
@@ -143,14 +158,9 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
         },
       },
     };
-    return { data: chartData, options: chartOptions, hasData: true };
+    return { data: chartData, options: chartOptions, hasData: true, dimensionCount: effectiveDimensions.length };
   }, [dimensions, cells, metric, stat]);
 
-  if (!dimensions || dimensions.length === 0) {
-    return html`<div data-testid="sweep-cells-chart" class="text-dim" style="padding:var(--space-3) 0">
-      No swept dimensions in this sweep.
-    </div>`;
-  }
   if (!cells || cells.length === 0 || !hasData) {
     return html`<div data-testid="sweep-cells-chart" class="text-dim" style="padding:var(--space-3) 0">
       No cells completed yet.
@@ -160,9 +170,9 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
   return html`
     <div data-testid="sweep-cells-chart">
       <${ChartWrapper} type="line" data=${data} options=${options} height=${360} />
-      ${dimensions.length >= 3 && html`
+      ${dimensionCount >= 3 && html`
         <p class="text-dim" style="margin-top:var(--space-2);font-size:var(--font-size-sm)">
-          ${dimensions.length}-D sweep — chart shows the first dimension only.
+          ${dimensionCount}-D sweep — chart shows the first dimension only.
           Use the table view to inspect higher-dim cells.
         </p>
       `}

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from typing import Annotated
 
+import msgspec
 from fastapi import APIRouter
 from starlette.requests import HTTPConnection
 
@@ -278,17 +279,21 @@ def _aggregate_from_snapshot(snapshot: dict) -> AggregateWorkerStatus:
     :func:`build_aggregate_worker_status` aggregator does not have to learn
     the dict shape.
 
-    The msgspec ``model_dump()`` shim emits the tag field ``message_type``
-    which the constructor does not accept as a kwarg — strip it before
-    re-instantiating.
+    The RPC crosses a process boundary, so malformed pod entries are skipped
+    instead of letting one bad pod snapshot break the whole progress response.
     """
-    raw_pods: dict[str, dict] = snapshot.get("pod_states", {}) or {}
-    pod_states = {
-        pod_index: WorkerPodStateMessage(
-            **{k: v for k, v in raw.items() if k != "message_type"}
-        )
-        for pod_index, raw in raw_pods.items()
-    }
+    raw_pods = snapshot.get("pod_states", {}) or {}
+    if not isinstance(raw_pods, dict):
+        return AggregateWorkerStatus()
+
+    pod_states: dict[str, WorkerPodStateMessage] = {}
+    for pod_index, raw in raw_pods.items():
+        if not isinstance(raw, dict):
+            continue
+        try:
+            pod_states[str(pod_index)] = msgspec.convert(raw, WorkerPodStateMessage)
+        except (msgspec.ValidationError, TypeError):
+            continue
     return build_aggregate_worker_status(pod_states)
 
 

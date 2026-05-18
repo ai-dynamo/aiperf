@@ -39,7 +39,7 @@ function buildNavGroups(features) {
 
 function isActive(itemPath, currentRoute) {
   if (itemPath === '/') return currentRoute === '/' || currentRoute === '';
-  return currentRoute.startsWith(itemPath);
+  return currentRoute === itemPath || currentRoute.startsWith(itemPath + '/');
 }
 
 function routeSlug(path) {

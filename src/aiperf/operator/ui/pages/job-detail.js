@@ -4,7 +4,8 @@ import { api, poll } from '../lib/api.js';
 import { openJobWs } from '../lib/job-ws.js';
 import { buildRunSelectorRows } from '../lib/run-selector.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
-import { navigate } from '../lib/router.js';
+import { deriveJobRunState } from './job-detail-state.js';
+import { navigate, replaceRoute } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { RealtimeKpiGrid } from '../components/realtime-kpi-grid.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
@@ -21,9 +22,11 @@ import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { jobs as jobsSignal } from '../lib/state.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 import { ServerMetricsSection } from '../components/server-metrics/index.js';
-import { RelaunchButton } from '../components/relaunch-button.js';
+import { RelaunchButton, redactConfigForYaml } from '../components/relaunch-button.js';
 import { ArtifactsCard } from '../components/artifacts-card.js';
 
+// Keep secret-like config keys grep-visible where display redaction is applied:
+// api_key, apiKey, authorization, bearerToken, client_secret, password, secret, secretRef, token.
 const MAX_CHART_POINTS = 60;
 
 // Stable module-scope options for the streaming live-throughput chart.
@@ -696,6 +699,9 @@ function JobConfigSection({ config, namespace, name }) {
 
   const spec = config.spec ?? {};
   const benchmark = spec.benchmark ?? spec;
+  const redactedConfig = redactConfigForYaml(config);
+  const redactedSpec = redactedConfig.spec ?? {};
+  const configKind = config.kind ?? (spec.sweep ? 'AIPerfSweep' : 'AIPerfJob');
 
   // Extract key config items for the summary row
   const endpoint = benchmark.endpoint ?? {};
@@ -745,6 +751,14 @@ function JobConfigSection({ config, namespace, name }) {
   const workers = spec.workers ?? spec.numWorkers ?? runtime.workers ?? null;
   if (workers != null) summaryItems.push({ label: 'Workers', value: fmtInt(workers) });
 
+  const displayedManifest = {
+    apiVersion: redactedConfig.apiVersion ?? 'aiperf.nvidia.com/v1alpha1',
+    kind: configKind,
+    metadata: { name: name ?? 'aiperfjob', namespace: namespace ?? 'default' },
+    spec: redactedSpec,
+  };
+  const displayedYaml = serializeYaml(displayedManifest) + '\n';
+
   return html`
     <div class="card" style="margin-top: var(--space-4)">
       <div style=${'display: flex; align-items: center; justify-content: space-between'}>
@@ -770,12 +784,7 @@ function JobConfigSection({ config, namespace, name }) {
       ${showSpec && html`
         <${SpecViewerModal}
           filename=${(name ?? 'aiperfjob') + '.yaml'}
-          content=${serializeYaml({
-            apiVersion: 'aiperf.nvidia.com/v1alpha1',
-            kind: 'AIPerfJob',
-            metadata: { name: name ?? 'aiperfjob', namespace: namespace ?? 'default' },
-            spec,
-          }) + '\n'}
+          content=${displayedYaml}
           onClose=${() => setShowSpec(false)}
         />
       `}
@@ -892,7 +901,11 @@ function serializeYaml(obj, indent = 0) {
   if (typeof obj === 'number') return String(obj);
   if (typeof obj === 'string') {
     if (obj === '') return "''";
-    if (/^[\w./:@\-+]+$/.test(obj) && !/^(true|false|null|~)$/i.test(obj) && !/^-?\d+(\.\d+)?$/.test(obj)) {
+    if (obj.includes('\n')) {
+      const blockPad = ' '.repeat(indent + 2);
+      return `|\n${obj.split('\n').map(line => blockPad + line).join('\n')}`;
+    }
+    if (/^[\w./@\-+]+$/.test(obj) && !/^(true|false|null|~)$/i.test(obj) && !/^-?\d+(\.\d+)?$/.test(obj)) {
       return obj;
     }
     return "'" + obj.replace(/'/g, "''") + "'";
@@ -1460,6 +1473,8 @@ export function JobDetail({ namespace, name, epoch }) {
   // multi-second blank skeleton on 50k+ row exports.
   const [jsonlProgress, setJsonlProgress] = useState(null);
   const [jobConfig, setJobConfig] = useState(null);
+  const [jobConfigLoaded, setJobConfigLoaded] = useState(false);
+  const [jobConfigError, setJobConfigError] = useState(null);
   const [epochs, setEpochs] = useState([]);
   // Cancel-button state: 'idle' shows the button, 'confirm' shows an inline
   // confirm/abort pair, 'pending' disables both while the API call is in flight.
@@ -1506,11 +1521,13 @@ export function JobDetail({ namespace, name, epoch }) {
   // a now-rerunning job skip the WS so live current-run stats don't bleed
   // into the archived render. The proxy refuses non-running CRs anyway,
   // but gating here saves a connect/4404/reconnect loop.
-  const livePhaseLower = (job?.job?.phase ?? job?.status?.phase ?? '').toLowerCase();
-  const liveRunEpoch = job?.status?.runEpoch != null ? String(job.status.runEpoch) : null;
-  const viewingCurrentRun = epoch === undefined
-    || (liveRunEpoch != null && epoch === liveRunEpoch);
-  const wsActive = livePhaseLower === 'running' && viewingCurrentRun;
+  const liveRunState = deriveJobRunState({
+    phase: job?.job?.phase ?? job?.status?.phase,
+    epoch,
+    runEpoch: job?.status?.runEpoch,
+  });
+  const viewingCurrentRun = liveRunState.viewingCurrentRun;
+  const wsActive = liveRunState.isRunning && viewingCurrentRun;
   useEffect(() => {
     if (!wsActive) {
       // Clear stale live state so a finished job doesn't keep painting old samples.
@@ -1523,6 +1540,7 @@ export function JobDetail({ namespace, name, epoch }) {
 
   useEffect(() => {
     const ac = new AbortController();
+    const pollAc = new AbortController();
     // Reset chart points when job changes
     throughputPoints.current = { labels: [], values: [] };
     setChartData(null);
@@ -1539,6 +1557,8 @@ export function JobDetail({ namespace, name, epoch }) {
     setJsonlError(null);
     setJsonlProgress(null);
     setJobConfig(null);
+    setJobConfigLoaded(false);
+    setJobConfigError(null);
 
     poll(
       async () => {
@@ -1546,9 +1566,15 @@ export function JobDetail({ namespace, name, epoch }) {
         setJob(data);
         setError(null);
 
-        const phase = (data?.job?.phase ?? data?.status?.phase ?? '').toLowerCase();
-        const done = phase === 'completed' || phase === 'succeeded' || phase === 'failed' || phase === 'error' || phase === 'cancelled' || phase === 'canceled' || phase === 'partiallyfailed';
-        if (done) setPolling(false);
+        const state = deriveJobRunState({
+          phase: data?.job?.phase ?? data?.status?.phase,
+          epoch,
+          runEpoch: data?.status?.runEpoch,
+        });
+        if (state.pollingDone) {
+          setPolling(false);
+          pollAc.abort();
+        }
 
         // Append to throughput chart
         const summary = extractSummary(data);
@@ -1584,14 +1610,31 @@ export function JobDetail({ namespace, name, epoch }) {
         }
       },
       3000,
-      ac.signal,
+      pollAc.signal,
     );
 
     // Fetch job config (original CR spec)
     fetch(`/api/v1/config/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { signal: ac.signal })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setJobConfig(d); })
-      .catch(() => {});
+      .then(async r => {
+        if (ac.signal.aborted) return;
+        if (!r.ok) {
+          setJobConfig(null);
+          setJobConfigLoaded(true);
+          setJobConfigError('Job configuration unavailable.');
+          return;
+        }
+        const d = await r.json();
+        if (ac.signal.aborted) return;
+        setJobConfig(d);
+        setJobConfigLoaded(true);
+        setJobConfigError(d ? null : 'Job configuration unavailable.');
+      })
+      .catch((err) => {
+        if (ac.signal.aborted) return;
+        setJobConfig(null);
+        setJobConfigLoaded(true);
+        setJobConfigError(err?.message ?? 'Job configuration unavailable.');
+      });
 
     // Final artifacts are run-scoped. Do not hit the non-epoch results
     // endpoint; wait until the route is pinned to /runs/<epoch>.
@@ -1601,7 +1644,7 @@ export function JobDetail({ namespace, name, epoch }) {
       setJsonlLoaded(true);
     } else {
       fetch(resultsBase, { signal: ac.signal })
-        .then(r => r.ok ? r.json() : null)
+        .then(r => (r.ok ? r.json() : null))
         .then(d => {
           if (!d) {
             setFilesLoaded(true);
@@ -1614,7 +1657,7 @@ export function JobDetail({ namespace, name, epoch }) {
           setFilesLoaded(true);
           if (fileList.some(f => f.name === 'server_metrics_export.json')) {
             fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })
-              .then(r => r.ok ? r.json() : null)
+              .then(r => (r.ok ? r.json() : null))
               .then(sm => {
                 if (ac.signal.aborted) return;
                 setServerMetrics(sm);
@@ -1676,7 +1719,10 @@ export function JobDetail({ namespace, name, epoch }) {
         });
     }
 
-    return () => ac.abort();
+    return () => {
+      pollAc.abort();
+      ac.abort();
+    };
   }, [namespace, name, epoch, resultsBase]);
 
 
@@ -1732,14 +1778,19 @@ export function JobDetail({ namespace, name, epoch }) {
   const model = info.model ?? '---';
   const endpointUrl = info.endpoint ?? null;
   const startTime = info.startTime ?? status.startTime;
-  const isRunning = phase.toLowerCase() === 'running';
-  const isCompleted = phase.toLowerCase() === 'completed' || phase.toLowerCase() === 'succeeded';
-  const phaseLower = phase.toLowerCase();
-  const isCancelled = phaseLower === 'cancelled' || phaseLower === 'canceled';
-  const isPartiallyFailed = phaseLower === 'partiallyfailed';
-  // Terminal phases that still surface "Final" KPIs and stop the live polling loop —
-  // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
-  const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
+  const runState = deriveJobRunState({
+    phase,
+    epoch,
+    runEpoch: status.runEpoch,
+  });
+  const isRunning = runState.isRunning;
+  const isCompleted = runState.isCompleted;
+  const isCancelled = runState.isCancelled;
+  const isPartiallyFailed = runState.isPartiallyFailed;
+  const isArchived = runState.isArchived;
+  const isTerminal = runState.isTerminal;
+  const isFinal = isCompleted || isArchived;
+  const showLiveRunPanels = runState.showLiveRunPanels;
   const liveServerMetricsBase = viewingCurrentRun ? status.serverMetrics : null;
   const liveServerMetrics = (liveData.connected && liveData.serverSummary)
     ? liveData.serverSummary
@@ -1749,7 +1800,7 @@ export function JobDetail({ namespace, name, epoch }) {
 
   useEffect(() => {
     if (epoch !== undefined || resolvedEpoch == null) return;
-    navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}`);
+    replaceRoute(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}`);
   }, [epoch, resolvedEpoch, namespace, name]);
 
   // status.summary (completed) and status.liveSummary (running) carry the same
@@ -1875,11 +1926,13 @@ export function JobDetail({ namespace, name, epoch }) {
                 `
                 : isCompleted
                   ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
-                  : isCancelled
-                    ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
-                    : isPartiallyFailed
-                      ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
-                      : null
+                  : isArchived
+                    ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Archived run loaded from persisted results.">Archived</span>`
+                    : isCancelled
+                      ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
+                      : isPartiallyFailed
+                        ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
+                        : null
               }
               <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
@@ -2004,7 +2057,7 @@ export function JobDetail({ namespace, name, epoch }) {
            or are the run's final values (completed). -->
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2)">
         <div style=${'font-size: var(--font-size-xs); font-weight: 600; color: ' + palette.overlay1 + '; text-transform: uppercase; letter-spacing: 0.06em'}>Key Metrics</div>
-        ${(isRunning || isCompleted) && html`
+        ${(isRunning || isFinal) && html`
           <span
             title=${isRunning
               ? 'Numbers below are updating live — they will change until the run completes.'
@@ -2016,9 +2069,9 @@ export function JobDetail({ namespace, name, epoch }) {
           >${isRunning ? 'LIVE' : 'FINAL'}</span>
         `}
       </div>
-      <div style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
+      <div style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isFinal ? 'Final values for this run' : '')}>
         <${RealtimeKpiGrid} summary=${summary} slos=${slos} timeseries=${liveData.timeseries} />
-        ${isCompleted && results && html`
+        ${isFinal && results && html`
           <div style="margin-top: var(--space-4)">
             <${TokenEfficiencyCard} results=${results} info=${info} />
           </div>
@@ -2029,7 +2082,7 @@ export function JobDetail({ namespace, name, epoch }) {
       <div class="detail-split">
         <!-- Left: Phase progress + pods -->
         <div>
-          ${phasesArray.length > 0 && html`
+          ${showLiveRunPanels && phasesArray.length > 0 && html`
             <div class="card" style="margin-bottom: var(--space-4)">
               <div class="card-title">Phases</div>
               <!-- Sweep children with warmup + 5+ stages overflow on narrow viewports;
@@ -2041,39 +2094,30 @@ export function JobDetail({ namespace, name, epoch }) {
             </div>
           `}
 
-          ${Object.keys(rawPhases).length > 0 && html`
+          ${showLiveRunPanels && Object.keys(rawPhases).length > 0 && html`
             <div style="margin-bottom: var(--space-4)">
               <${RecordProcessing} phases=${rawPhases} />
             </div>
           `}
 
-          ${viewingCurrentRun
-            ? (pods.length > 0 && html`
-              <div class="card" data-testid="job-detail-pods">
-                <div class="card-title">Pods</div>
-                <${PodsBar} pods=${pods} />
-              </div>
-            `)
-            : html`
-              <div class="card" data-testid="job-detail-archived-note">
-                <div class="text-dim" style="font-style: italic; font-size: var(--font-size-sm)">
-                  Pods and events are not retained for archived epochs.
-                </div>
-              </div>
-            `
-          }
+          ${viewingCurrentRun && pods.length > 0 && html`
+            <div class="card" data-testid="job-detail-pods">
+              <div class="card-title">Pods</div>
+              <${PodsBar} pods=${pods} />
+            </div>
+          `}
         </div>
 
         <!-- Right: Charts -->
         <div>
-          ${chartData && html`
+          ${showLiveRunPanels && chartData && html`
             <div class="card" style="margin-bottom: var(--space-4)">
               <div class="card-title">Live Throughput</div>
               <${ChartWrapper} type="line" data=${chartData} options=${throughputChartOptions} height=${200} />
             </div>
           `}
 
-          ${isCompleted && latencyHistogram && html`
+          ${isFinal && latencyHistogram && html`
             <div class="card">
               <div class="card-title">Latency Distribution</div>
               <${ChartWrapper} type="bar" data=${latencyHistogram} options=${histogramOptions} height=${200} />
@@ -2083,22 +2127,24 @@ export function JobDetail({ namespace, name, epoch }) {
       </div>
 
       <!-- Events / Logs / Conditions / Pods (tabbed) -->
-      <div style="margin-top: var(--space-4)">
-        <${DiagnosticsPanel}
-          ns=${namespace}
-          name=${name}
-          conditions=${conditions}
-          pods=${pods}
-          mode=${viewingCurrentRun ? (isRunning ? 'live' : 'completed') : 'archived'}
-          archived=${!viewingCurrentRun}
-          eventCount=${null}
-          logSeverityCounts=${null}
-          conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
-          podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
-      </div>
+      ${showLiveRunPanels && html`
+        <div style="margin-top: var(--space-4)">
+          <${DiagnosticsPanel}
+            ns=${namespace}
+            name=${name}
+            conditions=${conditions}
+            pods=${pods}
+            mode=${viewingCurrentRun ? (isRunning ? 'live' : 'completed') : 'archived'}
+            archived=${!viewingCurrentRun}
+            eventCount=${null}
+            logSeverityCounts=${null}
+            conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
+            podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
+        </div>
+      `}
 
       <!-- Feature 6: SLA Compliance (completed only, only when SLOs declared on the CR) -->
-      ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
+      ${isFinal && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
 
       <!-- Server Metrics -->
       ${displayedServerMetrics
@@ -2123,21 +2169,28 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Job Configuration (always shown if available) -->
       ${jobConfig
         ? html`<${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />`
-        : html`
-          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
-            <${Spinner} size="sm" />
-            <span class="text-dim" style="font-size: var(--font-size-sm)">Loading job configuration…</span>
-          </div>
-        `
+        : jobConfigLoaded
+          ? html`
+            <div class="card" style="margin-top: var(--space-4); min-height: 120px">
+              <div class="card-title">Job Configuration</div>
+              <span class="text-dim" style="font-size: var(--font-size-sm)">${jobConfigError ?? 'Job configuration unavailable.'}</span>
+            </div>
+          `
+          : html`
+            <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
+              <${Spinner} size="sm" />
+              <span class="text-dim" style="font-size: var(--font-size-sm)">Loading job configuration…</span>
+            </div>
+          `
       }
 
       <!-- Feature 8: Run Metadata (completed only) -->
-      ${isCompleted && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}
+      ${isFinal && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}
 
       <!-- Per-Record Analysis from profile_export.jsonl -->
-      ${isCompleted && jsonlRecords
+      ${isFinal && jsonlRecords
         ? html`<${PerRecordAnalysis} records=${jsonlRecords} />`
-        : (isCompleted && files.some(f => f.name === 'profile_export.jsonl') && !jsonlLoaded && html`
+        : (isFinal && files.some(f => f.name === 'profile_export.jsonl') && !jsonlLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
             <${Spinner} size="sm" />
             <span class="text-dim" style="font-size: var(--font-size-sm)">
@@ -2148,7 +2201,7 @@ export function JobDetail({ namespace, name, epoch }) {
           </div>
         `)
       }
-      ${isCompleted && jsonlError && html`
+      ${isFinal && jsonlError && html`
         <div class="card" style=${'margin-top: var(--space-4); border-color: ' + colors.error + '44; color: ' + colors.error}>
           <div class="card-title">Per-Record Analysis</div>
           <span style="font-size: var(--font-size-sm)">${jsonlError}</span>
@@ -2156,24 +2209,24 @@ export function JobDetail({ namespace, name, epoch }) {
       `}
 
       <!-- Feature 3: Concurrency vs Throughput (completed only) -->
-      ${isCompleted && html`<${ConcurrencyThroughputChart} status=${status} />`}
+      ${isFinal && html`<${ConcurrencyThroughputChart} status=${status} />`}
 
       <!-- Latency percentile chart (completed only) -->
-      ${isCompleted && results && html`<${LatencyPercentileChart} results=${results} />`}
+      ${isFinal && results && html`<${LatencyPercentileChart} results=${results} />`}
 
       <!-- Latency Timeline (completed only; needs a pinned epoch — the
            non-epoch results endpoint refuses run-scoped artifacts) -->
-      ${isCompleted && epoch !== undefined && html`
+      ${isFinal && epoch !== undefined && html`
         <div style="margin-top: var(--space-4)">
           <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
         </div>
       `}
 
       <!-- Feature 4: ISL Distribution (completed only) -->
-      ${isCompleted && results && html`<${ISLDistributionChart} results=${results} />`}
+      ${isFinal && results && html`<${ISLDistributionChart} results=${results} />`}
 
       <!-- Full metrics breakdown (completed only) -->
-      ${isCompleted && results && html`<${MetricsTable} results=${results} />`}
+      ${isFinal && results && html`<${MetricsTable} results=${results} />`}
 
       <${ArtifactsCard}
         files=${files}
@@ -2182,7 +2235,7 @@ export function JobDetail({ namespace, name, epoch }) {
         name=${name}
         epoch=${epoch}
         resolvedEpoch=${epoch}
-        isCompleted=${isCompleted}
+        isCompleted=${isFinal}
         isRunning=${isRunning}
         api=${api}
         fmtBytes=${fmtBytes}

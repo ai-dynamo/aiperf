@@ -717,16 +717,16 @@ export function SweepDetail({ namespace, name, epoch }) {
                   <tbody>
                     ${childRows.map(c => html`
                       <tr
-                        key=${c.namespace + '/' + c.name + '/' + (c.childRunEpoch ?? '')}
+                        key=${c.namespace + '/' + c.name + '/' + (c.childRunEpoch ?? c.child_run_epoch ?? '')}
                         class="job-table-row"
                         style="cursor:pointer"
-                        onclick=${() => navigate(buildJobPath(c))}
+                        onclick=${() => navigate(buildJobPath({ ...c, childRunEpoch: c.childRunEpoch ?? c.child_run_epoch }))}
                       >
                         <td class="job-table-td">${c.name}</td>
                         <td class="job-table-td">${c.namespace}</td>
-                        <td class="job-table-td">${c.variationLabel ?? c.variationIndex ?? '---'}</td>
-                        <td class="job-table-td">${c.trialIndex ?? '---'}</td>
-                        <td class="job-table-td text-dim">${c.childRunEpoch ?? '---'}</td>
+                        <td class="job-table-td">${c.variationLabel ?? c.variation_label ?? c.variationIndex ?? c.variation_index ?? '---'}</td>
+                        <td class="job-table-td">${c.trialIndex ?? c.trial_index ?? '---'}</td>
+                        <td class="job-table-td text-dim">${c.childRunEpoch ?? c.child_run_epoch ?? '---'}</td>
                       </tr>
                     `)}
                   </tbody>

@@ -44,9 +44,14 @@ const MODAL_STYLE_WIDE = MODAL_BASE_STYLE + ' max-width: 95vw; width: 1400px;';
 function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, copyDisabled = false, children }) {
   return html`
     <div style=${BACKDROP_STYLE} onclick=${e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style=${MODAL_STYLE_WIDE}>
+      <div
+        style=${MODAL_STYLE_WIDE}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="artifact-preview-title"
+      >
         <div style=${'display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid ' + palette.surface0 + '; flex-shrink: 0'}>
-          <span style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
+          <span id="artifact-preview-title" style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
           <div style="display: flex; gap: var(--space-2); align-items: center">
             ${onCopy && html`
               <button
@@ -61,6 +66,7 @@ function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, copyDis
             >Download</button>
             <button
               onclick=${onClose}
+              aria-label="Close preview"
               style=${'background: transparent; color: ' + palette.overlay1 + '; border: 1px solid ' + palette.surface1 + '; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); line-height: 1'}
             >×</button>
           </div>
@@ -299,7 +305,8 @@ function fileTypeChip(filename) {
 }
 
 function resultFileUrl(namespace, name, epoch, fileName) {
-  return `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/${encodeURIComponent(fileName)}`;
+  const encodedFileName = fileName.split('/').map(encodeURIComponent).join('/');
+  return `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/${encodedFileName}`;
 }
 
 function selectedEmptyKey({ resolvedEpoch, isCompleted, isRunning }) {
@@ -337,11 +344,17 @@ export function ArtifactsCard({
   const messages = { ...defaultEmptyMessages, ...(emptyMessages ?? {}) };
   const details = { ...defaultEmptyDetails, ...(emptyDetails ?? {}) };
   const emptyKey = selectedEmptyKey({ resolvedEpoch, isCompleted, isRunning });
-  const downloadAllUrl = bundleUrl ?? (epoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, epoch) : null);
-  const resolvedQuickExportUrl = quickExportUrl ?? (epoch != null
-    ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/profile_export?format=json`
+  const canBuildFileUrls = fileUrl != null || resolvedEpoch != null;
+  const downloadAllUrl = bundleUrl ?? (resolvedEpoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, resolvedEpoch) : null);
+  const resolvedQuickExportUrl = quickExportUrl ?? (resolvedEpoch != null
+    ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}/profile_export?format=json`
     : null);
   const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
+  const artifactSummary = [
+    `${files.length} file${files.length === 1 ? '' : 's'}`,
+    totalArtifactBytes > 0 ? fmtBytes(totalArtifactBytes) : null,
+    resolvedEpoch != null ? `epoch ${resolvedEpoch}` : null,
+  ].filter(Boolean).join(' · ');
 
   useEffect(() => {
     if (!fileViewer) return undefined;
@@ -354,8 +367,8 @@ export function ArtifactsCard({
 
   function resolveFileUrl(fileName) {
     if (fileUrl) return fileUrl(fileName);
-    if (epoch == null) return null;
-    return resultFileUrl(namespace, name, epoch, fileName);
+    if (resolvedEpoch == null) return null;
+    return resultFileUrl(namespace, name, resolvedEpoch, fileName);
   }
 
   function downloadFile(fileName) {
@@ -386,20 +399,13 @@ export function ArtifactsCard({
 
   return html`
     <div class="card" style="margin-top: var(--space-4)" data-testid=${cardTestId}>
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
-        <div class="card-title" style="margin: 0">${title}</div>
-        ${files.length > 0 && html`
-          <div style="display: flex; gap: var(--space-2); flex-wrap: wrap">
-            ${resolvedQuickExportUrl && (quickExportUrl || hasExportFile) && html`
-              <a
-                href=${resolvedQuickExportUrl}
-                download
-                data-testid=${`${testIdPrefix}-quick-export`}
-                style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
-              >
-                ${quickExportLabel}
-              </a>
-            `}
+      ${files.length > 0 ? html`
+        <div class="artifacts-card-header" style=${'display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid ' + palette.surface0}>
+          <div style="display: flex; flex-direction: column; gap: var(--space-1); min-width: 0">
+            <div class="artifacts-card-title" style=${'margin: 0; color: ' + palette.text + '; font-size: var(--font-size-lg); font-weight: 700'}>${title}</div>
+            <div class="artifacts-card-summary" style=${'color: ' + palette.subtext0 + '; font-size: var(--font-size-xs); letter-spacing: 0.01em'}>${artifactSummary}</div>
+          </div>
+          <div style="display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end">
             ${downloadAllUrl && html`
               <a
                 class="btn"
@@ -412,7 +418,17 @@ export function ArtifactsCard({
                 ${bundleLabel ?? `Download .zip${totalArtifactBytes > 0 ? ` (${fmtBytes(totalArtifactBytes)})` : ''}`}
               </a>
             `}
-            ${showIndividualDownloadAll && html`
+            ${resolvedQuickExportUrl && (quickExportUrl || hasExportFile) && html`
+              <a
+                href=${resolvedQuickExportUrl}
+                download
+                data-testid=${`${testIdPrefix}-quick-export`}
+                style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
+              >
+                ${quickExportLabel}
+              </a>
+            `}
+            ${showIndividualDownloadAll && canBuildFileUrls && html`
               <button
                 onclick=${downloadAll}
                 data-testid=${`${testIdPrefix}-download-individual`}
@@ -423,8 +439,12 @@ export function ArtifactsCard({
               </button>
             `}
           </div>
-        `}
-      </div>
+        </div>
+      ` : html`
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
+          <div class="card-title" style="margin: 0">${title}</div>
+        </div>
+      `}
 
       ${!filesLoaded && html`
         <${LoadingPanel} label="Looking up result files…" inline=${true} testid="artifacts-loading" />
@@ -457,9 +477,11 @@ export function ArtifactsCard({
             const ext = f.name.split('.').pop().toLowerCase();
             const previewable = PREVIEWABLE.has(ext);
             const chip = fileTypeChip(f.name);
+            const rowActionLabel = previewable ? 'Preview' : 'Download';
             const action = () => openFile(f.name);
             return html`
               <div
+                class="artifacts-file-row"
                 key=${f.name}
                 onclick=${action}
                 onkeydown=${e => {
@@ -470,13 +492,13 @@ export function ArtifactsCard({
                 }}
                 role="button"
                 tabindex="0"
-                aria-label=${(previewable ? 'Preview ' : 'Download ') + f.name}
-                title=${previewable ? 'Click to preview' : 'Click to download'}
-                style=${'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); background: ' + palette.base + '; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s; border: 1px solid ' + palette.surface0 + '60; outline: none'}
-                onmouseenter=${e => { e.currentTarget.style.background = palette.surface0; }}
-                onmouseleave=${e => { e.currentTarget.style.background = palette.base; }}
+                aria-label=${`${rowActionLabel} ${f.name}`}
+                title=${`${rowActionLabel} ${f.name}`}
+                style=${'display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: linear-gradient(135deg, ' + palette.base + ', ' + palette.mantle + '); border-radius: var(--radius-md); cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.15s; border: 1px solid ' + palette.surface0 + '80; outline: none'}
+                onmouseenter=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onmouseleave=${e => { e.currentTarget.style.background = 'linear-gradient(135deg, ' + palette.base + ', ' + palette.mantle + ')'; e.currentTarget.style.transform = 'translateY(0)'; }}
                 onfocus=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.borderColor = palette.blue + '88'; }}
-                onblur=${e => { e.currentTarget.style.background = palette.base; e.currentTarget.style.borderColor = palette.surface0 + '60'; }}
+                onblur=${e => { e.currentTarget.style.background = 'linear-gradient(135deg, ' + palette.base + ', ' + palette.mantle + ')'; e.currentTarget.style.borderColor = palette.surface0 + '80'; }}
               >
                 <div style="display: flex; align-items: center; gap: var(--space-2); min-width: 0">
                   <span
@@ -484,11 +506,11 @@ export function ArtifactsCard({
                     style=${'background: ' + chip.color + '22; color: ' + chip.color + '; border: 1px solid ' + chip.color + '55'}
                     title=${'File type: ' + chip.label.toLowerCase()}
                   >${chip.label}</span>
-                  <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name) + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap'}>${f.name}</span>
+                  <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name) + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600'}>${f.name}</span>
                 </div>
-                <div style="display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0">
-                  <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>${previewable ? 'preview' : 'download'}</span>
+                <div style="display: flex; align-items: center; gap: var(--space-3); flex-shrink: 0">
                   <span class="text-dim" style="font-size: var(--font-size-xs)">${fmtBytes(f.size_bytes)}</span>
+                  <span class="artifacts-file-action" style=${'font-size: var(--font-size-xs); color: ' + (previewable ? palette.mauve : palette.blue) + '; font-weight: 700'}>${previewable ? 'Preview' : 'Download'}</span>
                 </div>
               </div>
             `;

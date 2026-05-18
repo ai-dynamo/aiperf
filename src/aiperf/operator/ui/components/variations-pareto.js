@@ -27,6 +27,21 @@ function shortLabel(label) {
   return dot >= 0 ? label.slice(dot + 1) : label;
 }
 
+function isFiniteNumber(value) {
+  return typeof value === 'number' && isFinite(value);
+}
+
+function bestPointForX(points, yIsSmallerBetter) {
+  const byX = new Map();
+  for (const point of points) {
+    const current = byX.get(point.x);
+    if (!current || (yIsSmallerBetter ? point.y <= current.y : point.y >= current.y)) {
+      byX.set(point.x, point);
+    }
+  }
+  return [...byX.values()].sort((a, b) => a.x - b.x);
+}
+
 const MUTED = palette.overlay1;
 
 export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBetter }) {
@@ -36,7 +51,7 @@ export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBette
       .map(v => {
         const xr = v.perMetric?.[xMetric.key + '.' + xMetric.stat];
         const yr = v.perMetric?.[yMetric.key + '.' + yMetric.stat];
-        if (xr?.mean == null || yr?.mean == null) return null;
+        if (!isFiniteNumber(xr?.mean) || !isFiniteNumber(yr?.mean)) return null;
         return {
           x: xr.mean,
           y: yr.mean,
@@ -48,13 +63,13 @@ export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBette
     if (points.length === 0) return null;
 
     // Monotone scan: sort by x asc, walk forward, push each point that
-    // improves bestY (strictly better when yIsSmallerBetter, otherwise
-    // greater-or-equal). Yields a left-to-right frontier ready to draw.
-    const sorted = [...points].sort((a, b) => a.x - b.x);
+    // strictly improves bestY. Equal-y ties do not add another line step,
+    // while every variation still remains visible in the scatter dataset.
+    const candidates = bestPointForX(points, yIsSmallerBetter);
     const frontier = [];
     let bestY = yIsSmallerBetter ? Infinity : -Infinity;
-    for (const p of sorted) {
-      const better = yIsSmallerBetter ? p.y <= bestY : p.y >= bestY;
+    for (const p of candidates) {
+      const better = yIsSmallerBetter ? p.y < bestY : p.y > bestY;
       if (better) {
         bestY = p.y;
         frontier.push({ x: p.x, y: p.y, jobName: p.jobName });

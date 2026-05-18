@@ -41,6 +41,7 @@ const TILES = [
     secondary: 'avg',
     secondaryLabel: 'avg',
     sloTag: 'output_token_throughput',
+    fallbackTags: ['e2e_output_token_throughput'],
   },
   {
     tag: 'request_throughput',
@@ -101,6 +102,16 @@ const UNIT_BY_TAG = {
   prefill_throughput_per_user: 'tok/s',
 };
 
+function pickMetric(summary, spec) {
+  const primary = summary?.[spec.tag];
+  if (primary != null) return primary;
+  for (const tag of spec.fallbackTags ?? []) {
+    const fallback = summary?.[tag];
+    if (fallback != null) return fallback;
+  }
+  return null;
+}
+
 function pickStat(metric, key) {
   if (!metric) return { value: null, stat: null };
   const v = metric[key];
@@ -112,6 +123,7 @@ function pickStat(metric, key) {
 function formatStat(value, unit) {
   if (value == null) return { body: '---', unit: '' };
   if (typeof value !== 'number') return { body: String(value), unit: unit ?? '' };
+  if (!isFinite(value)) return { body: '---', unit: '' };
   const body = Math.abs(value) >= 1000 ? fmtInt(Math.round(value)) : fmtNumber(value, 2);
   return { body, unit: unit ?? '' };
 }
@@ -149,7 +161,7 @@ function KpiTile({ spec, metric, slos, series }) {
   const slo = sloStatus(primaryVal, sloThreshold, spec.sloTag);
 
   const primary = formatStat(primaryVal, unit);
-  const secondaryDisplay = secondaryVal != null && typeof secondaryVal === 'number'
+  const secondaryDisplay = secondaryVal != null && typeof secondaryVal === 'number' && isFinite(secondaryVal)
     ? (Math.abs(secondaryVal) >= 1000
         ? fmtInt(Math.round(secondaryVal))
         : fmtNumber(secondaryVal, 2))
@@ -211,10 +223,12 @@ function ReliabilityTile({ summary, slos, timeseries }) {
     const reqCount = summary['request_count'];
     const goodVal = goodCount?.avg;
     const reqVal = reqCount?.avg;
-    const failedCount = (goodVal != null && reqVal != null)
+    const hasFiniteCounts = typeof goodVal === 'number' && isFinite(goodVal)
+      && typeof reqVal === 'number' && isFinite(reqVal);
+    const failedCount = hasFiniteCounts
       ? Math.max(0, Math.round(reqVal - goodVal))
       : null;
-    const pct = (goodVal != null && reqVal != null && reqVal > 0)
+    const pct = (hasFiniteCounts && reqVal > 0)
       ? (goodVal / reqVal) * 100
       : null;
     const kind = pct == null ? null : (pct >= 100 ? 'good' : 'warn');
@@ -279,9 +293,10 @@ function ReliabilityTile({ summary, slos, timeseries }) {
     ?? (reqCount?.avg != null && errorCount?.avg != null && reqCount.avg > 0
         ? (errorCount.avg / reqCount.avg) * 100
         : null);
-  if (rate == null) return null;
+  if (rate == null || !isFinite(rate)) return null;
   const success = Math.max(0, 100 - rate);
-  const errVal = (typeof errorCount === 'number') ? errorCount : (errorCount?.avg ?? 0);
+  const rawErrVal = (typeof errorCount === 'number') ? errorCount : (errorCount?.avg ?? 0);
+  const errVal = (typeof rawErrVal === 'number' && isFinite(rawErrVal)) ? rawErrVal : 0;
   const kind = errVal === 0 ? 'good' : 'warn';
   // Sparkline: error_rate trend (lower is better) — fall back to
   // error_request_count if error_rate isn't streamed.
@@ -328,7 +343,7 @@ export function RealtimeKpiGrid({ summary, slos, timeseries }) {
   const ts = timeseries ?? {};
   const sloDict = slos ?? null;
 
-  const hasHero = TILES.some(t => summary?.[t.tag] != null);
+  const hasHero = TILES.some(t => pickMetric(summary, t) != null);
   const hasReliability =
     summary?.['goodput'] != null
     || summary?.['good_request_count'] != null
@@ -339,7 +354,7 @@ export function RealtimeKpiGrid({ summary, slos, timeseries }) {
   return html`
     <div class="kpi-grid">
       ${TILES.map((spec) => html`
-        <${KpiTile} spec=${spec} metric=${summary?.[spec.tag]} slos=${sloDict}
+        <${KpiTile} spec=${spec} metric=${pickMetric(summary, spec)} slos=${sloDict}
                     series=${ts[spec.tag] ?? []} key=${spec.tag} />
       `)}
       <${ReliabilityTile} summary=${summary ?? {}} slos=${sloDict} timeseries=${ts} />

@@ -176,6 +176,8 @@ async def get_raw_aiperfjob(
     api: ApiClient,
     namespace: str,
     name: str,
+    *,
+    suppress_api_errors: bool = True,
 ) -> dict[str, Any] | None:
     """Return the full raw AIPerfJob CR dict (spec + status + metadata) or None.
 
@@ -188,13 +190,15 @@ async def get_raw_aiperfjob(
         api: Open ``ApiClient`` from :func:`k8s_client`.
         namespace: Namespace containing the AIPerfJob.
         name: AIPerfJob resource name (``metadata.name``).
+        suppress_api_errors: When true, return ``None`` for non-404 API errors.
+            When false, 404 still returns ``None`` but other API errors are raised
+            so callers can distinguish apiserver failures from missing CRs.
 
     Returns:
         The raw CR body (``{"apiVersion", "metadata", "spec", "status", ...}``),
-        or ``None`` if the CR does not exist (404). Any non-404 API error is
-        suppressed and also returns ``None`` — this helper is intended for
-        best-effort UI lookups where a missing/erroring CR should fall through
-        silently rather than surface as a 5xx.
+        or ``None`` if the CR does not exist (404). With the default
+        ``suppress_api_errors=True``, any non-404 API error is also suppressed
+        and returns ``None`` for best-effort UI lookups.
     """
     custom = client.CustomObjectsApi(api)
     try:
@@ -205,8 +209,10 @@ async def get_raw_aiperfjob(
             namespace=namespace,
             name=name,
         )
-    except ApiException:
-        return None
+    except ApiException as exc:
+        if exc.status == 404 or suppress_api_errors:
+            return None
+        raise
     return raw or None
 
 

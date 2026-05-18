@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import time
 import zlib
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 LATEST_POINTER = "latest.txt"
+_READY_MARKER_NAME = ".aiperf_results_ready.json"
 # 9-20 digits covers legacy epoch-seconds directories, fractional-second
 # run keys, and whole-second Kubernetes keys with a uid-derived suffix.
 EPOCH_RE = re.compile(r"^\d{9,20}$")
@@ -107,7 +109,9 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
     for p in parent.iterdir():
         if not p.is_dir() or not EPOCH_RE.match(p.name):
             continue
-        files = [f for f in p.iterdir() if f.is_file()]
+        files = [
+            f for f in p.iterdir() if f.is_file() and f.name != _READY_MARKER_NAME
+        ]
         runs.append(
             RunEntry(
                 epoch=p.name,
@@ -144,7 +148,7 @@ async def list_runs_async(base: Path, namespace: str, name: str) -> list[RunEntr
 
     try:
         rows = await _runs_index.list_runs_for_job(namespace, name)
-    except RuntimeError:
+    except (RuntimeError, sqlite3.DatabaseError):
         rows = []
 
     parent = job_dir(base, namespace, name)
@@ -243,6 +247,8 @@ def resolve_run_dir(
         if resolved is None:
             return None
         epoch = resolved
+    if not EPOCH_RE.match(epoch):
+        return None
     candidate = run_dir(base, namespace, name, epoch)
     if not candidate.is_dir():
         return None

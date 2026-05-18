@@ -20,6 +20,7 @@ export function PhaseBar({ phases }) {
       ${phases.map((phase) => {
         const pct =
           phase.total > 0 ? Math.round((phase.completed / phase.total) * 100) : 0;
+        const boundedPct = Math.min(100, pct);
         const done = phase.completed >= phase.total && phase.total > 0;
         const active = !done && phase.completed > 0;
         const statusClass = done
@@ -48,9 +49,9 @@ export function PhaseBar({ phases }) {
             <div class="phase-bar-track">
               <div
                 class="phase-bar-fill"
-                style=${'width: ' + pct + '%'}
+                style=${'width: ' + boundedPct + '%'}
                 role="progressbar"
-                aria-valuenow=${pct}
+                aria-valuenow=${boundedPct}
                 aria-valuemin="0"
                 aria-valuemax="100"
               />

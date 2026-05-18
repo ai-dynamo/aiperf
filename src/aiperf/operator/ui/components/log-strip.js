@@ -195,16 +195,21 @@ export function LogStrip() {
           const sevClass = e.severity === 'error' ? ' log-strip-entry--error'
                          : e.severity === 'warn'  ? ' log-strip-entry--warn'
                          : '';
+          const jobPath = buildJobPath({ namespace: e.ns, name: e.name });
           return html`
-            <div
+            <a
               key=${e.ts + '-' + i}
               class=${'log-strip-entry' + sevClass}
-              onclick=${() => navigate(buildJobPath({ namespace: e.ns, name: e.name }))}
+              href=${jobPath}
+              onclick=${event => {
+                event.preventDefault();
+                navigate(jobPath);
+              }}
             >
               <span class="ts">${fmtTs(e.ts)}</span>
               <span class=${'log-strip-cat log-strip-cat--' + e.cat}>${e.cat}</span>
               <span>${e.msg}</span>
-            </div>
+            </a>
           `;
         })}
       </div>

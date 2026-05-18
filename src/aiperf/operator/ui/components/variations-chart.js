@@ -25,18 +25,31 @@ function shortLabel(label) {
   return dot >= 0 ? label.slice(dot + 1) : label;
 }
 
+function finiteOrNull(value) {
+  return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
+function uniqueLabels(labels) {
+  const counts = new Map();
+  return labels.map(label => {
+    const count = (counts.get(label) ?? 0) + 1;
+    counts.set(label, count);
+    return count === 1 ? label : `${label} (${count})`;
+  });
+}
+
 export function VariationsChart({ variations, metricLabel, unit }) {
   const chart = useMemo(() => {
     if (!variations || variations.length === 0) return null;
-    const labels = variations.map(v => shortLabel(v.label) || `v${v.variation_index}`);
-    const means = variations.map(v => v.mean);
+    const labels = uniqueLabels(variations.map(v => shortLabel(v.label) || `v${v.variation_index}`));
+    const means = variations.map(v => finiteOrNull(v.mean));
     // If every variation is missing this metric (e.g. selected metric not yet
     // computed across any trial), Chart.js still renders an empty axis box —
     // signal "no data" up so the page can show its empty state instead.
     if (means.every(m => m == null)) return null;
-    const stds = variations.map(v => v.std ?? 0);
-    const errorPlus = means.map((m, i) => (m == null ? null : m + (stds[i] ?? 0)));
-    const errorMinus = means.map((m, i) => (m == null ? null : m - (stds[i] ?? 0)));
+    const stds = variations.map(v => finiteOrNull(v.std) ?? 0);
+    const errorPlus = means.map((m, i) => (m == null ? null : m + stds[i]));
+    const errorMinus = means.map((m, i) => (m == null ? null : m - stds[i]));
 
     const data = {
       labels,
@@ -90,7 +103,7 @@ export function VariationsChart({ variations, metricLabel, unit }) {
           callbacks: {
             label: (ctx) => {
               const v = variations[ctx.dataIndex];
-              const cv = v?.cv != null ? ` (cv ${(v.cv * 100).toFixed(2)}%)` : '';
+              const cv = typeof v?.cv === 'number' && isFinite(v.cv) ? ` (cv ${(v.cv * 100).toFixed(2)}%)` : '';
               return `  mean ${ctx.parsed.y?.toFixed(2)} ${unit}${cv}, n=${v?.n ?? 0}`;
             },
           },

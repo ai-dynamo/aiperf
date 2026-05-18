@@ -68,14 +68,15 @@ def test_artifacts_card_accepts_endpoint_agnostic_props_with_job_defaults() -> N
         assert prop in props
 
     assert (
-        "const downloadAllUrl = bundleUrl ?? (epoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, epoch) : null);"
+        "const downloadAllUrl = bundleUrl ?? (resolvedEpoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, resolvedEpoch) : null);"
         in src
     )
-    assert "const resolvedQuickExportUrl = quickExportUrl ?? (epoch != null" in src
+    assert (
+        "const resolvedQuickExportUrl = quickExportUrl ?? (resolvedEpoch != null" in src
+    )
     assert "data-testid=${cardTestId}" in src
     assert "data-testid=${`${testIdPrefix}-download-all`}" in src
     assert "data-testid=${`${testIdPrefix}-quick-export`}" in src
-    assert '<div class="card-title" style="margin: 0">${title}</div>' in src
 
 
 def test_artifacts_card_empty_messages_are_overrideable_without_changing_job_text() -> (
@@ -99,6 +100,51 @@ def test_artifacts_card_empty_messages_are_overrideable_without_changing_job_tex
     )
     assert "${messages[emptyKey]}" in src
     assert "${details[emptyKey]}" in src
+
+
+def test_artifacts_card_renders_refreshed_header_summary_markup() -> None:
+    src = _source(_ARTIFACTS_CARD_JS)
+
+    assert (
+        re.search(
+            r'class="artifacts-card-header".*?'
+            r'class="artifacts-card-title"[^>]*>\$\{title\}</div>.*?'
+            r'class="artifacts-card-summary"',
+            src,
+            re.DOTALL,
+        )
+        is not None
+    )
+    assert re.search(r"files\.length.*file", src, re.DOTALL) is not None
+    assert (
+        re.search(
+            r"totalArtifactBytes.*?fmtBytes\(totalArtifactBytes\).*?resolvedEpoch.*?epoch \$\{resolvedEpoch\}",
+            src,
+            re.DOTALL,
+        )
+        is not None
+    )
+
+
+def test_artifacts_card_renders_dense_rows_with_explicit_row_actions() -> None:
+    src = _source(_ARTIFACTS_CARD_JS)
+
+    assert (
+        re.search(
+            r'class="artifacts-file-row".*?aria-label=\$\{.*?f\.name.*?\}.*?title=\$\{.*?f\.name.*?\}',
+            src,
+            re.DOTALL,
+        )
+        is not None
+    )
+    assert (
+        re.search(
+            r'class="artifacts-file-row".*?\$\{fmtBytes\(f\.size_bytes\)\}.*?class="artifacts-file-action".*?Preview.*?Download',
+            src,
+            re.DOTALL,
+        )
+        is not None
+    )
 
 
 def test_sweep_detail_fetches_and_renders_aggregate_artifacts_card() -> None:

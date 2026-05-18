@@ -39,7 +39,7 @@ function magnitudeAwareDecimals(value, decimals) {
  */
 export function fmtNumber(value, decimals = 1, fallback = '---') {
   if (value == null) return fallback;
-  if (typeof value !== 'number' || !isFinite(value)) return String(value);
+  if (typeof value !== 'number' || !isFinite(value)) return fallback;
   const effective = magnitudeAwareDecimals(value, decimals);
   return value.toLocaleString('en-US', {
     minimumFractionDigits: effective,
@@ -55,7 +55,7 @@ export function fmtNumber(value, decimals = 1, fallback = '---') {
  */
 export function fmtInt(value, fallback = '---') {
   if (value == null) return fallback;
-  if (typeof value !== 'number' || !isFinite(value)) return String(value);
+  if (typeof value !== 'number' || !isFinite(value)) return fallback;
   return Math.round(value).toLocaleString('en-US');
 }
 
@@ -108,7 +108,7 @@ export function fmtPrecise(value, fallback = '\u2014') {
  * @returns {string}
  */
 export function fmtPercent(value, decimals = 1) {
-  if (value == null) return '---';
+  if (value == null || typeof value !== 'number' || !isFinite(value)) return '---';
   return fmtNumber(value, decimals) + '%';
 }
 
@@ -118,7 +118,7 @@ export function fmtPercent(value, decimals = 1) {
  * @returns {string}
  */
 export function fmtBytes(bytes) {
-  if (bytes == null || typeof bytes !== 'number' || !isFinite(bytes)) return '---';
+  if (bytes == null || typeof bytes !== 'number' || !isFinite(bytes) || bytes < 0) return '---';
   if (bytes < 1024) return fmtInt(bytes) + ' B';
   if (bytes < 1024 * 1024) return fmtNumber(bytes / 1024, 1) + ' KiB';
   return fmtNumber(bytes / (1024 * 1024), 1) + ' MiB';

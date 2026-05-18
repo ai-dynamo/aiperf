@@ -20,6 +20,11 @@ import aiofiles
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from aiperf.kubernetes.results_sidecar import (
+    CHECKPOINTS_DIR_NAME,
+    READY_MARKER_NAME,
+    ready_marker_path,
+)
 from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.routers.results_schemas import FileEntry, JobEntry
 
@@ -69,31 +74,41 @@ def _artifact_entry(artifact: FileArtifact) -> FileEntry:
 
 
 def _list_file_artifacts(
-    root: Path, relative_dirs: tuple[str, ...] = ()
+    root: Path,
+    relative_dirs: tuple[str, ...] = (),
+    *,
+    include_root: bool = True,
 ) -> list[FileArtifact]:
-    artifacts = [
-        FileArtifact(path=f, name=f.name)
-        for f in root.iterdir()
-        if not f.is_symlink() and f.is_file()
-    ]
+    artifacts: list[FileArtifact] = []
+    if include_root:
+        artifacts.extend(
+            FileArtifact(path=f, name=f.name)
+            for f in root.iterdir()
+            if not f.is_symlink() and f.is_file() and f.name != READY_MARKER_NAME
+        )
     for rel_dir in relative_dirs:
         child = _safe_resolve(root, rel_dir)
         if child is None or not child.is_dir():
             continue
         artifacts.extend(
-            FileArtifact(path=f, name=f"{rel_dir}/{f.name}")
-            for f in child.iterdir()
+            FileArtifact(path=f, name=f.relative_to(root).as_posix())
+            for f in child.rglob("*")
             if not f.is_symlink() and f.is_file()
         )
     return sorted(artifacts, key=lambda item: _artifact_display_name(item.name))
 
 
 def _list_artifact_files(
-    root: Path, relative_dirs: tuple[str, ...] = ()
+    root: Path,
+    relative_dirs: tuple[str, ...] = (),
+    *,
+    include_root: bool = True,
 ) -> list[FileEntry]:
     return [
         _artifact_entry(artifact)
-        for artifact in _list_file_artifacts(root, relative_dirs)
+        for artifact in _list_file_artifacts(
+            root, relative_dirs, include_root=include_root
+        )
     ]
 
 
@@ -328,7 +343,11 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
             latest_dir = resolve_run_dir(base_dir, ns_dir.name, name_dir.name)
             if latest_dir is None:
                 continue
-            files = [f for f in latest_dir.iterdir() if f.is_file()]
+            files = [
+                f
+                for f in latest_dir.iterdir()
+                if f.is_file() and f.name != READY_MARKER_NAME
+            ]
             if not files:
                 continue
             model, endpoint = _extract_model_endpoint(latest_dir)
@@ -346,8 +365,13 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
 
 
 def _list_job_files(job_dir: Path) -> list[FileEntry]:
-    """List all regular files in a single job directory, sorted by display name."""
-    return _list_artifact_files(job_dir)
+    """List visible artifacts in a run directory, sorted by display name."""
+    include_root = ready_marker_path(job_dir).is_file()
+    return _list_artifact_files(
+        job_dir,
+        (CHECKPOINTS_DIR_NAME,),
+        include_root=include_root,
+    )
 
 
 def _read_profile_export_bytes(job_dir: Path) -> bytes:
@@ -405,8 +429,36 @@ def _serve_artifact_file(
     raise HTTPException(404, f"File not found: {filename}")
 
 
+def _is_checkpoint_artifact(root: Path, path: Path) -> bool:
+    """Return whether ``path`` resolves under the checkpoint subtree."""
+    try:
+        relative = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] == CHECKPOINTS_DIR_NAME
+
+
+def _not_ready_error(job_dir: Path) -> HTTPException:
+    return HTTPException(
+        404,
+        (
+            f"Results not ready for {job_dir.name}; marker file "
+            f"{READY_MARKER_NAME} not present — retry after completion"
+        ),
+    )
+
+
 def _serve_job_file(
     request: Request, job_dir: Path, filename: str
 ) -> StreamingResponse:
     """Serve ``filename`` from ``job_dir``, preferring .zst + content negotiation."""
+    raw_path = _safe_resolve(job_dir, filename)
+    zst_path = _safe_resolve(job_dir, filename + ".zst")
+    candidate = raw_path or zst_path
+    if (
+        candidate is not None
+        and not ready_marker_path(job_dir).is_file()
+        and not _is_checkpoint_artifact(job_dir, candidate)
+    ):
+        raise _not_ready_error(job_dir)
     return _serve_artifact_file(request, job_dir, filename)

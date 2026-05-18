@@ -11,6 +11,7 @@ import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
+import { recentJobs } from './dashboard-helpers.js';
 
 function findBest(jobList, field) {
   let best = null;
@@ -40,17 +41,6 @@ function findMin(jobList, field) {
     }
   }
   return { value: best, name: bestName };
-}
-
-function jobCreatedTs(job) {
-  // Sort key for "Recent Jobs" — newer first. ``created`` is the
-  // canonical timestamp (matches the JobTable's age sort); fall back to
-  // startTime / completionTime so an in-flight CR without a ``created``
-  // field still ranks above old completed runs.
-  const raw = job?.created ?? job?.startTime ?? job?.completionTime ?? null;
-  if (!raw) return 0;
-  const t = new Date(raw).getTime();
-  return Number.isFinite(t) ? t : 0;
 }
 
 // --- Section 2: ThroughputLatencyScatter ---
@@ -285,20 +275,11 @@ export function Dashboard() {
   const allJobs = enrichJobsFromSummaries(localJobs, summaryMap);
   const running = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'running' || p === 'initializing' || p === 'pending'; });
   const completed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'completed' || p === 'succeeded'; });
-  const failed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'failed' || p === 'error'; });
-
   const best = findBest(allJobs, 'throughputRps');
   const bestTtft = findMin(allJobs, 'ttftMs');
   const bestTokenTps = findBest(allJobs, 'tokenThroughput');
 
-  // Recent jobs: most-recently-created completed/succeeded runs only —
-  // in-flight and failed jobs surface in their own sections above. Falls
-  // back to startTime when ``created`` is missing (older CR shapes).
-  const recent = [...completed]
-    .map(j => ({ j, ts: jobCreatedTs(j) }))
-    .sort((a, b) => b.ts - a.ts)
-    .slice(0, 5)
-    .map(({ j }) => j);
+  const recent = recentJobs(allJobs);
   const maxThroughput = recent.reduce((mx, j) => Math.max(mx, j.throughputRps ?? 0), 0) || 1;
   const maxLatency = recent.reduce((mx, j) => Math.max(mx, j.latencyP99Ms ?? 0), 0) || 1;
 
@@ -475,42 +456,7 @@ export function Dashboard() {
       </div>
 
 
-      <!-- Section 5: Failed Jobs -->
-      ${failed.length > 0 ? html`
-        <div class="section-header" style="margin-top:var(--space-6)">
-          <span class="section-title" style="color:${palette.red}">Failed Jobs</span>
-          <span class="text-dim" style="font-size:var(--font-size-sm)">${failed.length}</span>
-        </div>
-        ${failed.map(job => {
-          const goToFailed = () => navigate(buildJobPath(job));
-          return html`
-            <div
-              key=${job.namespace + '/' + job.name}
-              class="job-card"
-              role="button"
-              tabindex="0"
-              aria-label=${'Open failed job ' + job.namespace + '/' + job.name}
-              onclick=${goToFailed}
-              onkeydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToFailed(); } }}
-              onfocus=${e => { e.currentTarget.style.outline = '2px solid ' + palette.red; e.currentTarget.style.outlineOffset = '2px'; }}
-              onblur=${e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
-              style="cursor:pointer;margin-bottom:var(--space-3);border-color:${palette.red}44"
-            >
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <div class="job-indicator failed"></div>
-                <span class="job-name">${job.name}</span>
-                <span class="job-badge failed">${job.phase ?? 'Failed'}</span>
-                <${NsPill} ns=${job.namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId=${'dashboard-failed-ns-' + (job.namespace ?? '')} />
-              </div>
-              ${job.error ? html`
-                <div title=${job.error} style="font-size:var(--font-size-sm);color:${palette.red};margin-top:4px;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${job.error}</div>
-              ` : null}
-            </div>
-          `;
-        })}
-      ` : null}
-
-      <!-- Section 6: Recent Jobs -->
+      <!-- Section 5: Recent Jobs -->
       ${recent.length > 0 ? html`
         <div class="section-header" style="margin-top:var(--space-6)">
           <div class="section-title">Recent Jobs</div>

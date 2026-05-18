@@ -50,9 +50,11 @@ export function DiagnosticsPanel({
 
   useEffect(() => {
     if (!availableTabs.includes(active)) {
-      setActive(availableTabs[0]);
+      setActive(defaultTab);
     }
-  }, [archived, mode]);
+  }, [active, availableTabs, defaultTab]);
+
+  const renderedActive = availableTabs.includes(active) ? active : defaultTab;
 
   useEffect(() => {
     function onPopState() {
@@ -82,10 +84,10 @@ export function DiagnosticsPanel({
                       : tab === 'conditions' ? (conditions?.length ?? null)
                       : (pods?.length ?? null);
           return html`
-            <span class=${'diag-tab' + (active === tab ? ' diag-tab--active' : '')}
+            <span class=${'diag-tab' + (renderedActive === tab ? ' diag-tab--active' : '')}
                   data-tab-id=${tab}
                   role="tab"
-                  aria-selected=${active === tab}
+                  aria-selected=${renderedActive === tab}
                   onClick=${() => switchTo(tab)}
                   key=${tab}>
               ${tab}
@@ -94,10 +96,10 @@ export function DiagnosticsPanel({
           `;
         })}
       </div>
-      ${active === 'events' && html`<${EventsTab} ns=${ns} name=${name} kind=${kind} active=${true} />`}
-      ${active === 'logs' && html`<${LogsTab} ns=${ns} name=${name} pods=${pods} kind=${kind} active=${true} />`}
-      ${active === 'conditions' && html`<${ConditionsTab} conditions=${conditions} />`}
-      ${active === 'pods' && html`<${PodsTab} pods=${pods} />`}
+      ${renderedActive === 'events' && html`<${EventsTab} ns=${ns} name=${name} kind=${kind} active=${true} />`}
+      ${renderedActive === 'logs' && html`<${LogsTab} ns=${ns} name=${name} pods=${pods} kind=${kind} active=${true} />`}
+      ${renderedActive === 'conditions' && html`<${ConditionsTab} conditions=${conditions} />`}
+      ${renderedActive === 'pods' && html`<${PodsTab} pods=${pods} />`}
     <//>
   `;
 }

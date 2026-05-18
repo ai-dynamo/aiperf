@@ -15,6 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME, ready_marker_path
 from aiperf.operator.results_layout import EPOCH_RE, resolve_run_dir
 from aiperf.operator.routers.results_files_io import (
     PROFILE_EXPORT_FILENAME,
@@ -78,8 +79,22 @@ def _validate_epoch(epoch: str) -> None:
         raise HTTPException(422, f"Invalid epoch: {epoch}")
 
 
+def _require_run_ready(job_dir: Path) -> None:
+    """Reject final artifact access before the sidecar readiness marker exists."""
+    if ready_marker_path(job_dir).is_file():
+        return
+    raise HTTPException(
+        404,
+        (
+            f"Results not ready for {job_dir.name}; marker file "
+            f"{READY_MARKER_NAME} not present — retry after completion"
+        ),
+    )
+
+
 def _bundle_response(job_dir: Path, bundle_name: str) -> StreamingResponse:
     """Stream a zip bundle of ``job_dir`` with Content-Disposition set."""
+    _require_run_ready(job_dir)
     return StreamingResponse(
         _stream_job_bundle(job_dir),
         media_type="application/zip",
@@ -158,6 +173,7 @@ async def _profile_export_quick_response(
     """
     _validate_epoch(epoch)
     job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+    _require_run_ready(job_dir)
     try:
         payload = await asyncio.to_thread(_read_profile_export_bytes, job_dir)
     except FileNotFoundError:

@@ -1,4 +1,5 @@
 import { signal } from '@preact/signals';
+import { normalizePath, replaceHash } from './router-helpers.js';
 
 // Current route signal — path only (no query string)
 export const route = signal(parseHash().path);
@@ -12,6 +13,15 @@ function parseHash() {
   return { path: path || '/', query: parseQueryString(queryStr) };
 }
 
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    if (error instanceof URIError) return value;
+    throw error;
+  }
+}
+
 function parseQueryString(queryStr) {
   const out = {};
   if (!queryStr) return out;
@@ -19,9 +29,9 @@ function parseQueryString(queryStr) {
     if (!pair) continue;
     const eq = pair.indexOf('=');
     if (eq === -1) {
-      out[decodeURIComponent(pair)] = '';
+      out[safeDecodeURIComponent(pair)] = '';
     } else {
-      out[decodeURIComponent(pair.slice(0, eq))] = decodeURIComponent(pair.slice(eq + 1));
+      out[safeDecodeURIComponent(pair.slice(0, eq))] = safeDecodeURIComponent(pair.slice(eq + 1));
     }
   }
   return out;
@@ -63,10 +73,15 @@ window.addEventListener('load', syncFromHash);
  * @param {string} path - e.g. '/jobs', '/jobs?ns=default', '/jobs/default/my-job'
  */
 export function navigate(path) {
-  const target = path.startsWith('/') ? path : `/${path}`;
+  const target = normalizePath(path);
   if (window.location.hash !== `#${target}`) {
     window.location.hash = target;
   }
+}
+
+export function replaceRoute(path) {
+  replaceHash(window, path);
+  syncFromHash();
 }
 
 /**
@@ -124,7 +139,7 @@ export function matchRoute(pattern, path) {
     const pp = patternParts[i];
     const vp = pathParts[i];
     if (pp.startsWith(':')) {
-      params[pp.slice(1)] = decodeURIComponent(vp);
+      params[pp.slice(1)] = safeDecodeURIComponent(vp);
     } else if (pp !== vp) {
       return null;
     }

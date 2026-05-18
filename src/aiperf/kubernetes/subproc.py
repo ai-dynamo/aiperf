@@ -82,11 +82,11 @@ async def check_command(cmd: list[str], *, timeout: float | None = 60.0) -> bool
         timeout: Seconds to wait for the command to exit. Defaults to 60s.
 
     Returns:
-        True if the command succeeded. Returns False on timeout.
+        True if the command succeeded. Returns False on timeout or missing executable.
     """
     try:
         result = await run_command(cmd, timeout=timeout)
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, FileNotFoundError):
         return False
     return result.ok
 

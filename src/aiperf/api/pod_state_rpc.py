@@ -59,10 +59,11 @@ async def query_controller_pod_states(
         Decoded snapshot dict, or ``None`` if the RPC is unavailable.
     """
     service = getattr(conn.app.state, "service", None)
-    if service is None or not hasattr(service, "send_command_to_controller"):
+    send_command = getattr(service, "send_command_to_controller", None)
+    if service is None or not callable(send_command):
         return None
     try:
-        response = await service.send_command_to_controller(
+        response = await send_command(
             CommandType.GET_POD_STATES,
             timeout=timeout,
         )
@@ -75,10 +76,17 @@ async def query_controller_pod_states(
     if not isinstance(response, CommandOk):
         return None
     try:
-        return orjson.loads(response.payload)
+        snapshot = orjson.loads(response.payload)
     except (ValueError, TypeError) as exc:
         _logger.debug("GET_POD_STATES payload decode failed: %r", exc)
         return None
+    if not isinstance(snapshot, dict):
+        _logger.debug(
+            "GET_POD_STATES payload decoded to non-dict top-level: %s",
+            type(snapshot).__name__,
+        )
+        return None
+    return snapshot
 
 
 __all__ = ["query_controller_pod_states"]

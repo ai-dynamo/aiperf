@@ -276,17 +276,16 @@ async def logs(
         aiperf kube logs my-sweep -v 5 -t 0
     """
     from aiperf import cli_utils
+    from aiperf.cli_commands.kube._kube_common import resolve_child_name
 
     manage_options = manage_options or KubeManageOptions()
+    if job_id is not None:
+        child = resolve_child_name(job_id, variation=variation, trial=trial)
+        if child is not None:
+            job_id = child
 
     with cli_utils.exit_on_error(title="Error Getting Logs"):
-        from aiperf.cli_commands.kube._kube_common import resolve_child_name
         from aiperf.kubernetes import cli_helpers
-
-        if job_id is not None:
-            child = resolve_child_name(job_id, variation=variation, trial=trial)
-            if child is not None:
-                job_id = child
 
         resolved = cli_helpers.resolve_job_id_and_namespace(
             job_id, manage_options.namespace

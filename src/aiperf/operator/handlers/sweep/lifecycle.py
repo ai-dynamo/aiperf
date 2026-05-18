@@ -63,13 +63,15 @@ async def cancel(
 
 
 async def on_delete(*, name: str, namespace: str, **_: Any) -> None:
-    """Best-effort cooperative cancel before cascade GC reaps in-flight children.
+    """Cooperative cancel child jobs before cascade GC reaps them.
 
     OwnerReferences will SIGKILL the sweep-controller pod and child
     AIPerfJobs anyway, but flipping each child's spec.cancel=true gives
     them a brief window to write partial results and shut workers down
-    cleanly. Failures here are swallowed — we never block CR deletion
-    on a transient apiserver hiccup.
+    cleanly. Listing failures are best-effort because namespace teardown can
+    make child enumeration unreliable; non-race child patch failures are
+    retried by kopf so a transient apiserver error does not immediately cede
+    to cascade deletion.
     """
     import aiohttp
     from kubernetes_asyncio import client as k8s
@@ -80,13 +82,22 @@ async def on_delete(*, name: str, namespace: str, **_: Any) -> None:
     try:
         async with k8s_client() as api:
             custom = k8s.CustomObjectsApi(api)
-            resp = await custom.list_namespaced_custom_object(
-                group="aiperf.nvidia.com",
-                version="v1alpha1",
-                namespace=namespace,
-                plural="aiperfjobs",
-                label_selector=f"aiperf.nvidia.com/sweep={name}",
-            )
+            try:
+                resp = await custom.list_namespaced_custom_object(
+                    group="aiperf.nvidia.com",
+                    version="v1alpha1",
+                    namespace=namespace,
+                    plural="aiperfjobs",
+                    label_selector=f"aiperf.nvidia.com/sweep={name}",
+                )
+            except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+                logger.warning(
+                    "AIPerfSweep on_delete: cooperative-cancel best-effort failed for %s/%s: %s",
+                    namespace,
+                    name,
+                    e,
+                )
+                return
             for child in resp.get("items", []):
                 child_name = (child.get("metadata") or {}).get("name")
                 if not child_name:
@@ -102,13 +113,19 @@ async def on_delete(*, name: str, namespace: str, **_: Any) -> None:
                         _content_type="application/merge-patch+json",
                     )
                 except ApiException as e:
-                    if e.status not in (404, 409):
-                        logger.warning(
-                            "failed to cooperative-cancel child %s/%s: %s",
-                            namespace,
-                            child_name,
-                            e,
-                        )
+                    if e.status in (404, 409):
+                        continue
+                    raise kopf.TemporaryError(
+                        "apiserver rejected cooperative-cancel patch for "
+                        f"{namespace}/{child_name} ({e.status}): {e.reason}",
+                        delay=15,
+                    ) from e
+                except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+                    raise kopf.TemporaryError(
+                        "apiserver unreachable during cooperative-cancel patch for "
+                        f"{namespace}/{child_name}: {e}",
+                        delay=15,
+                    ) from e
     except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(
             "AIPerfSweep on_delete: cooperative-cancel best-effort failed for %s/%s: %s",

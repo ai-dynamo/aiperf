@@ -34,33 +34,47 @@ export function CellsTable({ dimensions, cells, metric, stat, onCellClick }) {
           </tr>
         </thead>
         <tbody>
-          ${cells.map(c => html`
-            <tr key=${c.variation_index}
-                class="job-table-row"
-                onclick=${() => onCellClick && onCellClick(c)}
-                style=${onCellClick ? 'cursor: pointer' : ''}
-                data-testid=${'sweep-cell-row-' + c.variation_index}>
-              <td class="job-table-td text-dim" style="text-align:right;font-variant-numeric:tabular-nums">${c.variation_index}</td>
-              <td class="job-table-td job-table-name">${c.variation_label || '—'}</td>
-              ${dimNames.map(n => html`<td key=${n} class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">${c.values?.[n] ?? '—'}</td>`)}
-              <td class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">${c.trials_completed}</td>
-              <td class="job-table-td"
-                  style=${`text-align:right;font-variant-numeric:tabular-nums;color:${c.trials_failed > 0 ? palette.red : 'inherit'}`}>
-                ${c.trials_failed}
-              </td>
-              <td class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">
-                ${formatStat(c.metrics?.[metric]?.[stat])}
-              </td>
-            </tr>
-          `)}
+          ${cells.map(c => {
+            const variationIndex = c.variation_index ?? c.variationIndex;
+            const variationLabel = c.variation_label ?? c.variationLabel;
+            const trialsCompleted = c.trials_completed ?? c.trialsCompleted ?? 0;
+            const trialsFailed = c.trials_failed ?? c.trialsFailed ?? 0;
+            return html`
+              <tr key=${variationIndex}
+                  class="job-table-row"
+                  onclick=${() => onCellClick && onCellClick(c)}
+                  style=${onCellClick ? 'cursor: pointer' : ''}
+                  data-testid=${'sweep-cell-row-' + variationIndex}>
+                <td class="job-table-td text-dim" style="text-align:right;font-variant-numeric:tabular-nums">${variationIndex}</td>
+                <td class="job-table-td job-table-name">${variationLabel || '—'}</td>
+                ${dimNames.map(n => html`<td key=${n} class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">${c.values?.[n] ?? '—'}</td>`)}
+                <td class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">${trialsCompleted}</td>
+                <td class="job-table-td"
+                    style=${`text-align:right;font-variant-numeric:tabular-nums;color:${trialsFailed > 0 ? palette.red : 'inherit'}`}>
+                  ${trialsFailed}
+                </td>
+                <td class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">
+                  ${formatStat(c.metrics?.[metric]?.[stat])}
+                </td>
+              </tr>
+            `;
+          })}
         </tbody>
       </table>
     </div>
   `;
 }
 
+function finiteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function formatStat(v) {
-  if (v == null) return html`<span class="text-dim">—</span>`;
-  if (Math.abs(v) >= 100) return v.toFixed(1);
-  return v.toFixed(3);
+  const value = finiteNumber(v);
+  if (value == null) return html`<span class="text-dim">—</span>`;
+  if (Math.abs(value) >= 100) return value.toFixed(1);
+  return value.toFixed(3);
 }

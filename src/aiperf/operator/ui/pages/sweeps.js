@@ -31,15 +31,27 @@ const COLUMNS = [
   { key: 'age', label: 'Age' },
   { key: 'epochs', label: '' },
 ];
+const NUMERIC_SORT_KEYS = new Set(['progress', 'failed', 'variations', 'age']);
+
+function finiteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sweepAlias(s, snakeKey, camelKey) {
+  return s[snakeKey] ?? s[camelKey];
+}
 
 function sweepValue(s, key) {
   switch (key) {
     case 'name': return s.name ?? '';
     case 'namespace': return s.namespace ?? '';
     case 'phase': return s.phase ?? '';
-    case 'progress': return s.completed_runs ?? 0;
-    case 'failed': return s.failed_runs ?? 0;
-    case 'variations': return s.total_variations ?? 0;
+    case 'progress': return sweepAlias(s, 'completed_runs', 'completedRuns') ?? 0;
+    case 'failed': return sweepAlias(s, 'failed_runs', 'failedRuns') ?? 0;
+    case 'variations': return sweepAlias(s, 'total_variations', 'totalVariations') ?? 0;
     case 'model': return s.model ?? '';
     case 'source': return s.source ?? '';
     // Negate so descending sort (dir=-1, the default) yields newest first.
@@ -47,7 +59,7 @@ function sweepValue(s, key) {
     // *smaller* = newer; without the flip, dir=-1 would list oldest first
     // and disagree with the JobTable's ``case 'age'`` which keys on a
     // monotonically-increasing ``created`` timestamp.
-    case 'age': return -(s.age_seconds ?? 0);
+    case 'age': return -(s.age_seconds ?? s.ageSeconds ?? 0);
     default: return '';
   }
 }
@@ -173,7 +185,8 @@ export function Sweeps() {
       const qLower = searchText.toLowerCase();
       r = r.filter(s =>
         (s.name ?? '').toLowerCase().includes(qLower) ||
-        (s.namespace ?? '').toLowerCase().includes(qLower)
+        (s.namespace ?? '').toLowerCase().includes(qLower) ||
+        (s.model ?? '').toLowerCase().includes(qLower)
       );
     }
     return r;
@@ -181,8 +194,15 @@ export function Sweeps() {
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      const av = sweepValue(a, sort.key);
-      const bv = sweepValue(b, sort.key);
+      let av = sweepValue(a, sort.key);
+      let bv = sweepValue(b, sort.key);
+      if (NUMERIC_SORT_KEYS.has(sort.key)) {
+        av = finiteNumber(av);
+        bv = finiteNumber(bv);
+      }
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       if (av < bv) return -sort.dir;
       if (av > bv) return sort.dir;
       return 0;
@@ -255,8 +275,8 @@ export function Sweeps() {
         <div style="position: relative; flex: 1; min-width: 150px; display: flex; align-items: center">
           <input
             type="text"
-            placeholder="Search name or namespace..."
-            aria-label="Search sweeps by name or namespace"
+            placeholder="Search name, namespace, or model..."
+            aria-label="Search sweeps by name, namespace, or model"
             value=${searchText}
             oninput=${e => setSearchText(e.target.value)}
             onkeydown=${e => { if (e.key === 'Enter' && searchText !== urlQ) { e.preventDefault(); setQuery({ q: searchText }); } }}
@@ -331,6 +351,10 @@ export function Sweeps() {
               </thead>
               <tbody>
                 ${sorted.map(s => {
+                  const completedRuns = finiteNumber(sweepAlias(s, 'completed_runs', 'completedRuns')) ?? 0;
+                  const failedRuns = finiteNumber(sweepAlias(s, 'failed_runs', 'failedRuns')) ?? 0;
+                  const totalVariations = finiteNumber(sweepAlias(s, 'total_variations', 'totalVariations'));
+                  const ageSeconds = finiteNumber(s.age_seconds ?? s.ageSeconds);
                   const detailUrl = `/sweeps/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`;
                   return html`
                     <tr key=${`${s.namespace}/${s.name}`}
@@ -344,31 +368,27 @@ export function Sweeps() {
                       </td>
                       <td class="job-table-td">${renderPhase(s.phase)}</td>
                       <td class="job-table-td" title=${(() => {
-                        const c = s.completed_runs ?? 0;
-                        const t = s.total_variations;
-                        if (t == null) return '';
-                        if (c > t) return `${c} child runs completed across all run epochs; current epoch declares ${t} variations. Stale children from prior epochs are being counted — server-side rollup should be filtering by current runEpoch.`;
+                        if (totalVariations == null) return '';
+                        if (completedRuns > totalVariations) return `${completedRuns} child runs completed across all run epochs; current epoch declares ${totalVariations} variations. Stale children from prior epochs are being counted — server-side rollup should be filtering by current runEpoch.`;
                         return '';
                       })()}>
                         ${(() => {
-                          const c = s.completed_runs ?? 0;
-                          const t = s.total_variations;
-                          if (t == null || t === 0) return html`${c} / ?`;
+                          if (totalVariations == null || totalVariations === 0) return html`${completedRuns} / ?`;
                           // Clamp the visible numerator so users don't see "5 / 3"
                           // when the rollup picks up stale children from prior
                           // run-epochs. The hover-title surfaces the raw numbers.
-                          const shown = Math.min(c, t);
-                          const surplus = c > t ? c - t : 0;
-                          return html`${shown} / ${t}${surplus > 0
+                          const shown = Math.min(completedRuns, totalVariations);
+                          const surplus = completedRuns > totalVariations ? completedRuns - totalVariations : 0;
+                          return html`${shown} / ${totalVariations}${surplus > 0
                             ? html`<span class="text-dim" style="margin-left:4px;font-size:11px"> (+${surplus} stale)</span>`
                             : null}`;
                         })()}
                       </td>
                       <td class="job-table-td"
-                          style=${(s.failed_runs ?? 0) > 0 ? `color:${palette.red}` : ''}>
-                        ${s.failed_runs ?? 0}
+                          style=${failedRuns > 0 ? `color:${palette.red}` : ''}>
+                        ${failedRuns}
                       </td>
-                      <td class="job-table-td">${s.total_variations ?? html`<span class="text-dim">—</span>`}</td>
+                      <td class="job-table-td">${totalVariations ?? html`<span class="text-dim">—</span>`}</td>
                       <td class="job-table-td">
                         ${s.model
                           ? html`<${ModelPill} model=${s.model} testId=${'sweep-row-model-' + s.model} />`
@@ -376,7 +396,7 @@ export function Sweeps() {
                       </td>
                       <td class="job-table-td">${renderSource(s.source)}</td>
                       <td class="job-table-td text-dim">
-                        <${RelativeTime} seconds=${s.age_seconds} />
+                        <${RelativeTime} seconds=${ageSeconds} />
                       </td>
                       <td class="job-table-td">
                         <a href=${`#${detailUrl}`}

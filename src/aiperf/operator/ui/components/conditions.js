@@ -1,33 +1,5 @@
 import { html } from 'htm/preact';
-
-const CONDITION_LABELS = {
-  ConfigValid: 'Config',
-  EndpointReachable: 'Endpoint',
-  PreflightPassed: 'Preflight',
-  ResourcesCreated: 'Resources',
-  WorkersReady: 'Workers',
-  BenchmarkRunning: 'Running',
-  ResultsAvailable: 'Results',
-};
-
-/**
- * Determine badge CSS class based on condition status/reason.
- * @param {object} condition - K8s condition object
- * @returns {string} CSS class suffix
- */
-function conditionClass(condition) {
-  const status = (condition.status ?? '').toLowerCase();
-  const reason = (condition.reason ?? '').toLowerCase();
-
-  if (status === 'true') return 'condition-badge--true';
-  if (reason.includes('progress') || reason.includes('waiting')) {
-    return 'condition-badge--progress';
-  }
-  if (status === 'false' && reason.includes('failed')) {
-    return 'condition-badge--false';
-  }
-  return 'condition-badge--unknown';
-}
+import { visibleConditionBadgeSummary } from './conditions-helpers.js';
 
 /**
  * Defensive cap on rendered condition badges. K8s conditions for AIPerfJob
@@ -45,8 +17,8 @@ export function Conditions({ conditions }) {
     return html`<div class="conditions conditions--empty">No conditions</div>`;
   }
 
-  const overflow = Math.max(0, conditions.length - MAX_VISIBLE_CONDITIONS);
-  const visible = overflow > 0 ? conditions.slice(0, MAX_VISIBLE_CONDITIONS) : conditions;
+  const { badges: visible, overflow } = visibleConditionBadgeSummary(conditions, MAX_VISIBLE_CONDITIONS);
+  if (visible.length === 0) return null;
 
   return html`
     <div
@@ -56,8 +28,6 @@ export function Conditions({ conditions }) {
       style="display:flex;flex-wrap:wrap;gap:var(--space-1,4px);align-items:center"
     >
       ${visible.map((cond) => {
-        const label = CONDITION_LABELS[cond.type] ?? cond.type;
-        const cls = conditionClass(cond);
         const title = cond.message
           ? `${cond.type}: ${cond.message}`
           : cond.type;
@@ -65,12 +35,12 @@ export function Conditions({ conditions }) {
         return html`
           <span
             key=${cond.type}
-            class=${'condition-badge ' + cls}
+            class=${'condition-badge ' + cond.className}
             title=${title}
             role="listitem"
             style="word-break:break-word;max-width:100%"
           >
-            ${label}
+            ${cond.label}
           </span>
         `;
       })}

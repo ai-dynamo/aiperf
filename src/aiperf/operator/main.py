@@ -277,6 +277,7 @@ async def on_jobset_conditions(
     new: list[dict[str, Any]] | None,
     namespace: str,
     name: str,
+    body: dict[str, Any],
     **_: Any,
 ) -> None:
     """Detect a JobSet terminal-success flip immediately rather than waiting for the next monitor tick.
@@ -286,7 +287,7 @@ async def on_jobset_conditions(
     existing ``on_benchmark_complete`` handler.
     """
     await jobset_terminal_handler.handle_jobset_conditions(
-        old=old, new=new, namespace=namespace, jobset_name=name
+        old=old, new=new, namespace=namespace, jobset_name=name, jobset_body=body
     )
 
 

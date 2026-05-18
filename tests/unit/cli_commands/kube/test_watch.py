@@ -214,7 +214,7 @@ class TestWatchCommandErrorSurface:
         self, capsys: Any
     ) -> None:
         """JSON mode must not contaminate stdout when default job resolution fails."""
-        with patch("aiperf.kubernetes.console.get_last_benchmark", return_value=None):
+        with patch("aiperf.kubernetes.cli_helpers.get_last_benchmark", return_value=None):
             await watch(manage_options=KubeManageOptions(), output="json")
 
         captured = capsys.readouterr()

@@ -141,6 +141,36 @@ spec:
 
 /* ───────────────────────── tiny YAML parser ───────────────────────── */
 
+const DANGEROUS_YAML_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function assertSafeYamlKey(key, lineNo = null) {
+  if (!DANGEROUS_YAML_KEYS.has(key)) return;
+  const location = lineNo === null ? 'Manifest' : `Line ${lineNo + 1}`;
+  throw new Error(`${location}: key '${key}' is not allowed in launch YAML.`);
+}
+
+function setYamlKey(target, key, value, lineNo) {
+  assertSafeYamlKey(key, lineNo);
+  target[key] = value;
+}
+
+function sanitizeParsedYaml(value, path = 'manifest') {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => sanitizeParsedYaml(item, `${path}[${index}]`));
+  }
+  if (!value || typeof value !== 'object') return value;
+  if (Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error(`${path}: object prototype was modified by YAML keys.`);
+  }
+
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    assertSafeYamlKey(key);
+    out[key] = sanitizeParsedYaml(child, `${path}.${key}`);
+  }
+  return out;
+}
+
 /** Very small YAML-ish parser sufficient for AIPerfJob manifests. Real YAML
  *  would need a library; for the expected shape (mappings, sequences, scalars,
  *  inline flow maps for isl/osl) this hand-rolled version is enough and keeps
@@ -184,7 +214,7 @@ function parseYaml(text) {
           if (ci < 0) continue;
           const k = pair.slice(0, ci).trim();
           const v = pair.slice(ci + 1).trim();
-          out[k] = parseScalar(v);
+          setYamlKey(out, k, parseScalar(v), null);
         }
       }
       return out;
@@ -225,9 +255,11 @@ function parseYaml(text) {
         const child = {};
         top.val.push(child);
         const [k, ...vparts] = rest.split(':');
+        const itemKey = k.trim();
         const v = vparts.join(':').trim();
-        child[k.trim()] = v === '' ? {} : parseScalar(v);
-        if (v === '') stack.push({ val: child[k.trim()], indent: indent + 2 });
+        const itemValue = v === '' ? {} : parseScalar(v);
+        setYamlKey(child, itemKey, itemValue, lineNo);
+        if (v === '') stack.push({ val: itemValue, indent: indent + 2 });
         else stack.push({ val: child, indent });
       } else {
         top.val.push(parseScalar(rest));
@@ -256,17 +288,48 @@ function parseYaml(text) {
       if (Array.isArray(top.val)) {
         throw new Error(`Line ${lineNo + 1}: key '${key}' at sequence position (should be inside an object).`);
       }
-      top.val[key] = child;
+      setYamlKey(top.val, key, child, lineNo);
       stack.push({ val: child, indent });
     } else {
       if (Array.isArray(top.val)) {
         throw new Error(`Line ${lineNo + 1}: key '${key}' at sequence position.`);
       }
-      top.val[key] = parseScalar(rest);
+      setYamlKey(top.val, key, parseScalar(rest), lineNo);
     }
   }
 
-  return root;
+  return sanitizeParsedYaml(root);
+}
+
+function validateManifest(manifest) {
+  if (!manifest || Object.keys(manifest).length === 0) {
+    throw new Error('Manifest is empty; paste an AIPerfJob YAML manifest.');
+  }
+  if (manifest.kind !== 'AIPerfJob') {
+    throw new Error(`kind must be AIPerfJob, got ${manifest.kind ?? 'missing'}.`);
+  }
+
+  const name = manifest?.metadata?.name;
+  if (typeof name !== 'string' || name.trim() === '') {
+    throw new Error('metadata.name is required.');
+  }
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(name) || name.length > 253) {
+    throw new Error('metadata.name must be a valid Kubernetes DNS subdomain.');
+  }
+
+  const namespace = manifest?.metadata?.namespace;
+  if (typeof namespace !== 'string' || namespace.trim() === '') {
+    throw new Error('metadata.namespace is required.');
+  }
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(namespace) || namespace.length > 63) {
+    throw new Error('metadata.namespace must be a valid Kubernetes namespace name.');
+  }
+}
+
+function parseLaunchManifest(text) {
+  const manifest = parseYaml(text);
+  validateManifest(manifest);
+  return manifest;
 }
 
 // Peek at current YAML to derive a live, non-editable view of the target
@@ -274,11 +337,11 @@ function parseYaml(text) {
 // errors here — the dedicated parse-error banner handles user-visible feedback.
 function peekManifest(text) {
   try {
-    const m = parseYaml(text);
+    const m = parseLaunchManifest(text);
     return {
-      namespace: m?.metadata?.namespace ?? null,
-      name: m?.metadata?.name ?? null,
-      kind: m?.kind ?? null,
+      namespace: m.metadata.namespace,
+      name: m.metadata.name,
+      kind: m.kind,
       parseError: null,
     };
   } catch (e) {
@@ -326,7 +389,7 @@ export function Launch() {
   async function launch() {
     let manifest;
     try {
-      manifest = parseYaml(yaml);
+      manifest = parseLaunchManifest(yaml);
     } catch (e) {
       setState({ kind: 'err', msg: e.message, stage: 'parse' });
       return;

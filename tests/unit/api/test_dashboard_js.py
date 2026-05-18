@@ -37,6 +37,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
+from fastapi.testclient import TestClient
 from pytest import param
 from starlette.websockets import WebSocket as StarletteWebSocket
 
@@ -535,6 +536,64 @@ _STATIC_V2_DIR = _REPO_ROOT / "src" / "aiperf" / "api" / "static-v2"
 def _v2_js_files() -> list[Path]:
     """All ES modules shipped by the v2 dashboard."""
     return sorted(_STATIC_V2_DIR.rglob("*.js"))
+
+
+@pytest.fixture
+def _static_client() -> TestClient:
+    app = FastAPI(title="aiperf-static-test")
+    app.include_router(static_router)
+    return TestClient(app)
+
+
+class TestDashboardV2StaticServing:
+    """Route-level coverage for the API server's static-v2 asset handler."""
+
+    def test_dashboard_v2_without_trailing_slash_redirects(
+        self, _static_client: TestClient
+    ) -> None:
+        response = _static_client.get("/dashboard-v2", follow_redirects=False)
+
+        assert response.status_code == 307
+        assert response.headers["location"] == "/dashboard-v2/"
+
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            param("/dashboard-v2/", "text/html", id="index"),
+            param("/dashboard-v2/app.js", "application/javascript", id="js"),
+            param("/dashboard-v2/style.css", "text/css", id="css"),
+        ],
+    )  # fmt: skip
+    def test_dashboard_v2_serves_expected_content_types(
+        self, _static_client: TestClient, path: str, expected: str
+    ) -> None:
+        response = _static_client.get(path)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(expected)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            param("/dashboard-v2/../static/dashboard.html", id="dot-dot"),
+            param("/dashboard-v2/%2E%2E/static/dashboard.html", id="encoded-dot-dot"),
+        ],
+    )  # fmt: skip
+    def test_dashboard_v2_rejects_path_traversal(
+        self, _static_client: TestClient, path: str
+    ) -> None:
+        response = _static_client.get(path)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid asset path"
+
+    def test_dashboard_v2_missing_asset_returns_404(
+        self, _static_client: TestClient
+    ) -> None:
+        response = _static_client.get("/dashboard-v2/no-such-asset.js")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "no-such-asset.js not found"
 
 
 class TestDashboardV2InlineJS:

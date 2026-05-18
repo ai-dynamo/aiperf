@@ -504,47 +504,49 @@ async def main() -> int:
                 flag=cancel_flag,
             )
         )
-        status_writer = SweepStatusWriter(
-            api, name=sweep_name, namespace=sweep_namespace
-        )
-        # Promote `status.phase` from `Pending` to `Running` before the
-        # orchestrator loop begins. The CRD declares Running but no other
-        # writer ever set it, so parents jumped Pending -> Aggregating
-        # directly. Atomic test/replace skips silently on pod restart or
-        # if the rollup already advanced phase.
-        await status_writer.parent_running()
-        executor = K8sChildJobExecutor(
-            api=api,
-            sweep=sweep_cr,
-            with_trial_suffix=needs_trial_suffix(
-                multi_run_trials=(spec.multi_run.num_runs if spec.multi_run else None),
-                has_convergence=(
-                    spec.multi_run is not None
-                    and spec.multi_run.convergence is not None
-                ),
-            ),
-            base_dir=RESULTS_DIR,
-            status_writer=status_writer,
-            cancel_check=lambda: cancel_flag["requested"],
-            sweep_run_epoch=sweep_run_epoch,
-        )
-
-        orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
-        from aiperf.cli_runner._strategy import _build_search_planner
-
-        search_planner = _build_search_planner(plan)
-        if search_planner is not None:
-            from aiperf.config.sweep import AdaptiveSearchSweep
-
-            adaptive = (
-                plan.sweep if isinstance(plan.sweep, AdaptiveSearchSweep) else None
-            )
-            if adaptive is not None:
-                logger.info(
-                    "Cluster-side adaptive search active: "
-                    f"{_adaptive_search_log_summary(adaptive)}"
-                )
         try:
+            status_writer = SweepStatusWriter(
+                api, name=sweep_name, namespace=sweep_namespace
+            )
+            # Promote `status.phase` from `Pending` to `Running` before the
+            # orchestrator loop begins. The CRD declares Running but no other
+            # writer ever set it, so parents jumped Pending -> Aggregating
+            # directly. Atomic test/replace skips silently on pod restart or
+            # if the rollup already advanced phase.
+            await status_writer.parent_running()
+            executor = K8sChildJobExecutor(
+                api=api,
+                sweep=sweep_cr,
+                with_trial_suffix=needs_trial_suffix(
+                    multi_run_trials=(
+                        spec.multi_run.num_runs if spec.multi_run else None
+                    ),
+                    has_convergence=(
+                        spec.multi_run is not None
+                        and spec.multi_run.convergence is not None
+                    ),
+                ),
+                base_dir=RESULTS_DIR,
+                status_writer=status_writer,
+                cancel_check=lambda: cancel_flag["requested"],
+                sweep_run_epoch=sweep_run_epoch,
+            )
+
+            orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
+            from aiperf.cli_runner._strategy import _build_search_planner
+
+            search_planner = _build_search_planner(plan)
+            if search_planner is not None:
+                from aiperf.config.sweep import AdaptiveSearchSweep
+
+                adaptive = (
+                    plan.sweep if isinstance(plan.sweep, AdaptiveSearchSweep) else None
+                )
+                if adaptive is not None:
+                    logger.info(
+                        "Cluster-side adaptive search active: "
+                        f"{_adaptive_search_log_summary(adaptive)}"
+                    )
             all_results = await orchestrator.execute(
                 plan,
                 executor,

@@ -280,7 +280,7 @@ export const api = {
     const nsSeg = encodeURIComponent(ns);
     const sweepSeg = encodeURIComponent(sweepName);
     const epSeg = encodeURIComponent(epoch);
-    const fileSeg = encodeURIComponent(filename);
+    const fileSeg = filename.split('/').map(encodeURIComponent).join('/');
     return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`;
   },
 

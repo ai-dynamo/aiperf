@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -78,16 +79,24 @@ async def _download_and_decompress(
     else:
         decompressor = None
 
-    async with aiofiles.open(dest_path, "wb") as f:
-        async for chunk in resp.content.iter_chunked(64 * 1024):
+    temp_path = dest_path.with_name(f".{dest_path.name}.{uuid.uuid4().hex}.tmp")
+    replaced = False
+    try:
+        async with aiofiles.open(temp_path, "wb") as f:
+            async for chunk in resp.content.iter_chunked(64 * 1024):
+                if decompressor is not None:
+                    chunk = decompressor.decompress(chunk)
+                if chunk:
+                    await f.write(chunk)
             if decompressor is not None:
-                chunk = decompressor.decompress(chunk)
-            if chunk:
-                await f.write(chunk)
-        if decompressor is not None:
-            remaining = decompressor.flush()
-            if remaining:
-                await f.write(remaining)
+                remaining = decompressor.flush()
+                if remaining:
+                    await f.write(remaining)
+        await asyncio.to_thread(os.replace, temp_path, dest_path)
+        replaced = True
+    finally:
+        if not replaced:
+            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
 
 
 async def _download_operator_file(

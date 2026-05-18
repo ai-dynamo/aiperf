@@ -756,6 +756,22 @@ class TestLoadManifest:
         assert entry.metadata["key1"] == "value1"
         assert entry.metadata["key2"] == 42
 
+    def test_load_manifest_missing_distribution_metadata_still_registers_types(
+        self, empty_registry: _PluginRegistry, manifest_path: Path
+    ) -> None:
+        """load_manifest() tolerates incomplete distribution metadata."""
+        mock_dist = Mock()
+        mock_dist.metadata = None
+        empty_registry.load_manifest(
+            manifest_path,
+            plugin_name="test-plugin",
+            dist=mock_dist,
+        )
+        assert empty_registry.has_entry("test_category", "test_type")
+        assert empty_registry.get_package_metadata("test-plugin") == PackageInfo(
+            name="test-plugin"
+        )
+
     def test_load_manifest_invalid_resource_path(
         self, empty_registry: _PluginRegistry
     ) -> None:

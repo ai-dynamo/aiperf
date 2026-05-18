@@ -7,6 +7,10 @@ import { sparkColors } from './kpi-card-tone.js';
 export { sparkColors };
 
 const slugifyLabel = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g, '-');
+const displayValue = (value) => (typeof value === 'number' && !Number.isFinite(value)) ? '—' : (value ?? '—');
+const progressWidth = (progress) => Number.isFinite(Number(progress))
+  ? Math.min(100, Math.max(0, Number(progress)))
+  : 0;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Material-style outlined SVG icon registry. Looked up by string key in
@@ -154,7 +158,7 @@ export function KpiCard({
         <span class="metric-label">${label}</span>
         <div class="metric-val-row">
           <span class=${valueClass} style=${valueStyle}>
-            ${value ?? '—'}
+            ${displayValue(value)}
           </span>
           ${unit && html`<span class="metric-unit">${unit}</span>`}
           ${trend && html`<${TrendBadge} trend=${trend} />`}
@@ -163,7 +167,7 @@ export function KpiCard({
         ${progress != null && html`
           <div class="metric-bar" aria-hidden="true">
             <div class=${'metric-bar__fill metric-bar__fill--' + barTone}
-                 style=${'width: ' + Math.min(100, Math.max(0, Number(progress))) + '%'}></div>
+                 style=${'width: ' + progressWidth(progress) + '%'}></div>
           </div>
         `}
       </div>
@@ -178,7 +182,7 @@ export function KpiCard({
           <span class="metric-label">${label}</span>
           <div class="metric-val-row">
             <span class=${valueClass} style=${valueStyle}>
-              ${value ?? '—'}
+              ${displayValue(value)}
             </span>
             ${unit && html`<span class="metric-unit">${unit}</span>`}
             ${trend && html`<${TrendBadge} trend=${trend} />`}
@@ -197,7 +201,7 @@ export function KpiCard({
       ${progress != null && html`
         <div class="metric-bar metric-bar--gradient" aria-hidden="true">
           <div class=${'metric-bar__fill metric-bar__fill--' + barTone}
-               style=${'width: ' + Math.min(100, Math.max(0, Number(progress))) + '%'}></div>
+               style=${'width: ' + progressWidth(progress) + '%'}></div>
         </div>
       `}
     </div>

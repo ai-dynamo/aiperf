@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.common.redact import REDACTED_VALUE, redact_headers
 from aiperf.kubernetes.client import get_raw_aiperfjob
 from aiperf.operator import runs_index
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB

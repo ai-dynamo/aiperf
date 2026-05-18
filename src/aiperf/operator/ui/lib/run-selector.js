@@ -3,23 +3,30 @@ export function runHref(namespace, name, epoch = null) {
   return epoch == null ? base : `${base}/runs/${encodeURIComponent(epoch)}`;
 }
 
+function compareEpochsNewestFirst(a, b) {
+  const aEpoch = String(a?.epoch ?? '');
+  const bEpoch = String(b?.epoch ?? '');
+  const aNumber = Number(aEpoch);
+  const bNumber = Number(bEpoch);
+  if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) {
+    return bNumber - aNumber;
+  }
+  return bEpoch.localeCompare(aEpoch);
+}
+
 export function buildRunSelectorRows({ namespace, name, epochs, current, hasLive, isRunning = false }) {
-  const sorted = [...(epochs || [])].sort((a, b) => String(b?.epoch ?? '').localeCompare(String(a?.epoch ?? '')));
-  const latestEp = sorted.find(e => e?.isLatest)?.epoch;
+  const sorted = [...(epochs || [])].sort(compareEpochsNewestFirst);
+  const liveRowVisible = hasLive && isRunning;
+  const latestEp = sorted.find(e => e?.isLatest)?.epoch ?? sorted[0]?.epoch;
+  const selectedEpoch = current == null && !liveRowVisible ? String(latestEp) : current;
   const rows = [];
-  if (hasLive) {
-    // Running jobs: row points at the no-epoch URL so the page opens the
-    // controller WebSocket for the live stream. Non-running jobs: there is
-    // no live stream, so pin directly to /runs/<latest> — otherwise the
-    // click bounces through a stale no-epoch render and run-scoped child
-    // fetches (e.g. profile_export.jsonl) hit the legacy endpoint and 409.
-    const liveEpoch = isRunning || latestEp == null ? null : String(latestEp);
+  if (liveRowVisible) {
     rows.push({
       kind: 'live',
-      epoch: liveEpoch,
-      label: isRunning ? 'Live' : 'Latest',
-      selected: liveEpoch != null ? current === liveEpoch : current == null,
-      href: runHref(namespace, name, liveEpoch),
+      epoch: null,
+      label: 'Live',
+      selected: current == null,
+      href: runHref(namespace, name),
       fileCount: null,
       mtimeEpoch: null,
       isLatest: false,
@@ -30,11 +37,11 @@ export function buildRunSelectorRows({ namespace, name, epochs, current, hasLive
       kind: 'epoch',
       epoch: String(epoch.epoch),
       label: String(epoch.epoch),
-      selected: current === String(epoch.epoch),
+      selected: selectedEpoch === String(epoch.epoch),
       href: runHref(namespace, name, epoch.epoch),
       fileCount: epoch.fileCount ?? null,
       mtimeEpoch: epoch.mtimeEpoch ?? null,
-      isLatest: Boolean(epoch.isLatest),
+      isLatest: Boolean(epoch.isLatest) && sorted.length > 1,
     });
   }
   return rows;

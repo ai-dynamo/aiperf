@@ -187,10 +187,10 @@ async def on_benchmark_complete(
     )
 
     sb = StatusBuilder(patch, status)
+    await handle_completion(body, namespace, jobset_name, job_id, status=status, sb=sb)
     generation = body.get("metadata", {}).get("generation")
     if generation is not None:
         sb.set_observed_generation(int(generation))
-    await handle_completion(body, namespace, jobset_name, job_id, status=status, sb=sb)
 
     host = controller_dns_name(jobset_name, namespace)
     try:

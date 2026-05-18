@@ -519,8 +519,7 @@ export function Compare() {
     setCompareError(null);
     setCompareData(null);
     try {
-      const bareJobIds = keys.map((k) => splitKey(k).jobId);
-      const resp = await api.compareJobs(bareJobIds);
+      const resp = await api.compareJobs(keys);
       setCompareData(resp);
     } catch (err) {
       setCompareError(err.message);
@@ -605,9 +604,7 @@ export function Compare() {
     setCompareError(null);
     setCompareData(null);
     try {
-      // Backend filters by bare job_id; strip the namespace prefix.
-      const bareJobIds = selectedKeys.map((k) => splitKey(k).jobId);
-      const resp = await api.compareJobs(bareJobIds);
+      const resp = await api.compareJobs(selectedKeys);
       setCompareData(resp);
     } catch (err) {
       setCompareError(err.message);
@@ -910,9 +907,15 @@ export function Compare() {
             <div style="color: var(--error); font-size: var(--font-size-sm)">${jobsError}</div>
           `}
 
-          ${!jobsLoading && filtered.length === 0 && html`
+          ${!jobsLoading && storedJobs.length === 0 && html`
             <div class="text-dim" style="padding: var(--space-3); text-align: center; font-size: var(--font-size-sm)">
               No completed jobs found.
+            </div>
+          `}
+
+          ${!jobsLoading && filtered.length === 0 && storedJobs.length > 0 && html`
+            <div class="text-dim" style="padding: var(--space-3); text-align: center; font-size: var(--font-size-sm)">
+              No completed jobs match these filters.
             </div>
           `}
 
