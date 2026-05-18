@@ -80,9 +80,9 @@ The UI is organized as a **two-tier router**:
   jobs in, and host analytics that benefit from a wider lens.
 - **Per-namespace tier** (`/ns/<name>/...`): every operational view —
   overview, launch, archive, single run, single epoch. The namespace segment
-  in the URL is the **authoritative scope** for any state-changing action: a
-  Launch from `/ns/foo/launch` cannot create a job in namespace `bar`, even
-  if the YAML body says so (see "Launch divergence lock" below).
+  in the URL is the **authoritative scope** for the read-only launch helper:
+  YAML copied from `/ns/foo/launch` is pre-scoped to namespace `foo` and must
+  be applied from an authenticated terminal.
 
 Routes are hash-based, so reloading any page works without server-side route
 configuration. The full route table:
@@ -91,7 +91,7 @@ configuration. The full route table:
 |---|---|
 | `/` | Cross-namespace picker — one tile per namespace observed in the operator's job list, with mini-status chips (running / failed-recent / completed counts) and a left-edge state tint. Click a tile to enter that namespace. |
 | `/ns/:ns` | Per-namespace overview — stats hero, active runs strip, recent runs table, all scoped to one namespace. Empty namespaces show a "Launch in `<ns>`" CTA. |
-| `/ns/:ns/launch` | Launch a benchmark into `:ns`. The `namespace:` field of the YAML is auto-filled from the URL. If the user edits the YAML to specify a different namespace, the LAUNCH button disables and the breadcrumb pill is tinted red until the YAML and URL agree. |
+| `/ns/:ns/launch` | Read-only launch helper for `:ns`. The YAML is auto-filled from the URL, browser submission is disabled, and the user copies the manifest for `kubectl apply` or a GitOps review path. |
 | `/ns/:ns/archive` | Namespace history — flat list of past runs in `:ns`. |
 | `/ns/:ns/run/:name` | Single-run workbench. |
 | `/ns/:ns/run/:name/runs/:epoch` | Single-run epoch view. |
@@ -128,32 +128,34 @@ namespace with at least one observed job (search-filterable). Selecting a
 namespace navigates to `/ns/<chosen>`. A "View all namespaces" footer item
 returns to `/`.
 
-This is the canonical way to switch namespaces — including when you want to
-launch into a different namespace than the one currently in the URL.
+This is the canonical way to switch namespaces — including when you want the
+launch helper to render YAML for a different namespace.
 
-### Launch divergence lock
+### Read-only launch helper
 
-The URL is the source of truth for the namespace you're launching into. On
-`/ns/:ns/launch`, the YAML editor auto-fills `namespace: <ns>`. If a user
-edits the YAML so the `namespace:` field disagrees with the URL segment, two
-things happen at once:
+The URL is the source of truth for the namespace stamped into launch YAML. On
+`/ns/:ns/launch`, the editor auto-fills `namespace: <ns>` and treats browser
+creation as disabled: the dashboard has no safe bearer-token delivery path for
+mutating routes. Copy the YAML, save it locally, review it, then apply it from
+an authenticated terminal:
 
-- The **LAUNCH** button disables.
-- The breadcrumb pill is tinted red.
+```bash
+kubectl apply -f benchmark.yaml
+```
 
 To launch into a different namespace, switch namespaces via the breadcrumb
-pill (which navigates to `/ns/<other>/launch`) — do not edit the YAML. This
-guarantees the namespace in the URL bar always matches the namespace any
-state-changing action will operate on.
+pill (which navigates to `/ns/<other>/launch`) before copying the YAML. This
+keeps the URL bar, rendered YAML, and authenticated `kubectl apply` target in
+sync.
 
 ### Picker visibility caveat
 
 The `/` picker only renders namespaces with **at least one observed job**
 (current or historical). Empty-but-deployable namespaces are not surfaced.
-To launch into a namespace the operator has never seen, navigate to
-`/ns/<name>/launch` directly — the launch view works regardless of whether
-the namespace appears in the picker. After the first job lands, the
-namespace will appear on subsequent picker visits.
+To prepare YAML for a namespace the operator has never seen, navigate to
+`/ns/<name>/launch` directly — the launch helper works regardless of whether
+the namespace appears in the picker. After the first job lands via `kubectl
+apply` or GitOps, the namespace will appear on subsequent picker visits.
 
 ### External Plots link
 
@@ -218,21 +220,28 @@ namespace in the URL.
 
 ### Launch (`/ns/:ns/launch`)
 
-YAML editor for submitting a new AIPerfJob into `:ns`.
+Read-only YAML helper for preparing a new AIPerfJob manifest scoped to `:ns`.
+The browser does not create cluster resources from this page.
 
 **Behavior:**
 
 - The `namespace:` field of the YAML is **auto-filled** from the URL.
-- Edits to the YAML that change `namespace:` to a different value trigger
-  the **divergence lock**: the LAUNCH button disables and the breadcrumb
-  pill turns red until the YAML and URL agree (or you switch namespaces via
-  the pill).
-- Templates and schema validation are unchanged from the legacy launch view.
-- On success, the page navigates to `/ns/:ns/run/<new-name>`.
+- Browser submission is disabled by default because the static SPA cannot
+  safely hold the bearer token required for mutating results-server routes.
+- Templates and schema validation still help draft a valid manifest.
+- To launch, copy the YAML, save it as `benchmark.yaml`, then apply it from an
+  authenticated terminal:
 
-**Endpoints consumed:**
+  ```bash
+  kubectl apply -f benchmark.yaml
+  ```
 
-- `POST /api/v1/jobs/{ns}` — creates the AIPerfJob CR in `:ns`
+- For generated manifests and GitOps flows, use `aiperf kube generate --operator`
+  or commit the copied YAML for review before applying it.
+
+**Endpoints consumed:** none. The actual mutating HTTP route for API clients is
+`POST /api/v1/jobs`, protected by mutating-route bearer-token auth; the
+dashboard does not call it by default.
 
 ### Archive (`/ns/:ns/archive`)
 
@@ -257,8 +266,9 @@ the job is still running or has finished.
 **Always visible:**
 
 - **Header** — name, namespace, phase badge, model, backend, start time,
-  elapsed. A "Cancel" button appears for running jobs (calls
-  `POST /api/v1/jobs/{ns}/{name}/cancel` after a JS `confirm()` prompt).
+  elapsed. Mutating controls are hidden or disabled when browser mutations are
+  disabled; a read-only notice points users to authenticated terminal actions
+  for cancellation.
 - **Conditions** — kopf condition list (Ready, Progressing, Completed, …).
 - **Phases** — `PhaseBar` showing which benchmark phase (warmup, measurement,
   cooldown) the job is in.
@@ -295,8 +305,8 @@ the job is still running or has finished.
 
 **Archived state.** When the CR has been deleted but results remain on the
 PVC, a banner flags the missing cluster resource; KPIs, Phases, and Job
-Configuration are synthesized from `profile_export_aiperf.json`. Cancel and
-Pods are omitted.
+Configuration are synthesized from `profile_export_aiperf.json`. Pods are
+omitted.
 
 **Endpoints consumed:**
 
@@ -306,7 +316,10 @@ Pods are omitted.
 - `GET /api/v1/results/{ns}/{name}` (file listing)
 - `GET /api/v1/results/{ns}/{name}/{filename}` (downloads, plus direct
   fetches of `server_metrics_export.json` and `profile_export.jsonl`)
-- `POST /api/v1/jobs/{ns}/{name}/cancel` (Cancel button)
+
+Mutating routes such as `POST /api/v1/jobs/{ns}/{name}/cancel` exist for
+authenticated API/CLI clients, but the dashboard does not wire browser cancel
+controls by default.
 
 ### Run epoch view (`/ns/:ns/run/:name/runs/:epoch`)
 
@@ -431,14 +444,25 @@ terminates the operator pod will drop the connection. Re-run the command
 once the new pod is Ready, or use a managed auto-reconnecting forward (see
 the `aiperf kube watch` command for an example).
 
-### Cancel button does nothing
+### Mutating action is unavailable from the dashboard
 
-The "Cancel" action is wired to `POST /api/v1/jobs/{ns}/{name}/cancel`,
-which patches the CR to set `spec.cancelled: true`. If the operator is
-unreachable, the `fetch` call fails and an `alert()` surfaces the error
-message. Verify the Results pod can talk to the Kubernetes API — the
-lifespan hook logs "kubernetes_asyncio client initialized for UI endpoints"
-when it can.
+Launch, cancel, and index rebuild are intentionally not exposed as unauthenticated
+browser actions. Use an authenticated terminal instead:
+
+```bash
+# Cancel a running AIPerfJob.
+kubectl patch aiperfjob <name> -n <namespace> --type=merge -p '{"spec":{"cancel":true}}'
+
+# Rebuild the operator runs/sweep index; requires the configured bearer token.
+AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN=<token> aiperf kube index rebuild
+```
+
+If an API or CLI client receives 401/403 from `POST /api/v1/jobs`,
+`POST /api/v1/jobs/{ns}/{name}/cancel`, or `POST /admin/index/rebuild`, verify
+that the operator has `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=true` and a
+non-empty `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`, then send
+`Authorization: Bearer <token>`. Read-only dashboard/API calls continue to work
+without this token.
 
 ---
 
