@@ -172,6 +172,59 @@ async def test_handle_completion_short_circuits_when_cancelled_after_fetch() -> 
 
 
 @pytest.mark.asyncio
+async def test_handle_completion_leaves_no_terminal_patch_when_cancelled_during_index_update() -> (
+    None
+):
+    """Cancellation during the index await must not leave a terminal status patch."""
+    from aiperf.operator.handlers.completion import handle_completion
+    from aiperf.operator.models import ControllerFetchResult
+    from aiperf.operator.status import StatusBuilder
+
+    patch = MagicMock()
+    patch.status = {}
+    sb = StatusBuilder(patch, {"workers": {"total": 1}})
+
+    async def fake_update_index(*_args, **_kwargs) -> None:
+        await asyncio.sleep(0)
+        request_cancellation("ns/j")
+
+    result = ControllerFetchResult(
+        metrics=None,
+        downloaded=[],
+        checkpoints=[],
+        error="controller result fetch failed",
+    )
+
+    with (
+        mock_patch(
+            "aiperf.operator.handlers.completion._update_job_index_safe",
+            side_effect=fake_update_index,
+        ) as mock_update_index,
+        mock_patch(
+            "aiperf.operator.handlers.completion._maybe_delete_jobset_after_success",
+            new_callable=AsyncMock,
+        ) as mock_delete,
+    ):
+        await handle_completion(
+            body=_FIXTURE_BODY,
+            namespace="ns",
+            jobset_name="js",
+            job_id="j",
+            status={},
+            sb=sb,
+            result=result,
+        )
+
+    mock_update_index.assert_awaited_once()
+    mock_delete.assert_not_awaited()
+    assert "phase" not in patch.status
+    assert "currentPhase" not in patch.status
+    assert "subPhase" not in patch.status
+    assert "completionTime" not in patch.status
+    assert "conditions" not in patch.status
+
+
+@pytest.mark.asyncio
 async def test_monitor_progress_short_circuits_on_cancellation() -> None:
     """monitor_progress must return early on cancellation without fetching
     the JobSet (the CR is about to disappear)."""

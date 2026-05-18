@@ -168,22 +168,25 @@ async def handle_completion(
     if _completion_cancelled(namespace, job_id):
         return
 
-    _backfill_pre_completion_conditions(status, sb)
-    sb.set_completion_time()
+    staged_patch = _StagedStatusPatch(status={})
+    staged_sb = StatusBuilder(staged_patch, status)
+    _backfill_pre_completion_conditions(status, staged_sb)
+    staged_sb.set_completion_time()
     await _apply_completion_results(
         body=body,
         namespace=namespace,
         jobset_name=jobset_name,
         job_id=job_id,
         result=result,
-        sb=sb,
+        sb=staged_sb,
         flags=flags,
     )
 
     if _completion_cancelled(namespace, job_id):
         return
 
-    sb.finalize()
+    staged_sb.finalize()
+    sb._patch.status.update(staged_patch.status)
     if flags.success:
         events.completed(body, job_id, duration_sec)
 
@@ -317,6 +320,13 @@ async def _maybe_delete_jobset_after_success(
     """
     if flags.success and not is_cancellation_requested(job_key(namespace, job_id)):
         await _delete_backing_jobset(namespace, jobset_name)
+
+
+@dataclass(slots=True)
+class _StagedStatusPatch:
+    """Minimal patch object for staging completion status until cancellation-safe."""
+
+    status: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
