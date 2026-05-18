@@ -68,6 +68,11 @@ dependencies = [
   "crick~=0.0.8",
 ]
 
+[project.urls]
+Homepage   = "https://github.com/ai-dynamo/aiperf"
+Repository = "https://github.com/ai-dynamo/aiperf"
+Issues     = "https://github.com/ai-dynamo/aiperf/issues"
+
 # CLI Entrypoints
 [project.scripts]
 aiperf = "aiperf.cli:app"
