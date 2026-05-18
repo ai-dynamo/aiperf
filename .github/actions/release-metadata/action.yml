@@ -16,13 +16,6 @@ inputs:
   commit_sha:
     description: 'Full git commit SHA being built'
     required: true
-  container_registry:
-    description: 'Container registry hostname (e.g. ${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com)'
-    required: true
-  container_repository:
-    description: 'Container repository name within the registry'
-    required: false
-    default: 'aiperf'
   pr_number:
     description: 'Pull request number (required when flavor=pr)'
     required: false
@@ -57,12 +50,6 @@ outputs:
   container_tag:
     description: 'Container manifest tag for this flavor'
     value: ${{ steps.compute.outputs.container_tag }}
-  container_image:
-    description: 'Full container image path without tag (registry/repo)'
-    value: ${{ steps.compute.outputs.container_image }}
-  container_ref:
-    description: 'Full container image reference with tag'
-    value: ${{ steps.compute.outputs.container_ref }}
   short_sha:
     description: '7-char short SHA derived from commit_sha'
     value: ${{ steps.compute.outputs.short_sha }}
@@ -82,8 +69,6 @@ runs:
       env:
         FLAVOR: ${{ inputs.flavor }}
         COMMIT_SHA: ${{ inputs.commit_sha }}
-        CONTAINER_REGISTRY: ${{ inputs.container_registry }}
-        CONTAINER_REPOSITORY: ${{ inputs.container_repository }}
         PR_NUMBER: ${{ inputs.pr_number }}
         RELEASE_VERSION: ${{ inputs.release_version }}
         NIGHTLY_DATE: ${{ inputs.nightly_date }}
@@ -161,16 +146,19 @@ runs:
         esac
 
         WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
-        CONTAINER_IMAGE="${CONTAINER_REGISTRY}/${CONTAINER_REPOSITORY}"
-        CONTAINER_REF="${CONTAINER_IMAGE}:${CONTAINER_TAG}"
 
+        # NOTE: We intentionally do NOT export `container_image` or
+        # `container_ref` as outputs. Both would contain the ECR registry
+        # hostname (built from secrets.AWS_ACCOUNT_ID + AWS_DEFAULT_REGION),
+        # and GitHub Actions silently strips job outputs whose values
+        # contain a registered secret. Downstream jobs reconstruct the
+        # ref locally from `container_tag` plus the AWS secrets they
+        # already have access to.
         {
           echo "base_version=${BASE_VERSION}"
           echo "wheel_version=${WHEEL_VERSION}"
           echo "wheel_filename=${WHEEL_FILENAME}"
           echo "container_tag=${CONTAINER_TAG}"
-          echo "container_image=${CONTAINER_IMAGE}"
-          echo "container_ref=${CONTAINER_REF}"
           echo "short_sha=${SHORT_SHA}"
           echo "artifactory_subpath=${ARTIFACTORY_SUBPATH}"
           echo "skip_version_mutation=${SKIP_VERSION_MUTATION}"
@@ -180,7 +168,7 @@ runs:
           echo "### Release Metadata (flavor=${FLAVOR})"
           echo "- Base version: \`${BASE_VERSION}\`"
           echo "- Wheel: \`${WHEEL_FILENAME}\`"
-          echo "- Container: \`${CONTAINER_REF}\`"
+          echo "- Container tag: \`${CONTAINER_TAG}\`"
           echo "- Artifactory subpath: \`${ARTIFACTORY_SUBPATH}\`"
           echo "- Short SHA: \`${SHORT_SHA}\`"
           echo "- Skip version mutation: \`${SKIP_VERSION_MUTATION}\`"

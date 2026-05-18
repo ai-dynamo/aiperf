@@ -42,8 +42,6 @@ jobs:
       wheel_version:        ${{ steps.meta.outputs.wheel_version }}
       wheel_filename:       ${{ steps.meta.outputs.wheel_filename }}
       container_tag:        ${{ steps.meta.outputs.container_tag }}
-      container_image:      ${{ steps.meta.outputs.container_image }}
-      container_ref:        ${{ steps.meta.outputs.container_ref }}
       short_sha:            ${{ steps.meta.outputs.short_sha }}
       artifactory_subpath:  ${{ steps.meta.outputs.artifactory_subpath }}
       skip_version_mutation: ${{ steps.meta.outputs.skip_version_mutation }}
@@ -78,7 +76,6 @@ jobs:
         with:
           flavor:              ${{ steps.flavor.outputs.flavor }}
           commit_sha:          ${{ github.sha }}
-          container_registry:  ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
           release_version:     ${{ steps.flavor.outputs.release_version }}
           run_id:              ${{ github.run_id }}
           run_number:          ${{ github.run_number }}
@@ -205,10 +202,11 @@ jobs:
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          CONTAINER_REF:      ${{ needs.prepare.outputs.container_ref }}
+          CONTAINER_TAG:      ${{ needs.prepare.outputs.container_tag }}
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          CONTAINER_REF="${REGISTRY}/aiperf:${CONTAINER_TAG}"
 
           refresh_ecr_token() {
             while sleep 21600; do
@@ -278,7 +276,7 @@ jobs:
         env:
           FLAVOR:              ${{ needs.prepare.outputs.flavor }}
           WHEEL_FILENAME:      ${{ needs.prepare.outputs.wheel_filename }}
-          CONTAINER_REF:       ${{ needs.prepare.outputs.container_ref }}
+          CONTAINER_TAG:       ${{ needs.prepare.outputs.container_tag }}
           ARTIFACTORY_SUBPATH: ${{ needs.prepare.outputs.artifactory_subpath }}
           BUILD_RESULT:        ${{ needs.build.result }}
           STAGE_RESULT:        ${{ needs.stage-wheel.result }}
@@ -289,7 +287,7 @@ jobs:
             echo "| Artifact | Location |"
             echo "|----------|----------|"
             echo "| Wheel | \`${ARTIFACTORY_SUBPATH}${WHEEL_FILENAME}\` |"
-            echo "| Container | \`${CONTAINER_REF}\` |"
+            echo "| Container tag | \`${CONTAINER_TAG}\` |"
             echo ""
             echo "| Job | Result |"
             echo "|-----|--------|"
