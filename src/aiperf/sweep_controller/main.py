@@ -51,12 +51,16 @@ def aggregate_marker_exists(base_dir: Path) -> bool:
     return (base_dir / AGGREGATE_READY_MARKER).exists()
 
 
-def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) -> str:
+def resolve_terminal_phase(
+    *, completed: int, failed: int, max_failures: int, cancel_requested: bool = False
+) -> str:
     """Resolve the AIPerfSweep terminal ``status.phase`` from child outcomes.
 
     Three-way classification keeps a single bad trial in a 6-trial sweep from
     masquerading as a total run-failure:
 
+    * ``Cancelled`` — the parent CR requested cancellation; partial child
+      results still feed aggregate artifacts.
     * ``Succeeded`` — no failures.
     * ``Failed`` — every result failed (no successful trial), OR
       ``max_failures > 0`` and ``failed >= max_failures`` (explicit budget).
@@ -77,10 +81,11 @@ def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) ->
             ``0`` = unbounded (no explicit threshold; use the all-failed
             rule). ``>0`` = treat ``failed >= max_failures`` as
             non-recoverable.
+        cancel_requested: Whether ``spec.cancel`` was observed during the run.
 
     Returns:
-        One of ``"Succeeded"``, ``"PartiallyFailed"``, ``"Failed"`` —
-        members of ``PARENT_TERMINAL_PHASES`` in
+        One of ``"Cancelled"``, ``"Succeeded"``, ``"PartiallyFailed"``,
+        ``"Failed"`` — members of ``PARENT_TERMINAL_PHASES`` in
         ``aiperf.operator.handlers.sweep.child_rollup``.
 
     Example:
@@ -92,7 +97,11 @@ def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) ->
         'Succeeded'
         >>> resolve_terminal_phase(completed=4, failed=2, max_failures=2)
         'Failed'
+        >>> resolve_terminal_phase(completed=1, failed=0, max_failures=0, cancel_requested=True)
+        'Cancelled'
     """
+    if cancel_requested:
+        return "Cancelled"
     if failed <= 0:
         return "Succeeded"
     if max_failures > 0 and failed >= max_failures:
@@ -212,6 +221,7 @@ def _write_sweep_parent_aggregate(
     plan: Any,
     sweep_run_epoch: str,
     with_trial_suffix: bool,
+    terminal_phase: str | None = None,
 ) -> None:
     """Persist the durable parent ``aggregate.json`` under ``<base>/<ns>/sweeps/<name>/<epoch>/``.
 
@@ -237,7 +247,7 @@ def _write_sweep_parent_aggregate(
     completed = sum(1 for r in results if r.success)
     failed = sum(1 for r in results if not r.success)
     doc: dict[str, Any] = {
-        "phase": "Succeeded" if failed == 0 else "Failed",
+        "phase": terminal_phase or ("Succeeded" if failed == 0 else "Failed"),
         "totalVariations": len(plan.configs),
         "completedRuns": completed,
         "failedRuns": failed,
@@ -546,6 +556,15 @@ async def main() -> int:
             with contextlib.suppress(asyncio.CancelledError):
                 await cancel_task
 
+        failed_count = sum(1 for r in all_results if not r.success)
+        completed_count = len(all_results) - failed_count
+        terminal_phase = resolve_terminal_phase(
+            completed=completed_count,
+            failed=failed_count,
+            max_failures=spec.failure_policy.max_failures,
+            cancel_requested=cancel_flag["requested"],
+        )
+
         if not aggregate_marker_exists(RESULTS_DIR):
             await status_writer.aggregation_running()
             try:
@@ -586,6 +605,7 @@ async def main() -> int:
                             and spec.multi_run.convergence is not None
                         ),
                     ),
+                    terminal_phase=terminal_phase,
                 )
                 write_aggregate_marker(RESULTS_DIR)
             except Exception as e:  # noqa: BLE001
@@ -605,13 +625,6 @@ async def main() -> int:
         try:
             aggregate_doc = _load_aggregate_for_cr(
                 RESULTS_DIR, sweep_namespace, sweep_name, sweep_run_epoch
-            )
-            failed_count = sum(1 for r in all_results if not r.success)
-            completed_count = len(all_results) - failed_count
-            terminal_phase = resolve_terminal_phase(
-                completed=completed_count,
-                failed=failed_count,
-                max_failures=spec.failure_policy.max_failures,
             )
             await status_writer.aggregation_complete(
                 aggregate_path=(
