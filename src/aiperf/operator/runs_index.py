@@ -217,7 +217,7 @@ async def open_readonly(path: Path) -> None:
     if _DB is not None:
         return
 
-    uri = f"file:{quote(str(path), safe='/')}?mode=ro"
+    uri = f"file:{quote(str(path), safe='/')}?mode=ro&cache=shared"
     db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
     await db.execute("PRAGMA query_only = ON")
     await db.execute("PRAGMA busy_timeout = 5000")

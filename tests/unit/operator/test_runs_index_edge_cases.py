@@ -878,6 +878,42 @@ class TestConcurrentReaders:
     """WAL-mode runs_index must let read-only connections proceed during writes."""
 
     @pytest.mark.asyncio
+    async def test_open_readonly_uses_shared_cache_uri(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Production readonly opener must opt into SQLite shared cache."""
+        await runs_index.close()
+        captured: dict[str, Any] = {}
+
+        class FakeCursor:
+            async def fetchone(self) -> tuple[str]:
+                return (str(runs_index.SCHEMA_VERSION),)
+
+            async def close(self) -> None:
+                return None
+
+        class FakeDB:
+            async def execute(self, sql: str) -> FakeCursor:
+                return FakeCursor()
+
+            async def close(self) -> None:
+                return None
+
+        async def fake_connect(database_uri: str, **kwargs: Any) -> FakeDB:
+            captured["uri"] = database_uri
+            captured["kwargs"] = kwargs
+            return FakeDB()
+
+        monkeypatch.setattr(aiosqlite, "connect", fake_connect)
+
+        await runs_index.open_readonly(tmp_path / ".aiperf_index.sqlite")
+        try:
+            assert "?mode=ro&cache=shared" in captured["uri"]
+            assert captured["kwargs"]["uri"] is True
+        finally:
+            await runs_index.close()
+
+    @pytest.mark.asyncio
     async def test_reader_ro_connection_sees_committed_state(
         self, index_path: Path
     ) -> None:

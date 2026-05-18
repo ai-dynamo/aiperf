@@ -42,24 +42,65 @@ class IndexRunRowResponse(BaseModel):
     job_id: str = Field(description="AIPerfJob CR name.")
     epoch: str = Field(description="Run epoch (timestamp directory name).")
     phase: str = Field(description="Last-known run phase (Succeeded/Failed/...).")
-    request_throughput_avg: float | None = Field(default=None)
-    request_throughput_p50: float | None = Field(default=None)
-    request_throughput_p99: float | None = Field(default=None)
-    request_latency_avg: float | None = Field(default=None)
-    request_latency_p50: float | None = Field(default=None)
-    request_latency_p99: float | None = Field(default=None)
-    time_to_first_token_avg: float | None = Field(default=None)
-    time_to_first_token_p50: float | None = Field(default=None)
-    time_to_first_token_p99: float | None = Field(default=None)
-    output_token_throughput_avg: float | None = Field(default=None)
-    output_token_throughput_p50: float | None = Field(default=None)
-    output_token_throughput_p99: float | None = Field(default=None)
-    output_token_throughput_per_user_avg: float | None = Field(default=None)
-    output_token_throughput_per_user_p50: float | None = Field(default=None)
-    output_token_throughput_per_user_p99: float | None = Field(default=None)
-    inter_token_latency_avg: float | None = Field(default=None)
-    inter_token_latency_p50: float | None = Field(default=None)
-    inter_token_latency_p99: float | None = Field(default=None)
+    request_throughput_avg: float | None = Field(
+        default=None, description="Average request throughput for the indexed run."
+    )
+    request_throughput_p50: float | None = Field(
+        default=None, description="Median request throughput for the indexed run."
+    )
+    request_throughput_p99: float | None = Field(
+        default=None, description="P99 request throughput for the indexed run."
+    )
+    request_latency_avg: float | None = Field(
+        default=None, description="Average request latency for the indexed run."
+    )
+    request_latency_p50: float | None = Field(
+        default=None, description="Median request latency for the indexed run."
+    )
+    request_latency_p99: float | None = Field(
+        default=None, description="P99 request latency for the indexed run."
+    )
+    time_to_first_token_avg: float | None = Field(
+        default=None,
+        description="Average time-to-first-token latency for the indexed run.",
+    )
+    time_to_first_token_p50: float | None = Field(
+        default=None,
+        description="Median time-to-first-token latency for the indexed run.",
+    )
+    time_to_first_token_p99: float | None = Field(
+        default=None, description="P99 time-to-first-token latency for the indexed run."
+    )
+    output_token_throughput_avg: float | None = Field(
+        default=None, description="Average output-token throughput for the indexed run."
+    )
+    output_token_throughput_p50: float | None = Field(
+        default=None, description="Median output-token throughput for the indexed run."
+    )
+    output_token_throughput_p99: float | None = Field(
+        default=None, description="P99 output-token throughput for the indexed run."
+    )
+    output_token_throughput_per_user_avg: float | None = Field(
+        default=None,
+        description="Average per-user output-token throughput for the indexed run.",
+    )
+    output_token_throughput_per_user_p50: float | None = Field(
+        default=None,
+        description="Median per-user output-token throughput for the indexed run.",
+    )
+    output_token_throughput_per_user_p99: float | None = Field(
+        default=None,
+        description="P99 per-user output-token throughput for the indexed run.",
+    )
+    inter_token_latency_avg: float | None = Field(
+        default=None, description="Average inter-token latency for the indexed run."
+    )
+    inter_token_latency_p50: float | None = Field(
+        default=None, description="Median inter-token latency for the indexed run."
+    )
+    inter_token_latency_p99: float | None = Field(
+        default=None, description="P99 inter-token latency for the indexed run."
+    )
 
 
 def create_admin_router(
