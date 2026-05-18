@@ -95,6 +95,55 @@ class TestHFConversationDatasetLoader:
         assert len(conversations[0].turns) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "First message"
 
+    async def test_single_turn_skips_system_message(self, loader):
+        """Single-turn extraction should prefer the first user message, not a system preamble."""
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "system", "content": "You are helpful"},
+                        {"role": "user", "content": "What is 2+2?"},
+                        {"role": "assistant", "content": "4"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "What is 2+2?"
+
+    async def test_single_turn_skips_assistant_first_message(self, loader):
+        """Single-turn extraction should skip a leading assistant message."""
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "assistant", "content": "Hello!"},
+                        {"role": "user", "content": "Tell me a joke"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "Tell me a joke"
+
+    async def test_single_turn_fallback_when_no_roles(self, loader):
+        """When messages have no role tags, fall back to the literal first message."""
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"content": "What is AI?"},
+                        {"content": "Artificial intelligence"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "What is AI?"
+
     async def test_each_row_becomes_one_conversation(self, loader):
         data = {
             "dataset": [
