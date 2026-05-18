@@ -157,10 +157,11 @@ class TestTryClaimCompletion:
 
         assert result is True
         patch_ops = mock_custom.patch_namespaced_custom_object.call_args.kwargs["body"]
-        # Three-op sequence: test null, add dict, add annotation.
+        # Three-op sequence: test current metadata, add dict, add annotation.
         assert len(patch_ops) == 3
         assert patch_ops[0]["op"] == "test"
-        assert patch_ops[0]["value"] is None
+        assert patch_ops[0]["path"] == "/metadata"
+        assert patch_ops[0]["value"] == {}
         assert patch_ops[1]["op"] == "add"
         assert patch_ops[1]["path"] == "/metadata/annotations"
 
@@ -191,7 +192,7 @@ class TestTryClaimCompletion:
 
     @pytest.mark.asyncio
     async def test_unprocessable_422_returns_false(self) -> None:
-        """On 422 (JSON-patch test op failed) return False."""
+        """On 422, return False without poisoning the retry cache."""
         body = _body_without_annotation()
         mock_api = MagicMock()
         mock_custom = MagicMock()
@@ -212,7 +213,7 @@ class TestTryClaimCompletion:
             result = await try_claim_completion("ns", "j", body)
 
         assert result is False
-        assert "ns/j" in _shutdown_sent
+        assert "ns/j" not in _shutdown_sent
 
     @pytest.mark.asyncio
     async def test_other_server_error_returns_false_without_marking(self) -> None:
