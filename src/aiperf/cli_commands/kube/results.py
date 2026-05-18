@@ -93,7 +93,7 @@ def _validate_run_arg(run: str | None, *, from_pods: bool) -> None:
     if not EPOCH_RE.match(run):
         raise ValueError(
             f"Invalid --run value '{run}'. Expected decimal epoch-seconds from "
-            "`aiperf kube results list-runs`, or 'legacy'."
+            "`aiperf kube results list-runs`."
         )
     if from_pods:
         raise ValueError(

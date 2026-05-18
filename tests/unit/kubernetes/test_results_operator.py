@@ -360,19 +360,10 @@ class TestListOperatorFiles:
     @pytest.mark.asyncio
     async def test_returns_file_dicts(self) -> None:
         list_url = "http://localhost/api/v1/results/ns/job-1"
-        session = FakeSession(
-            {
-                list_url: [
-                    FakeResponse(
-                        json_data={
-                            "namespace": "ns",
-                            "job_id": "job-1",
-                            "files": [{"name": "a.json"}, {"name": "b.json"}],
-                        }
-                    )
-                ],
-            }
+        response = FakeResponse(
+            body=b'{"namespace":"ns","job_id":"job-1","files":[{"name":"a.json"},{"name":"b.json"}]}'
         )
+        session = FakeSession({list_url: [response]})
         result = await _list_operator_files(
             session,  # type: ignore[arg-type]
             api_base="http://localhost",
@@ -380,6 +371,7 @@ class TestListOperatorFiles:
             job_id="job-1",
         )
         assert result == [{"name": "a.json"}, {"name": "b.json"}]
+        assert response.json_loads is orjson.loads
 
     @pytest.mark.asyncio
     async def test_404_returns_none(self) -> None:

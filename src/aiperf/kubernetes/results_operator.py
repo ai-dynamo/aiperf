@@ -163,7 +163,7 @@ async def _list_operator_files(
                 print_error(f"No results stored for {namespace}/{job_id}")
                 return None
             resp.raise_for_status()
-            list_data = await resp.json()
+            list_data = await resp.json(loads=orjson.loads)
     except aiohttp.ClientError as e:
         print_error(f"Failed to list results: {e}")
         return None

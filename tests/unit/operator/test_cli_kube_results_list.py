@@ -493,11 +493,9 @@ def test_result_base_url_helper_pins_epoch() -> None:
 
     latest = _result_base_url("http://x", "default", "foo", None)
     pinned = _result_base_url("http://x", "default", "foo", "1714150923")
-    legacy = _result_base_url("http://x", "default", "foo", "legacy")
 
     assert latest == "http://x/api/v1/results/default/foo"
     assert pinned == "http://x/api/v1/results/default/foo/runs/1714150923"
-    assert legacy == "http://x/api/v1/results/default/foo/runs/legacy"
 
 
 @pytest.mark.asyncio
