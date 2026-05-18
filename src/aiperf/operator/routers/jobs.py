@@ -34,7 +34,12 @@ from aiperf.operator.job_union import (
     list_all_jobs,
     synthesize_status_from_summary,
 )
-from aiperf.operator.results_layout import EPOCH_RE, list_runs_async, resolve_run_dir
+from aiperf.operator.results_layout import (
+    EPOCH_RE,
+    RunEntry,
+    list_runs_async,
+    resolve_run_dir,
+)
 from aiperf.operator.routers.jobs_logs import get_pod_logs_impl
 from aiperf.operator.routers.jobs_models import (
     ActiveJobListResponse,
@@ -422,6 +427,45 @@ def derive_run_status(
     return "unknown"
 
 
+def _disk_epoch_summary(
+    run: RunEntry, *, live_running_epoch: str | None
+) -> JobEpochSummary:
+    """Convert a disk-discovered run into a status-light epoch summary."""
+    return JobEpochSummary(
+        epoch=run.epoch,
+        is_latest=run.is_latest,
+        mtime_epoch=run.mtime_epoch,
+        file_count=run.file_count,
+        status=(
+            "running"
+            if live_running_epoch is not None and run.epoch == live_running_epoch
+            else "unknown"
+        ),
+        started_at=None,
+        ended_at=None,
+    )
+
+
+def _indexed_epoch_summary(
+    row: RunIndexRow,
+    existing: JobEpochSummary | None,
+    *,
+    live_running_epoch: str | None,
+) -> JobEpochSummary:
+    """Overlay indexed status fields onto a disk summary when available."""
+    return JobEpochSummary(
+        epoch=row.epoch,
+        is_latest=existing.is_latest if existing is not None else bool(row.is_latest),
+        mtime_epoch=existing.mtime_epoch
+        if existing is not None
+        else int(row.mtime_epoch or 0),
+        file_count=existing.file_count if existing is not None else row.file_count,
+        status=derive_run_status(row, live_running_epoch=live_running_epoch),
+        started_at=_iso_to_unix(row.start_time),
+        ended_at=_iso_to_unix(row.end_time),
+    )
+
+
 async def _list_job_epochs_impl(
     api: ApiClient | None,
     base_dir: Path,
@@ -432,10 +476,9 @@ async def _list_job_epochs_impl(
 
     Reads rich rows from the runs SQLite index and reconciles each row's
     ``phase`` / ``error`` against the live CR's ``status.runEpoch`` to
-    produce a single normalized ``status`` enum per epoch. Falls back to a
-    disk walk (``list_runs_async``) when the index has no rows for this
-    job — those rows report ``status='unknown'`` and ``started_at``/
-    ``ended_at`` of ``None``.
+    produce a single normalized ``status`` enum per epoch. Merges those rows
+    with a disk walk (``list_runs_async``) so disk-only epochs report
+    ``status='unknown'`` and ``started_at`` / ``ended_at`` of ``None``.
 
     Order is ascending by ``mtime_epoch`` so the latest entry sits at the
     tail; this matches the prior contract.
@@ -457,49 +500,31 @@ async def _list_job_epochs_impl(
                 if run_epoch is not None:
                     live_running_epoch = str(run_epoch)
 
-    # Index-first read.
+    # Index-first read, then reconcile with disk so a stale index never hides
+    # a newer persisted run.
     rich_rows: list[RunIndexRow] = []
     try:
         rich_rows = await runs_index.list_runs_for_job(namespace, name)
     except Exception:  # noqa: BLE001 — index unavailable degrades to disk
         rich_rows = []
 
-    if rich_rows:
-        rich_rows.sort(key=lambda r: r.mtime_epoch or 0)
-        return JobEpochsResponse(
-            epochs=[
-                JobEpochSummary(
-                    epoch=r.epoch,
-                    is_latest=bool(r.is_latest),
-                    mtime_epoch=int(r.mtime_epoch or 0),
-                    file_count=r.file_count,
-                    status=derive_run_status(r, live_running_epoch=live_running_epoch),
-                    started_at=_iso_to_unix(r.start_time),
-                    ended_at=_iso_to_unix(r.end_time),
-                )
-                for r in rich_rows
-            ]
+    runs = await list_runs_async(base_dir, namespace, name)
+    by_epoch = {
+        run.epoch: _disk_epoch_summary(run, live_running_epoch=live_running_epoch)
+        for run in runs
+    }
+
+    for row in rich_rows:
+        by_epoch[row.epoch] = _indexed_epoch_summary(
+            row,
+            by_epoch.get(row.epoch),
+            live_running_epoch=live_running_epoch,
         )
 
-    # Disk fallback — index has nothing for this job.
-    runs = await list_runs_async(base_dir, namespace, name)
     return JobEpochsResponse(
-        epochs=[
-            JobEpochSummary(
-                epoch=r.epoch,
-                is_latest=r.is_latest,
-                mtime_epoch=r.mtime_epoch,
-                file_count=r.file_count,
-                status=(
-                    "running"
-                    if live_running_epoch is not None and r.epoch == live_running_epoch
-                    else "unknown"
-                ),
-                started_at=None,
-                ended_at=None,
-            )
-            for r in reversed(runs)
-        ]
+        epochs=sorted(
+            by_epoch.values(), key=lambda entry: (entry.mtime_epoch, entry.epoch)
+        )
     )
 
 

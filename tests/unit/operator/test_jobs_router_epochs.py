@@ -48,6 +48,15 @@ def _patch_no_live_cr(monkeypatch) -> None:
     monkeypatch.setattr(ju, "find_aiperf_job", _no_cr)
 
 
+def _patch_no_lazy_backfill(monkeypatch) -> None:
+    """Keep index-backed endpoint tests from scheduling background DB writes."""
+    from aiperf.operator import results_layout
+
+    monkeypatch.setattr(
+        results_layout, "_schedule_lazy_backfill_runs", lambda *args: None
+    )
+
+
 def test_get_job_with_epoch_param(tmp_path: Path, monkeypatch) -> None:
     _write_summary(tmp_path, "bench", "j1", "1714069323")
     _write_summary(tmp_path, "bench", "j1", "1714069400")
@@ -125,6 +134,65 @@ def test_list_job_epochs_returns_status_unknown_when_index_empty(
     assert e["endedAt"] is None
 
 
+def test_list_job_epochs_merges_stale_index_with_newer_disk_epoch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An indexed old epoch does not hide a newer disk-only epoch."""
+    from aiperf.operator.results_layout import write_latest
+    from aiperf.operator.routers import jobs as jobs_module
+    from aiperf.operator.runs_index_models import RunIndexRow
+
+    old_epoch = "1714069323"
+    new_epoch = "1714069400"
+    _write_summary(tmp_path, "bench", "j1", old_epoch)
+    _write_summary(tmp_path, "bench", "j1", new_epoch)
+    write_latest(tmp_path, "bench", "j1", new_epoch)
+
+    async def _no_raw(*_args, **_kwargs):
+        return None
+
+    async def _stale_index_rows(namespace: str, job_id: str) -> list[RunIndexRow]:
+        assert (namespace, job_id) == ("bench", "j1")
+        return [
+            RunIndexRow(
+                namespace="bench",
+                job_id="j1",
+                epoch=old_epoch,
+                phase="Succeeded",
+                is_latest=True,
+                start_time="2026-05-01T00:00:00+00:00",
+                end_time="2026-05-01T00:05:00+00:00",
+                created_unix=0,
+                mtime_epoch=1,
+                error=None,
+                model=None,
+                endpoint=None,
+                gpu_count=0,
+                gpu_name=None,
+                file_count=0,
+                total_size_bytes=0,
+                sweep_namespace=None,
+                sweep_name=None,
+                sweep_epoch=None,
+                sweep_variation_idx=None,
+            )
+        ]
+
+    monkeypatch.setattr(jobs_module, "get_raw_aiperfjob", _no_raw)
+    monkeypatch.setattr(jobs_module.runs_index, "list_runs_for_job", _stale_index_rows)
+
+    api = MagicMock()
+    c = _client(api, tmp_path)
+    r = c.get("/api/v1/jobs/bench/j1/epochs")
+    assert r.status_code == 200, r.text
+    epochs = {entry["epoch"]: entry for entry in r.json()["epochs"]}
+    assert set(epochs) == {old_epoch, new_epoch}
+    assert epochs[old_epoch]["status"] == "succeeded"
+    assert epochs[old_epoch]["startedAt"] == 1777593600
+    assert epochs[new_epoch]["status"] == "unknown"
+    assert epochs[new_epoch]["isLatest"] is True
+
+
 def test_list_job_epochs_running_overrides_index_phase(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -134,6 +202,7 @@ def test_list_job_epochs_running_overrides_index_phase(
     from aiperf.operator import runs_index
     from aiperf.operator.routers import jobs as jobs_module
 
+    _patch_no_lazy_backfill(monkeypatch)
     _write_summary(tmp_path, "bench", "j1", "1714069400")
     from aiperf.operator.results_layout import write_latest
 
@@ -213,6 +282,7 @@ def test_list_job_epochs_phase_failed(tmp_path: Path, monkeypatch) -> None:
     from aiperf.operator import runs_index
     from aiperf.operator.routers import jobs as jobs_module
 
+    _patch_no_lazy_backfill(monkeypatch)
     _write_summary(tmp_path, "bench", "j1", "1714069400")
     from aiperf.operator.results_layout import write_latest
 
