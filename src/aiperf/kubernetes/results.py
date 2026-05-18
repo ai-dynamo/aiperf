@@ -41,6 +41,7 @@ from aiperf.kubernetes.results_operator import (
     _download_and_decompress,
     _download_operator_file,
     retrieve_results_from_operator,
+    retrieve_sweep_aggregate_artifacts_from_operator,
 )
 from aiperf.kubernetes.subproc import (
     run_command,
@@ -67,6 +68,7 @@ __all__ = [
     "retrieve_results_from_api",
     "retrieve_results_from_operator",
     "retrieve_results_from_pod",
+    "retrieve_sweep_aggregate_artifacts_from_operator",
     "retrieve_sweep_results_from_operator",
     "shutdown_api_service",
     "stream_controller_logs",
@@ -510,6 +512,7 @@ async def _fetch_children_manifest(
     local_port: int,
     kubeconfig: str | None,
     kube_context: str | None,
+    run: str | None = None,
 ) -> dict | None:
     """Fetch the per-epoch children manifest from the operator results server.
 
@@ -549,6 +552,8 @@ async def _fetch_children_manifest(
             kube_context=kube_context,
         ) as port:
             url = f"http://localhost:{port}/api/v1/sweeps/{namespace}/{sweep_name}/children"
+            if run is not None:
+                url = f"{url}?epoch={run}"
             timeout = aiohttp.ClientTimeout(total=30)
             connector = create_tcp_connector()
             async with (
@@ -583,58 +588,18 @@ def _cell_id(entry: dict) -> str:
     return f"v{int(var_idx or 0)}-t{int(trial_idx)}"
 
 
-async def retrieve_sweep_results_from_operator(
-    sweep_name: str,
+async def _download_sweep_children(
+    *,
+    children: list[dict],
     namespace: str,
     output_dir: Path,
     api: ApiClient,
-    *,
-    local_port: int = 0,
-    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
-    kubeconfig: str | None = None,
-    kube_context: str | None = None,
+    local_port: int,
+    operator_namespace: str,
+    kubeconfig: str | None,
+    kube_context: str | None,
 ) -> bool:
-    """Download sweep parent + per-child results via the operator API.
-
-    For each cell ``(variation_index, trial_index)`` advertised by
-    ``GET /api/v1/sweeps/{ns}/{name}/children`` on the operator results-server,
-    invokes :func:`retrieve_results_from_operator` with the child CR name into
-    ``output_dir/v<variation_index>-t<trial_index>/``. The manifest itself is
-    persisted to ``output_dir/sweep_manifest.json`` to aid downstream tooling.
-
-    Returns True iff the parent manifest fetch and ALL child downloads
-    succeeded. On any child failure, prints which child failed and continues
-    retrieving the rest before returning False — so the user sees as much data
-    as possible from a partially-successful run.
-    """
-    manifest = await _fetch_children_manifest(
-        api=api,
-        sweep_name=sweep_name,
-        namespace=namespace,
-        operator_namespace=operator_namespace,
-        local_port=local_port,
-        kubeconfig=kubeconfig,
-        kube_context=kube_context,
-    )
-    if manifest is None:
-        return False
-
-    children: list[dict] = list(manifest.get("children") or [])
-    output_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = output_dir / "sweep_manifest.json"
-    await asyncio.to_thread(
-        manifest_path.write_bytes, orjson.dumps(manifest, option=orjson.OPT_INDENT_2)
-    )
-
-    if not children:
-        print_warning(
-            f"Sweep {namespace}/{sweep_name} children manifest is empty; "
-            "nothing to download."
-        )
-        return False
-
-    print_step(f"Sweep {sweep_name}: downloading {len(children)} children...")
-
+    """Download each child result named in a sweep children manifest."""
     all_ok = True
     for entry in children:
         cell_id = _cell_id(entry)
@@ -659,5 +624,82 @@ async def retrieve_sweep_results_from_operator(
         else:
             all_ok = False
             print_error(f"{cell_id} ({child_name}): FAILED")
-
     return all_ok
+
+
+async def retrieve_sweep_results_from_operator(
+    sweep_name: str,
+    namespace: str,
+    output_dir: Path,
+    api: ApiClient,
+    *,
+    local_port: int = 0,
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+    run: str | None = None,
+) -> bool:
+    """Download sweep parent + per-child results via the operator API.
+
+    For each cell ``(variation_index, trial_index)`` advertised by
+    ``GET /api/v1/sweeps/{ns}/{name}/children`` on the operator results-server,
+    invokes :func:`retrieve_results_from_operator` with the child CR name into
+    ``output_dir/v<variation_index>-t<trial_index>/``. The manifest itself is
+    persisted to ``output_dir/sweep_manifest.json`` to aid downstream tooling.
+
+    Returns True iff the parent manifest fetch and ALL child downloads
+    succeeded. On any child failure, prints which child failed and continues
+    retrieving the rest before returning False — so the user sees as much data
+    as possible from a partially-successful run.
+    """
+    manifest = await _fetch_children_manifest(
+        api=api,
+        sweep_name=sweep_name,
+        namespace=namespace,
+        operator_namespace=operator_namespace,
+        local_port=local_port,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        run=run,
+    )
+    if manifest is None:
+        return False
+
+    children: list[dict] = list(manifest.get("children") or [])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "sweep_manifest.json"
+    await asyncio.to_thread(
+        manifest_path.write_bytes, orjson.dumps(manifest, option=orjson.OPT_INDENT_2)
+    )
+
+    if not children:
+        print_warning(
+            f"Sweep {namespace}/{sweep_name} children manifest is empty; "
+            "nothing to download."
+        )
+        return False
+
+    await retrieve_sweep_aggregate_artifacts_from_operator(
+        sweep_name,
+        namespace,
+        output_dir,
+        api,
+        local_port=local_port,
+        operator_namespace=operator_namespace,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        run=run
+        or str(manifest.get("sweepRunEpoch") or manifest.get("sweep_run_epoch") or ""),
+    )
+
+    print_step(f"Sweep {sweep_name}: downloading {len(children)} children...")
+    return await _download_sweep_children(
+        children=children,
+        namespace=namespace,
+        output_dir=output_dir,
+        api=api,
+        local_port=local_port,
+        operator_namespace=operator_namespace,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+    )

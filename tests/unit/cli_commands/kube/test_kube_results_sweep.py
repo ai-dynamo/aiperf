@@ -9,6 +9,7 @@ ResolvedSweep branch in `_run_results` and the new sweep fan-out helper
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -147,8 +148,8 @@ class TestRunResultsSweepBranch:
         msgs = [c.args[0] for c in mock_print_error.call_args_list]
         assert any("from-pods" in m for m in msgs)
 
-    async def test_results_rejects_run_flag_for_sweep(self, tmp_path: Path) -> None:
-        """--run is rejected for sweeps (not yet supported)."""
+    async def test_results_accepts_run_flag_for_sweep(self, tmp_path: Path) -> None:
+        """--run pins whole-sweep downloads to the requested sweep epoch."""
         resolved = _make_resolved_sweep()
         opts = KubeManageOptions(namespace="bench-ns")
 
@@ -156,6 +157,10 @@ class TestRunResultsSweepBranch:
             patch(
                 "aiperf.kubernetes.cli_helpers.resolve_target",
                 new=AsyncMock(return_value=resolved),
+            ),
+            patch(
+                "aiperf.cli_commands.kube.results._resolve_op_ns",
+                new=AsyncMock(return_value="aiperf-system"),
             ),
             patch(
                 "aiperf.kubernetes.results.retrieve_sweep_results_from_operator",
@@ -175,10 +180,10 @@ class TestRunResultsSweepBranch:
                 run="1714069323",
             )
 
-        mock_sweep_get.assert_not_awaited()
+        mock_sweep_get.assert_awaited_once()
+        assert mock_sweep_get.await_args.kwargs["run"] == "1714069323"
         resolved.api.close.assert_awaited_once()
-        msgs = [c.args[0] for c in mock_print_error.call_args_list]
-        assert any("--run" in m for m in msgs)
+        mock_print_error.assert_not_called()
 
 
 class TestDefaultSweepOutputDir:
@@ -234,11 +239,15 @@ class TestRetrieveSweepResultsFromOperator:
             patch(
                 "aiperf.kubernetes.results._fetch_children_manifest",
                 new=AsyncMock(return_value=manifest),
-            ),
+            ) as mock_fetch,
             patch(
                 "aiperf.kubernetes.results.retrieve_results_from_operator",
                 new=AsyncMock(return_value=True),
             ) as mock_get,
+            patch(
+                "aiperf.kubernetes.results.retrieve_sweep_aggregate_artifacts_from_operator",
+                new=AsyncMock(return_value=True),
+            ) as mock_aggregate_get,
         ):
             ok = await retrieve_sweep_results_from_operator(
                 "my-sweep",
@@ -247,6 +256,7 @@ class TestRetrieveSweepResultsFromOperator:
                 MagicMock(),
                 local_port=0,
                 operator_namespace="aiperf-system",
+                run="1714069323",
             )
 
         assert ok is True
@@ -259,8 +269,12 @@ class TestRetrieveSweepResultsFromOperator:
         assert names == ["sweep-c0", "sweep-c1"]
         assert out_dirs[0] == tmp_path / "v0-t0"
         assert out_dirs[1] == tmp_path / "v1-t2"
+        fetch_kwargs = mock_fetch.await_args.kwargs
+        assert fetch_kwargs["run"] == "1714069323"
         run_kwargs = [c.kwargs["run"] for c in mock_get.await_args_list]
         assert run_kwargs == ["1714069300", "1714069310"]
+        mock_aggregate_get.assert_awaited_once()
+        assert mock_aggregate_get.await_args.kwargs["run"] == "1714069323"
         # Manifest persisted alongside per-cell dirs.
         assert (tmp_path / "sweep_manifest.json").is_file()
 
@@ -294,6 +308,10 @@ class TestRetrieveSweepResultsFromOperator:
                 new=AsyncMock(return_value=manifest),
             ),
             patch("aiperf.kubernetes.results.retrieve_results_from_operator", new=get),
+            patch(
+                "aiperf.kubernetes.results.retrieve_sweep_aggregate_artifacts_from_operator",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             ok = await retrieve_sweep_results_from_operator(
                 "my-sweep",
@@ -341,3 +359,98 @@ class TestRetrieveSweepResultsFromOperator:
 
         assert ok is expected
         mock_get.assert_not_awaited()
+
+
+class _FakeContent:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def iter_chunked(self, _size: int) -> AsyncIterator[bytes]:
+        yield self._body
+
+
+class _FakeResponse:
+    def __init__(self, *, body: bytes = b"", json_body: dict | None = None) -> None:
+        self.status = 200
+        self.headers: dict[str, str] = {}
+        self.content = _FakeContent(body)
+        self._json_body = json_body or {}
+
+    async def __aenter__(self) -> _FakeResponse:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        return None
+
+    async def json(self) -> dict:
+        return self._json_body
+
+
+class _FakeSession:
+    def __init__(self, responses: dict[str, _FakeResponse]) -> None:
+        self._responses = responses
+        self.requested: list[str] = []
+
+    async def __aenter__(self) -> _FakeSession:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    def get(self, url: str, **_kwargs: object) -> _FakeResponse:
+        self.requested.append(url)
+        return self._responses[url]
+
+
+class TestSweepAggregateArtifactClient:
+    async def test_lists_and_downloads_from_sweep_epoch_artifact_api(
+        self, tmp_path: Path
+    ) -> None:
+        from aiperf.kubernetes.results_operator import (
+            _download_all_sweep_operator_files,
+        )
+
+        artifact_name = "sweep_aggregate/profile_export_aiperf.json"
+        list_url = (
+            "http://operator/api/v1/sweeps/bench/my-sweep/epochs/1714069323/artifacts"
+        )
+        file_url = f"{list_url}/{artifact_name}"
+        session = _FakeSession(
+            {
+                list_url: _FakeResponse(
+                    json_body={
+                        "files": [
+                            {
+                                "name": artifact_name,
+                                "stored_name": "profile_export_aiperf.json.zst",
+                                "size_bytes": 2,
+                                "compressed": False,
+                            }
+                        ]
+                    }
+                ),
+                file_url: _FakeResponse(body=b"{}"),
+            }
+        )
+
+        with (
+            patch("aiohttp.ClientSession", return_value=session),
+            patch(
+                "aiperf.transports.aiohttp_client.create_tcp_connector",
+                return_value=None,
+            ),
+        ):
+            downloaded = await _download_all_sweep_operator_files(
+                api_base="http://operator",
+                namespace="bench",
+                sweep_name="my-sweep",
+                output_dir=tmp_path,
+                run="1714069323",
+            )
+
+        assert downloaded == [(artifact_name, 2)]
+        assert session.requested == [list_url, file_url]
+        assert (tmp_path / artifact_name).read_bytes() == b"{}"

@@ -258,13 +258,6 @@ async def _run_sweep_results(
                 "Sweep child results live on the operator PVC; omit --from-pods."
             )
             return
-        if run is not None:
-            kube_console.print_error(
-                "--run is not yet supported for AIPerfSweep. "
-                "Latest sweep epoch is downloaded by default."
-            )
-            return
-
         op_ns = await _resolve_op_ns(resolved.api, explicit=operator_namespace)
         output_dir = output or _default_sweep_output_dir(
             resolved.namespace, resolved.name
@@ -280,6 +273,7 @@ async def _run_sweep_results(
             operator_namespace=op_ns,
             kubeconfig=manage_options.kubeconfig,
             kube_context=manage_options.kube_context,
+            run=run,
         )
         if ok:
             kube_console.print_results_summary(str(output_dir))
