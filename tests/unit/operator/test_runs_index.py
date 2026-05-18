@@ -530,10 +530,10 @@ async def test_bootstrap_indexes_k8s_sweep_children_from_real_run_artifacts(
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_counts_repeated_trial_sweep_rows_by_variation_idx(
+async def test_bootstrap_skips_repeated_trial_child_only_variations(
     tmp_path: Path,
 ) -> None:
-    """Repeated-trial children share a variation row keyed by variation_idx."""
+    """Child-only repeated trials are not truthful variation aggregates."""
     base = tmp_path / "results"
     epoch_dir = base / "ns" / "sweeps" / "satsweep" / "1714069323"
     epoch_dir.mkdir(parents=True)
@@ -600,10 +600,7 @@ async def test_bootstrap_counts_repeated_trial_sweep_rows_by_variation_idx(
     try:
         stats = await runs_index.bootstrap(base)
         rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
-        assert stats.sweep_variations_indexed == len(rows) == 1
-        assert rows[0].variation_idx == 0
-        assert rows[0].child_job_id == "satsweep-v00-t1"
-        assert rows[0].child_epoch == "1714069325"
+        assert stats.sweep_variations_indexed == len(rows) == 0
     finally:
         await runs_index.close()
 

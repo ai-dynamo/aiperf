@@ -1027,15 +1027,22 @@ def _legacy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
 
 def _load_strategy_sweep_aggregate(epoch_dir: Path) -> dict[str, Any] | None:
     aggregate_dir = epoch_dir / "sweep_aggregate"
+    loaded: list[dict[str, Any]] = []
     for filename in (
-        "profile_export_aiperf_aggregate.json",
         "profile_export_aiperf_sweep.json",
+        "profile_export_aiperf_aggregate.json",
     ):
         try:
-            return orjson.loads((aggregate_dir / filename).read_bytes())
+            doc = orjson.loads((aggregate_dir / filename).read_bytes())
         except (FileNotFoundError, OSError, orjson.JSONDecodeError):
             continue
-    return None
+        if not isinstance(doc, dict):
+            continue
+        loaded.append(doc)
+        rows = doc.get("per_combination_metrics")
+        if isinstance(rows, list) and rows:
+            return doc
+    return loaded[0] if loaded else None
 
 
 def _strategy_sweep_rows(agg: dict[str, Any]) -> list[SweepRow]:
@@ -1099,7 +1106,7 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
     if not isinstance(children, list):
         return []
 
-    rows: list[SweepRow] = []
+    rows_by_idx: dict[int, list[SweepRow]] = {}
     for child in children:
         if not isinstance(child, dict):
             continue
@@ -1120,7 +1127,7 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
             if isinstance(summary.get("metrics"), dict)
             else summary
         )
-        rows.append(
+        rows_by_idx.setdefault(idx, []).append(
             (
                 idx,
                 _child_variation_values(child),
@@ -1128,7 +1135,7 @@ def _child_sweep_rows(epoch_dir: Path) -> list[SweepRow]:
                 {"child": child, "metrics": summary},
             )
         )
-    return rows
+    return [rows[0] for rows in rows_by_idx.values() if len(rows) == 1]
 
 
 def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
@@ -1145,18 +1152,25 @@ def _load_sweep_child_refs(epoch_dir: Path) -> dict[int, tuple[str, str, str]]:
         return {}
 
     refs: dict[int, tuple[str, str, str]] = {}
+    duplicate_idxs: set[int] = set()
     for child in children:
         if not isinstance(child, dict):
             continue
         try:
             idx = int(child["variation_index"])
-            refs[idx] = (
+            ref = (
                 child.get("namespace") or "",
                 child["name"],
                 child.get("child_run_epoch") or "",
             )
         except (KeyError, TypeError, ValueError):
             continue
+        if idx in refs:
+            duplicate_idxs.add(idx)
+            refs.pop(idx, None)
+            continue
+        if idx not in duplicate_idxs:
+            refs[idx] = ref
     return refs
 
 
@@ -1224,13 +1238,14 @@ async def _index_sweep_from_disk(
     source_agg = parent_agg
     rows = _legacy_sweep_rows(parent_agg)
     if not rows:
-        rows = _child_sweep_rows(epoch_dir)
-    if not rows:
         strategy_agg = _load_strategy_sweep_aggregate(epoch_dir)
-        if strategy_agg is None:
-            return 0
-        source_agg = strategy_agg
-        rows = _strategy_sweep_rows(strategy_agg)
+        if strategy_agg is not None:
+            strategy_rows = _strategy_sweep_rows(strategy_agg)
+            if strategy_rows:
+                source_agg = strategy_agg
+                rows = strategy_rows
+    if not rows:
+        rows = _child_sweep_rows(epoch_dir)
 
     child_refs = _load_sweep_child_refs(epoch_dir)
     indexed_rows: dict[int, dict[str, Any]] = {}

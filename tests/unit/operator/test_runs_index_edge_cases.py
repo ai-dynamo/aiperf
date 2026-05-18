@@ -450,6 +450,63 @@ class TestBootstrapEdgeCases:
         rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
         assert rows == []
 
+    @pytest.mark.asyncio
+    async def test_index_sweep_from_disk_prefers_sweep_export_when_both_exist(
+        self, tmp_path: Path, index_path: Path
+    ) -> None:
+        """Valid sweep export rows beat confidence aggregate metadata."""
+        epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
+        aggregate_dir = epoch_dir / "sweep_aggregate"
+        aggregate_dir.mkdir(parents=True)
+        (epoch_dir / "aggregate.json").write_bytes(
+            orjson.dumps({"phase": "Succeeded", "completedRuns": 1})
+        )
+        (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metadata": {"aggregation_type": "confidence"},
+                    "metrics": {
+                        "request_throughput": {"mean": 50.0, "unit": "rps"},
+                    },
+                }
+            )
+        )
+        (aggregate_dir / "profile_export_aiperf_sweep.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metadata": {"mode": "INDEPENDENT"},
+                    "per_combination_metrics": [
+                        {
+                            "variation_idx": 0,
+                            "variation_values": {"concurrency": 10},
+                            "metrics": {
+                                "request_throughput": {
+                                    "avg": 75.0,
+                                    "p50": 70.0,
+                                    "p99": 90.0,
+                                    "unit": "rps",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)
+
+        assert ok == 1
+        rows = await runs_index.list_sweep_variations("ns", "s", "1714069323")
+        assert len(rows) == 1
+        assert rows[0].variation_idx == 0
+        cur = await runs_index._conn().execute(
+            "SELECT request_throughput_avg FROM sweep_variations "
+            "WHERE namespace = ? AND sweep_name = ? AND variation_idx = ?",
+            ("ns", "s", 0),
+        )
+        assert (await cur.fetchone())[0] == 75.0
+        await cur.close()
+
     @pytest.mark.parametrize(
         "children_doc", [[{"not": "a mapping envelope"}], "scalar"]
     )
