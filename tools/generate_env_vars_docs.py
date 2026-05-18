@@ -38,8 +38,25 @@ from tools._core import (
 # Configuration
 # =============================================================================
 
-ENV_FILE = Path("src/aiperf/common/environment.py")
+ENV_FILES = [
+    Path("src/aiperf/common/environment.py"),
+    Path("src/aiperf/operator/environment.py"),
+]
 OUTPUT_FILE = Path("docs/environment-variables.md")
+
+INCLUDED_ROOT_CLASSES = {"_OperatorEnvironment"}
+
+ENV_VAR_OVERRIDES = {
+    ("_OperatorEnvironment", "CLUSTER_NAME"): "AIPERF_OPERATOR_CLUSTER_NAME",
+    (
+        "_OperatorEnvironment",
+        "MUTATING_ROUTES_ENABLED",
+    ): "AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED",
+    (
+        "_OperatorEnvironment",
+        "MUTATING_ROUTES_TOKEN",
+    ): "AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN",
+}
 
 # =============================================================================
 # Data Models
@@ -156,7 +173,7 @@ def parse_settings_file(path: Path) -> list[Settings]:
         if (
             isinstance(node, ast.ClassDef)
             and node.name.startswith("_")
-            and node.name.endswith("Settings")
+            and (node.name.endswith("Settings") or node.name in INCLUDED_ROOT_CLASSES)
             and (parsed := _parse_settings_class(node))
         ):
             settings.append(parsed)
@@ -179,6 +196,14 @@ def _format_default(default: str) -> str:
             formatted = ", ".join(f"`{i}`" for i in items[:3])
             return f"[{formatted}{', ...' if len(items) > 3 else ''}]"
     return f"`{default}`"
+
+
+def _env_var_name(settings: Settings, field: Field) -> str:
+    """Return the documented environment variable name for a settings field."""
+    override = ENV_VAR_OVERRIDES.get((settings.name, field.name))
+    if override is not None:
+        return override
+    return f"{settings.env_prefix}{field.name}"
 
 
 def generate_markdown(settings_list: list[Settings]) -> str:
@@ -238,7 +263,7 @@ def generate_markdown(settings_list: list[Settings]) -> str:
         lines.append("|----------------------|---------|-------------|-------------|")
 
         for field in settings.fields:
-            env_var = f"{settings.env_prefix}{field.name}"
+            env_var = _env_var_name(settings, field)
             default = _format_default(field.default)
             constraints = ", ".join(field.constraints) or "—"
             desc = field.description.replace("|", "\\|")
@@ -261,27 +286,34 @@ class EnvVarsDocsGenerator(Generator):
     description = "Generate environment variable documentation for AIPerf"
 
     def generate(self) -> GeneratorResult:
-        if not ENV_FILE.exists():
+        missing_files = [path for path in ENV_FILES if not path.exists()]
+        if missing_files:
             raise ParseError(
-                f"Source file not found: {ENV_FILE}",
+                "Source file not found",
                 {
+                    "files": ", ".join(str(path) for path in missing_files),
                     "hint": "Run from the project root directory",
                 },
             )
 
-        try:
-            settings_list = parse_settings_file(ENV_FILE)
-        except SyntaxError as e:
-            raise ParseError(
-                "Failed to parse environment.py",
-                {
-                    "error": str(e),
-                    "line": e.lineno,
-                },
-            ) from e
+        settings_list: list[Settings] = []
+        for path in ENV_FILES:
+            try:
+                settings_list.extend(parse_settings_file(path))
+            except SyntaxError as e:
+                raise ParseError(
+                    f"Failed to parse {path}",
+                    {
+                        "error": str(e),
+                        "line": e.lineno,
+                    },
+                ) from e
 
         if not settings_list:
-            raise ParseError("No settings classes found", {"file": str(ENV_FILE)})
+            raise ParseError(
+                "No settings classes found",
+                {"files": ", ".join(str(path) for path in ENV_FILES)},
+            )
 
         total_fields = sum(len(s.fields) for s in settings_list)
 
