@@ -36,6 +36,7 @@ pytest.importorskip(
 )
 
 from aiperf.accuracy.benchmarks.hellaswag import (  # noqa: E402
+    DEEPEVAL_CONFINEMENT,
     DEFAULT_GENERATION_SIZE,
     DEFAULT_N_SHOTS,
     MAX_N_SHOTS,
@@ -281,6 +282,82 @@ class TestPromptByteEqualWithDeepEval:
         assert "train_AS_0" in prompt
         assert "train_SAIL_0" in prompt
         assert "train_AS_1" not in prompt
+
+
+class TestDeepEvalConfinementInstructionAppended:
+    """Pin that aiperf appends DeepEval's default ``confinement_instructions``
+    string to the rendered prompt.
+
+    DeepEval's ``HellaSwag.predict()`` falls back to appending
+    ``"Output 'A', 'B', 'C', or 'D'. Full answer not needed."`` when the
+    model doesn't accept ``model.generate(..., schema=MultipleChoiceSchema)``
+    — which is the only path aiperf has against OpenAI-compatible
+    endpoints. Without the append, ``ExactMatchGrader`` (which mirrors
+    ``Scorer.exact_match_score``) under-grades verbose-but-correct
+    responses (e.g. ``"The answer is A."`` vs gold ``"A"``).
+    """
+
+    def test_constant_matches_deepeval_default(self) -> None:
+        """The constant must byte-match DeepEval's hardcoded default —
+        sourced from ``HellaSwag.__init__`` when
+        ``confinement_instructions=None``."""
+        assert (
+            DEEPEVAL_CONFINEMENT
+            == "Output 'A', 'B', 'C', or 'D'. Full answer not needed."
+        )
+
+    @pytest.mark.asyncio
+    async def test_prompt_ends_with_confinement(self) -> None:
+        rows = [_make_row(activity_label="Applying sunscreen", label=0)]
+        ds = _make_fake_dataset_dict(train_rows=rows, validation_rows=rows)
+        with patch(
+            "aiperf.accuracy.benchmarks.hellaswag.load_dataset",
+            return_value=ds,
+        ):
+            bench = HellaSwagBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["Applying sunscreen"], n_shots=0, enable_cot=False
+            )
+        prompt = problems[0].prompt
+        # Confinement is appended with a blank line separator after the
+        # template's trailing "Answer:" — matches DeepEval's
+        # ``prompt += f"\n\n{self.confinement_instructions}"``.
+        assert prompt.endswith(f"\n\n{DEEPEVAL_CONFINEMENT}")
+
+    @pytest.mark.asyncio
+    async def test_template_output_is_a_prefix_of_prompt(self) -> None:
+        """The HellaSwagTemplate output is preserved byte-for-byte as
+        the prefix of the final prompt; only the confinement suffix is
+        new. Pins parity with DeepEval's ``predict()`` flow:
+        ``template.generate_output()`` then ``prompt += confinement``."""
+        from deepeval.benchmarks.hellaswag.task import HellaSwagTask
+        from deepeval.benchmarks.hellaswag.template import HellaSwagTemplate
+
+        rows = [
+            _make_row(
+                activity_label="Applying sunscreen",
+                ctx="A man is in the bathroom. He",
+                endings=["applies", "watches", "sings", "cooks"],
+                label=0,
+            )
+        ]
+        ds = _make_fake_dataset_dict(train_rows=rows, validation_rows=rows)
+        with patch(
+            "aiperf.accuracy.benchmarks.hellaswag.load_dataset",
+            return_value=ds,
+        ):
+            bench = HellaSwagBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["Applying sunscreen"], n_shots=0, enable_cot=False
+            )
+        prompt = problems[0].prompt
+        expected_template = HellaSwagTemplate.generate_output(
+            input=HellaSwagTemplate.format_question(rows[0], include_answer=False),
+            train_set=rows,
+            task=HellaSwagTask.APPLYING_SUNSCREEN,
+            n_shots=0,
+        )
+        assert prompt == f"{expected_template}\n\n{DEEPEVAL_CONFINEMENT}"
 
 
 class TestGroundTruthIsBareLetter:

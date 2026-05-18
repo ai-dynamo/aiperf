@@ -86,6 +86,19 @@ DEFAULT_GENERATION_SIZE = 5
 ACTIVITY_LABEL_FIELD = "activity_label"
 LABEL_FIELD = "label"
 
+# DeepEval's default ``confinement_instructions`` string for HellaSwag,
+# appended to the prompt when the model doesn't support
+# ``model.generate(prompt, schema=MultipleChoiceSchema)`` — i.e. for
+# every non-DeepEval-aware OpenAI-compatible endpoint, which is the
+# only path aiperf takes. Without it, models emit verbose responses
+# like ``"The answer is A."`` and the strict ``ExactMatchGrader``
+# (which mirrors ``Scorer.exact_match_score``) under-grades them
+# vs DeepEval's reference numbers.
+#
+# Source: ``deepeval/benchmarks/hellaswag/hellaswag.py`` —
+# ``HellaSwag.__init__`` default when ``confinement_instructions=None``.
+DEEPEVAL_CONFINEMENT = "Output 'A', 'B', 'C', or 'D'. Full answer not needed."
+
 
 def _build_unique_activity_label_shots_set(train_set: Any) -> list[dict[str, Any]]:
     """Mirror DeepEval's ``shots_dataset`` construction.
@@ -223,12 +236,20 @@ class HellaSwagBenchmark(AIPerfLoggerMixin):
                 input_text = HellaSwagTemplate.format_question(
                     row, include_answer=False
                 )
-                prompt = HellaSwagTemplate.generate_output(
+                template_prompt = HellaSwagTemplate.generate_output(
                     input=input_text,
                     train_set=shots_set,
                     task=task,
                     n_shots=n_shots,
                 )
+                # Append DeepEval's confinement instruction. DeepEval's
+                # ``predict()`` does this when ``model.generate`` doesn't
+                # accept a ``schema`` kwarg (the normal case for every
+                # OpenAI-compatible endpoint aiperf hits). Without the
+                # append, ``ExactMatchGrader`` systematically grades
+                # verbose-but-correct responses ("The answer is A.") as
+                # wrong vs DeepEval's reference numbers.
+                prompt = f"{template_prompt}\n\n{DEEPEVAL_CONFINEMENT}"
                 gold_letter = choices[int(label_raw)]
                 problems.append(
                     BenchmarkProblem(
