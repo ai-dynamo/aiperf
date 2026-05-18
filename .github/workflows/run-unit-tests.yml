@@ -28,7 +28,7 @@ jobs:
         make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
     - name: Run unit tests and component integration tests
       run: |
-        make test-ci PYTHON_VERSION=${{ matrix.python-version }} args="-n 0"
+        make test-ci PYTHON_VERSION=${{ matrix.python-version }} component_args="-n 0"
     - name: Upload results to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5
