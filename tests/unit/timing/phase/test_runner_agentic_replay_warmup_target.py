@@ -5,14 +5,14 @@
 Originally these tests pinned the ``PhaseRunner.__init__`` re-anchor logic
 that lowered ``total_expected_requests`` to match the actual trajectory count
 when ``concurrency`` exceeded the number of usable trajectories. That bug
-class is now caught earlier: ``TrajectorySource.__init__`` raises
-``InsufficientTrajectoriesError`` when ``concurrency > usable_trajectories``,
-so the runner-side re-anchor only ever applies to the in-budget case
-(``concurrency <= len(trajectories)``).
+class is now handled earlier: ``TrajectorySource.__init__`` always wrap-fills
+to ``concurrency`` lanes (cycling through distinct trajectories with fresh
+``start_turn_index`` values), so ``len(trajectories) == concurrency`` by
+construction and the runner-side re-anchor is a no-op in practice.
 
 This module now exercises:
-- the construction-time rejection path (replacing the old "cap-at-pool" /
-  "short-traces-skipped" assertions);
+- the wrap-fill path that keeps ``len(trajectories) == concurrency`` even
+  when the pool or the usable subset is smaller than ``concurrency``;
 - the unchanged in-budget path: warmup target equals ``concurrency`` when the
   trajectory build matches it exactly;
 - the unchanged non-AGENTIC_REPLAY warmup and PROFILING phase behavior.
@@ -25,7 +25,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.scenario.base import InsufficientTrajectoriesError
 from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.runner import PhaseRunner
@@ -102,27 +101,27 @@ def _make_runner(
 class TestAgenticReplayWarmupTarget:
     """``PhaseRunner`` warmup-target behavior under AGENTIC_REPLAY."""
 
-    async def test_concurrency_above_pool_size_rejected_at_construction(self) -> None:
-        """Pool of 6, concurrency=8 -> ``InsufficientTrajectoriesError`` at __init__.
+    async def test_concurrency_above_pool_size_wrap_fills_to_concurrency(self) -> None:
+        """Pool of 6, concurrency=8 -> 8 lanes (wrap-fill activates).
 
-        Replaces the old "re-anchor target to 6" assertion: silently capping
-        load below the requested concurrency was the bug we now refuse to
-        paper over with a runtime adjustment.
+        Replaces the old "rejected at __init__" assertion: silently capping
+        load below the requested concurrency was the bug; wrap-fill keeps the
+        run honouring ``--concurrency`` while reusing trajectories.
         """
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(6)})
         sampler = MagicMock()
         sampler.next_conversation_id.side_effect = [
             c.conversation_id for c in md.conversations
         ]
-        with pytest.raises(InsufficientTrajectoriesError) as exc_info:
-            TrajectorySource(
-                dataset_metadata=md,
-                dataset_sampler=sampler,
-                concurrency=8,
-                random_seed=42,
-            )
-        assert exc_info.value.concurrency == 8
-        assert exc_info.value.usable_trajectories == 6
+        src = TrajectorySource(
+            dataset_metadata=md,
+            dataset_sampler=sampler,
+            concurrency=8,
+            random_seed=42,
+        )
+        assert len(src.trajectories) == 8
+        distinct = {t.conversation_id for t in src.trajectories}
+        assert len(distinct) == 6  # 6 distinct sources, fanned out to 8 lanes
 
     async def test_concurrency_below_pool_size_uses_concurrency(self) -> None:
         """Pool of 10, concurrency=4 -> 4 trajectories -> target = 4 (unchanged)."""
@@ -140,30 +139,29 @@ class TestAgenticReplayWarmupTarget:
         runner = _make_runner(config, src)
         assert runner._config.total_expected_requests == 4
 
-    async def test_short_traces_skipped_below_concurrency_rejected(self) -> None:
-        """Pool of 6 with one 1-turn trace, concurrency=8: rejected at __init__.
+    async def test_short_traces_skipped_below_concurrency_wrap_fills(self) -> None:
+        """Pool of 6 with one 1-turn trace, concurrency=8: wrap-fill to 8 lanes.
 
-        Previously the runner re-anchored target to the 5 usable trajectories;
-        now ``TrajectorySource`` rejects the configuration directly because
-        each lane is pinned to a distinct trajectory and the requested
-        concurrency cannot be honoured.
+        Previously the runner re-anchored target to the 5 usable trajectories
+        and the construction-time guard was a hard rejection; now
+        ``TrajectorySource`` wrap-fills the missing lanes by cycling through
+        the 5 usable trajectories with fresh ``start_turn_index`` salts.
         """
         md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5, "d": 5, "e": 5, "tiny": 1})
         sampler = MagicMock()
         sampler.next_conversation_id.side_effect = [
             c.conversation_id for c in md.conversations
         ]
-        with pytest.raises(InsufficientTrajectoriesError) as exc_info:
-            TrajectorySource(
-                dataset_metadata=md,
-                dataset_sampler=sampler,
-                concurrency=8,
-                random_seed=42,
-            )
-        assert exc_info.value.concurrency == 8
-        assert exc_info.value.usable_trajectories == 5
-        # Pool size counts ALL traces, including the skipped tiny one.
-        assert exc_info.value.pool_size == 6
+        src = TrajectorySource(
+            dataset_metadata=md,
+            dataset_sampler=sampler,
+            concurrency=8,
+            random_seed=42,
+        )
+        assert len(src.trajectories) == 8
+        distinct = {t.conversation_id for t in src.trajectories}
+        # 5 usable (tiny is skipped), fanned out to 8 lanes.
+        assert distinct == {"a", "b", "c", "d", "e"}
 
     async def test_profiling_phase_target_unchanged(self) -> None:
         """The re-anchor only applies to WARMUP, not PROFILING (in-budget run)."""

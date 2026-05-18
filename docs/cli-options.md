@@ -30,6 +30,10 @@ Generate visualizations from AIPerf profiling data.
 
 Explore AIPerf plugins: aiperf plugins [category] [type]
 
+### [`report`](#aiperf-report)
+
+Render HTML reports (report.html, cache_explorer.html, simulation.html)
+
 ### [`service`](#aiperf-service)
 
 Run an AIPerf service in a single process.
@@ -280,7 +284,7 @@ For weka_trace inputs, emit Turn.delay using only the recorded per-request `thin
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `semianalysis_cc_traces_weka`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -1212,6 +1216,56 @@ Show all categories and plugins.
 #### `-v`, `--validate`, `--no-validate`
 
 Validate plugins.yaml.
+
+<hr/>
+
+## `aiperf report`
+
+Render HTML reports (report.html, cache_explorer.html, simulation.html) for a real trace file or directory.
+
+**Examples:**
+
+```bash
+aiperf report weka-trace ./traces/
+aiperf report weka-trace ./traces/ --block-size 64
+aiperf report weka-trace ./traces/ --max-context-length 200000
+aiperf report weka-trace ./traces/ --no-subagents
+```
+
+#### `--target` `<str>` _(Required)_
+
+Trace flavor to report on.
+
+#### `--path` `<str>` _(Required)_
+
+Path to a trace file or a directory of *.json trace files.
+
+#### `--output` `<str>`
+
+Parent directory for the auto-named run directory.
+<br/>_Default: `.`_
+
+#### `--block-size` `<int>`
+
+KV cache block size for cache statistics; inferred from weka traces when omitted.
+
+#### `--max-context-length` `<int>`
+
+Drop traces whose peak input_length exceeds this.
+
+#### `--no-subagents`, `--no-no-subagents`
+
+Skip subagent sessions; report only parent traces.
+
+#### `--prefill-tps` `<float>`
+
+Synthetic prefill throughput for latency estimates.
+<br/>_Default: `20000`_
+
+#### `--decode-tps` `<float>`
+
+Synthetic decode throughput for latency estimates.
+<br/>_Default: `60`_
 
 <hr/>
 

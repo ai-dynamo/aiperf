@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -95,15 +96,29 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.lifecycle = lifecycle
 
         self._recycle_queue: asyncio.Queue[str] | None = None
+        # Keyed on x_correlation_id (not trace_id): the guard's intent is to
+        # catch the same final turn firing handle_credit_return twice — a
+        # per-session property. trace_id-keying spuriously tripped when two
+        # wrap-filled lanes finished the same trace_id with distinct
+        # correlation_ids.
         self._in_flight_recycled: set[str] = set()
         # Trace_ids whose session is currently dispatched (any turn in flight
         # or scheduled). Used by ``_spawn_from_recycle_or_id`` to skip
-        # popping a trace whose session is still alive — prevents two
-        # concurrent sessions for the same trace_id, which would otherwise
-        # be possible when the initial recycle queue spans the full pool
-        # (trajectories appear in the queue while their sessions are still
-        # running at PROFILING start).
-        self._active_traces: set[str] = set()
+        # popping a trace whose every lane is already alive — prevents over-
+        # subscribing a trace_id, which would otherwise be possible when the
+        # initial recycle queue spans the full pool (trajectories appear in
+        # the queue while their sessions are still running at PROFILING start).
+        # Multiset (Counter) rather than a set because wrap-fill can place
+        # multiple lanes on the same trace_id: skip only when every lane for
+        # this trace is busy. Collapses to set-style semantics when every
+        # value in _lanes_per_trace is 1.
+        self._active_traces: Counter[str] = Counter()
+        # Lane multiplicity per trace_id, frozen at strategy init from the
+        # trajectory list. _pop_next_eligible_trace skips only when every
+        # lane for a trace is busy (count >= capacity).
+        self._lanes_per_trace: Counter[str] = Counter(
+            t.conversation_id for t in conversation_source.trajectories
+        )
         self._failed_warmup_traces: list[str] = []
         self._warmup_completed_count: int = 0
         self._warmup_total_count: int = 0
@@ -139,6 +154,22 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._benchmark_id: str = (
             user_config.benchmark_id if user_config is not None else "unknown"
         )
+
+        # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
+        # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
+        # so this never fires there; ad-hoc agentic-replay with cache_bust
+        # explicitly off gets a loud heads-up.
+        wrap_fill_active = any(count > 1 for count in self._lanes_per_trace.values())
+        if wrap_fill_active and self._cache_bust_target == CacheBustTarget.NONE:
+            self.warning(
+                "Wrap-fill active (%d distinct trace_ids fanned across %d "
+                "lanes) with cache_bust.target=NONE: per-lane traffic will "
+                "be byte-identical. Set cache_bust.target=first_turn_prefix "
+                "(or another non-NONE target) for distinct shared-trace "
+                "replays.",
+                len(self._lanes_per_trace),
+                sum(self._lanes_per_trace.values()),
+            )
 
     async def setup_phase(self) -> None:
         """Phase-specific async setup.
@@ -193,7 +224,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
-            self._active_traces.add(trajectory.conversation_id)
+            self._active_traces[trajectory.conversation_id] += 1
             self._mint_marker_for_session(
                 session.x_correlation_id, trajectory.conversation_id, lane
             )
@@ -233,7 +264,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
-            self._active_traces.add(trajectory.conversation_id)
+            self._active_traces[trajectory.conversation_id] += 1
             self._mint_marker_for_session(
                 session.x_correlation_id, trajectory.conversation_id, lane
             )
@@ -279,6 +310,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         compute and inflates the run's overflow rate. This mirrors the
         kv-cache-tester behavior of marking the user "truncated" on the first
         context-length error and removing them from the active pool.
+
+        DAG-child final turns short-circuit: child terminal completion is
+        owned by ``BranchOrchestrator`` (the callback handler invokes
+        ``on_child_leaf_reached`` / ``on_child_errored`` before the strategy).
+        The strategy must not push child conversation_ids into the recycle
+        pool — they're not root pool entries, and they repeat across recycle
+        passes of the parent, which would trip the double-recycle guard the
+        second time the parent re-runs.
         """
         if self.config.phase == CreditPhase.WARMUP:
             self._warmup_completed_count += 1
@@ -313,6 +352,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         if not credit.is_final_turn and not terminal_overflow:
             await self._dispatch_next_turn(credit)
+            return
+
+        # DAG-child final turns are owned by BranchOrchestrator
+        # (on_child_leaf_reached / on_child_errored, already invoked by the
+        # callback handler before reaching the strategy). The trajectory
+        # recycle pool is root-only — child conversation_ids like
+        # ``parent::sa:agent_id`` are not legitimate pool entries, and they
+        # repeat across recycle passes of the same parent, which would trip
+        # the double-recycle guard the second time the parent re-runs.
+        if credit.agent_depth > 0:
             return
 
         if terminal_overflow:
@@ -364,7 +413,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """
         # Prune unconditionally so every early-return path leaves dicts clean.
         self._session_marker.pop(finished_correlation_id, None)
-        self._active_traces.discard(finished_trace_id)
+        self._active_traces[finished_trace_id] -= 1
+        if self._active_traces[finished_trace_id] <= 0:
+            del self._active_traces[finished_trace_id]
 
         lane = self._release_lane_for(finished_correlation_id, finished_trace_id)
 
@@ -373,12 +424,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         # Double-recycle guard. Raise rather than gate on __debug__ — `python -O`
         # would otherwise let the duplicate-final-turn corruption escape silently.
-        if finished_trace_id in self._in_flight_recycled:
+        if finished_correlation_id in self._in_flight_recycled:
             raise RuntimeError(
-                f"Double recycle of trace_id {finished_trace_id!r} - "
-                "handle_credit_return invoked twice for the same final turn"
+                f"Double recycle of correlation_id {finished_correlation_id!r} "
+                f"(trace_id={finished_trace_id!r}) - handle_credit_return "
+                "invoked twice for the same final turn"
             )
-        self._in_flight_recycled.add(finished_trace_id)
+        self._in_flight_recycled.add(finished_correlation_id)
 
         # Re-enqueue BEFORE the cooldown check so an in-flight credit returning
         # during cooldown can't drop the trace_id from the recycle pool.
@@ -391,14 +443,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if next_trace_id is None:
             return
 
-        self._in_flight_recycled.discard(next_trace_id)
-
         session = self._build_session_for_trace(next_trace_id)
         if session is None or not session.metadata.turns:
             return
 
         self._correlation_to_lane[session.x_correlation_id] = lane
-        self._active_traces.add(next_trace_id)
+        self._active_traces[next_trace_id] += 1
         self._mint_marker_for_session(session.x_correlation_id, next_trace_id, lane)
 
         turn = self._build_turn_for_session(session, 0)
@@ -439,7 +489,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 candidate = self._recycle_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return None
-            if candidate in self._active_traces:
+            lane_cap = self._lanes_per_trace.get(candidate, 1) or 1
+            if self._active_traces[candidate] >= lane_cap:
                 self._recycle_queue.put_nowait(candidate)
                 continue
             return candidate

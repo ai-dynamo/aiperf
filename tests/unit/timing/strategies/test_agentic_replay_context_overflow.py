@@ -141,7 +141,7 @@ async def test_mid_trajectory_context_overflow_recycles_trace():
     # trace_ids). The finishing trace is discarded from _active_traces at
     # the top of _spawn_from_recycle_or_id before the pop loop runs.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     # Mid-trajectory turn (index 2 of 5) errors with context-overflow.
     mid = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=5)
@@ -234,7 +234,7 @@ async def test_final_turn_overflow_recycles_normally():
     # trace_ids; the finishing trace is discarded at the top of
     # _spawn_from_recycle_or_id before the pop loop runs).
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces.add("trace_0")
+    strategy._active_traces["trace_0"] += 1
 
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(

@@ -147,9 +147,25 @@ class ConversationReconstructor:
     ) -> None:
         """Initialize segments for turn 0 from a tool+system / user prefix split.
 
-        See spec §4.3. hash_ids tile the first ``floor(in_tokens / bs)`` blocks;
-        any partial tail of ``in_tokens % bs`` tokens is appended to the user
-        segment via ``sample_partial_tail_tokens``.
+        See spec §4.3. hash_ids tile the first ``floor(in_tokens / bs)`` blocks
+        when fully recorded; any partial tail of ``in_tokens % bs`` tokens is
+        appended to the user segment via ``sample_partial_tail_tokens``.
+
+        When ``hash_ids`` is **truncated** relative to
+        ``floor(in_tokens / bs)`` (a common shape for real captures where the
+        recorder only stored a prefix of the hash blocks), the missing block
+        region is synthesized as additional partial-tail tokens on the
+        trailing user segment. The resulting prompt has exactly ``in_tokens``
+        tokens but a smaller hash-derived prefix than the recording had —
+        KV-cache fidelity for the covered prefix is preserved; the uncovered
+        suffix carries sha256-keyed synth tokens whose hashes don't match
+        any recorded block. This matches the relaxed model already used by
+        :func:`compose_weka_prompt_tokens`.
+
+        If even the system/tool prefix can't be filled from hash_ids, the
+        function still raises: synthesizing the system segment from random
+        tokens would silently fake the KV-cache prefix the whole trace
+        exists to measure.
 
         tool_tokens and system_tokens are merged into a SINGLE
         ``role="system"`` segment of ``ceil((tool+system)/bs) * bs`` tokens.
@@ -166,13 +182,8 @@ class ConversationReconstructor:
         bs = self.block_size
         m_full = in_tokens // bs
         partial_tail_tokens_n = in_tokens - m_full * bs
-        if len(hash_ids) < m_full:
-            raise ValueError(
-                f"weka trace turn-0 has {len(hash_ids)} hash_ids but in_tokens="
-                f"{in_tokens} with block_size={bs} requires at least {m_full} "
-                f"(floor(in_tokens / block_size)). Either the recorded hash_ids "
-                f"list is truncated or in_tokens is wrong."
-            )
+        covered_blocks = min(m_full, len(hash_ids))
+        missing_block_tokens = (m_full - covered_blocks) * bs
 
         cursor = 0
         segs: list[RoleSegment] = []
@@ -181,6 +192,20 @@ class ConversationReconstructor:
             prefix_tokens = tool_tokens + system_tokens
             prefix_blocks = math.ceil(prefix_tokens / bs)
             if prefix_blocks > 0:
+                # The system/tool prefix MUST come from hash_ids — synthesizing
+                # it from random tokens would silently corrupt the KV-cache
+                # prefix measurement (the whole point of the trace).
+                if prefix_blocks > len(hash_ids):
+                    raise ValueError(
+                        f"weka trace turn-0 system prefix requires "
+                        f"{prefix_blocks} hash blocks but only "
+                        f"{len(hash_ids)} were recorded "
+                        f"(tool_tokens={tool_tokens}, "
+                        f"system_tokens={system_tokens}, block_size={bs}). "
+                        f"The hash_ids list is too truncated to even "
+                        f"reconstruct the prefix; aborting to avoid faking "
+                        f"the cache structure."
+                    )
                 seg_tokens = self.decode_block_tokens(
                     hash_ids[cursor : cursor + prefix_blocks]
                 )
@@ -195,12 +220,14 @@ class ConversationReconstructor:
                 )
                 cursor += prefix_blocks
 
-        user_blocks = m_full - cursor
+        # User segment: consume whatever hash_ids remain, then synthesize the
+        # missing-blocks region + the recorded partial tail as one synth-tail
+        # call.
+        user_blocks = covered_blocks - cursor
         user_tokens = self.decode_block_tokens(hash_ids[cursor : cursor + user_blocks])
-        if partial_tail_tokens_n > 0:
-            user_tokens.extend(
-                self.sample_partial_tail_tokens(partial_tail_tokens_n, seed)
-            )
+        synth_tail_n = missing_block_tokens + partial_tail_tokens_n
+        if synth_tail_n > 0:
+            user_tokens.extend(self.sample_partial_tail_tokens(synth_tail_n, seed))
         segs.append(
             RoleSegment(
                 role="user",
@@ -232,6 +259,15 @@ class ConversationReconstructor:
         rule applies across all three structural patterns (append-only,
         mid-seq replace, pull-back); see §4.4.1.
 
+        When ``curr_hash_ids`` is **truncated** relative to
+        ``curr_in_tokens // bs`` (common in real captures where the recorder
+        stored only a prefix of the hash blocks), the missing block region
+        is synthesized as additional partial-tail tokens on the trailing
+        user segment. Total tokens still equal ``curr_in_tokens`` exactly;
+        only the uncovered suffix carries synth tokens whose hashes don't
+        match any recorded block. Mirrors the relaxed shape in
+        :meth:`init_turn_0`.
+
         Assistant size is block-aligned UP via
         ``ceil(prev_out_tokens / bs) * bs``, clamped to fit the new region.
         This makes the asst content slightly larger than the recorded
@@ -241,6 +277,8 @@ class ConversationReconstructor:
         """
         bs = self.block_size
         m_curr = len(curr_hash_ids)
+        m_curr_full = curr_in_tokens // bs
+        missing_block_tokens = max(0, (m_curr_full - m_curr) * bs)
         lcp = longest_common_prefix(prev_hash_ids, curr_hash_ids)
         prev_partial_tail = prev_in_tokens % bs
 
@@ -256,9 +294,10 @@ class ConversationReconstructor:
         new_blocks = curr_hash_ids[lcp:m_curr]
         new_partial_tail_n = curr_in_tokens % bs
         new_region_tokens = self.decode_block_tokens(new_blocks)
-        if new_partial_tail_n > 0:
+        synth_tail_n = missing_block_tokens + new_partial_tail_n
+        if synth_tail_n > 0:
             new_region_tokens.extend(
-                self.sample_partial_tail_tokens(new_partial_tail_n, seed)
+                self.sample_partial_tail_tokens(synth_tail_n, seed)
             )
         new_blocks_count = m_curr - lcp
 

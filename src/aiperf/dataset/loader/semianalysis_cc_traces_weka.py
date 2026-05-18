@@ -2,12 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """HF-backed Weka trace loader.
 
-Pulls the SemiAnalysis cc-traces-weka-no-subagents-051226 dataset from
-HuggingFace and delegates reconstruction to ``WekaTraceLoader`` so file-based
-and HF-based replay use the EXACT same backing code (same serial + parallel
-paths, same hash_id replay, same model mapping, same branch / spawn-join,
-same delay capping). The public loader's only job is "download + parse rows
-into WekaTrace + delegate".
+Pulls a SemiAnalysis cc-traces-weka dataset variant from HuggingFace and
+delegates reconstruction to ``WekaTraceLoader`` so file-based and HF-based
+replay use the EXACT same backing code (same serial + parallel paths, same
+hash_id replay, same model mapping, same branch / spawn-join, same delay
+capping). The public loader's only job is "download + parse rows into
+WekaTrace + delegate".
+
+Two variants are registered against this class in ``plugins.yaml``:
+
+* ``semianalysis_cc_traces_weka`` — original 042026 corpus, 739 traces
+  with full subagent fan-out structure.
+* ``semianalysis_cc_traces_weka_no_subagents`` — 051226 derivative, 949
+  traces with all subagent blocks stripped (main-agent linear streams
+  only). Default for the InferenceX AgentX-MVP scenario.
+
+Which dataset is downloaded is governed by the ``hf_dataset_name``
+plugin metadata field; the loader itself is variant-agnostic.
 """
 
 from __future__ import annotations
@@ -30,11 +41,17 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
     """HF-backed Weka trace loader.
 
-    Downloads ``semianalysisai/cc-traces-weka-no-subagents-051226`` (2.77 GB
-    jsonl, 949 traces, 136k requests, public, no auth), validates each row as
+    Downloads a ``semianalysisai/cc-traces-weka-*`` dataset (selected via
+    the ``hf_dataset_name`` plugin metadata field), validates each row as
     a ``WekaTrace``, and delegates conversation reconstruction to
-    :class:`WekaTraceLoader`. File-based and HF-based replay are guaranteed
-    byte-identical because they share one method body.
+    :class:`WekaTraceLoader`. File-based and HF-based replay are
+    guaranteed byte-identical because they share one method body.
+
+    Two variants are registered against this class:
+    ``semianalysis_cc_traces_weka`` (042026, 739 traces, full subagent
+    fan-out) and ``semianalysis_cc_traces_weka_no_subagents`` (051226,
+    949 traces, main-agent linear streams only). The loader code is
+    identical for both — only ``hf_dataset_name`` differs.
     """
 
     tag: ClassVar[str] = "SemiAnalysisCCTracesWeka"
@@ -72,12 +89,15 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
     async def load_dataset(self) -> dict[str, list[WekaTrace]]:
         """Download the HF dataset and validate every row as a WekaTrace.
 
-        Caps the number of rows to ``--num-dataset-entries`` (defaults to 100)
-        to avoid reconstructing the full 949-trace corpus when the benchmark
-        only needs a subset. Pass ``--num-dataset-entries 949`` (or higher)
-        to load the full corpus. The no-subagents corpus has subagent entries
-        stripped, so each row produces exactly one main-agent conversation
-        downstream (no parent / child fan-out).
+        Caps the number of rows to ``--num-dataset-entries`` (defaults to
+        100) to avoid reconstructing the full corpus when the benchmark
+        only needs a subset. Pass a value at or above the registered
+        variant's corpus size to load every trace (739 for the 042026
+        full-subagent variant, 949 for the 051226 no-subagents variant).
+        For variants with subagents, each row produces 1 parent
+        conversation plus 1 child conversation per subagent, so N rows
+        typically yields 2-10x N conversations downstream; for the
+        no-subagents variant the row-to-conversation ratio is ~1:1.
         """
         raw = await super().load_dataset()
         ds = raw["dataset"]

@@ -488,6 +488,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.advance_turn"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.init_turn_0"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
@@ -1100,6 +1110,16 @@
       "function-size",
       "src/aiperf/timing/phase_orchestrator.py",
       "PhaseOrchestrator.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy.handle_credit_return"
     ],
     [
       "function-size",

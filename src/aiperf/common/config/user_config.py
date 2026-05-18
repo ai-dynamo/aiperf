@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 if TYPE_CHECKING:
     from aiperf.plugin.schema.schemas import EndpointMetadata
 
+import orjson
 from orjson import JSONDecodeError
 from pydantic import BeforeValidator, Field, PrivateAttr, model_validator
 from typing_extensions import Self
@@ -28,7 +29,6 @@ from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import GPUTelemetryMode, ServerMetricsFormat
-from aiperf.common.utils import load_json_str
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ArrivalPattern,
@@ -399,11 +399,22 @@ class UserConfig(BaseConfig):
                 for line in f:
                     if not (line := line.strip()):
                         continue
+                    # Use ``orjson.loads`` directly rather than
+                    # ``load_json_str`` here: this is format-detection
+                    # scanning, so parse failures are EXPECTED (e.g. a
+                    # pretty-printed multi-line JSON document fed into a
+                    # trace-dataset config) and must not log ERROR per
+                    # fragment line.
                     try:
-                        data = load_json_str(line)
-                        return "timestamp" in data and data["timestamp"] is not None
-                    except (JSONDecodeError, KeyError):
+                        data = orjson.loads(line)
+                    except JSONDecodeError:
                         continue
+                    if (
+                        isinstance(data, dict)
+                        and "timestamp" in data
+                        and data["timestamp"] is not None
+                    ):
+                        return True
         except (OSError, FileNotFoundError):
             _logger.warning(
                 f"Could not read dataset file {self.input.file} to check for timestamps"

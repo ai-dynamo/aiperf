@@ -172,18 +172,29 @@ class TestPreloadTokenizers:
         assert mock_load.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_enables_offline_mode_after_successful_preload(self) -> None:
+    async def test_does_not_mutate_offline_mode_after_successful_preload(self) -> None:
+        """Parent process must NOT set HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE
+        after a successful preload — workers re-set them on init themselves,
+        and parent-side mutation breaks same-process consumers that need HF
+        online (e.g. dataset_manager loading a public HF dataset after the
+        tokenizer preload completes). Regression for commit b05cbf9ec.
+        """
         resolved = {"model": "meta-llama/Llama-2-7b-hf"}
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
             patch.object(Tokenizer, "from_pretrained"),
         ):
             await preload_tokenizers(resolved)
-        assert os.environ.get("HF_HUB_OFFLINE") == "1"
-        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+        assert os.environ.get("HF_HUB_OFFLINE") is None
+        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
 
     @pytest.mark.asyncio
-    async def test_enables_offline_mode_when_all_already_cached(self) -> None:
+    async def test_does_not_mutate_offline_mode_when_all_already_cached(self) -> None:
+        """Same invariant as above on the all-cached short-circuit path:
+        the parent must not mutate HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE even
+        when every tokenizer was already cached and ``from_pretrained`` is
+        skipped.
+        """
         resolved = {"model": "meta-llama/Llama-2-7b-hf"}
         with (
             patch("aiperf.common.tokenizer._is_hf_cached", return_value=True),
@@ -191,8 +202,8 @@ class TestPreloadTokenizers:
         ):
             await preload_tokenizers(resolved)
         mock_load.assert_not_called()
-        assert os.environ.get("HF_HUB_OFFLINE") == "1"
-        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+        assert os.environ.get("HF_HUB_OFFLINE") is None
+        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
 
     @pytest.mark.asyncio
     async def test_does_not_enable_offline_mode_on_failure(self) -> None:

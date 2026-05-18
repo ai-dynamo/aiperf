@@ -322,3 +322,83 @@ class TestTraceDatasetTimingDetection:
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             assert config._should_use_fixed_schedule_for_trace_dataset() is False
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_pretty_printed_json_file_does_not_spam_error_logs(
+        self, mock_is_file, mock_exists, caplog
+    ):
+        """Regression: when a trace-dataset config points at a pretty-printed
+        (multi-line) JSON document instead of JSONL, ``load_json_str`` used
+        to log ERROR per fragment line. The function now uses raw
+        ``orjson.loads`` so format-detection failures are silent — only the
+        returned ``False`` matters.
+        """
+        import logging
+
+        mock_file_content = (
+            "{\n"
+            '  "id": "91a41301c26657b2500e2dc71141217dd11b",\n'
+            '  "models": [\n'
+            '    "model-a"\n'
+            "  ]\n"
+            "}\n"
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/pretty.json",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with (
+            patch("builtins.open", mock_open(read_data=mock_file_content)),
+            caplog.at_level(logging.ERROR, logger="aiperf.common.utils"),
+        ):
+            result = config._should_use_fixed_schedule_for_trace_dataset()
+
+        assert result is False
+        json_error_logs = [
+            r.getMessage()
+            for r in caplog.records
+            if "Failed to parse JSON string" in r.getMessage()
+        ]
+        assert json_error_logs == [], (
+            f"Format-detection scanning must not emit per-line JSON parse "
+            f"errors; got: {json_error_logs}"
+        )
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_bare_scalar_line_does_not_raise_type_error(
+        self, mock_is_file, mock_exists
+    ):
+        """Regression: pretty-printed JSON arrays produce lines like ``62``
+        (trailing element). ``orjson.loads("62")`` returns an int; the
+        original code did ``"timestamp" in data`` directly, raising
+        ``TypeError: argument of type 'int' is not iterable``. The guard
+        must short-circuit on non-dict scalars and continue scanning.
+        """
+        mock_file_content = (
+            "{\n"
+            '  "id": "trace-x",\n'
+            '  "hash_ids": [\n'
+            "    0,\n"
+            "    1,\n"
+            "    62\n"
+            "  ]\n"
+            "}\n"
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/pretty.json",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            assert config._should_use_fixed_schedule_for_trace_dataset() is False

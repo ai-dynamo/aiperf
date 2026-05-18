@@ -91,34 +91,6 @@ class EmptyTracePoolError(RuntimeError):
     """Raised when the loader produces 0 valid traces and the scenario requires a non-empty pool."""
 
 
-class InsufficientTrajectoriesError(RuntimeError):
-    """Raised when AGENTIC_REPLAY concurrency exceeds the usable trajectory count.
-
-    Each AGENTIC_REPLAY profiling lane is anchored to a distinct trajectory
-    built at startup; when ``concurrency`` exceeds the number of usable
-    trajectories (pool size minus traces skipped for being too short to split
-    into a warmup + profiling turn), the run cannot honour the requested
-    concurrency and is rejected up front instead of silently capping the
-    effective load.
-    """
-
-    def __init__(
-        self, concurrency: int, usable_trajectories: int, pool_size: int
-    ) -> None:
-        self.concurrency = concurrency
-        self.usable_trajectories = usable_trajectories
-        self.pool_size = pool_size
-        super().__init__(
-            f"AGENTIC_REPLAY concurrency {concurrency} exceeds usable trajectory "
-            f"count {usable_trajectories} (raw pool size {pool_size}; traces with "
-            f"fewer than 2 turns are skipped because warmup+profiling needs at "
-            f"least one turn each). Each lane is pinned to a distinct trajectory, "
-            f"so the run cannot reach the requested concurrency. Lower "
-            f"--concurrency to at most {usable_trajectories}, or use a larger "
-            f"trace corpus."
-        )
-
-
 class TrajectoryWarmupFailedError(RuntimeError):
     """Raised when WARMUP has terminal failures across trajectories and PROFILING cannot honestly start."""
 
