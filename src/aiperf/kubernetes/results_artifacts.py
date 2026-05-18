@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import aiohttp
+import orjson
 
 from aiperf.kubernetes.client import find_retrievable_pod
 from aiperf.kubernetes.console import (
@@ -106,7 +107,7 @@ async def _list_available_artifacts(
     try:
         async with session.get(list_url) as list_resp:
             list_resp.raise_for_status()
-            list_data = await list_resp.json()
+            list_data = await list_resp.json(loads=orjson.loads)
             return [f["name"] for f in list_data.get("files", [])]
     except (aiohttp.ClientError, KeyError) as e:
         print_error(f"Failed to list available results for job {job_id}: {e!r}")

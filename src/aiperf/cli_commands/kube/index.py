@@ -66,12 +66,8 @@ async def _operator_api_base(
 
     opts = options or KubeManageOptions()
 
-    async with k8s_client(
-        kubeconfig=opts.kubeconfig, context=opts.kube_context
-    ) as api:
-        op_ns = await resolve_operator_namespace(
-            api, explicit=opts.namespace
-        )
+    async with k8s_client(kubeconfig=opts.kubeconfig, context=opts.kube_context) as api:
+        op_ns = await resolve_operator_namespace(api, explicit=opts.namespace)
         pod_info = await find_operator_pod(api, namespace=op_ns)
         if not pod_info:
             raise RuntimeError(
@@ -113,11 +109,13 @@ async def rebuild(
         logging.getLogger("aiperf.kube").setLevel(logging.WARNING)
 
     try:
-        async with _operator_api_base(api_url, options) as base_url:
-            async with httpx.AsyncClient(base_url=base_url, timeout=300.0) as client:
-                resp = await client.post("/admin/index/rebuild")
-                resp.raise_for_status()
-                data = resp.json()
+        async with (
+            _operator_api_base(api_url, options) as base_url,
+            httpx.AsyncClient(base_url=base_url, timeout=300.0) as client,
+        ):
+            resp = await client.post("/admin/index/rebuild")
+            resp.raise_for_status()
+            data = orjson.loads(resp.content)
         if output == "json":
             kube_console.console.print(
                 orjson.dumps(data, option=orjson.OPT_INDENT_2).decode()
@@ -153,11 +151,13 @@ async def stats(
     if output == "json":
         logging.getLogger("aiperf.kube").setLevel(logging.WARNING)
     try:
-        async with _operator_api_base(api_url, options) as base_url:
-            async with httpx.AsyncClient(base_url=base_url) as client:
-                resp = await client.get("/admin/index/stats")
-                resp.raise_for_status()
-                data = resp.json()
+        async with (
+            _operator_api_base(api_url, options) as base_url,
+            httpx.AsyncClient(base_url=base_url) as client,
+        ):
+            resp = await client.get("/admin/index/stats")
+            resp.raise_for_status()
+            data = orjson.loads(resp.content)
         if output == "json":
             kube_console.console.print(
                 orjson.dumps(data, option=orjson.OPT_INDENT_2).decode()

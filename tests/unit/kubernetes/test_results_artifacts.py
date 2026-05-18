@@ -59,10 +59,10 @@ class FakeResponse:
     async def read(self) -> bytes:
         return self._body
 
-    async def json(self) -> dict:
+    async def json(self, *, loads=orjson.loads) -> dict:
         if self._json_data is not None:
             return self._json_data
-        return orjson.loads(self._body)
+        return loads(self._body)
 
     def raise_for_status(self) -> None:
         if self.status >= 400:

@@ -64,17 +64,14 @@ class _FakeAsyncClient:
 
 
 class _FakeResponse:
-    """Minimal httpx.Response stand-in: raise_for_status no-op, json passthrough."""
+    """Minimal httpx.Response stand-in with byte content."""
 
     def __init__(self, payload: dict[str, Any]) -> None:
-        self._payload = payload
+        self.content = orjson.dumps(payload)
         self.status_code = 200
 
     def raise_for_status(self) -> None:
         return None
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
 
 
 def _patch_httpx(client: _FakeAsyncClient) -> Any:
