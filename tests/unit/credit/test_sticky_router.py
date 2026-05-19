@@ -865,6 +865,44 @@ class TestStickyCreditRouterWorkerUnregistration:
 
         assert events == [(credit1.id, True), (credit2.id, True)]
 
+    async def test_reconnected_worker_reclaims_old_registered_generation(
+        self, run
+    ) -> None:
+        """A same-ID reconnect must reclaim credits stranded on the prior pod."""
+        router = StickyCreditRouter(run=run, service_id="test-router")
+        router._credit_router_client.send_to = AsyncMock()
+        on_return = AsyncMock()
+        router.set_return_callback(on_return)
+
+        router._register_worker("worker-1")
+        old_credit = make_credit(id=16, corr_id="session-16", turn=0, num_turns=3)
+        router._track_credit_sent("worker-1", old_credit)
+        router._sticky_sessions["session-16"] = "worker-1"
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids = {"session-16"}
+
+        await router._handle_return_router_message(
+            "worker-1",
+            WorkerConnected(worker_id="worker-1"),
+        )
+
+        assert "worker-1" not in router._workers
+        assert "worker-1" in router._connected_workers
+        on_return.assert_awaited_once()
+        reclaimed = on_return.await_args.args[1]
+        assert reclaimed.credit.id == old_credit.id
+        assert reclaimed.cancelled is True
+        assert reclaimed.error.startswith("worker_unavailable:")
+        assert "session-16" not in router._unavailable_sessions
+
+        await router._handle_return_router_message(
+            "worker-1",
+            WorkerDispatchable(worker_id="worker-1"),
+        )
+
+        assert "worker-1" in router._workers
+        assert router._workers["worker-1"].in_flight_credits == 0
+
     async def test_replacement_worker_reclaims_old_detached_generation(
         self, run
     ) -> None:

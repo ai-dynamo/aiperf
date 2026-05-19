@@ -547,12 +547,12 @@ export function Compare() {
     if (activeClusterLabel) setActiveClusterLabel(null);
     if (unmatchedClusterLabel) setUnmatchedClusterLabel(null);
     if (query.value.cluster) setQuery({ cluster: '' });
-    if (nsFilter.size) setNsFilter(new Set());
-    if (modelFilter.size) setModelFilter(new Set());
   }
 
   function toggleJob(key) {
     clearDeepLinkContext();
+    setCompareData(null);
+    setCompareError(null);
     setSelectedKeys((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
@@ -571,6 +571,8 @@ export function Compare() {
   // for jobs by name before they can see anything.
   function selectRecent(n) {
     clearDeepLinkContext();
+    setCompareData(null);
+    setCompareError(null);
     const sorted = [...filtered].sort((a, b) => {
       const ta = a?.start_time ? Date.parse(a.start_time) : 0;
       const tb = b?.start_time ? Date.parse(b.start_time) : 0;

@@ -25,6 +25,18 @@ function byTag(metrics, tag) {
   return null;
 }
 
+function finiteNumber(value) {
+  return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
+function firstFiniteMetricStat(metric, stats) {
+  for (const stat of stats) {
+    const value = finiteNumber(metric?.[stat]);
+    if (value != null) return value;
+  }
+  return null;
+}
+
 /** Classify overall run health.
  *
  *  Three signals, ranked:
@@ -55,7 +67,7 @@ function classifyHealth(cfg, metrics, recs) {
     for (const [key, thr] of Object.entries(slos)) {
       const metric = byT[key];
       if (!metric) continue;
-      const probe = metric.p99 ?? metric.current ?? metric.avg;
+      const probe = firstFiniteMetricStat(metric, ['p99', 'current', 'avg']);
       if (probe != null && probe > thr) {
         status = 'error';
         category = 'slo';

@@ -30,6 +30,7 @@ from aiperf.kubernetes.cr_refs import (
     JOBSET_PLURAL,
     JOBSET_VERSION,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
@@ -48,7 +49,8 @@ from aiperf.operator.handlers.completion import (
     fetch_results_with_retry,
     handle_completion,
 )
-from aiperf.operator.models import MetricsSummary, PhaseProgress
+from aiperf.operator.models import ControllerFetchResult, MetricsSummary, PhaseProgress
+from aiperf.operator.progress_client import ProgressClient
 from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 from aiperf.operator.status import (
     ConditionType,
@@ -59,7 +61,6 @@ from aiperf.operator.status import (
 
 if TYPE_CHECKING:
     from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-    from aiperf.operator.progress_client import ProgressClient
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ FATAL_POD_WAITING_REASONS = frozenset(
         "InvalidImageName",
     }
 )
+KEY_RESULT_FILES = frozenset(
+    {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
+)
+CHECKPOINTS_PREFIX = "checkpoints/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,6 +556,91 @@ def _update_worker_counts(
     return workers_ready, workers_succeeded, total_workers
 
 
+def _split_downloaded_results(paths: list[str]) -> tuple[list[str], list[str]]:
+    """Split downloaded result paths into final exports and checkpoint files."""
+    final_files: list[str] = []
+    checkpoint_files: list[str] = []
+    for path in paths:
+        if path.startswith(CHECKPOINTS_PREFIX):
+            checkpoint_files.append(path)
+        else:
+            final_files.append(path)
+    return final_files, checkpoint_files
+
+
+async def _maybe_recover_exported_results_from_sidecar(
+    *,
+    body: dict[str, Any],
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    job_id: str,
+    status: dict[str, Any],
+    sb: StatusBuilder,
+    key: str,
+) -> bool:
+    """Complete a job from final exports served by the results sidecar.
+
+    This is the success-path counterpart to terminated-controller salvage. If
+    controller API traffic is blackholed, the control-plane container keeps
+    running and ``_maybe_recover_terminated_controller`` never fires. The
+    sidecar is independent of that API port and only exposes top-level result
+    files after the ready marker exists, so key exports there are sufficient
+    evidence that the benchmark completed and can be finalized.
+    """
+    if key in _shutdown_sent:
+        return False
+
+    host = controller_dns_name(jobset_name, namespace)
+    epoch = epoch_key_from_body(body)
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+    try:
+        async with ProgressClient(port=K8sEnvironment.PORTS.RESULTS_SIDECAR) as sidecar:
+            downloaded = await sidecar.download_all_results(host, dest_dir)
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.debug(
+            "sidecar export recovery for %s/%s unavailable: %s", namespace, name, e
+        )
+        return False
+    except Exception as e:  # noqa: BLE001 - sidecar recovery is best-effort; normal monitor retry continues
+        logger.debug(
+            "sidecar export recovery for %s/%s unavailable: %s", namespace, name, e
+        )
+        return False
+
+    final_files, checkpoint_files = _split_downloaded_results(downloaded)
+    if not (KEY_RESULT_FILES & set(final_files)):
+        return False
+
+    if is_cancellation_requested(key):
+        logger.debug(
+            "Cancellation requested for %s/%s during sidecar export recovery; "
+            "skipping completion side effects",
+            namespace,
+            name,
+        )
+        return True
+
+    if not await try_claim_completion(namespace, name, body):
+        return False
+
+    await handle_completion(
+        body,
+        namespace,
+        jobset_name,
+        job_id,
+        status=status,
+        sb=sb,
+        result=ControllerFetchResult(
+            metrics=None,
+            downloaded=final_files,
+            checkpoints=checkpoint_files,
+            error="",
+        ),
+    )
+    return True
+
+
 def _should_poll_progress(
     effective_phase: Phase,
     workers_succeeded: int,
@@ -687,6 +777,59 @@ def _handle_kueue_suspension(
     return False
 
 
+def _set_initializing_when_workers_start(
+    current_phase: Phase,
+    workers_ready: int,
+    workers_succeeded: int,
+    sb: StatusBuilder,
+) -> None:
+    if current_phase in (Phase.PENDING, Phase.QUEUED) and (
+        workers_ready > 0 or workers_succeeded > 0
+    ):
+        sb.set_phase(Phase.INITIALIZING)
+
+
+async def _poll_progress_or_recover_sidecar(
+    *,
+    body: dict[str, Any],
+    status: dict[str, Any],
+    patch: kopf.Patch,
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    job_id: str,
+    key: str,
+    effective_phase: Phase,
+    sb: StatusBuilder,
+) -> bool:
+    if await _poll_controller_progress(
+        body=body,
+        status=status,
+        patch=patch,
+        namespace=namespace,
+        name=name,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        key=key,
+        effective_phase=effective_phase,
+        sb=sb,
+    ):
+        return True
+    return (
+        effective_phase == Phase.RUNNING
+        and await _maybe_recover_exported_results_from_sidecar(
+            body=body,
+            namespace=namespace,
+            name=name,
+            jobset_name=jobset_name,
+            job_id=job_id,
+            status=status,
+            sb=sb,
+            key=key,
+        )
+    )
+
+
 async def _run_worker_and_progress_phase(
     api: ApiClient,
     *,
@@ -707,11 +850,9 @@ async def _run_worker_and_progress_phase(
         status=status, jobset_status=jobset_status, sb=sb
     )
 
-    # Phase transitions based on worker readiness
-    if current_phase in (Phase.PENDING, Phase.QUEUED) and (
-        workers_ready > 0 or workers_succeeded > 0
-    ):
-        sb.set_phase(Phase.INITIALIZING)
+    _set_initializing_when_workers_start(
+        current_phase, workers_ready, workers_succeeded, sb
+    )
 
     if await _fail_on_fatal_pod_waiting_reason(
         api,
@@ -742,7 +883,7 @@ async def _run_worker_and_progress_phase(
     effective_phase = sb.get_phase() or current_phase
     if _should_poll_progress(
         effective_phase, workers_succeeded, total_workers
-    ) and await _poll_controller_progress(
+    ) and await _poll_progress_or_recover_sidecar(
         body=body,
         status=status,
         patch=patch,

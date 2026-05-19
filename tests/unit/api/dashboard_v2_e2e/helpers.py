@@ -15,12 +15,13 @@ def dashboard_cfg(
     models: Sequence[str] | None = None,
     phases: Sequence[dict[str, Any]] | None = None,
     slos: dict[str, float] | None = None,
+    endpoint_urls: Sequence[str] | None = None,
 ) -> AIPerfConfig:
     """Build a representative dashboard config with secret redaction coverage."""
     benchmark: dict[str, Any] = {
         "models": list(models or ["llama3-8b", "llama3-70b"]),
         "endpoint": {
-            "urls": ["http://srv:8000/v1/chat/completions"],
+            "urls": list(endpoint_urls or ["http://srv:8000/v1/chat/completions"]),
             "type": "chat",
             "streaming": True,
             "api_key": "SHOULD_NOT_LEAK",

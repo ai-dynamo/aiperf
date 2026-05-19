@@ -9,7 +9,7 @@
  * ./state.js signals.
  */
 
-import { connection, log, resetLiveState } from './state.js';
+import { connection, log } from './state.js';
 import { handleWsMessage } from './ws-dispatch.js';
 
 const SUBSCRIBE_TYPES = [
@@ -66,7 +66,6 @@ export function connectWebSocket({ onOpen } = {}) {
   ws.onclose = () => {
     if (currentWs !== ws) return;
     if (connection.value !== 'error') connection.value = 'disconnected';
-    resetLiveState();
     currentWs = null;
     if (!reconnectEnabled) {
       log('Disconnected');

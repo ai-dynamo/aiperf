@@ -11,6 +11,22 @@ import { html } from 'htm/preact';
 import { config } from '../lib/state.js';
 import { fmtInt, fmtDuration } from '../lib/format.js';
 
+function sanitizeDisplayUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    url.username = '';
+    url.password = '';
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (['api_key', 'key', 'token', 'access_token'].includes(key.toLowerCase())) {
+        url.searchParams.set(key, '<redacted>');
+      }
+    }
+    return url.toString();
+  } catch (_) {
+    return String(rawUrl).replace(/\/\/[^/@\s]+@/, '//');
+  }
+}
+
 function buildItems(cfg) {
   const items = [];
   const add = (label, value) => items.push({ label, value: String(value) });
@@ -21,7 +37,8 @@ function buildItems(cfg) {
   const ep = cfg.endpoint || {};
   if (ep.type) add('Endpoint', ep.type + (ep.streaming ? ' (streaming)' : ''));
   if (ep.urls?.length) {
-    add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);
+    const urls = ep.urls.map(sanitizeDisplayUrl);
+    add('URL', urls.length === 1 ? urls[0] : `${urls.length} URLs`);
   }
 
   // phases is a list of named phase configs (post-2026-04 list-with-name shape).

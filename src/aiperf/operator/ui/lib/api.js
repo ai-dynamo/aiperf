@@ -160,10 +160,12 @@ export const api = {
   },
 
   /** Get original CR config for a job */
-  getJobConfig(ns, jobId) {
-    return apiFetch(
-      `/config/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}`,
-    );
+  getJobConfig(ns, jobId, epoch = null) {
+    const path = `/config/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}`;
+    if (epoch && epoch !== 'latest') {
+      return apiFetch(`${path}?epoch=${encodeURIComponent(epoch)}`);
+    }
+    return apiFetch(path);
   },
 
   /** Get the full job index */
@@ -251,18 +253,17 @@ export const api = {
 
   /** Build a URL for the full job-results bundle as a single zip.
    *
-   *  Hits ``/results/<ns>/<jobId>/runs/<epoch>.zip`` when an epoch is pinned,
-   *  and ``/results/<ns>/<jobId>.zip`` for the non-epoch (live "latest")
-   *  variant. Use as ``<a href={url} download>``; the operator streams the
-   *  zip with ``Content-Disposition`` set, so the browser saves it directly.
+   *  Hits ``/results/<ns>/<jobId>/runs/<epoch>.zip``. The backend rejects an
+   *  unpinned "latest" bundle because latest can move while the archive is being
+   *  streamed, so callers must pass a concrete epoch.
    */
   resultBundleUrl(ns, jobId, epoch = null) {
+    if (!epoch || epoch === 'latest') {
+      throw new Error('resultBundleUrl requires a concrete run epoch');
+    }
     const nsSeg = encodeURIComponent(ns);
     const idSeg = encodeURIComponent(jobId);
-    if (epoch && epoch !== 'latest') {
-      return `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`;
-    }
-    return `${BASE}/results/${nsSeg}/${idSeg}.zip`;
+    return `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`;
   },
 
   sweepArtifactListUrl(ns, sweepName, epoch) {

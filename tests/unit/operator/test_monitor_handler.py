@@ -33,6 +33,7 @@ from aiperf.operator.handlers.monitor import (
     _get_fatal_pod_waiting_reason,
     _get_terminated_controller_info,
     _handle_kueue_suspension,
+    _maybe_recover_exported_results_from_sidecar,
     _recover_from_live_status,
     _recover_from_partial_checkpoints,
     _should_poll_progress,
@@ -601,6 +602,73 @@ class TestCleanupDeleteFailures:
         assert results_condition["status"] == "True"
         assert results_condition["reason"] == "PartialLiveMetricsRecovered"
         custom.delete_namespaced_custom_object.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sidecar_export_recovery_completes_without_controller_exit(
+        self,
+    ) -> None:
+        """API blackhole recovery completes once sidecar exposes final exports."""
+        sb, _patch = _make_status_builder()
+        sidecar_client = AsyncMock()
+        sidecar_client.__aenter__.return_value = sidecar_client
+        sidecar_client.__aexit__.return_value = None
+        sidecar_client.download_all_results.return_value = [
+            "profile_export_aiperf.json",
+            "profile_export_aiperf.csv",
+        ]
+
+        with (
+            patch(
+                "aiperf.operator.handlers.monitor.ProgressClient",
+                return_value=sidecar_client,
+            ) as progress_client_cls,
+            patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new=AsyncMock(return_value=True),
+            ) as claim,
+            patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new=AsyncMock(),
+            ) as completion,
+        ):
+            recovered = await _maybe_recover_exported_results_from_sidecar(
+                body={
+                    "kind": "AIPerfJob",
+                    "metadata": {
+                        "name": "job",
+                        "creationTimestamp": "2026-05-19T08:00:00Z",
+                    },
+                },
+                namespace="ns",
+                name="job",
+                jobset_name="aiperf-job",
+                job_id="job",
+                status={"phase": "Running"},
+                sb=sb,
+                key="ns/job",
+            )
+
+        assert recovered is True
+        progress_client_cls.assert_called_once()
+        sidecar_client.download_all_results.assert_awaited_once()
+        claim.assert_awaited_once_with(
+            "ns",
+            "job",
+            {
+                "kind": "AIPerfJob",
+                "metadata": {
+                    "name": "job",
+                    "creationTimestamp": "2026-05-19T08:00:00Z",
+                },
+            },
+        )
+        completion.assert_awaited_once()
+        result = completion.await_args.kwargs["result"]
+        assert result.downloaded == [
+            "profile_export_aiperf.json",
+            "profile_export_aiperf.csv",
+        ]
+        assert result.error == ""
 
 
 class TestApplyControllerProgressStatus:

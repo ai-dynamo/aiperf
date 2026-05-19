@@ -23,6 +23,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import orjson
 import pytest
 import pytest_asyncio
 
@@ -285,15 +286,13 @@ async def test_c6_kill_controller_container_salvages(
     operator_job_namespace: str,
     kubectl: KubectlClient,
 ) -> None:
-    """Kill the SystemController PID mid-benchmark; operator salvages to Completed.
+    """Kill the SystemController PID mid-benchmark; operator preserves partial metrics.
 
     Exercises ``src/aiperf/operator/handlers/monitor.py::
     _maybe_recover_terminated_controller`` — when the control-plane
-    container terminates non-zero while the results sidecar stays alive,
-    the next monitor tick invokes the salvage path, fetches results, and
-    patches the CR to ``Completed``. The stamp annotation
-    ``aiperf.nvidia.com/completion-claimed`` must be set before phase
-    flips terminal (durable-claim invariant).
+    container terminates before final export, the next monitor tick copies
+    CR live metrics into terminal partial result fields and marks the CR
+    ``Failed`` with ``ResultsAvailable=True``.
     """
     name = "chaos-c6"
     try:
@@ -333,18 +332,45 @@ async def test_c6_kill_controller_container_salvages(
             f"unexpected terminated reason {reason!r} for control-plane"
         )
 
-        # Operator salvage path patches CR to Completed within benchmark
-        # duration + recovery margin.
         phase = await chaos_injector.wait_for_phase(
             operator_job_namespace,
             name,
-            phases=("Completed",),
+            phases=("Failed",),
             timeout=240.0,
         )
-        assert phase == "Completed"
+        assert phase == "Failed"
 
-        claim = await chaos_injector.read_claim_annotation(operator_job_namespace, name)
-        assert claim, "completion-claimed annotation missing on salvaged Completed CR"
+        res = await kubectl.run(
+            "get",
+            "aiperfjob",
+            name,
+            "-n",
+            operator_job_namespace,
+            "-o",
+            "json",
+            check=True,
+        )
+        status = orjson.loads(res.stdout).get("status", {})
+        assert status.get("summary") or status.get("results", {}).get("metrics"), (
+            "controller-kill salvage should preserve partial live metrics on "
+            "status.summary or status.results.metrics"
+        )
+        results_available = next(
+            (
+                cond
+                for cond in status.get("conditions", [])
+                if cond.get("type") == "ResultsAvailable"
+            ),
+            {},
+        )
+        assert results_available.get("status") == "True"
+        assert results_available.get("reason") in (
+            "PartialLiveMetricsRecovered",
+            "PartialCheckpointRecovered",
+        )
+        assert "Controller container terminated before final export" in status.get(
+            "error", ""
+        )
     finally:
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 

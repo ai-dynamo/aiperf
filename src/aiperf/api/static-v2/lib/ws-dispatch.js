@@ -23,8 +23,7 @@ import {
 function applyPhase(name, stats, patch = {}) {
   const prev = phases.value[name] ?? {};
   const prevTerminal = Boolean(prev.complete || prev.failed || prev.requests_end_ns);
-  const updateTerminal = Boolean(stats?.requests_end_ns || patch.failed || stats?.failed);
-  if (prevTerminal && !updateTerminal) return;
+  if (prevTerminal) return;
 
   const merged = { ...prev, ...stats, ...patch, name };
   // Derived flags to drive badge/bar state.
@@ -65,7 +64,7 @@ export function normalizeEndpointSummaries(summaries) {
     if (!isRecord(body) || !isRecord(body.metrics)) return [];
     const metrics = Object.entries(body.metrics).flatMap(([name, m]) => {
       if (!isRecord(m) || !Array.isArray(m.series)) return [];
-      const series = m.series.find((sample) => isRecord(sample?.stats));
+      const series = m.series.find((sample) => firstFiniteStat(sample?.stats) != null);
       if (!series) return [];
       return [{ name, value: firstFiniteStat(series.stats), unit: m.unit ?? null }];
     });

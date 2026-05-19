@@ -159,3 +159,27 @@ def test_config_response_redacts_api_key_and_keeps_visible_endpoint_fields(
     expect(config_bar).to_contain_text("http://srv:8000/v1/chat/completions")
     dashboard.assert_no_console_errors()
     dashboard.assert_no_bad_responses()
+
+
+def test_config_bar_redacts_endpoint_url_credentials_and_api_key_query(
+    dashboard: DashboardHarness,
+) -> None:
+    """Displayed endpoint URLs omit credentials and secret query values only."""
+    scenario = DashboardScenario(
+        cfg=dashboard_cfg(
+            endpoint_urls=[
+                "https://user:SECRET_PASSWORD@api.example.test/v1/chat/completions?api_key=SECRET_TOKEN&region=us-west"
+            ]
+        )
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    config_bar = dashboard.page.locator("#config-bar.visible")
+    expect(config_bar).to_contain_text("https://api.example.test/v1/chat/completions")
+    expect(config_bar).to_contain_text("region=us-west")
+    assert "SECRET_PASSWORD" not in config_bar.inner_text()
+    assert "SECRET_TOKEN" not in config_bar.inner_text()
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()

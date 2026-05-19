@@ -208,10 +208,6 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
         self._detached_reclaim_tasks: dict[str, asyncio.Task[None]] = {}
         self._reclaimed_credit_ids: set[tuple[str, int]] = set()
 
-    # =============================================================================
-    # Public Methods
-    # =============================================================================
-
     def set_return_callback(
         self, callback: Callable[[str, CreditReturn], Awaitable[None]]
     ) -> None:
@@ -349,7 +345,7 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
             case TimePing():
                 await self._handle_time_ping(worker_id, message)
             case WorkerConnected():
-                self._connected_workers.add(worker_id)
+                await self._handle_worker_connected(worker_id)
             case WorkerDispatchable():
                 await self._handle_worker_dispatchable(worker_id)
             case WorkerUndispatchable():
@@ -431,6 +427,22 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
             worker_id,
             TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
         )
+
+    async def _handle_worker_connected(self, worker_id: str) -> None:
+        """Track a worker connection, replacing stale same-ID generations."""
+        if worker_id in self._workers:
+            stale = self._unregister_worker(
+                worker_id,
+                session_loss_reason=(
+                    "worker_unavailable: worker reconnected before next turn"
+                ),
+            )
+            await self._reclaim_detached_worker_credits(
+                worker_id,
+                stale,
+                "worker_unavailable: worker reconnected before returning in-flight credits",
+            )
+        self._connected_workers.add(worker_id)
 
     async def _handle_worker_dispatchable(self, worker_id: str) -> None:
         """Register a (possibly previously-detached) worker as dispatchable."""

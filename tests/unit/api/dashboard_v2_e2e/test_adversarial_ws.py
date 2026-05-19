@@ -80,6 +80,39 @@ def test_terminal_phase_complete_is_not_overwritten_by_later_progress(
     dashboard.assert_no_bad_responses()
 
 
+def test_terminal_phase_complete_is_not_overwritten_by_later_failure(
+    dashboard: DashboardHarness,
+) -> None:
+    """A stale failed push must not downgrade a complete phase."""
+    phase = "profiling"
+    scenario = DashboardScenario(
+        ws_payloads=[
+            _phase_complete_payload(phase),
+            {
+                "type": "credit_phase_failed",
+                "phase": phase,
+                "stats": {
+                    "phase": phase,
+                    "start_ns": time.time_ns() - 2_000_000_000,
+                    "total_expected_requests": 100,
+                    "requests_completed": 50,
+                },
+            },
+        ],
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    phase_card = dashboard.page.locator(".phase-card").filter(has_text=phase)
+    expect(phase_card).to_be_visible()
+    expect(phase_card.locator(".phase-badge")).to_contain_text("Complete")
+    expect(phase_card).to_contain_text("100.0%")
+    expect(phase_card).to_contain_text("100 / 100")
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
 def test_non_finite_metrics_render_fallback_without_nan_or_infinity_leaks(
     dashboard: DashboardHarness,
 ) -> None:
@@ -129,6 +162,71 @@ def test_non_finite_metrics_render_fallback_without_nan_or_infinity_leaks(
     page_text = dashboard.page.locator("body").inner_text()
     assert "NaN" not in page_text
     assert "Infinity" not in page_text
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_string_slo_metric_does_not_crash_or_count_as_violation(
+    dashboard: DashboardHarness,
+) -> None:
+    """String metric values are ignored for SLO health instead of crashing the page."""
+    scenario = DashboardScenario(
+        cfg=dashboard_cfg(slos={"time_to_first_token": 200.0}),
+        ws_payloads=[
+            realtime_metrics_payload(
+                {
+                    **metric_result("time_to_first_token", "TTFT", "ms", avg=82.0),
+                    "p99": "999",
+                }
+            )
+        ],
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    expect(dashboard.page.locator(".hero-health-label")).to_contain_text("On target")
+    expect(dashboard.page.locator(".kpi-tile").filter(has_text="TTFT")).to_be_visible()
+    assert not [
+        error for error in dashboard.console_errors if error.startswith("[pageerror]")
+    ]
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_server_metrics_use_first_finite_series_stat(
+    dashboard: DashboardHarness,
+) -> None:
+    """Server metrics skip empty series stats and show the first finite value."""
+    endpoint_summaries = {
+        "http://srv:8000": {
+            "metrics": {
+                "queue_depth": {
+                    "unit": "requests",
+                    "series": [
+                        {"stats": {"avg": None}},
+                        {"stats": {"avg": 64}},
+                    ],
+                }
+            }
+        }
+    }
+    scenario = DashboardScenario(
+        server_metrics={"endpoint_summaries": endpoint_summaries},
+        ws_payloads=[
+            {
+                "type": "realtime_server_metrics",
+                "endpoint_summaries": endpoint_summaries,
+            }
+        ],
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    server_metrics = dashboard.page.locator(".card").filter(has_text="Server Metrics")
+    expect(server_metrics).to_contain_text("queue_depth")
+    expect(server_metrics).to_contain_text("64.00 requests")
     dashboard.assert_no_console_errors()
     dashboard.assert_no_bad_responses()
 
@@ -216,5 +314,57 @@ def test_websocket_close_after_payload_leaves_app_usable(
     expect(dashboard.page.locator("body")).to_contain_text("llama3-8b")
     dashboard.page.get_by_role("button", name="warn+").click()
     expect(dashboard.page.locator(".log-pane")).to_be_visible()
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_websocket_transient_close_preserves_last_live_values(
+    dashboard: DashboardHarness,
+) -> None:
+    """A reconnecting dashboard keeps last phase and metric values visible."""
+    phase = "profiling"
+    scenario = DashboardScenario(
+        ws_payloads=[
+            {
+                "type": "credit_phase_progress",
+                "phase": phase,
+                "stats": {
+                    "phase": phase,
+                    "start_ns": time.time_ns() - 2_000_000_000,
+                    "total_expected_requests": 100,
+                    "requests_completed": 25,
+                },
+            },
+            realtime_metrics_payload(
+                metric_result(
+                    "request_throughput",
+                    "Requests/s",
+                    "req/s",
+                    current=12.0,
+                    avg=11.5,
+                )
+            ),
+        ],
+        close_ws_after_payloads=True,
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.page.wait_for_selector("#config-bar.visible", timeout=10_000)
+    dashboard.page.wait_for_function(
+        """() => {
+            const text = document.querySelector('.status-bar')?.textContent ?? '';
+            return text.includes('Disconnected');
+        }""",
+        timeout=10_000,
+    )
+
+    expect(dashboard.page.locator(".status-dot.disconnected")).to_be_visible()
+    phase_card = dashboard.page.locator(".phase-card").filter(has_text=phase)
+    expect(phase_card).to_be_visible()
+    expect(phase_card.locator(".phase-badge")).to_contain_text("Running")
+    expect(phase_card).to_contain_text("25.0%")
+    expect(
+        dashboard.page.locator(".kpi-tile").filter(has_text="Requests/s")
+    ).to_contain_text("12.00")
     dashboard.assert_no_console_errors()
     dashboard.assert_no_bad_responses()

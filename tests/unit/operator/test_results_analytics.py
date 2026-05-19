@@ -16,8 +16,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.operator import runs_index
 from aiperf.operator.results_db import ResultsDB
+from aiperf.operator.results_layout import run_dir, write_latest
 from aiperf.operator.routers import results_analytics as mod
 from aiperf.operator.routers.results_analytics import create_results_analytics_router
 
@@ -64,13 +66,14 @@ def _write_profile_export(
     epoch: str = "1714064523",
     metric_val: float = 100.0,
     model: str = "llama-7b",
+    payload: dict[str, object] | None = None,
 ) -> None:
-    from aiperf.operator.results_layout import run_dir, write_latest
-
-    payload = orjson.dumps(_summary_payload(metric_val=metric_val, model=model))
+    payload_bytes = orjson.dumps(
+        payload or _summary_payload(metric_val=metric_val, model=model)
+    )
     path = run_dir(base, namespace, job_id, epoch)
     path.mkdir(parents=True, exist_ok=True)
-    (path / "profile_export_aiperf.json").write_bytes(payload)
+    (path / "profile_export_aiperf.json").write_bytes(payload_bytes)
     write_latest(base, namespace, job_id, epoch)
 
 
@@ -81,10 +84,11 @@ async def _write_index_run(
     epoch: str = "1714064523",
     metric_val: float = 100.0,
     model: str = "llama-7b",
+    spec: dict[str, object] | None = None,
 ) -> None:
     summary = _summary_payload(metric_val=metric_val, model=model)
     await runs_index.upsert_run_created(
-        namespace, job_id, epoch, spec={"benchmark": summary["input_config"]}
+        namespace, job_id, epoch, spec=spec or {"benchmark": summary["input_config"]}
     )
     await runs_index.upsert_run_completed(
         namespace,
@@ -359,6 +363,105 @@ async def test_results_db_summary_skips_index_blob_when_run_dir_missing(tmp_path
 
     assert summary is None
     await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_get_job_config_redacts_persisted_index_spec(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    epoch = "1714064523"
+    run_dir(tmp_path, "ns", "secret-job", epoch).mkdir(parents=True, exist_ok=True)
+    write_latest(tmp_path, "ns", "secret-job", epoch)
+    await _write_index_run(
+        "ns",
+        "secret-job",
+        epoch=epoch,
+        spec={
+            "benchmark": {
+                "endpoint": {
+                    "urls": ["https://llm.example/v1"],
+                    "api_key": "plain-api-key",
+                    "headers": {
+                        "Authorization": "Bearer plain-token",
+                        "X-Trace-Id": "safe-trace",
+                    },
+                }
+            }
+        },
+    )
+    db = ResultsDB(tmp_path)
+    router = create_results_analytics_router(lambda: db, tmp_path, [None])
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/config/ns/secret-job")
+        assert resp.status_code == 200, resp.text
+        endpoint = resp.json()["spec"]["benchmark"]["endpoint"]
+        assert endpoint["api_key"] == REDACTED_VALUE
+        assert endpoint["headers"]["Authorization"] == REDACTED_VALUE
+        assert endpoint["headers"]["X-Trace-Id"] == "safe-trace"
+    finally:
+        db.close()
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_get_job_config_epoch_query_loads_historical_file_config(tmp_path):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    old_epoch = "1714064523"
+    new_epoch = "1714150923"
+    old_run = run_dir(tmp_path, "ns", "job-1", old_epoch)
+    new_run = run_dir(tmp_path, "ns", "job-1", new_epoch)
+    old_run.mkdir(parents=True, exist_ok=True)
+    new_run.mkdir(parents=True, exist_ok=True)
+    old_run.joinpath("job_spec.json").write_bytes(
+        orjson.dumps({"benchmark": {"slos": {"time_to_first_token": 111}}})
+    )
+    new_run.joinpath("job_spec.json").write_bytes(
+        orjson.dumps({"benchmark": {"slos": {"time_to_first_token": 999}}})
+    )
+    write_latest(tmp_path, "ns", "job-1", new_epoch)
+    db = ResultsDB(tmp_path)
+    router = create_results_analytics_router(lambda: db, tmp_path, [None])
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        with TestClient(app) as client:
+            resp = client.get(f"/api/v1/config/ns/job-1?epoch={old_epoch}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source"] == "file"
+        assert resp.json()["spec"]["benchmark"]["slos"] == {"time_to_first_token": 111}
+    finally:
+        db.close()
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_get_job_config_redacts_summary_input_config(tmp_path):
+    await runs_index.close()
+    payload = _summary_payload()
+    input_config = payload["input_config"]
+    assert isinstance(input_config, dict)
+    input_config["endpoint"] = {
+        "urls": ["https://llm.example/v1"],
+        "headers": {"Authorization": "Bearer summary-token"},
+    }
+    _write_profile_export(tmp_path, "ns", "summary-job", payload=payload)
+    db = ResultsDB(tmp_path)
+    router = create_results_analytics_router(lambda: db, tmp_path, [None])
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/config/ns/summary-job")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source"] == "summary"
+        endpoint = resp.json()["spec"]["benchmark"]["endpoint"]
+        assert endpoint["headers"]["Authorization"] == REDACTED_VALUE
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio

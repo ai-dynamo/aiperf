@@ -1630,16 +1630,8 @@ export function JobDetail({ namespace, name, epoch }) {
     );
 
     // Fetch job config (original CR spec)
-    fetch(`/api/v1/config/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { signal: ac.signal })
-      .then(async r => {
-        if (ac.signal.aborted) return;
-        if (!r.ok) {
-          setJobConfig(null);
-          setJobConfigLoaded(true);
-          setJobConfigError('Job configuration unavailable.');
-          return;
-        }
-        const d = await r.json();
+    api.getJobConfig(namespace, name, epoch)
+      .then(d => {
         if (ac.signal.aborted) return;
         setJobConfig(d);
         setJobConfigLoaded(true);
@@ -1742,6 +1734,24 @@ export function JobDetail({ namespace, name, epoch }) {
   }, [namespace, name, epoch, resultsBase]);
 
 
+  // job detail response: { job: {AIPerfJobInfo}, status: {raw CR status}, pods: [...] }
+  // job.job has flat camelCase fields, job.status has raw CR status
+  const info = job?.job ?? {};
+  const status = job?.status ?? {};
+  // Redirect target falls back through three sources so the URL gets pinned
+  // to /runs/<epoch> for any state where one is knowable: pinned URL > CR
+  // status.runEpoch (current/last run) > latest persisted epoch from the
+  // index (covers archived jobs whose CR is gone or never had runEpoch set).
+  const latestPersistedEpoch = epochs.find(e => e?.isLatest)?.epoch;
+  const resolvedEpoch = epoch
+    ?? (status.runEpoch != null ? String(status.runEpoch) : null)
+    ?? (latestPersistedEpoch != null ? String(latestPersistedEpoch) : null);
+
+  useEffect(() => {
+    if (epoch !== undefined || resolvedEpoch == null) return;
+    replaceRoute(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}`);
+  }, [epoch, resolvedEpoch, namespace, name]);
+
   async function handleCancel() {
     setCancelError(null);
     setCancelState('pending');
@@ -1776,19 +1786,6 @@ export function JobDetail({ namespace, name, epoch }) {
     `;
   }
 
-  // job detail response: { job: {AIPerfJobInfo}, status: {raw CR status}, pods: [...] }
-  // job.job has flat camelCase fields, job.status has raw CR status
-  const info = job?.job ?? {};
-  const status = job?.status ?? {};
-  // Redirect target falls back through three sources so the URL gets pinned
-  // to /runs/<epoch> for any state where one is knowable: pinned URL > CR
-  // status.runEpoch (current/last run) > latest persisted epoch from the
-  // index (covers archived jobs whose CR is gone or never had runEpoch set).
-  const latestPersistedEpoch = epochs.find(e => e?.isLatest)?.epoch;
-  const resolvedEpoch = epoch
-    ?? (status.runEpoch != null ? String(status.runEpoch) : null)
-    ?? (latestPersistedEpoch != null ? String(latestPersistedEpoch) : null);
-
   const phase = info.phase ?? status.phase ?? 'Unknown';
   const phaseClr = phaseColor(phase);
   const model = info.model ?? '---';
@@ -1813,11 +1810,6 @@ export function JobDetail({ namespace, name, epoch }) {
     : liveServerMetricsBase;
   const displayedServerMetrics = serverMetrics || liveServerMetrics;
   const serverMetricsSource = serverMetrics ? 'final' : 'live';
-
-  useEffect(() => {
-    if (epoch !== undefined || resolvedEpoch == null) return;
-    replaceRoute(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}`);
-  }, [epoch, resolvedEpoch, namespace, name]);
 
   // status.summary (completed) and status.liveSummary (running) carry the same
   // curated nested ``{tag: {avg, p50, p99, ...}}`` projection of the AIPerf

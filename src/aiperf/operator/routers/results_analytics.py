@@ -105,15 +105,17 @@ def _pivot_compare_rows(
 
 
 async def _get_run_spec_from_index(
-    base_dir: Path, namespace: str, job_id: str
+    base_dir: Path, namespace: str, job_id: str, epoch: str | None = None
 ) -> dict[str, Any] | None:
     try:
-        row = await runs_index.get_latest_run(namespace, job_id)
-        if row is None:
+        if epoch is None:
+            row = await runs_index.get_latest_run(namespace, job_id)
+            if row is None:
+                return None
+            epoch = row.epoch
+        if resolve_run_dir(base_dir, namespace, job_id, epoch) is None:
             return None
-        if resolve_run_dir(base_dir, namespace, job_id, row.epoch) is None:
-            return None
-        return await runs_index.get_run_spec(namespace, job_id, row.epoch)
+        return await runs_index.get_run_spec(namespace, job_id, epoch)
     except (RuntimeError, sqlite3.Error):
         return None
 
@@ -322,7 +324,14 @@ def _register_index_routes(
         return out
 
     @router.get("/config/{namespace}/{job_id}")
-    async def get_job_config(namespace: str, job_id: str) -> dict[str, Any]:
+    async def get_job_config(
+        namespace: str,
+        job_id: str,
+        epoch: str | None = Query(
+            default=None,
+            description="Run epoch to load. None = follow latest.txt.",
+        ),
+    ) -> dict[str, Any]:
         """Get the original CR spec/config for a job.
 
         Fallback chain (first hit wins):
@@ -334,22 +343,25 @@ def _register_index_routes(
            whose artifacts haven't been persisted yet (e.g. dashboard hero
            SLO chips for the currently-running CR).
         """
-        spec = await _get_run_spec_from_index(base_dir, namespace, job_id)
+        spec = await _get_run_spec_from_index(base_dir, namespace, job_id, epoch)
         if spec is not None:
-            return {"source": "index", "spec": spec}
+            return {"source": "index", "spec": _redact_exposed_spec(spec)}
 
-        run = resolve_run_dir(base_dir, namespace, job_id)
+        run = resolve_run_dir(base_dir, namespace, job_id, epoch)
         if run is not None:
             spec_file = run / "job_spec.json"
             if spec_file.exists():
                 import orjson
 
                 data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
-                return {"source": "file", "spec": data}
+                return {"source": "file", "spec": _redact_exposed_spec(data)}
 
-        result = await get_db().summary(namespace, job_id)
+        result = await get_db().summary(namespace, job_id, epoch=epoch)
         if result and result.get("input_config"):
-            return {"source": "summary", "spec": {"benchmark": result["input_config"]}}
+            return {
+                "source": "summary",
+                "spec": _redact_exposed_spec({"benchmark": result["input_config"]}),
+            }
 
         api = api_holder[0] if api_holder else None
         if api is not None:
