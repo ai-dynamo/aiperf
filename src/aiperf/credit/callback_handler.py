@@ -216,14 +216,7 @@ class CreditCallbackHandler:
 
         # Late arrivals after phase complete are logged but don't affect counts
         if handler.lifecycle.is_complete:
-            # Downgraded warning -> debug: every cancel-triggered phase
-            # shutdown (e.g. --failed-request-threshold trip) produces
-            # one such line per in-flight credit (potentially
-            # concurrency-many = up to thousands), flooding the log
-            # without being actionable — the late return is expected
-            # under the cancel race, not a bug. Surfaced via --verbose
-            # when investigating credit-tracking edge cases.
-            _logger.debug(
+            _logger.warning(
                 lambda: f"Credit return after phase {phase} complete, "
                 f"credit_id={credit.id}, worker={worker_id}"
             )

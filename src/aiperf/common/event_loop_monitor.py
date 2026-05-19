@@ -86,14 +86,7 @@ class EventLoopMonitor(AIPerfLoggerMixin):
                     f"Event loop health check: expected {interval_sec * MILLIS_PER_SECOND:.1f}ms, actual {elapsed_ns / NANOS_PER_MILLIS:.2f}ms, delta {delta_ns / NANOS_PER_MILLIS:.2f}ms"
                 )
             if delta_ns > threshold_ns:
-                # Downgraded warning -> debug: at sustained high
-                # concurrency (conc>=32) on agentic workloads this fires
-                # dozens of times per minute and floods the log without
-                # being actionable (the overhead is inherent to the
-                # async scheduler under load, not a bug to fix). Still
-                # surfaced via --verbose / --log-level DEBUG when
-                # genuinely investigating event-loop scheduling.
-                self.debug(
+                self.warning(
                     f"Event loop for {self._service_id} is taking too long to run. Overhead: {delta_ns / NANOS_PER_MILLIS:,.2f}ms"
                 )
                 if self._callback is not None:

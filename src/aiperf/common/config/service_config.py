@@ -41,20 +41,13 @@ class ServiceConfig(BaseConfig):
     def validate_ui_type(self) -> Self:
         """Set UI type based on explicit user choice, TTY detection, and verbose flags.
 
-        Priority: explicit --ui-type > non-TTY (tqdm) > verbose flags (simple) > default (dashboard).
-
-        Note: changed non-TTY default from UIType.NONE to UIType.TQDM so progress
-        bars render even when stdout is captured to a log file (e.g. when
-        srt-slurm or a GHA runner pipes the benchmark to a file). tqdm's
-        carriage-return + ANSI cursor codes still render usefully in tailed
-        logs, and the bar lines collapse to a final state once the phase
-        completes. Set --ui-type none explicitly to opt back into silence.
+        Priority: explicit --ui-type > non-TTY (none) > verbose flags (simple) > default (dashboard).
         """
         if "ui_type" in self.model_fields_set:
             return self
 
         if not is_tty():
-            self.ui_type = UIType.TQDM
+            self.ui_type = UIType.NONE
         elif self.verbose or self.extra_verbose:
             self.ui_type = UIType.SIMPLE
         return self
