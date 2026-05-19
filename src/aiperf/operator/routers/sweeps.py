@@ -29,15 +29,15 @@ from aiperf.operator.routers._sweeps_diagnostics import (
     register_diagnostics_routes,
 )
 from aiperf.operator.routers._sweeps_live import children_manifest_from_live_aiperfjobs
-from aiperf.operator.routers._sweeps_spec import dimensions_from_sweep_model
+from aiperf.operator.routers._sweeps_spec import (
+    spec_summary_from_record,
+)
 from aiperf.operator.routers.sweeps_models import (
     CellAggregatesResponse,
     CellEntry,
     ChildJobRef,
     ChildrenManifestEntry,
     ChildrenManifestResponse,
-    DimensionInfo,
-    SpecSummary,
     SweepDetailResponse,
     SweepEpochsResponse,
     SweepEpochSummary,
@@ -74,43 +74,6 @@ def _summary(rec: SweepRecord) -> SweepSummary:
         results_available=rec.results_available,
         current_child_ref=sanitize_current_child_ref(rec.current_child_ref),
         run_states=sanitize_run_states(rec.run_states),
-    )
-
-
-def _spec_summary_from_record(rec: SweepRecord) -> SpecSummary:
-    """Build a SpecSummary from whichever side of the union is available."""
-    if rec.raw_spec:
-        from aiperf.operator.models import AIPerfSweepSpec
-
-        spec = AIPerfSweepSpec.model_validate(rec.raw_spec)
-        multi_run = spec.multi_run.model_dump(mode="json", by_alias=True)
-        convergence = (
-            spec.multi_run.convergence.model_dump(mode="json", by_alias=True)
-            if spec.multi_run.convergence is not None
-            else None
-        )
-        return SpecSummary(
-            sweep_type=spec.sweep.type,
-            dimensions=dimensions_from_sweep_model(spec.sweep),
-            multi_run=multi_run,
-            convergence=convergence,
-        )
-    if rec.aggregate_doc is not None:
-        snap = rec.aggregate_doc.get("spec_snapshot") or {}
-        dims_raw = snap.get("dimensions") or []
-        dims = [
-            DimensionInfo(name=d["name"], values=list(d.get("values") or []))
-            for d in dims_raw
-            if isinstance(d, dict) and isinstance(d.get("name"), str)
-        ]
-        return SpecSummary(
-            sweep_type=str(snap.get("sweep_type") or "grid"),  # type: ignore[arg-type]
-            dimensions=dims,
-            multi_run=snap.get("multi_run"),
-            convergence=snap.get("convergence"),
-        )
-    return SpecSummary(
-        sweep_type="grid", dimensions=[], multi_run=None, convergence=None
     )
 
 
@@ -158,7 +121,7 @@ async def _get_sweep_impl(
     else:
         status = rec.raw_status or {}
 
-    spec_summary = _spec_summary_from_record(rec)
+    spec_summary = spec_summary_from_record(rec)
 
     children_records = await list_all_jobs(
         api, base_dir, all_namespaces=False, namespace=namespace
@@ -303,7 +266,7 @@ async def _get_cells_impl(
     rec = await find_any_sweep(api, base_dir, namespace, name, epoch=epoch)
     if rec is None:
         raise HTTPException(404, f"Sweep {namespace}/{name} not found")
-    spec_summary = _spec_summary_from_record(rec)
+    spec_summary = spec_summary_from_record(rec)
     if rec.aggregate_doc is not None:
         cells = _cells_from_aggregate(rec.aggregate_doc)
         source = rec.source

@@ -1562,7 +1562,23 @@ export function JobDetail({ namespace, name, epoch }) {
 
     poll(
       async () => {
-        const data = await api.getJob(namespace, name, epoch);
+        let data;
+        try {
+          data = await api.getJob(namespace, name, epoch);
+        } catch (err) {
+          // Mirror pages/jobs.js: surface the error at the page level so the
+          // [data-testid=job-detail-error] card renders, then re-throw so
+          // ``poll`` still increments the global unhealthy counter.
+          setError(err?.message ?? String(err));
+          throw err;
+        }
+        if (data == null) {
+          // 204 / explicit-null body lands here. Without a job, the
+          // !job && !error branch above would otherwise sit on LoadingPanel
+          // forever.
+          setError('Empty response from operator');
+          return;
+        }
         setJob(data);
         setError(null);
 

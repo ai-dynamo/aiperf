@@ -24,6 +24,7 @@ import orjson
 # Import at module level so tests can monkeypatch these bindings directly.
 from aiperf.kubernetes.client import find_aiperf_job, list_aiperf_jobs
 from aiperf.kubernetes.models import AIPerfJobInfo
+from aiperf.operator._archived_stubs import archived_stub
 from aiperf.operator.models import MetricsSummary
 from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.runs_index import zstd_decompress
@@ -463,6 +464,10 @@ async def find_any_job(
                 mtime_iso=mtime_iso,
                 name_dir=run.parent,
             )
+    elif run is not None and epoch is not None and epoch != "latest":
+        # Pinned epoch dir exists on disk but has no profile_export summary;
+        # ``/epochs`` still lists this epoch (see ``_archived_stubs``).
+        pvc = archived_stub(namespace, name, run_dir=run, name_dir=run.parent)
 
     # Caller asked for a specific historical epoch: never merge the live CR.
     if epoch is not None and epoch != "latest":

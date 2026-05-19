@@ -27,7 +27,7 @@ function App() {
   // Ctrl+K to open command palette
   useEffect(() => {
     function handleKey(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      if ((e.ctrlKey || e.metaKey) && typeof e.key === 'string' && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setShowPalette((v) => !v);
       }

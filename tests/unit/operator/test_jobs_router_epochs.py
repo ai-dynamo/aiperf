@@ -80,6 +80,27 @@ def test_get_job_unknown_epoch_404(tmp_path: Path, monkeypatch) -> None:
     assert r.status_code == 404
 
 
+def test_get_job_epoch_dir_without_summary_returns_200_archived(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An epoch dir on disk with no profile_export must serve a 200 archived
+    stub instead of 404, so the run-detail page can render epochs that
+    ``/epochs`` already enumerates (failed/cancelled runs).
+    """
+    (tmp_path / "bench" / "j1" / "1714069323").mkdir(parents=True)
+    _patch_no_live_cr(monkeypatch)
+    api = MagicMock()
+    c = _client(api, tmp_path)
+    r = c.get("/api/v1/jobs/bench/j1?epoch=1714069323")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["job"]["source"] == "archived"
+    assert body["job"]["phase"] == "Unknown"
+    assert body["job"]["throughputRps"] is None
+    assert body["status"]["jobId"] == "j1"
+    assert body["pods"] == []
+
+
 def test_get_job_malformed_epoch_400(tmp_path: Path) -> None:
     api = MagicMock()
     c = _client(api, tmp_path)

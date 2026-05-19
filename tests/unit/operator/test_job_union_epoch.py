@@ -241,3 +241,59 @@ async def test_find_any_job_epoch_drops_live_half(tmp_path: Path) -> None:
     assert rec is not None
     assert rec.source == "archived"
     assert rec.throughput_rps == 100.0
+
+
+@pytest.mark.asyncio
+async def test_find_any_job_epoch_without_summary_returns_stub(
+    tmp_path: Path,
+) -> None:
+    """A pinned epoch dir that exists on disk but has no profile_export
+    summary (e.g. a run that failed before producing artifacts) must yield
+    a stub archived ``AIPerfJobInfo`` — not ``None`` — so the run-detail
+    route does not 404 on epochs that ``/epochs`` happily enumerates.
+    """
+    from aiperf.operator import job_union
+
+    # No summary, just an empty epoch dir.
+    (tmp_path / "bench" / "j1" / "1714069323").mkdir(parents=True)
+
+    with patch.object(job_union, "find_aiperf_job", AsyncMock(return_value=None)):
+        rec = await job_union.find_any_job(
+            None,
+            tmp_path,
+            "bench",
+            "j1",
+            epoch="1714069323",
+        )
+    assert rec is not None
+    assert rec.source == "archived"
+    assert rec.phase == "Unknown"
+    assert rec.throughput_rps is None
+    assert rec.total_requests is None
+
+
+@pytest.mark.asyncio
+async def test_find_any_job_latest_pointer_without_summary_still_none(
+    tmp_path: Path,
+) -> None:
+    """The stub fallback only applies to explicit historical epochs.
+
+    When the caller asks for "latest" (no epoch / ``"latest"``) and the
+    latest run dir has no summary yet, the live CR should still win —
+    falling back to a stub here would mask in-flight runs as archived.
+    """
+    from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
+
+    (tmp_path / "bench" / "j1" / "1714069323").mkdir(parents=True)
+    write_latest(tmp_path, "bench", "j1", "1714069323")
+
+    with patch.object(job_union, "find_aiperf_job", AsyncMock(return_value=None)):
+        rec = await job_union.find_any_job(
+            None,
+            tmp_path,
+            "bench",
+            "j1",
+            epoch=None,
+        )
+    assert rec is None
