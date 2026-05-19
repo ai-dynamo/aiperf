@@ -198,7 +198,7 @@ def _histogram(values: list[int]) -> dict[str, list[float] | list[int]] | None:
 
 def _render_histogram(
     metric: str,
-    hist: dict[str, list[float]],
+    hist: dict[str, list[float] | list[int]],
     count: int,
     unique: int,
 ) -> list[str]:
@@ -311,9 +311,9 @@ def _print_summary(summary: dict[str, Any]) -> None:
         for label, s in (("ISL", stats["isl"]), ("OSL", stats["requested_osl"])):
             if s is None or s.get("histogram") is None:
                 continue
-            for line in _render_histogram(
-                label, s["histogram"], stats["count"], s["unique_values"]
-            ):
+            hist = s["histogram"]
+            n = sum(hist["counts"])
+            for line in _render_histogram(label, hist, n, s["unique_values"]):
                 print(line)
         mn = stats["min_tokens"]
         if mn is not None:

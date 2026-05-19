@@ -71,6 +71,16 @@ class TestHistogram:
         # spec only promises equal-width up to representational precision.
         assert max(widths) - min(widths) < 1e-9
 
+    def test_last_edge_pinned_on_non_round_span(self) -> None:
+        # Span 1001 doesn't divide evenly into 11 bins (max_bin_width=100 ->
+        # ceil(1001/100)=11 bins). The last edge must equal hi exactly, even
+        # though float arithmetic would otherwise drift.
+        values = list(range(0, 1002))  # 1002 values, range 0..1001
+        hist = _histogram(values)
+        assert hist is not None
+        assert hist["bin_edges"][-1] == 1001.0
+        assert sum(hist["counts"]) == 1002
+
 
 class TestBuildSummary:
     def test_isl_block_has_histogram_and_unique_values(self) -> None:
