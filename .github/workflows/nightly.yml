@@ -144,10 +144,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -f ".nightly-version/version-info.env" ]; then
-            echo "Restoring version strings from prior run attempt."
+          # Restore from a prior attempt's archived snapshot. New runs write
+          # version-info.txt; the .env fallback exists so re-attempts of runs
+          # started before this rename still hit a source-able file.
+          VERSION_INFO_FILE=""
+          if [ -f ".nightly-version/version-info.txt" ]; then
+            VERSION_INFO_FILE=".nightly-version/version-info.txt"
+          elif [ -f ".nightly-version/version-info.env" ]; then
+            VERSION_INFO_FILE=".nightly-version/version-info.env"
+          fi
+          if [ -n "${VERSION_INFO_FILE}" ]; then
+            echo "Restoring version strings from prior run attempt (${VERSION_INFO_FILE})."
             # shellcheck source=/dev/null
-            source .nightly-version/version-info.env
+            source "${VERSION_INFO_FILE}"
           else
             # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
             # WHEEL_VERSION are disambiguated by the 7-char short SHA so
@@ -187,7 +196,7 @@ jobs:
             #     artifact locations (for emergency re-publishes etc.).
             # github.run_id is stable across re-attempts of the same run, so
             # an attempt-2 rerun produces the same identifiers (combined with
-            # the version-info.env restore above).
+            # the version-info.txt restore above).
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${MANUAL_ARTIFACTS:-true}" = "true" ]; then
               WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+manual.${GITHUB_RUN_ID}"
               STAGE_SUBPATH="nightly-manual/${TIMESTAMP}/${GITHUB_RUN_ID}"
@@ -217,7 +226,8 @@ jobs:
 
           mkdir -p .nightly-version
           # Values are single-quoted because NIGHTLY_TAG contains whitespace
-          # and version-info.env is `source`d on rerun.
+          # and version-info.txt is `source`d on rerun (extension is .txt
+          # but the format is plain shell key='value' so it round-trips).
           {
             echo "NIGHTLY_TAG='${NIGHTLY_TAG}'"
             echo "WHEEL_VERSION='${WHEEL_VERSION}'"
@@ -228,13 +238,20 @@ jobs:
             echo "TIMESTAMP='${TIMESTAMP:-reused}'"
             echo "FULL_SHA='${FULL_SHA}'"
             echo "STAGE_SUBPATH='${STAGE_SUBPATH}'"
-          } > .nightly-version/version-info.env
+          } > .nightly-version/version-info.txt
+
+          # Echo the file contents into the workflow log so the resolved
+          # values are visible on the job page without having to download
+          # the archived artifact.
+          echo "::group::Resolved version info"
+          cat .nightly-version/version-info.txt
+          echo "::endgroup::"
 
       - name: Save version artifact
         uses: actions/upload-artifact@v5
         with:
           name: nightly-version
-          path: .nightly-version/version-info.env
+          path: .nightly-version/version-info.txt
           overwrite: true
           retention-days: 7
 
