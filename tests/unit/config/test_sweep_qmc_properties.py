@@ -6,6 +6,7 @@ Mirrors the existing `tests/unit/orchestrator/test_parameter_sweep_properties.py
 pattern in this repo.
 """
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -17,6 +18,28 @@ def _base_data():
     return {"benchmark": {"model": "m"}}
 
 
+def _expand_sobol(data, *, samples, seed, dimensions):
+    if samples & (samples - 1) == 0:
+        return expand_qmc_sweep(
+            data,
+            sweep_type="sobol",
+            samples=samples,
+            seed=seed,
+            dimensions=dimensions,
+            options={"scramble": True},
+        )
+
+    with pytest.warns(UserWarning, match="Sobol balance is best at powers of 2"):
+        return expand_qmc_sweep(
+            data,
+            sweep_type="sobol",
+            samples=samples,
+            seed=seed,
+            dimensions=dimensions,
+            options={"scramble": True},
+        )
+
+
 @given(
     samples=st.integers(min_value=2, max_value=64),
     seed=st.integers(min_value=0, max_value=2**31 - 1),
@@ -26,13 +49,11 @@ def _base_data():
 @settings(max_examples=30, deadline=None)
 def test_qmc_count_invariant_sobol(samples, seed, lo, hi):
     dims = [SamplingDimension(path="x", lo=lo, hi=hi)]
-    out = expand_qmc_sweep(
+    out = _expand_sobol(
         _base_data(),
-        sweep_type="sobol",
         samples=samples,
         seed=seed,
         dimensions=dims,
-        options={"scramble": True},
     )
     assert len(out) == samples
 
@@ -46,13 +67,11 @@ def test_qmc_count_invariant_sobol(samples, seed, lo, hi):
 @settings(max_examples=30, deadline=None)
 def test_qmc_values_within_bounds_sobol(samples, seed, lo, hi):
     dims = [SamplingDimension(path="x", lo=lo, hi=hi)]
-    out = expand_qmc_sweep(
+    out = _expand_sobol(
         _base_data(),
-        sweep_type="sobol",
         samples=samples,
         seed=seed,
         dimensions=dims,
-        options={"scramble": True},
     )
     for _, var in out:
         v = var.values["x"]
@@ -67,21 +86,17 @@ def test_qmc_values_within_bounds_sobol(samples, seed, lo, hi):
 def test_qmc_purity_sobol(samples, seed):
     """Same inputs => same outputs."""
     dims = [SamplingDimension(path="x", lo=1.0, hi=100.0)]
-    a = expand_qmc_sweep(
+    a = _expand_sobol(
         _base_data(),
-        sweep_type="sobol",
         samples=samples,
         seed=seed,
         dimensions=dims,
-        options={"scramble": True},
     )
-    b = expand_qmc_sweep(
+    b = _expand_sobol(
         _base_data(),
-        sweep_type="sobol",
         samples=samples,
         seed=seed,
         dimensions=dims,
-        options={"scramble": True},
     )
     assert [v.values for _, v in a] == [v.values for _, v in b]
 

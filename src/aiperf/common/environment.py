@@ -912,6 +912,14 @@ class _TokenizerSettings(BaseSettings):
             "themselves on first use."
         ),
     )
+    SKIP_PRELOAD: bool = Field(
+        default=False,
+        description=(
+            "Skip parent-process tokenizer cache pre-warming. Intended for "
+            "test harnesses that replace tokenizer loading and must avoid "
+            "forked prefetch subprocesses. Production defaults to preloading."
+        ),
+    )
 
 
 class _UISettings(BaseSettings):

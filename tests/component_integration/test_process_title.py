@@ -10,7 +10,7 @@ from tests.component_integration.conftest import (
     COMPONENT_INTEGRATION_PROCESS_TITLE,
     _set_component_integration_process_title,
 )
-from tests.integration.conftest import _new_process_group_kwargs
+from tests.harness.subprocess import _new_process_group_kwargs
 
 
 def test_component_integration_process_title_uses_suite_name(monkeypatch):

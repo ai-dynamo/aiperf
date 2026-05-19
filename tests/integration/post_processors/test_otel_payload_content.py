@@ -125,7 +125,8 @@ def _histograms_with_data_points(
     return counts
 
 
-@pytest.mark.component_integration
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.asyncio
 class TestOTelPayloadContent:
     """Decode real OTLP payloads and assert the shape a Collector would see."""

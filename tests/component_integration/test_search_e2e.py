@@ -49,6 +49,7 @@ class _StubExecutor(RunExecutor):
         )
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_search_e2e_via_build_benchmark_plan(tmp_path: Path):
     # Schema-2.0 shape: adaptive search lives under the envelope `sweep:` block
