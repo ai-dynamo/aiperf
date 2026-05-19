@@ -11,7 +11,7 @@ from typing import Any, TypeAlias
 
 import pytest
 
-from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.constants import IS_WINDOWS, NANOS_PER_SECOND
 from aiperf.common.models import (
     InputsFile,
     JsonExportData,
@@ -565,6 +565,13 @@ class AIPerfCLI:
             AssertionError: If assert_success is True and the command fails
         """
         args = self._parse_command(command)
+        # Windows multiprocessing.spawn is ~3x slower than Linux fork for
+        # aiperf process bring-up. Search-recipe / sweep tests run many
+        # iterative spawns, so per-test timeouts calibrated for Linux/macOS
+        # fall short on Windows. Apply a blanket multiplier rather than
+        # editing every test individually. POSIX runs unchanged.
+        if IS_WINDOWS:
+            timeout *= 3.0
         result = await self._runner(args, timeout)
         perf_results = AIPerfResults(result)
 
