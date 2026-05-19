@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from aiperf.common.growable_array import GrowableArray
-
 from aiperf.common.constants import (
     MILLIS_PER_SECOND,
     NANOS_PER_MILLIS,
@@ -16,6 +14,7 @@ from aiperf.common.constants import (
 )
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
+from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models import MetricResult
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -36,6 +35,8 @@ from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -111,7 +112,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         """AccumulatorProtocol-compatible alias for process_server_metrics_record."""
         await self.process_server_metrics_record(record)
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> "NDArray[np.bool_]":
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""
         if len(self._timestamps_ns) == 0:
             return np.array([], dtype=bool)
@@ -122,6 +123,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self,
         start_ns: int,
         end_ns: int,
+        time_filter: TimeRangeFilter | None = None,
         error_summary: list[ErrorDetailsCount] | None = None,
     ) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.
@@ -137,6 +139,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Args:
             start_ns: Profiling phase start time in nanoseconds (excludes warmup period)
             end_ns: Profiling phase end time in nanoseconds (may extend beyond last collection)
+            time_filter: Optional explicit export time filter.
             error_summary: Optional list of error counts from collection failures
 
         Returns:
@@ -146,16 +149,20 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if not self._server_metrics_hierarchy.endpoints:
             return None
 
+        effective_start_ns = (
+            time_filter.start_ns if time_filter is not None else start_ns
+        )
+        effective_end_ns = time_filter.end_ns if time_filter is not None else end_ns
         endpoint_summaries = self._compute_endpoint_summaries(
-            start_ns, end_ns, self._slice_duration
+            effective_start_ns, effective_end_ns, self._slice_duration
         )
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
             benchmark_id=self.run.benchmark_id,
             endpoint_summaries=endpoint_summaries,
-            start_ns=start_ns,
-            end_ns=end_ns,
+            start_ns=effective_start_ns,
+            end_ns=effective_end_ns,
             endpoints_configured=endpoint_list,
             endpoints_successful=endpoint_list,
             error_summary=error_summary or [],
@@ -163,10 +170,22 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         # Export Parquet file directly from accumulator if format is enabled
         await self._export_parquet_if_enabled(
-            TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+            time_filter or TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
         )
 
         return results
+
+    def compute_endpoint_summaries(
+        self,
+        profiling_start_ns: int,
+        profiling_end_ns: int,
+        slice_duration: float | None = None,
+    ) -> dict[str, ServerMetricsEndpointSummary]:
+        return self._compute_endpoint_summaries(
+            profiling_start_ns,
+            profiling_end_ns,
+            slice_duration,
+        )
 
     def _compute_endpoint_summaries(
         self,

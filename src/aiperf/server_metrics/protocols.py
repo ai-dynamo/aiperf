@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from aiperf.common.models import (
         ErrorDetailsCount,
         MetricResult,
+        ServerMetricsEndpointSummary,
         ServerMetricsRecord,
         ServerMetricsResults,
         TimeRangeFilter,
@@ -43,6 +44,13 @@ class ServerMetricsAccumulatorProtocol(ServerMetricsProcessorProtocol, Protocol)
     and error summary support. Implementations should accumulate Prometheus snapshot data and compute
     aggregated statistics (mean, p50, p90, p95, p99) for configured metrics across collection windows.
     """
+
+    def compute_endpoint_summaries(
+        self,
+        profiling_start_ns: int,
+        profiling_end_ns: int,
+        slice_duration: float | None = None,
+    ) -> dict[str, ServerMetricsEndpointSummary]: ...
 
     async def export_results(
         self,

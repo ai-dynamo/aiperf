@@ -1,18 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CommandType
-from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
-from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
-from aiperf.common.models import ErrorDetails
+from aiperf.common.enums import CommandType, CreditPhase
+from aiperf.common.messages import (
+    ProfileCompleteCommand,
+    ProfileConfigureCommand,
+    ProfileStartCommand,
+    RealtimeServerMetricsMessage,
+)
+from aiperf.common.models import CreditPhaseStats, ErrorDetails
+from aiperf.common.models._server_metrics_export import (
+    ServerMetricsEndpointInfo,
+    ServerMetricsEndpointSummary,
+)
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.plugin.enums import EndpointType
+from aiperf.credit.messages import CreditPhaseStartMessage
+from aiperf.plugin.enums import EndpointType, TimingMode
 from aiperf.server_metrics.manager import ServerMetricsManager
+from aiperf.timing.config import CreditPhaseConfig
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -38,6 +49,308 @@ def cfg_with_server_metrics_urls() -> CLIConfig:
             "http://another-endpoint:8081",
         ],
     )
+
+
+class TestManagerOwnedServerMetricsProcessors:
+    def test_initializes_local_server_metrics_processors_and_accumulator(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+
+        assert manager._processors
+        assert manager._accumulator is not None
+        assert manager._accumulator in manager._processors
+
+    @pytest.mark.asyncio
+    async def test_record_callback_fans_out_locally_without_records_manager_push(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        processor = AsyncMock()
+        manager._processors = [processor]
+        manager.records_push_client = MagicMock()
+        manager.records_push_client.push = AsyncMock()
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8000/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        await manager._on_server_metrics_records(
+            [record], "http://localhost:8000/metrics"
+        )
+
+        processor.process_server_metrics_record.assert_awaited_once_with(record)
+        manager.records_push_client.push.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_record_callback_publishes_realtime_server_metrics_from_accumulator(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8000/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+        summary = ServerMetricsEndpointSummary(
+            endpoint_url="http://localhost:8000/metrics",
+            info=ServerMetricsEndpointInfo(
+                total_fetches=1,
+                first_fetch_ns=1_000_000_000,
+                last_fetch_ns=1_000_000_000,
+                avg_fetch_latency_ms=5.0,
+                unique_updates=1,
+                first_update_ns=1_000_000_000,
+                last_update_ns=1_000_000_000,
+                duration_seconds=0.0,
+                avg_update_interval_ms=0.0,
+            ),
+            metrics={},
+        )
+        endpoint_summaries = {"localhost:8000": summary}
+        processor = AsyncMock()
+        accumulator = MagicMock()
+        accumulator.compute_endpoint_summaries.return_value = endpoint_summaries
+        manager._processors = [processor]
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+        manager._profiling_started = True
+        manager._last_realtime_publish_ns = 0
+
+        await manager._on_server_metrics_records(
+            [record], "http://localhost:8000/metrics"
+        )
+
+        manager.publish.assert_awaited_once()
+        message = manager.publish.await_args.args[0]
+        assert isinstance(message, RealtimeServerMetricsMessage)
+        assert message.endpoint_summaries == endpoint_summaries
+
+    @pytest.mark.asyncio
+    async def test_record_callback_skips_realtime_publish_before_profiling(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8000/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+        processor = AsyncMock()
+        accumulator = MagicMock()
+        manager._processors = [processor]
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        await manager._on_server_metrics_records(
+            [record], "http://localhost:8000/metrics"
+        )
+
+        accumulator.compute_endpoint_summaries.assert_not_called()
+        manager.publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_record_callback_isolates_realtime_publish_failure(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8000/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+        summary = ServerMetricsEndpointSummary(
+            endpoint_url="http://localhost:8000/metrics",
+            info=ServerMetricsEndpointInfo(
+                total_fetches=1,
+                first_fetch_ns=1_000_000_000,
+                last_fetch_ns=1_000_000_000,
+                avg_fetch_latency_ms=5.0,
+                unique_updates=1,
+                first_update_ns=1_000_000_000,
+                last_update_ns=1_000_000_000,
+                duration_seconds=0.0,
+                avg_update_interval_ms=0.0,
+            ),
+            metrics={},
+        )
+        processor = AsyncMock()
+        accumulator = MagicMock()
+        accumulator.compute_endpoint_summaries.return_value = {
+            "localhost:8000": summary
+        }
+        manager._processors = [processor]
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock(side_effect=RuntimeError("bus down"))
+        manager._profiling_started = True
+        manager._last_realtime_publish_ns = 0
+
+        await manager._on_server_metrics_records(
+            [record], "http://localhost:8000/metrics"
+        )
+
+        processor.process_server_metrics_record.assert_awaited_once_with(record)
+        manager.publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_scrapes_final_metrics_before_publishing_result(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        events: list[str] = []
+        collector = AsyncMock()
+
+        async def collect_and_process_metrics() -> None:
+            events.append("final-scrape")
+
+        async def publish_result(*, start_ns: int | None, end_ns: int | None) -> None:
+            events.append("publish")
+
+        collector.collect_and_process_metrics.side_effect = collect_and_process_metrics
+        manager._collectors = {"http://localhost:8000/metrics": collector}
+        manager._publish_server_metrics_result = publish_result
+
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id,
+                command=CommandType.PROFILE_COMPLETE,
+            )
+        )
+
+        assert events == ["final-scrape", "publish"]
+        collector.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_profile_complete_scrapes_final_metrics_once(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        collector = AsyncMock()
+
+        async def collect_and_process_metrics() -> None:
+            await asyncio.sleep(0.01)
+
+        collector.collect_and_process_metrics.side_effect = collect_and_process_metrics
+        manager._collectors = {"http://localhost:8000/metrics": collector}
+
+        with patch(
+            "aiperf.server_metrics.result_publisher.publish_server_metrics_result",
+            new_callable=AsyncMock,
+        ) as publish_result:
+            await asyncio.gather(
+                manager._handle_profile_complete_command(
+                    ProfileCompleteCommand(
+                        service_id=manager.id,
+                        command=CommandType.PROFILE_COMPLETE,
+                    )
+                ),
+                manager._handle_profile_complete_command(
+                    ProfileCompleteCommand(
+                        service_id=manager.id,
+                        command=CommandType.PROFILE_COMPLETE,
+                    )
+                ),
+            )
+
+        collector.collect_and_process_metrics.assert_awaited_once()
+        collector.stop.assert_awaited_once()
+        publish_result.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_publish_failure_leaves_result_retryable(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+
+        with patch(
+            "aiperf.server_metrics.result_publisher.publish_server_metrics_result",
+            new_callable=AsyncMock,
+        ) as publish_result:
+            publish_result.side_effect = [RuntimeError("publish failed"), None]
+
+            with pytest.raises(RuntimeError, match="publish failed"):
+                await manager._publish_server_metrics_result(start_ns=1, end_ns=2)
+
+            assert manager._result_published is False
+
+            await manager._publish_server_metrics_result(start_ns=1, end_ns=2)
+
+        assert manager._result_published is True
+        assert publish_result.await_count == 2
+
+    def test_parse_profile_complete_window_treats_invalid_values_as_none(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        message = MagicMock(payload=b'{"start_ns":"1","end_ns":{"bad":true}}')
+
+        assert manager._parse_profile_complete_window(message) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_profiling_phase_start_captures_boundary_metrics(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        collector = AsyncMock()
+        manager._collectors = {"http://localhost:8000/metrics": collector}
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id=manager.id,
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING),
+            )
+        )
+
+        collector.collect_and_process_metrics.assert_awaited_once()
 
 
 class TestServerMetricsManagerInitialization:
@@ -323,17 +636,18 @@ class TestManagerCallbackFunctionality:
     """Test callback handling for records and errors."""
 
     @pytest.mark.asyncio
-    async def test_record_callback_sends_message(
+    async def test_record_callback_fans_out_to_local_processors(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that record callback sends ServerMetricsRecordMessage."""
+        """Test that record callback fans out records to local processors."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-
-        manager.records_push_client.push = AsyncMock()
+        first_processor = AsyncMock()
+        second_processor = AsyncMock()
+        manager._processors = [first_processor, second_processor]
 
         test_record = ServerMetricsRecord(
             endpoint_url="http://localhost:8081/metrics",
@@ -344,10 +658,12 @@ class TestManagerCallbackFunctionality:
 
         await manager._on_server_metrics_records([test_record], "test_collector")
 
-        manager.records_push_client.push.assert_called_once()
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert isinstance(call_args, ServerMetricsRecordMessage)
-        assert call_args.record == test_record
+        first_processor.process_server_metrics_record.assert_awaited_once_with(
+            test_record
+        )
+        second_processor.process_server_metrics_record.assert_awaited_once_with(
+            test_record
+        )
 
     @pytest.mark.asyncio
     async def test_error_callback_logs_error(
@@ -365,19 +681,20 @@ class TestManagerCallbackFunctionality:
         await manager._on_server_metrics_error(test_error, "test_collector")
 
     @pytest.mark.asyncio
-    async def test_record_callback_handles_send_failure(
+    async def test_record_callback_handles_processor_failure(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that record callback handles message send failures gracefully."""
+        """Test that record callback tracks processor failures gracefully."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
+        processor = AsyncMock()
+        processor.process_server_metrics_record.side_effect = RuntimeError(
+            "processor failed"
         )
+        manager._processors = [processor]
 
         test_records = [
             ServerMetricsRecord(
@@ -389,6 +706,14 @@ class TestManagerCallbackFunctionality:
         ]
 
         await manager._on_server_metrics_records(test_records, "test_collector")
+
+        processor.process_server_metrics_record.assert_awaited_once_with(
+            test_records[0]
+        )
+        assert sum(manager._error_state.error_counts.values()) == 1
+        recorded_error = next(iter(manager._error_state.error_counts))
+        assert recorded_error.type == "RuntimeError"
+        assert "processor failed" in recorded_error.message
 
 
 class TestDisabledServerMetrics:
@@ -750,37 +1075,33 @@ class TestCallbackEdgeCases:
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that record callback handles empty record list."""
+        """Test that record callback skips processors for an empty record list."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-
-        manager.records_push_client.push = AsyncMock()
+        processor = AsyncMock()
+        manager._processors = [processor]
 
         await manager._on_server_metrics_records([], "test_collector")
 
-        # Should not push anything for empty list
-        manager.records_push_client.push.assert_not_called()
+        processor.process_server_metrics_record.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_error_callback_handles_send_failure(
+    async def test_error_callback_records_error_locally(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that error callback handles message send failures gracefully."""
+        """Test that error callback records collection errors locally."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
 
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
-        )
-
         test_error = ErrorDetails.from_exception(ValueError("Test error"))
 
-        # Should not raise exception
         await manager._on_server_metrics_error(test_error, "test_collector")
+
+        assert manager._error_state.error_counts[test_error] == 1
 
     @pytest.mark.asyncio
     async def test_status_send_failure(
