@@ -441,7 +441,9 @@ def test_cleanup_clears_pre_dispatched_and_logs_leak(caplog):
     orch._descendant_counts["ghost-parent"] = 3
     orch._pre_dispatched_branches.add(("conv-x", "branch-y"))
 
-    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
+    with caplog.at_level(
+        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
+    ):
         orch.cleanup()
 
     leak_warnings = [r for r in caplog.records if "leaked state" in r.getMessage()]
@@ -1308,7 +1310,9 @@ async def test_satisfy_prerequisite_orphan_child_logs_warn_no_exception(caplog):
 
     await orch.intercept(_mk_credit("root", "corr-root", 0))  # spawn A only
 
-    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
+    with caplog.at_level(
+        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
+    ):
         result = await orch._satisfy_prerequisite(
             "corr-root", 5, "SPAWN_JOIN:does:not:exist", "ghost-child"
         )
@@ -1322,7 +1326,9 @@ async def test_satisfy_prerequisite_unknown_parent_logs_warn_no_exception(caplog
     warning and return None."""
     cs = _mk_source([])
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=MagicMock())
-    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
+    with caplog.at_level(
+        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
+    ):
         result = await orch._satisfy_prerequisite(
             "no-such-parent", 1, "SPAWN_JOIN:b", "ghost"
         )
