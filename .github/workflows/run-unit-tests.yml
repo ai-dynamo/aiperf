@@ -12,16 +12,24 @@ jobs:
   build:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    # Windows is non-blocking for now: we've validated AIPerf on a Windows
+    # 11 VDI but GitHub Actions windows-latest is Server 2022, and subtle
+    # environment differences (shell, PATH, line endings, codepage) can
+    # surface in CI but not on the VDI. Keep it informational until it has
+    # been observed green across a few runs, then promote to required.
+    continue-on-error: ${{ matrix.os == 'windows' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [linux, macos]
+        os: [linux, macos, windows]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
           - os: linux
             runner: prod-aiperf-builder-amd-v1
           - os: macos
             runner: macos-latest
+          - os: windows
+            runner: windows-latest
 
     steps:
     - uses: actions/checkout@v6
@@ -34,16 +42,39 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
-    - name: Install dependencies
+    # Windows has no `make`. Call uv directly to install the project +
+    # mock server. POSIX runners stay on the make-based path so existing
+    # CI behavior is unchanged.
+    - name: Install dependencies (POSIX)
+      if: runner.os != 'Windows'
       run: |
         make ci-install PYTHON_VERSION=${{ matrix.python-version }}
-    - name: Run unit tests and component integration tests
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        uv venv .venv --python ${{ matrix.python-version }}
+        uv pip install -e ".[dev]"
+        uv pip install -e "tests/aiperf_mock_server[dev]"
+    # Windows runs the same two tiers as macOS — unit + component_integration
+    # — by invoking pytest directly (no `make` available on Windows). Integration
+    # tests remain Linux-only (run-integration-tests.yml) which mirrors the
+    # current macOS coverage gap.
+    - name: Run unit tests and component integration tests (POSIX)
+      if: runner.os != 'Windows'
       env:
         # Caps pytest-xdist workers on the 48-vCPU / 6-GiB-RAM Linux
         # builder pod. -n auto without this OOM-kills the runner agent.
         PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
         make test-ci PYTHON_VERSION=${{ matrix.python-version }}
+    - name: Run unit tests (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        uv run pytest tests/unit -n auto --tb=short -m 'not performance and not stress and not slow'
+    - name: Run component integration tests (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        uv run pytest tests/component_integration -n auto --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
       if: matrix.os == 'linux' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5
