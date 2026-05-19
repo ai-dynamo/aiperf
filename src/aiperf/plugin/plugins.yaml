@@ -1767,15 +1767,15 @@ public_dataset_loader:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
     description: |
       SemiAnalysis Weka agentic coding trace dataset (no-subagents variant),
-      hosted on HuggingFace as semianalysisai/cc-traces-weka-no-subagents-051226
-      (2.77 GB jsonl, 949 traces, 136k requests, public, no auth required).
-      Subagent entries are stripped: only top-level main-agent turns remain.
-      Each row is a complete WekaTrace; reconstruction is delegated to
-      WekaTraceLoader so file-based and HF-based replay produce byte-identical
-      conversations.
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-no-subagents-051826
+      (539 MB jsonl, 98 traces, 22.8k requests, public, no auth required).
+      Filtered to v5-only + CC ≥ 2.1.139 + subagent blocks stripped; every
+      remaining trace has ≥20 main-agent turns. Each row is a complete
+      WekaTrace; reconstruction is delegated to WekaTraceLoader so file-based
+      and HF-based replay produce byte-identical conversations.
       Usage: --public-dataset semianalysis_cc_traces_weka
     metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051226
+      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051826
       hf_split: train
       is_trace: true
       default_block_size: 64
@@ -1785,16 +1785,17 @@ public_dataset_loader:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
     description: |
       SemiAnalysis Weka cc-traces, no-subagents variant — hosted on HuggingFace
-      as semianalysisai/cc-traces-weka-no-subagents-051226 (949 traces,
-      136.1k requests, public, no auth). Derivative of the source weka traces
-      with all WekaSubagentEntry blocks stripped — only top-level main-agent
-      turns remain. Use this corpus when you want a single linear agent stream
-      per trace and don't need parent/child fan-out structure. Each row is a
-      complete WekaTrace; reconstruction is delegated to WekaTraceLoader so
-      file-based and HF-based replay produce byte-identical conversations.
+      as semianalysisai/cc-traces-weka-no-subagents-051826 (98 traces,
+      22.8k requests, public, no auth). v5-only + CC ≥ 2.1.139 filtered
+      derivative of the source weka traces with all WekaSubagentEntry blocks
+      stripped — only top-level main-agent turns remain, ≥20 turns each. Use
+      this corpus when you want a single linear agent stream per trace and
+      don't need parent/child fan-out structure. Each row is a complete
+      WekaTrace; reconstruction is delegated to WekaTraceLoader so file-based
+      and HF-based replay produce byte-identical conversations.
       Usage: --public-dataset semianalysis_cc_traces_weka_no_subagents
     metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051226
+      hf_dataset_name: semianalysisai/cc-traces-weka-no-subagents-051826
       hf_split: train
       is_trace: true
       default_block_size: 64
