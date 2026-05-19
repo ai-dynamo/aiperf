@@ -11,7 +11,12 @@ import orjson
 from playwright.sync_api import expect
 
 from .harness import DashboardHarness, DashboardScenario
-from .helpers import dashboard_cfg, metric_result, realtime_metrics_payload
+from .helpers import (
+    dashboard_cfg,
+    metric_result,
+    phase_start_payload,
+    realtime_metrics_payload,
+)
 
 
 def _phase_complete_payload(phase: str) -> dict[str, Any]:
@@ -43,6 +48,32 @@ def test_unknown_ws_type_logs_once_even_if_repeated(
         has_text="Unknown WS message type: definitely_not_a_dashboard_v2_message"
     )
     expect(unknown_entries).to_have_count(1)
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_hostile_unknown_ws_type_renders_as_text_not_markup(
+    dashboard: DashboardHarness,
+) -> None:
+    """Unknown WS message types with markup must render as inert log text."""
+    dialogs: list[str] = []
+    dashboard.page.on(
+        "dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss())
+    )
+    hostile_type = (
+        '<svg onload="alert(1)"><script>alert(2)</script><img src=x onerror="alert(3)">'
+    )
+    scenario = DashboardScenario(ws_payloads=[{"type": hostile_type}])
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    log_pane = dashboard.page.locator(".log-pane")
+    expect(log_pane).to_contain_text(f"Unknown WS message type: {hostile_type}")
+    assert log_pane.locator("svg").count() == 0
+    assert log_pane.locator("img").count() == 0
+    assert log_pane.locator("script").count() == 0
+    assert dialogs == []
     dashboard.assert_no_console_errors()
     dashboard.assert_no_bad_responses()
 
@@ -224,7 +255,7 @@ def test_server_metrics_use_first_finite_series_stat(
     dashboard.goto_dashboard(scenario)
     dashboard.wait_for_boot()
 
-    server_metrics = dashboard.page.locator(".card").filter(has_text="Server Metrics")
+    server_metrics = dashboard.page.locator(".server-metrics-card")
     expect(server_metrics).to_contain_text("queue_depth")
     expect(server_metrics).to_contain_text("64.00 requests")
     dashboard.assert_no_console_errors()
@@ -275,6 +306,178 @@ def test_hostile_worker_ids_and_text_render_as_text_not_markup(
     assert dashboard.page.locator(".worker-table img").count() == 0
     assert dashboard.page.locator(".worker-table script").count() == 0
     assert dialogs == []
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_hostile_config_model_and_phase_names_render_as_text(
+    dashboard: DashboardHarness,
+) -> None:
+    """Config model and phase labels must render as inert text."""
+    dialogs: list[str] = []
+    dashboard.page.on(
+        "dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss())
+    )
+    hostile_model = '<img src=x onerror="alert(1)">model'
+    hostile_phase = '<svg onload="alert(2)">profiling'
+    scenario = DashboardScenario(
+        cfg=dashboard_cfg(
+            models=[hostile_model],
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "requests": 2,
+                    "concurrency": 1,
+                },
+                {
+                    "name": hostile_phase,
+                    "type": "poisson",
+                    "rate": 5,
+                    "duration": 10,
+                    "concurrency": 2,
+                },
+            ],
+        )
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    config_bar = dashboard.page.locator("#config-bar.visible")
+    expect(config_bar).to_contain_text(hostile_model)
+    expect(config_bar).to_contain_text(hostile_phase)
+    expect(config_bar).to_contain_text("poisson")
+    assert config_bar.locator("svg").count() == 0
+    assert config_bar.locator("img").count() == 0
+    assert config_bar.locator("script").count() == 0
+    assert dialogs == []
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_hostile_server_metric_names_and_endpoints_render_as_text(
+    dashboard: DashboardHarness,
+) -> None:
+    """Server metric endpoint, metric name, and unit strings are inert text."""
+    dialogs: list[str] = []
+    dashboard.page.on(
+        "dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss())
+    )
+    hostile_endpoint = '<svg onload="alert(1)">endpoint'
+    hostile_metric = '<img src=x onerror="alert(2)">metric'
+    hostile_unit = "<script>alert(3)</script>units"
+    endpoint_summaries = {
+        hostile_endpoint: {
+            "metrics": {
+                hostile_metric: {
+                    "unit": hostile_unit,
+                    "series": [{"stats": {"avg": 12.5}}],
+                }
+            }
+        }
+    }
+    scenario = DashboardScenario(
+        server_metrics={"endpoint_summaries": endpoint_summaries},
+        ws_payloads=[
+            {
+                "type": "realtime_server_metrics",
+                "endpoint_summaries": endpoint_summaries,
+            }
+        ],
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    server_metrics = dashboard.page.locator(".server-metrics-card")
+    expect(server_metrics).to_contain_text(hostile_endpoint)
+    expect(server_metrics).to_contain_text(hostile_metric)
+    expect(server_metrics).to_contain_text(f"12.50 {hostile_unit}")
+    assert server_metrics.locator("svg").count() == 0
+    assert server_metrics.locator("img").count() == 0
+    assert server_metrics.locator("script").count() == 0
+    assert dialogs == []
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_server_metrics_empty_ws_update_clears_prior_rows(
+    dashboard: DashboardHarness,
+) -> None:
+    """An empty server-metrics WS update replaces prior rows with the empty state."""
+    endpoint_summaries = {
+        "http://srv:8000": {
+            "metrics": {
+                "queue_depth": {
+                    "unit": "requests",
+                    "series": [{"stats": {"avg": 64}}],
+                }
+            }
+        }
+    }
+    scenario = DashboardScenario(
+        server_metrics={"endpoint_summaries": endpoint_summaries},
+        ws_payloads=[
+            {
+                "type": "realtime_server_metrics",
+                "endpoint_summaries": {},
+            }
+        ],
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    server_metrics = dashboard.page.locator(".server-metrics-card")
+    expect(server_metrics).to_contain_text("No server-side metrics reported yet.")
+    expect(server_metrics).not_to_contain_text("queue_depth")
+    expect(server_metrics).not_to_contain_text("http://srv:8000")
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
+def test_stale_reconnect_progress_response_does_not_clobber_newer_ws_phase(
+    dashboard: DashboardHarness,
+) -> None:
+    """A reconnect warm-start progress snapshot must not downgrade newer WS progress."""
+    phase = "profiling"
+    scenario = DashboardScenario(
+        progress={
+            "phases": {
+                phase: {
+                    "phase": phase,
+                    "start_ns": time.time_ns() - 4_000_000_000,
+                    "total_expected_requests": 100,
+                    "requests_completed": 10,
+                }
+            }
+        },
+        ws_payloads=[
+            phase_start_payload(
+                phase,
+                total_expected_requests=100,
+                requests_completed=75,
+                start_ns=time.time_ns() - 2_000_000_000,
+            )
+        ],
+        close_ws_after_payloads=True,
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.page.wait_for_selector("#config-bar.visible", timeout=10_000)
+    dashboard.page.wait_for_function(
+        """() => {
+            const text = document.querySelector('.status-bar')?.textContent ?? '';
+            return text.includes('Disconnected');
+        }""",
+        timeout=10_000,
+    )
+
+    phase_card = dashboard.page.locator(".phase-card").filter(has_text=phase)
+    expect(phase_card).to_be_visible()
+    expect(phase_card).to_contain_text("75.0%")
+    expect(phase_card).to_contain_text("75 / 100")
     dashboard.assert_no_console_errors()
     dashboard.assert_no_bad_responses()
 

@@ -280,6 +280,54 @@ def test_kpi_tiles_goodput_success_rate_and_chart_render(
     dashboard.assert_no_bad_responses()
 
 
+def test_full_metrics_tables_render_benchmark_gpu_and_server_rows(
+    dashboard: DashboardHarness,
+) -> None:
+    scenario = DashboardScenario(
+        cfg=dashboard_cfg(),
+        server_metrics={"endpoint_summaries": _server_endpoint_summaries()},
+        ws_payloads=[
+            _realtime_metrics(request_count=100, good_count=98),
+            _gpu_telemetry_payload(),
+            _server_metrics_payload(),
+        ],
+    )
+
+    dashboard.goto_dashboard(scenario)
+    dashboard.wait_for_boot()
+
+    dashboard.page.wait_for_selector(".full-metrics-card", timeout=10_000)
+
+    benchmark = dashboard.page.locator(".full-metrics-card").filter(
+        has_text="Full Benchmark Metrics"
+    )
+    expect(benchmark).to_be_visible()
+    expect(benchmark).to_contain_text("Request Latency")
+    expect(benchmark).to_contain_text("TTFT")
+    expect(benchmark.locator("th")).to_contain_text(
+        ["Metric", "avg", "min", "max", "p99", "p90", "p50"]
+    )
+
+    gpu = dashboard.page.locator(".full-metrics-card").filter(
+        has_text="Full GPU Telemetry Metrics"
+    )
+    expect(gpu).to_be_visible()
+    expect(gpu).to_contain_text("GPU Utilization")
+    expect(gpu).to_contain_text("96.00")
+    expect(gpu).to_contain_text("SM Clock")
+
+    server = dashboard.page.locator(".full-metrics-card").filter(
+        has_text="Full Server Metrics"
+    )
+    expect(server).to_be_visible()
+    expect(server).to_contain_text("http://srv:8000 · kv_cache_utilization")
+    expect(server).to_contain_text("ratio")
+    expect(server).to_contain_text("0.92")
+
+    dashboard.assert_no_console_errors()
+    dashboard.assert_no_bad_responses()
+
+
 def test_gpu_worker_logs_records_and_server_metrics_render(
     dashboard: DashboardHarness,
 ) -> None:
@@ -328,7 +376,7 @@ def test_gpu_worker_logs_records_and_server_metrics_render(
     expect(workers).to_contain_text("high load")
     expect(workers).to_contain_text("97")
 
-    server_metrics = dashboard.page.locator(".card").filter(has_text="Server Metrics")
+    server_metrics = dashboard.page.locator(".server-metrics-card")
     expect(server_metrics).to_contain_text("http://srv:8000")
     expect(server_metrics).to_contain_text("kv_cache_utilization")
     expect(server_metrics).to_contain_text("saturated")

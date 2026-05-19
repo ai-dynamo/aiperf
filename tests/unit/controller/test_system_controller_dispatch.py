@@ -32,7 +32,7 @@ from aiperf.common.control_structs import (
     StatusUpdate,
     TelemetryStatus,
 )
-from aiperf.common.enums import LifecycleState
+from aiperf.common.enums import LifecycleState, SystemState
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
 
@@ -168,6 +168,47 @@ class TestOnRegistration:
         await system_controller._handle_control_message("id_0", msg)
 
         scheduler.execute_async.assert_not_called()
+
+    @pytest.mark.parametrize("replacement_pod_name", ["old-pod", "new-pod"])
+    async def test_replacement_worker_group_reconfigures_during_profiling(
+        self, system_controller: SystemController, replacement_pod_name: str
+    ) -> None:
+        scheduler = MagicMock()
+        system_controller._auto_configure = False
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._configure_scheduler = scheduler
+        system_controller._configured_ids.add("worker_group_manager_0")
+        system_controller._configure_single_service = MagicMock(  # type: ignore[method-assign]
+            return_value="coro"
+        )
+        ServiceRegistry.register(
+            service_id="worker_group_manager_0",
+            service_type="worker_group_manager",
+            first_seen_ns=1,
+            state=LifecycleState.RUNNING,
+            pod_name="old-pod",
+            pod_index="0",
+        )
+
+        msg = Registration(
+            sid="worker_group_manager_0",
+            rid="r",
+            stype="worker_group_manager",
+            state="running",
+            pod_name=replacement_pod_name,
+            pod_index="0",
+        )
+        await system_controller._handle_control_message("id_0", msg)
+
+        scheduler.execute_async.assert_called_once_with("coro")
+        system_controller._configure_single_service.assert_called_once_with(
+            "worker_group_manager_0"
+        )
+        assert "worker_group_manager_0" not in system_controller._configured_ids
+        assert (
+            ServiceRegistry.get_service("worker_group_manager_0").pod_name
+            == replacement_pod_name
+        )
 
 
 # ============================================================

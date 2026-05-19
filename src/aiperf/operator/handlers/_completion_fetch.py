@@ -436,7 +436,7 @@ async def _fetch_once_into_state(
 
     await _download_final_and_sidecar(progress_client, controller_host, dest_dir, state)
 
-    if state["metrics"] is not None and state["downloaded"] is not None:
+    if state["downloaded"] is not None:
         if _KEY_FILES & set(state["downloaded"]):
             return ControllerFetchResult(
                 metrics=state["metrics"],

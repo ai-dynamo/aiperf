@@ -122,10 +122,13 @@ class _ServiceRegistry(_ServiceRegistryWaitMixin):
         info = self.services.get(service_id)
         if info:
             if info.registration_status == ServiceRegistrationStatus.REGISTERED:
-                # Already registered — update state/timestamp only
                 if info.last_seen_ns is None or first_seen_ns > info.last_seen_ns:
                     info.last_seen_ns = first_seen_ns
                     info.state = state
+                if pod_name is not None:
+                    info.pod_name = pod_name
+                if pod_index is not None:
+                    info.pod_index = pod_index
                 return
 
             # Pre-expected service (from expect_service): handle type mismatch

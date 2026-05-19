@@ -829,6 +829,151 @@ class TestDashboardV2ModuleAdversarial:
         assert "1,235 req/s" in result["rendered"]
 
     @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
+    def test_server_metrics_normalization_preserves_full_stats(
+        self, tmp_path: Path
+    ) -> None:
+        result = _run_v2_node_script(
+            tmp_path,
+            """
+            import { normalizeEndpointSummaries } from './lib/ws-dispatch.js';
+            const summaries = normalizeEndpointSummaries({
+              'http://srv:8000': {
+                metrics: {
+                  kv_cache_utilization: {
+                    unit: 'ratio',
+                    series: [{ stats: { avg: 0.92, min: 0.70, max: 0.99, p99: 0.98, p90: 0.95, p50: 0.90 } }],
+                  },
+                  tokens_total: {
+                    unit: 'tokens',
+                    series: [{ stats: { value: 125000 } }],
+                  },
+                },
+              },
+            });
+            console.log(JSON.stringify(summaries));
+            """,
+        )
+
+        metrics = {m["name"]: m for m in result[0]["metrics"]}
+        assert metrics["kv_cache_utilization"] == {
+            "name": "kv_cache_utilization",
+            "value": 0.92,
+            "unit": "ratio",
+            "avg": 0.92,
+            "min": 0.70,
+            "max": 0.99,
+            "p99": 0.98,
+            "p90": 0.95,
+            "p50": 0.90,
+        }
+        assert metrics["tokens_total"] == {
+            "name": "tokens_total",
+            "value": 125000,
+            "unit": "tokens",
+        }
+
+    @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
+    def test_full_metrics_table_formats_stats_and_fallbacks(
+        self, tmp_path: Path
+    ) -> None:
+        result = _run_v2_node_script(
+            tmp_path,
+            """
+            import { FullMetricsTable } from './components/full-metrics-table.js';
+            function flatten(node, acc = { text: [], templates: [] }) {
+              if (node == null || typeof node === 'boolean' || typeof node === 'function') return acc;
+              if (Array.isArray(node)) { for (const item of node) flatten(item, acc); return acc; }
+              if (typeof node === 'string' || typeof node === 'number') { acc.text.push(String(node)); return acc; }
+              if (node.strings) {
+                acc.templates.push(Array.from(node.strings).join(''));
+                for (const value of node.values ?? []) flatten(value, acc);
+              }
+              return acc;
+            }
+            const rendered = FullMetricsTable({
+              title: 'Full Benchmark Metrics',
+              rows: [
+                { key: 'latency', metric: 'Request Latency', unit: 'ms', avg: 510.25, min: 120, max: 9000, p99: 812, p90: Number.NaN, p50: null },
+              ],
+            });
+            const flat = flatten(rendered);
+            const text = flat.text.join('|');
+            console.log(JSON.stringify({
+              text,
+              templates: flat.templates.join('|'),
+              fallbackCount: (text.match(/---/g) || []).length,
+            }));
+            """,
+        )
+
+        assert "Full Benchmark Metrics" in result["text"]
+        assert "Request Latency" in result["text"]
+        assert "ms" in result["text"]
+        assert "510.25" in result["text"]
+        assert "9,000" in result["text"]
+        assert result["fallbackCount"] >= 2
+        assert "full-metrics-table" in result["templates"]
+
+    @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
+    def test_full_metrics_adapters_normalize_three_sources(
+        self, tmp_path: Path
+    ) -> None:
+        result = _run_v2_node_script(
+            tmp_path,
+            """
+            import {
+              rowsFromMetrics,
+              rowsFromServerMetrics,
+            } from './components/full-metrics-table.js';
+            const benchmarkRows = rowsFromMetrics([
+              { tag: 'request_latency', header: 'Request Latency', unit: 'ms', avg: 1, min: 2, max: 3, p99: 4, p90: 5, p50: 6 },
+              { tag: 'bad_metric', header: null, unit: 'x', avg: Number.POSITIVE_INFINITY },
+              null,
+            ]);
+            const gpuRows = rowsFromMetrics([
+              {
+                tag: 'gpu_utilization_dcgm_gpu_0',
+                header: 'GPU Utilization | http://srv:9400 | GPU 0 | NVIDIA H100',
+                unit: '%',
+                current: 96.0,
+              },
+            ]);
+            const serverRows = rowsFromServerMetrics([
+              { endpoint: 'http://srv:8000', metrics: [
+                { name: 'kv_cache_utilization', unit: 'ratio', avg: 0.5, min: 0.1, max: 0.9, p99: 0.8, p90: 0.7, p50: 0.4 },
+              ]},
+            ]);
+            console.log(JSON.stringify({ benchmarkRows, gpuRows, serverRows }));
+            """,
+        )
+
+        assert result["benchmarkRows"][0] == {
+            "key": "request_latency",
+            "metric": "Request Latency",
+            "unit": "ms",
+            "avg": 1,
+            "min": 2,
+            "max": 3,
+            "p99": 4,
+            "p90": 5,
+            "p50": 6,
+        }
+        assert result["benchmarkRows"][1]["metric"] == "bad_metric"
+        assert result["benchmarkRows"][1]["avg"] is None
+        assert result["gpuRows"][0]["key"] == "gpu_utilization_dcgm_gpu_0"
+        assert (
+            result["gpuRows"][0]["metric"]
+            == "GPU Utilization | http://srv:9400 | GPU 0 | NVIDIA H100"
+        )
+        assert result["gpuRows"][0]["unit"] == "%"
+        assert result["gpuRows"][0]["avg"] == 96.0
+        assert result["serverRows"][0]["key"] == "http://srv:8000::kv_cache_utilization"
+        assert (
+            result["serverRows"][0]["metric"]
+            == "http://srv:8000 · kv_cache_utilization"
+        )
+
+    @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
     def test_unknown_websocket_messages_log_once(self, tmp_path: Path) -> None:
         result = _run_v2_node_script(
             tmp_path,

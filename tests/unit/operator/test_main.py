@@ -618,6 +618,38 @@ class TestFetchResultsWithRetry:
 class TestConfigure:
     """Tests for configure kopf startup handler."""
 
+    @pytest.mark.asyncio
+    async def test_apiserver_proxy_login_disables_kopf_tls_verification(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Kopf has no TLS server-name field, so C15 must use insecure kopf transport."""
+        from kopf._cogs.structs.credentials import ConnectionInfo
+
+        from aiperf.operator.main import login_for_apiserver_proxy
+
+        base_connection = ConnectionInfo(
+            server="https://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20000",
+            ca_path="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+            insecure=False,
+            priority=30,
+        )
+        login = AsyncMock(return_value=base_connection)
+        monkeypatch.setenv(
+            "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE", "kubernetes.default.svc"
+        )
+
+        settings = kopf.OperatorSettings()
+        logger = MagicMock()
+        with mock_patch("aiperf.operator.main.kopf.login_via_async_client", login):
+            result = await login_for_apiserver_proxy(logger=logger, settings=settings)
+
+        login.assert_awaited_once_with(logger=logger, settings=settings)
+        assert result is not None
+        assert result.server == base_connection.server
+        assert result.ca_path == base_connection.ca_path
+        assert result.insecure is True
+
     def test_sets_finalizer(self) -> None:
         """Verify configures kopf finalizer."""
         settings = kopf.OperatorSettings()
@@ -1509,6 +1541,14 @@ class TestMonitorCompletedClaimsShutdownKey:
 class TestMonitorProgressAdvanced:
     """Additional tests for monitor_progress handler edge cases."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_state(self):
+        from aiperf.operator.client_cache import _reset_for_testing
+
+        _reset_for_testing()
+        yield
+        _reset_for_testing()
+
     @pytest.mark.asyncio
     async def test_monitor_progress_uses_controller_phase_when_profiling_started(
         self,
@@ -1895,10 +1935,12 @@ class TestHandleCompletion:
 
     @pytest.fixture(autouse=True)
     def _clear_client_cache(self):
-        """Clear the ProgressClient cache between tests."""
-        _progress_clients.clear()
+        """Clear operator client-cache state between tests."""
+        from aiperf.operator.client_cache import _reset_for_testing
+
+        _reset_for_testing()
         yield
-        _progress_clients.clear()
+        _reset_for_testing()
 
     @pytest.mark.asyncio
     async def test_sets_conditions_and_phase(self, temp_results_dir: Path) -> None:

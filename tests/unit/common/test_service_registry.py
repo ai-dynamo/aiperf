@@ -149,6 +149,30 @@ def test_register_idempotent_ignores_stale_timestamp(registry):
     assert info.state == LifecycleState.RUNNING
 
 
+def test_reregister_updates_pod_metadata(registry):
+    registry.register(
+        service_id="worker_group_manager_0",
+        service_type=ServiceType.WORKER_GROUP_MANAGER,
+        first_seen_ns=1000,
+        state=LifecycleState.RUNNING,
+        pod_name="old-pod",
+        pod_index="0",
+    )
+    registry.register(
+        service_id="worker_group_manager_0",
+        service_type=ServiceType.WORKER_GROUP_MANAGER,
+        first_seen_ns=2000,
+        state=LifecycleState.RUNNING,
+        pod_name="new-pod",
+        pod_index="0",
+    )
+
+    info = registry.services["worker_group_manager_0"]
+    assert info.last_seen_ns == 2000
+    assert info.pod_name == "new-pod"
+    assert info.pod_index == "0"
+
+
 def test_register_pre_expected_with_type_mismatch(registry):
     """Test that registering a pre-expected service with a different type updates correctly."""
     registry.expect_service("svc_001", ServiceType.WORKER)

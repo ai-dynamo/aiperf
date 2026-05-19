@@ -39,10 +39,10 @@ tests/kubernetes/chaos/
     toxiproxy.yaml                  # Toxiproxy Deployment + Service manifest (aiperf-chaos-toxiproxy ns)
   test_chaos_cancellation.py        # C1, C3
   test_chaos_operator_resilience.py # C4, C5
-  test_chaos_jobset_pods.py         # C6 (xfail), C7 (xfail), C8, C9
+  test_chaos_jobset_pods.py         # C6, C7, C8, C9
   test_chaos_helm.py                # H1, H2, H3, H4
-  test_chaos_churn.py               # C10, C11, C12 (xfail)
-  test_chaos_api_disruption.py      # C15 (xfail), C16 (xfail)
+  test_chaos_churn.py               # C10, C11, C12
+  test_chaos_api_disruption.py      # C15, C16
   test_chaos_benchmark.py           # B1, B2, B3
   test_chaos_infra.py               # K1, K2, K3
   findings-2026-04-23.md            # v1 run log
@@ -75,8 +75,8 @@ Wave 0 added an opt-in `podTemplate.shareProcessNamespace` Helm chart value (als
 
 | Test | Design ID | Exercises |
 |------|-----------|-----------|
-| `test_c6_kill_controller_container_salvages` (xfail) | C6 | documents the current mid-profiling controller-kill salvage gap: final artifacts may not be recoverable yet, leaving the CR Running/profiling |
-| `test_c7_kill_worker_pod_mid_benchmark` (xfail) | C7 | JobSet pod restartPolicy; documents the current controller hang after worker replacement loses in-flight benchmark state |
+| `test_c6_kill_controller_container_salvages` | C6 | controller-container termination salvage; preserves partial live metrics/checkpoints and marks results available |
+| `test_c7_kill_worker_pod_mid_benchmark` | C7 | JobSet pod restartPolicy plus controller reconfiguration when a replacement worker-group pod re-registers |
 | `test_c8_kill_event_bus_sidecar` | C8 | sidecar restart + event-bus reconnect inside controller pod (cross-container kill via shared PID ns) |
 | `test_c9_kill_results_sidecar_mid_fetch` | C9 | `fetch_results_with_retry` backoff while the results sidecar restarts; interaction with orphaned-claim recovery |
 
@@ -90,9 +90,9 @@ Wave 0 added an opt-in `podTemplate.shareProcessNamespace` Helm chart value (als
 | `test_h4_missing_jobset_crd_surfaces_error` | H4 | operator behavior when `jobsets.jobset.x-k8s.io` CRD is absent; missing JobSet CRD must surface through `status.conditions` or `phase=Failed` |
 | `test_c10_rapid_create_delete_recreate_same_name` | C10 | `on_create` `clear_cancellation` unsticks a re-created CR with the old name |
 | `test_c11_parallel_jobs_delete_subset` | C11 | parallel reconcile; deletion of 5/10 CRs doesn't destabilize the others |
-| `test_c12_invalid_spec_surfaces_conditions` (xfail) | C12 | malformed `spec.benchmark` surfaces as `phase=Failed` (exploratory — CRD schema is permissive) |
-| `test_c15_pause_apiserver_30s_recovers` (xfail) | C15 | 30 s apiserver pause via toxiproxy; operator reconcile retries + CR Completes (needs `KUBERNETES_SERVICE_HOST` override in operator Deployment) |
-| `test_c16_block_operator_controller_http_falls_back` (xfail) | C16 | operator↔controller HTTP routed through toxiproxy. Currently documents that the operator stays `Initializing` with Progress API connection errors after the proxy upstream is rewired; flips to pass once the toxiproxy data path is fixed and the salvage path reaches `Completed`. |
+| `test_c12_invalid_spec_surfaces_conditions` | C12 | malformed `spec.benchmark` surfaces as `phase=Failed` |
+| `test_c15_pause_apiserver_30s_recovers` | C15 | 30 s apiserver pause via toxiproxy; operator reconcile retries + CR Completes |
+| `test_c16_block_operator_controller_http_falls_back` | C16 | operator↔controller HTTP routed through toxiproxy; sidecar-result recovery completes after controller HTTP is blackholed |
 | `test_b1_mock_server_500s_mid_run` | B1 | benchmark tolerates 10 s burst of HTTP 500 from mock-server; error-rate metric populated |
 | `test_b2_mock_server_restart_mid_run` | B2 | benchmark recovers across a mock-server Deployment restart (connection refused → reconnect) |
 | `test_b3_mock_server_latency_injection` | B3 | per-request latency spike via toxiproxy toxic through the in-cluster mock-server proxy port |
@@ -105,23 +105,17 @@ Wave 0 added an opt-in `podTemplate.shareProcessNamespace` Helm chart value (als
 | `test_k2_dns_resolution_failure_fails_fast` | K2 | `endpoint.urls` pointing at an RFC 2606 `.invalid` hostname; asserts the CR reaches `Failed` within 120 s and status text names the DNS / endpoint failure domain |
 | `test_k3_resource_quota_exhaustion_fails_fast` | K3 | namespace `ResourceQuota` capped below the controller's memory request; asserts the CR reaches `Failed` within 120 s and status text or namespace events surface the quota admission rejection. Quota is unconditionally deleted in `finally` |
 
-### Xfail scenarios and why
+### Active xfail scenarios
 
-Each xfail ships with `strict=False` so the test converts a controlled fault into a documented "not yet contracted" signal rather than a hard failure. Rationale from each Wave's report:
+There are currently no active `@pytest.mark.xfail` scenarios in the chaos suite. If a future scenario depends on unavailable infrastructure, keep the xfail reason tied to a concrete flip-to-pass condition and update this section.
 
-- **C6 — controller container kill.** Documents a known mid-profiling salvage gap: final artifacts may not be recoverable from the sidecar yet, so the CR can remain Running/profiling instead of reaching `Completed`.
-- **C7 — worker pod kill.** Documents the current worker-replacement hang: JobSet recreates the pod, but the controller can remain Running/profiling because the replacement worker does not recover in-flight benchmark state.
-- **C12 — invalid spec.** The CRD's OpenAPI schema is deliberately permissive (flat `spec.benchmark`), so bogus config is accepted at admission and only surfaces at operator-side validation. Test xfails when the operator logs-and-retries instead of stamping `phase=Failed` within 60 s.
-- **C15 — 30 s apiserver pause.** Requires redirecting the operator's apiserver traffic through toxiproxy, which needs the operator Deployment re-rendered with `KUBERNETES_SERVICE_HOST` / `KUBERNETES_SERVICE_PORT` pointed at the toxiproxy Service AND an SNI-preserving L4 route to `kubernetes.default.svc:443` (default HTTP proxy mode breaks TLS). Cross-cutting Helm change; deferred. Flips to pass when the chart adds apiserver-URL override envs.
-- **C16 — operator-controller HTTP block.** Documents the unverified toxiproxy data path: the operator currently stays `Initializing` with Progress API connection errors after the proxy upstream is rewired, and should flip to pass once the route is fixed and the salvage path reaches `Completed`.
+## Manual-run recipes for API-disruption scenarios
 
-## Manual-run recipes for deferred API-disruption scenarios
-
-These are the explicit operator-side runbooks for the two toxiproxy-backed scenarios that were deferred from the original automation wave.
+These are the explicit operator-side runbooks for the two toxiproxy-backed scenarios.
 
 ### C15 — pause apiserver traffic for 30 s
 
-This scenario is still blocked on an operator deployment shape the chart does not expose yet: the operator must talk to the Kubernetes API through toxiproxy instead of the cluster-injected `kubernetes.default.svc` env.
+The `operator_ready_apiserver_toxiproxy_routed` fixture deploys the operator with Kubernetes API env vars pointed at toxiproxy, and creates the apiserver proxy before the operator starts.
 
 Current manual recipe:
 
@@ -138,17 +132,17 @@ Important constraint: this needs an SNI-preserving L4 route to `kubernetes.defau
 
 ### C16 — block operator ↔ controller HTTP
 
-This one is currently xfailed: the operator remains `Initializing` with Progress API connection errors after the proxy upstream is rewired.
+The controller JobSet DNS name is deterministic, so the proxy can target the controller Service hostname before the pod exists.
 
 Current manual recipe:
 
 1. Deploy `fixtures/toxiproxy.yaml`.
 2. Redeploy the operator with:
    - `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE=http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002/v1`
-3. Create toxiproxy proxy `controller-http` on `0.0.0.0:20002` with the upstream rewritten to the live controller pod once it has an IP.
+3. Create toxiproxy proxy `controller-http` on `0.0.0.0:20002` with upstream `<jobset>-controller-0-0.<jobset>.<namespace>.svc.cluster.local:9000`.
 4. Start the benchmark job and wait until it is in profiling.
 5. Add a `timeout` toxic on the proxy so operator HTTP calls to the controller fail.
-6. Assert the CR still reaches `Completed` via the salvage path once the controller exits.
+6. Assert the CR still reaches `Completed` via sidecar-result recovery.
 
 Use `tests/kubernetes/chaos/test_chaos_api_disruption.py::test_c16_block_operator_controller_http_falls_back` as the exact assertion template. Any future operator↔controller HTTP fault test should reuse the shared `operator_ready_toxiproxy_routed` fixture.
 

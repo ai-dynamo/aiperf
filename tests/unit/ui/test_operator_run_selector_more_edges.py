@@ -117,8 +117,7 @@ def test_run_selector_encodes_namespace_name_and_epoch_in_hrefs() -> None:
 
     assert rows[0]["href"] == "#/jobs/ns%20with%2Fslash/job%20%231%2Fblue"
     assert rows[1]["href"] == (
-        "#/jobs/ns%20with%2Fslash/job%20%231%2Fblue/runs/"
-        "2026%2F05%2F18%2012%3A34"
+        "#/jobs/ns%20with%2Fslash/job%20%231%2Fblue/runs/2026%2F05%2F18%2012%3A34"
     )
 
 
@@ -159,3 +158,26 @@ def test_run_selector_selects_latest_epoch_when_current_is_unpinned() -> None:
     )
 
     assert [row["selected"] for row in rows] == [True, False]
+
+
+def test_run_selector_orphan_pinned_epoch_marks_no_epoch_selected_and_keeps_latest_link() -> (
+    None
+):
+    rows = _run_selector_rows(
+        {
+            "namespace": "bench",
+            "name": "job",
+            "epochs": [
+                {"epoch": "100", "isLatest": False},
+                {"epoch": "200", "isLatest": True},
+            ],
+            "current": "999",
+            "hasLive": True,
+            "isRunning": False,
+        }
+    )
+
+    assert [row["epoch"] for row in rows] == ["200", "100"]
+    assert all(row["selected"] is False for row in rows)
+    assert rows[0]["href"] == "#/jobs/bench/job/runs/200"
+    assert rows[0]["isLatest"] is True

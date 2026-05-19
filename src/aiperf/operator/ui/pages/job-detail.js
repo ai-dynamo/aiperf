@@ -2249,7 +2249,7 @@ export function JobDetail({ namespace, name, epoch }) {
         namespace=${namespace}
         name=${name}
         epoch=${epoch}
-        resolvedEpoch=${epoch}
+        resolvedEpoch=${resolvedEpoch}
         isCompleted=${isFinal}
         isRunning=${isRunning}
         api=${api}

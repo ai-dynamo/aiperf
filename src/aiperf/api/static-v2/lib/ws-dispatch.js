@@ -58,6 +58,15 @@ function firstFiniteStat(stats) {
   return finiteNumber(stats.avg) ?? finiteNumber(stats.rate) ?? finiteNumber(stats.value);
 }
 
+function copyFiniteStats(stats) {
+  const out = {};
+  for (const key of ['avg', 'min', 'max', 'p99', 'p90', 'p50']) {
+    const value = finiteNumber(stats?.[key]);
+    if (value != null) out[key] = value;
+  }
+  return out;
+}
+
 export function normalizeEndpointSummaries(summaries) {
   if (!isRecord(summaries)) return [];
   return Object.entries(summaries).flatMap(([endpoint, body]) => {
@@ -66,13 +75,28 @@ export function normalizeEndpointSummaries(summaries) {
       if (!isRecord(m) || !Array.isArray(m.series)) return [];
       const series = m.series.find((sample) => firstFiniteStat(sample?.stats) != null);
       if (!series) return [];
-      return [{ name, value: firstFiniteStat(series.stats), unit: m.unit ?? null }];
+      return [{
+        name,
+        value: firstFiniteStat(series.stats),
+        unit: m.unit ?? null,
+        ...copyFiniteStats(series.stats),
+      }];
     });
     return metrics.length ? [{ endpoint, metrics }] : [];
   });
 }
 
 const unknownMessageTypesLogged = new Set();
+let phaseWsUpdateSeen = false;
+let serverMetricsWsUpdateSeen = false;
+
+export function hasPhaseWsUpdate() {
+  return phaseWsUpdateSeen;
+}
+
+export function hasServerMetricsWsUpdate() {
+  return serverMetricsWsUpdateSeen;
+}
 
 function shortGroupId(id) {
   if (!id) return '';
@@ -163,6 +187,7 @@ export function handleWsMessage(msg) {
       if (type === 'credit_phase_failed') {
         log({ severity: 'error', category: 'phase', message: `Phase failed: ${name}` });
       }
+      phaseWsUpdateSeen = true;
       // Any grace-period transition is worth surfacing.
       const s = msg.stats ?? msg;
       if ((s?.timeout_triggered || s?.grace_period_timeout_triggered)
@@ -208,6 +233,7 @@ export function handleWsMessage(msg) {
       return;
 
     case 'realtime_server_metrics':
+      serverMetricsWsUpdateSeen = true;
       serverMetrics.value = normalizeEndpointSummaries(msg.endpoint_summaries);
       return;
 

@@ -96,6 +96,15 @@ def test_apply_filters_search_matches_model() -> None:
     assert _run_node(script) == "a,b,e"
 
 
+def test_compare_search_endpoint_text_requires_endpoint_chip_or_is_documented_not_searchable() -> (
+    None
+):
+    script = _filter_script(
+        "{ nsFilter: new Set(), modelFilter: new Set(), endpointFilter: new Set(), search: 'completions' }"
+    )
+    assert _run_node(script) == "e"
+
+
 def test_extract_facets_counts_distinct_values_and_buckets_nulls() -> None:
     script = f"""
         import {{ extractFacets }} from {COMPARE_FILTERS_PATH.as_uri()!r};

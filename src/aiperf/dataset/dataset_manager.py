@@ -119,7 +119,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     @on_command(CommandType.PROFILE_START)
     async def _on_profile_start(self, message: Command) -> None:
-        """Stop rebroadcasting dataset notifications once profiling begins."""
+        """Stop local rebroadcasts once profiling begins.
+
+        Kubernetes worker pods can be recreated during profiling with the same
+        deterministic service IDs. Keep rebroadcasting there so replacement
+        WorkerGroupManagers can recover dataset state and become dispatchable.
+        """
+        if self._compress_only:
+            return
         if self._rebroadcast_task is not None:
             self._rebroadcast_task.cancel()
             self._rebroadcast_task = None
@@ -292,9 +299,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
         from aiperf.plugin.enums import DatasetSamplingStrategy, PhaseType
 
-        if any(
-            phase.type == PhaseType.FIXED_SCHEDULE for phase in self.run.cfg.phases
-        ):
+        if any(phase.type == PhaseType.FIXED_SCHEDULE for phase in self.run.cfg.phases):
             raise self._service_error(
                 "Accuracy mode requires sequential request order; "
                 "fixed-schedule timing is not supported in accuracy mode."

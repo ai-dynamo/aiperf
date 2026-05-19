@@ -70,6 +70,12 @@ function findEntry(entries, metric, stat) {
   return entries.find((e) => e.metric === metric && e.stat === stat) ?? null;
 }
 
+function finiteMetricValue(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 // Hardware colors — points on the InferenceX-style Pareto are colored by
 // GPU family rather than per-job, so identical accelerators cluster
 // visually. Falls back to a stable hash-based color for unknowns.
@@ -124,17 +130,18 @@ function buildScatterPoints(entries, x, y, displayKeys, splitKey, meta, yPerGpu)
   const points = [];
   for (let i = 0; i < displayKeys.length; i++) {
     const key = displayKeys[i];
-    const xv = xEntry.values?.[key];
-    const yv = yEntry.values?.[key];
-    if (xv == null || yv == null) continue;
+    const xValue = finiteMetricValue(xEntry.values?.[key]);
+    const yValue = finiteMetricValue(yEntry.values?.[key]);
+    if (xValue == null || yValue == null) continue;
     const m = (meta && meta[key]) || {};
     const gpuCount = Number(m.gpu_count) || 0;
     if (yPerGpu && gpuCount <= 0) continue;
-    const yScaled = yPerGpu ? Number(yv) / gpuCount : Number(yv);
+    const yScaled = yPerGpu ? yValue / gpuCount : yValue;
+    if (!Number.isFinite(yScaled)) continue;
     const gpuName = m.gpu_name || null;
     const color = gpuName ? gpuColor(gpuName) : JOB_COLORS[i % JOB_COLORS.length];
     points.push({
-      x: Number(xv),
+      x: xValue,
       y: yScaled,
       key,
       jobName: splitKey(key).jobId,
@@ -203,14 +210,14 @@ function buildLabPoints(entries, axis, displayKeys, splitKey, meta) {
   if (!xEntry || !yEntry) return [];
   const points = [];
   for (const key of displayKeys) {
-    const xv = xEntry.values?.[key];
-    const yv = yEntry.values?.[key];
-    if (xv == null || yv == null) continue;
+    const xValue = finiteMetricValue(xEntry.values?.[key]);
+    const yValue = finiteMetricValue(yEntry.values?.[key]);
+    if (xValue == null || yValue == null) continue;
     const { ns, jobId } = splitKey(key);
     const model = meta[key]?.model || 'unknown';
     points.push({
-      x: Number(xv),
-      y: Number(yv),
+      x: xValue,
+      y: yValue,
       key,
       jobName: jobId,
       ns: ns || 'unknown',

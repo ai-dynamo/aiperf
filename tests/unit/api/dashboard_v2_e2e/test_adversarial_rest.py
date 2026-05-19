@@ -87,7 +87,7 @@ def test_malformed_server_metrics_shapes_render_empty_state_without_console_erro
     dashboard.wait_for_boot()
     _assert_real_dashboard_v2_navigation(dashboard)
 
-    server_metrics = dashboard.page.locator(".card").filter(has_text="Server Metrics")
+    server_metrics = dashboard.page.locator(".server-metrics-card")
     expect(server_metrics).to_contain_text("No server-side metrics reported yet.")
     assert "not-a-summary" not in _visible_text(dashboard)
     dashboard.assert_no_console_errors()

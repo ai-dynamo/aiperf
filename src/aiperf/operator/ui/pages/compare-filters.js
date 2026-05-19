@@ -22,7 +22,8 @@ export function applyJobFilters(jobs, { nsFilter, modelFilter, endpointFilter, s
     return (
       (job.job_id ?? '').toLowerCase().includes(q) ||
       (job.namespace ?? '').toLowerCase().includes(q) ||
-      (job.model ?? '').toLowerCase().includes(q)
+      (job.model ?? '').toLowerCase().includes(q) ||
+      (job.endpoint ?? '').toLowerCase().includes(q)
     );
   });
 }

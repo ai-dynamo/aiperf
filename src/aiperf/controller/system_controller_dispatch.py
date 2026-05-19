@@ -29,7 +29,7 @@ from aiperf.common.control_structs import (
     StatusUpdate,
     TelemetryStatus,
 )
-from aiperf.common.enums import LifecycleState
+from aiperf.common.enums import LifecycleState, SystemState
 from aiperf.common.memory_tracker import MemoryPhase, MemoryReading
 from aiperf.common.service_registry import ServiceRegistry
 
@@ -75,6 +75,9 @@ class SystemControllerDispatchMixin:
             lambda: f"Received registration from {message.stype} service: {message.sid}"
         )
         already_configuring = message.sid in self._configuring_ids
+        is_replacement = self._is_replacement_worker_group_registration(
+            message, ServiceRegistry.is_registered(message.sid)
+        )
         ServiceRegistry.register(
             service_id=message.sid,
             service_type=message.stype,
@@ -84,11 +87,26 @@ class SystemControllerDispatchMixin:
             pod_index=message.pod_index,
         )
         self._record_declared_capacity(message, already_configuring)
-        if self._auto_configure and not already_configuring:
+        should_configure = (
+            self._auto_configure or is_replacement
+        ) and not already_configuring
+        if should_configure:
+            if is_replacement:
+                self._configured_ids.discard(message.sid)
+                self._configuring_ids.discard(message.sid)
             self._configure_scheduler.execute_async(
                 self._configure_single_service(message.sid)
             )
         return RegistrationAck(rid=message.rid)
+
+    def _is_replacement_worker_group_registration(
+        self, message: Registration, was_registered: bool
+    ) -> bool:
+        return (
+            was_registered
+            and message.stype == "worker_group_manager"
+            and self._system_state in {SystemState.PROFILING, SystemState.PROCESSING}
+        )
 
     def _record_declared_capacity(
         self, message: Registration, already_configuring: bool

@@ -193,19 +193,10 @@ async def operator_ready_apiserver_toxiproxy_routed(
     ``kubernetes.default.svc``, and restores a plain operator at teardown so
     sibling package tests run with production-shaped routing.
 
-    **Proxy lifecycle is the caller's responsibility.** The toxiproxy
-    proxy itself (``add_proxy(name=..., listen=..., upstream=...)``) is
-    NOT created here because tests need to choose when the proxy exists and
-    when toxics are installed. Tests should:
-
-    1. Call ``toxiproxy_injector.add_proxy(name="apiserver",
-       listen=f"0.0.0.0:{TOXIPROXY_APISERVER_PORT}",
-       upstream="kubernetes.default.svc:443")`` before creating the CR.
-    2. Create an AIPerfJob via the yielded ``OperatorDeployer``.
-    3. Add toxics (``add_toxic("apiserver", "timeout", ...)``) to inject
-       apiserver faults.
-    4. ``await toxiproxy_injector.reset()`` in ``finally`` to wipe
-       proxies+toxics for the next test.
+    The apiserver proxy must exist before the operator is deployed because
+    kopf's login and watches use the overridden Kubernetes service env vars
+    immediately at startup. Tests add toxics after the yielded deployer creates
+    a CR and call ``await toxiproxy_injector.reset()`` in ``finally``.
 
     Scope: ``package`` (matches every other chaos fixture that requires
     a living operator Deployment). Do NOT compose this fixture with the
@@ -223,6 +214,11 @@ async def operator_ready_apiserver_toxiproxy_routed(
     )
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
+    await toxiproxy_injector.add_proxy(
+        name="apiserver",
+        listen=f"0.0.0.0:{TOXIPROXY_APISERVER_PORT}",
+        upstream="kubernetes.default.svc:443",
+    )
     await deployer.deploy_operator()
     await _assert_live_operator_env(
         kubectl,

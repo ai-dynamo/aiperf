@@ -16,8 +16,8 @@ HTTP API (C16).
   pointed at the toxiproxy Service and sets
   ``AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE=kubernetes.default.svc``
   so raw TCP passthrough still verifies the real apiserver certificate.
-  C15 remains ``xfail(strict=False)`` until the full cluster path is
-  verified passing rather than only statically/unit-verified.
+  The apiserver proxy is created before the operator deploys so kopf login
+  and watch setup traverse toxiproxy from process start.
 
 * **SystemController HTTP (C16):** landed. The operator honors
   ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` (chaos-only env var)
@@ -39,10 +39,10 @@ import asyncio
 
 import pytest
 
+from aiperf.kubernetes.jobset import controller_dns_name
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.chaos.conftest import CONTROLLER_HTTP_UPSTREAM_PORT
 from tests.kubernetes.chaos.toxiproxy import (
-    TOXIPROXY_APISERVER_PORT,
     TOXIPROXY_CONTROLLER_HTTP_PORT,
     ToxiproxyInjector,
 )
@@ -69,15 +69,6 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
     )
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "C15 now has in-repo toxiproxy routing and TLS server-name "
-        "override wiring, but the full cluster path has not been verified "
-        "passing in this run. Keep xfail until the live test proves the "
-        "operator apiserver data path traverses toxiproxy and recovers."
-    ),
-)
 async def test_c15_pause_apiserver_30s_recovers(
     operator_ready_apiserver_toxiproxy_routed: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -118,12 +109,6 @@ async def test_c15_pause_apiserver_30s_recovers(
         image=k8s_settings.aiperf_image,
     )
     try:
-        await toxiproxy_injector.add_proxy(
-            name="apiserver",
-            listen=f"0.0.0.0:{TOXIPROXY_APISERVER_PORT}",
-            upstream="kubernetes.default.svc:443",
-        )
-
         await operator_ready_apiserver_toxiproxy_routed.create_job(
             config=longrun_config, name=name, namespace=operator_job_namespace
         )
@@ -158,15 +143,6 @@ async def test_c15_pause_apiserver_30s_recovers(
         await toxiproxy_injector.reset()
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "C16 controller-HTTP toxiproxy routing is not cluster-verified: "
-        "the operator remains Initializing with Progress API connection errors "
-        "after the proxy upstream is rewired. Keep as documented canary until "
-        "the toxiproxy data path is fixed."
-    ),
-)
 @pytest.mark.timeout(600)
 async def test_c16_block_operator_controller_http_falls_back(
     operator_ready_toxiproxy_routed: OperatorDeployer,
@@ -176,41 +152,13 @@ async def test_c16_block_operator_controller_http_falls_back(
     kubectl: KubectlClient,
     k8s_settings,  # noqa: ANN001
 ) -> None:
-    """Block operator->controller HTTP; salvage path still Completes the CR.
+    """Block operator->controller HTTP; sidecar-result recovery Completes the CR.
 
-    Exercises ``src/aiperf/operator/handlers/monitor.py::
-    _maybe_recover_terminated_controller`` — once every ``_fetch_progress``
-    call hangs on a ``timeout`` toxic, the operator can no longer observe
-    controller-side progress, but the salvage path polls JobSet pod status
-    and fires when the control-plane container exits on its own (which
-    happens once the benchmark_duration timer elapses inside the
-    controller). The salvage path then drives the CR to Completed without
-    relying on controller HTTP.
-
-    Flow:
-
-    1. ``operator_ready_toxiproxy_routed`` (package-scoped, from
-       ``conftest.py``) has already redeployed the operator with
-       ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` pointing at
-       ``toxiproxy.aiperf-chaos-toxiproxy.svc:20002``.
-    2. We create the toxiproxy proxy first with a placeholder upstream —
-       the controller pod's IP is not known until the JobSet spawns. The
-       operator's initial progress calls will simply fail-and-retry
-       against the unroutable placeholder until step 4 fixes it.
-    3. Create the CR; once the controller pod has an IP, swap the proxy's
-       upstream to the real controller HTTP port so the operator can
-       observe progress and drive the CR to Running/profiling.
-    4. Add a ``timeout`` toxic. Operator HTTP now blackholes; salvage
-       path must carry the CR to Completed.
-
-    Dependency on Bug A: if the salvage-path regression
-    (``findings-2026-04-23-v2.md`` Status ledger → Bug A) still bites
-    under chaos kills, this test will fail with
-    ``phase=Failed`` rather than ``Completed`` because
-    ``_maybe_recover_terminated_controller`` declares the run
-    unrecoverable when it has only partial checkpoints on disk. When
-    that happens the right fix is in the salvage path itself, not this
-    test — the test is the canary.
+    The controller pod DNS name is deterministic before the JobSet exists, so
+    toxiproxy can route to the future controller Service from the start. Once
+    every ``_fetch_progress`` call hangs on a ``timeout`` toxic, the operator
+    can no longer observe controller-side progress directly; it must recover
+    exported results through the results sidecar and mark the CR Completed.
     """
     name = "chaos-c16"
     longrun_config = AIPerfJobConfig(
@@ -241,57 +189,20 @@ async def test_c16_block_operator_controller_http_falls_back(
     )
 
     try:
-        # Placeholder upstream: the real controller pod IP is not known
-        # until the JobSet spawns. This keeps the proxy definition stable
-        # while the operator retries against an unroutable peer.
         await toxiproxy_injector.add_proxy(
             name=_CONTROLLER_PROXY_NAME,
             listen=f"0.0.0.0:{TOXIPROXY_CONTROLLER_HTTP_PORT}",
-            upstream="127.0.0.1:1",
+            upstream=(
+                f"{controller_dns_name(f'aiperf-{name}', operator_job_namespace)}:"
+                f"{CONTROLLER_HTTP_UPSTREAM_PORT}"
+            ),
         )
 
         await operator_ready_toxiproxy_routed.create_job(
             config=longrun_config, name=name, namespace=operator_job_namespace
         )
 
-        controller_pod = await chaos_injector.get_controller_pod_name(
-            operator_job_namespace, name
-        )
-        # Wait for the pod to get an IP (it takes a few seconds after
-        # scheduling). Poll kubectl rather than sleeping blindly.
-        pod_ip = ""
-        deadline = asyncio.get_event_loop().time() + 120.0
-        while asyncio.get_event_loop().time() < deadline:
-            res = await kubectl.run(
-                "get",
-                "pod",
-                controller_pod,
-                "-n",
-                operator_job_namespace,
-                "-o",
-                "jsonpath={.status.podIP}",
-                check=False,
-            )
-            pod_ip = res.stdout.strip()
-            if pod_ip:
-                break
-            await asyncio.sleep(2.0)
-
-        assert pod_ip, (
-            f"C16: controller pod {operator_job_namespace}/{controller_pod} "
-            "never received an IP within 120s; cannot rewrite toxiproxy proxy."
-        )
-
-        # Swap the proxy upstream to the real controller. Toxiproxy does
-        # not support in-place upstream updates, so delete+add.
-        await toxiproxy_injector.remove_proxy(_CONTROLLER_PROXY_NAME)
-        await toxiproxy_injector.add_proxy(
-            name=_CONTROLLER_PROXY_NAME,
-            listen=f"0.0.0.0:{TOXIPROXY_CONTROLLER_HTTP_PORT}",
-            upstream=f"{pod_ip}:{CONTROLLER_HTTP_UPSTREAM_PORT}",
-        )
-
-        # The operator can now observe controller progress. Wait until
+        # The operator can observe controller progress through toxiproxy. Wait until
         # the CR reaches Running/profiling before we blackhole the link.
         await chaos_injector.wait_for_phase(
             operator_job_namespace,
@@ -301,10 +212,8 @@ async def test_c16_block_operator_controller_http_falls_back(
             timeout=180.0,
         )
 
-        # Blackhole every subsequent controller HTTP call. The salvage
-        # path (_maybe_recover_terminated_controller) must drive the CR
-        # to Completed once the controller pod exits on its own at the
-        # benchmark_duration boundary.
+        # Blackhole every subsequent controller HTTP call. The sidecar-result
+        # recovery path must drive the CR to Completed.
         await toxiproxy_injector.add_toxic(
             _CONTROLLER_PROXY_NAME,
             "timeout",

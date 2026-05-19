@@ -372,6 +372,54 @@ a:hover { text-decoration: underline; }
 .server-metrics td:first-child { color: var(--text); font-family: var(--font-mono); font-size: 11px; }
 .server-metrics tr:last-child td { border-bottom: none; }
 
+/* ───── Full metrics tables ───── */
+.full-metrics-card { overflow: hidden; }
+.full-metrics-scroll {
+  overflow-x: auto;
+  max-height: 360px;
+}
+.full-metrics-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+.full-metrics-table th,
+.full-metrics-table td {
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+.full-metrics-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.full-metrics-table td {
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(34, 34, 34, 0.6);
+}
+.full-metrics-table td:first-child {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  min-width: 260px;
+}
+.full-metrics-table tr:last-child td { border-bottom: none; }
+.full-metrics-table tr:hover td { background: #1a1a1a; }
+.full-metric-name { display: block; }
+.full-metric-unit {
+  display: block;
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
 /* ───── Empty states ───── */
 .empty {
   padding: var(--space-6);

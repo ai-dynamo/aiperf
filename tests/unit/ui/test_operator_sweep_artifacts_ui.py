@@ -39,7 +39,9 @@ def test_api_exports_encoded_sweep_artifact_url_helpers() -> None:
     assert src.count("const nsSeg = encodeURIComponent(ns);") >= 4
     assert src.count("const sweepSeg = encodeURIComponent(sweepName);") >= 4
     assert src.count("const epSeg = encodeURIComponent(epoch);") >= 4
-    assert "const fileSeg = encodeURIComponent(filename);" in src
+    assert (
+        "const fileSeg = filename.split('/').map(encodeURIComponent).join('/');" in src
+    )
     assert "const formatSeg = encodeURIComponent(format);" in src
 
 
@@ -145,6 +147,17 @@ def test_artifacts_card_renders_dense_rows_with_explicit_row_actions() -> None:
         )
         is not None
     )
+
+
+def test_job_detail_artifact_actions_wait_for_pinned_route_epoch() -> None:
+    src = _source(
+        _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "job-detail.js"
+    )
+
+    assert "const resolvedEpoch = epoch" in src
+    assert "<${ArtifactsCard}" in src
+    assert "resolvedEpoch=${resolvedEpoch}" in src
+    assert "resolvedEpoch=${epoch}" not in src
 
 
 def test_sweep_detail_fetches_and_renders_aggregate_artifacts_card() -> None:

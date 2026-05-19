@@ -27,11 +27,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from dataclasses import replace
 from typing import Any
 
 import kopf
+from kopf._cogs.structs.credentials import ConnectionInfo
 
+from aiperf.kubernetes.client import APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV
 from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
@@ -54,6 +58,27 @@ from aiperf.operator.metrics import start_metrics_server, track_handler
 AIPERF_SWEEPS_PLURAL = "aiperfsweeps"
 
 logger = logging.getLogger(__name__)
+
+
+@kopf.on.login()
+async def login_for_apiserver_proxy(
+    *,
+    logger: logging.Logger | logging.LoggerAdapter,
+    settings: kopf.OperatorSettings,
+    **_: Any,
+) -> ConnectionInfo | None:
+    """Authenticate kopf, allowing the C15 apiserver proxy route to connect."""
+    connection = await kopf.login_via_async_client(logger=logger, settings=settings)
+    if connection is None:
+        return None
+    if not os.environ.get(APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV, "").strip():
+        return connection
+    logger.warning(
+        "Disabling kopf apiserver TLS verification because %s is set; "
+        "AIPerf direct Kubernetes clients still verify using tls_server_name",
+        APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV,
+    )
+    return replace(connection, insecure=True)
 
 
 @kopf.on.startup()

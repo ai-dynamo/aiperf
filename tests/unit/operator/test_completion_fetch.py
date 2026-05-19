@@ -931,6 +931,42 @@ class TestFetchOnceIntoState:
         assert exc_info.value.checkpoints == [f"{CHECKPOINTS_DIR_NAME}/c1.json"]
 
     @pytest.mark.asyncio
+    async def test_key_file_without_metrics_returns_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.operator.environment import OperatorEnvironment
+
+        monkeypatch.setattr(cf, "is_cancellation_requested", lambda _key: False)
+        monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+        monkeypatch.setattr(
+            K8sEnvironment.PORTS,
+            "RESULTS_SIDECAR",
+            K8sEnvironment.PORTS.API_SERVICE,
+        )
+
+        client = MagicMock()
+        client.get_metrics = AsyncMock(return_value=None)
+        client.download_all_results = AsyncMock(
+            return_value=["profile_export_aiperf.json"]
+        )
+        state: dict[str, Any] = {
+            "metrics": None,
+            "downloaded": None,
+            "checkpoints": None,
+        }
+
+        out = await _fetch_once_into_state(
+            key="ns/job",
+            controller_host="h",
+            dest_dir=tmp_path,
+            progress_client=client,
+            state=state,
+        )
+        assert out.metrics is None
+        assert out.downloaded == ["profile_export_aiperf.json"]
+        assert out.error == ""
+
+    @pytest.mark.asyncio
     async def test_metrics_and_key_file_returns_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -99,7 +99,9 @@ def _leaderboard_script(entries: list[dict[str, object]], body: str) -> str:
     """
 
 
-def _history_script(entries: list[dict[str, object]], query_value: dict[str, str], body: str) -> str:
+def _history_script(
+    entries: list[dict[str, object]], query_value: dict[str, str], body: str
+) -> str:
     return f"""
         import fs from 'node:fs';
         const source = fs.readFileSync({json.dumps(str(HISTORY_PATH))}, 'utf8')
@@ -167,7 +169,9 @@ def _api_script(body: str) -> str:
     """
 
 
-def test_compare_keeps_same_job_id_distinct_by_namespace_and_does_not_aggregate() -> None:
+def test_compare_keeps_same_job_id_distinct_by_namespace_and_does_not_aggregate() -> (
+    None
+):
     script = _compare_helper_script(
         """
         const entries = [
@@ -253,10 +257,70 @@ def test_compare_scatter_skips_missing_metrics_without_zero_filling() -> None:
     ]
 
 
+def test_compare_scatter_and_lab_skip_nan_infinity_values() -> None:
+    script = _compare_helper_script(
+        """
+        const entries = [
+          { metric: 'request_throughput', stat: 'avg', values: {
+            'ns/ok': 10, 'ns/nan-x': 'NaN', 'ns/inf-y': 30, 'ns/zero': 0,
+          } },
+          { metric: 'request_latency', stat: 'p99', values: {
+            'ns/ok': 50, 'ns/nan-x': 40, 'ns/inf-y': 'Infinity', 'ns/zero': 0,
+          } },
+        ];
+        const keys = ['ns/ok', 'ns/nan-x', 'ns/inf-y', 'ns/zero'];
+        const splitKey = (key) => ({ ns: key.split('/')[0], jobId: key.split('/').slice(1).join('/') });
+        const meta = {
+          'ns/ok': { gpu_count: 1, model: 'm' },
+          'ns/nan-x': { gpu_count: 1, model: 'm' },
+          'ns/inf-y': { gpu_count: 1, model: 'm' },
+          'ns/zero': { gpu_count: 1, model: 'm' },
+        };
+        const scatter = buildScatterPoints(
+          entries,
+          { metric: 'request_throughput', stat: 'avg' },
+          { metric: 'request_latency', stat: 'p99' },
+          keys,
+          splitKey,
+          meta,
+          false,
+        );
+        const lab = buildLabPoints(entries, LAB_AXES[0], keys, splitKey, meta);
+        console.log(JSON.stringify({
+          scatter: scatter.map((p) => ({ key: p.key, x: p.x, y: p.y })),
+          lab: lab.map((p) => ({ key: p.key, x: p.x, y: p.y })),
+        }));
+        """
+    )
+
+    assert json.loads(run_node(script)) == {
+        "scatter": [
+            {"key": "ns/ok", "x": 10, "y": 50},
+            {"key": "ns/zero", "x": 0, "y": 0},
+        ],
+        "lab": [
+            {"key": "ns/ok", "x": 10, "y": 50},
+            {"key": "ns/zero", "x": 0, "y": 0},
+        ],
+    }
+
+
 def test_leaderboard_missing_values_are_not_ranked_or_zero_filled() -> None:
     entries = [
-        {"job_id": "missing", "namespace": "prod", "model": "meta/llama 3", "value": None, "rank": None},
-        {"job_id": "valid", "namespace": "prod", "model": "meta/llama 3", "value": 42, "rank": None},
+        {
+            "job_id": "missing",
+            "namespace": "prod",
+            "model": "meta/llama 3",
+            "value": None,
+            "rank": None,
+        },
+        {
+            "job_id": "valid",
+            "namespace": "prod",
+            "model": "meta/llama 3",
+            "value": 42,
+            "rank": None,
+        },
     ]
     script = _leaderboard_script(
         entries,
@@ -275,9 +339,27 @@ def test_leaderboard_missing_values_are_not_ranked_or_zero_filled() -> None:
 
 def test_leaderboard_null_api_ranks_do_not_collapse_distinct_same_model_runs() -> None:
     entries = [
-        {"job_id": "run-a", "namespace": "prod", "model": "meta/llama 3", "value": 12, "rank": None},
-        {"job_id": "run-b", "namespace": "prod", "model": "meta/llama 3", "value": 11, "rank": None},
-        {"job_id": "run-c", "namespace": "prod", "model": "meta/llama 3", "value": 10, "rank": None},
+        {
+            "job_id": "run-a",
+            "namespace": "prod",
+            "model": "meta/llama 3",
+            "value": 12,
+            "rank": None,
+        },
+        {
+            "job_id": "run-b",
+            "namespace": "prod",
+            "model": "meta/llama 3",
+            "value": 11,
+            "rank": None,
+        },
+        {
+            "job_id": "run-c",
+            "namespace": "prod",
+            "model": "meta/llama 3",
+            "value": 10,
+            "rank": None,
+        },
     ]
     script = _leaderboard_script(
         entries,
@@ -296,8 +378,22 @@ def test_leaderboard_null_api_ranks_do_not_collapse_distinct_same_model_runs() -
 
 def test_history_filters_do_not_treat_malicious_query_strings_as_selectors() -> None:
     entries = [
-        {"job_id": "visible", "namespace": "prod", "model": "safe model", "endpoint": "https://api.example", "start_time": "2026-05-01T00:00:00Z", "value": 1},
-        {"job_id": "hidden", "namespace": "prod&ns=dev", "model": "safe model", "endpoint": "https://api.example", "start_time": "2026-05-02T00:00:00Z", "value": 2},
+        {
+            "job_id": "visible",
+            "namespace": "prod",
+            "model": "safe model",
+            "endpoint": "https://api.example",
+            "start_time": "2026-05-01T00:00:00Z",
+            "value": 1,
+        },
+        {
+            "job_id": "hidden",
+            "namespace": "prod&ns=dev",
+            "model": "safe model",
+            "endpoint": "https://api.example",
+            "start_time": "2026-05-02T00:00:00Z",
+            "value": 2,
+        },
     ]
     script = _history_script(
         entries,
@@ -317,8 +413,22 @@ def test_history_filters_do_not_treat_malicious_query_strings_as_selectors() -> 
 
 def test_history_keeps_repeated_runs_as_separate_points_without_aggregation() -> None:
     entries = [
-        {"job_id": "repeat-a", "namespace": "prod", "model": "m", "endpoint": "e", "start_time": "2026-05-01T10:00:00Z", "value": 10},
-        {"job_id": "repeat-b", "namespace": "prod", "model": "m", "endpoint": "e", "start_time": "2026-05-01T10:00:00Z", "value": 20},
+        {
+            "job_id": "repeat-a",
+            "namespace": "prod",
+            "model": "m",
+            "endpoint": "e",
+            "start_time": "2026-05-01T10:00:00Z",
+            "value": 10,
+        },
+        {
+            "job_id": "repeat-b",
+            "namespace": "prod",
+            "model": "m",
+            "endpoint": "e",
+            "start_time": "2026-05-01T10:00:00Z",
+            "value": 20,
+        },
     ]
     script = _history_script(
         entries,
@@ -336,7 +446,9 @@ def test_history_keeps_repeated_runs_as_separate_points_without_aggregation() ->
     assert out["labels"][0] == out["labels"][1]
 
 
-def test_compare_api_uses_repeated_selected_params_and_encodes_injection_strings() -> None:
+def test_compare_api_uses_repeated_selected_params_and_encodes_injection_strings() -> (
+    None
+):
     script = _api_script(
         """
         const calls = [];

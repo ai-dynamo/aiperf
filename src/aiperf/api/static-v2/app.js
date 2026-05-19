@@ -12,10 +12,22 @@
 import { html, render } from 'htm/preact';
 import { useEffect } from 'preact/hooks';
 
-import { connection, config, log, serverMetrics } from './lib/state.js';
+import {
+  connection,
+  config,
+  log,
+  realtimeMetrics,
+  serverMetrics,
+  telemetryMetrics,
+} from './lib/state.js';
 import { api } from './lib/api.js';
 import { connectWebSocket, currentEpoch, teardownWebSocket } from './lib/ws.js';
-import { bootstrapProgress, normalizeEndpointSummaries } from './lib/ws-dispatch.js';
+import {
+  bootstrapProgress,
+  hasPhaseWsUpdate,
+  hasServerMetricsWsUpdate,
+  normalizeEndpointSummaries,
+} from './lib/ws-dispatch.js';
 
 import { ConfigBar } from './components/config-bar.js';
 import { StatusBar } from './components/status-bar.js';
@@ -27,6 +39,11 @@ import { GpuTelemetryCard } from './components/gpu-telemetry.js';
 import { WorkerTable } from './components/worker-table.js';
 import { LogPane } from './components/log-pane.js';
 import { ServerMetrics } from './components/server-metrics.js';
+import {
+  FullMetricsTable,
+  rowsFromMetrics,
+  rowsFromServerMetrics,
+} from './components/full-metrics-table.js';
 
 function Dashboard() {
   useEffect(() => {
@@ -44,10 +61,12 @@ function Dashboard() {
 
     const warmStart = (epoch = null) => Promise.all([
       safe((s) => api.getConfig(s),       (d) => { if (d) config.value = d; }, epoch),
-      safe((s) => api.getProgress(s),     (d) => { if (d) bootstrapProgress(d); }, epoch),
+      safe((s) => api.getProgress(s),     (d) => {
+        if (d && !hasPhaseWsUpdate()) bootstrapProgress(d);
+      }, epoch),
       safe((s) => api.getServerMetrics(s), (d) => {
         // Warm-start before the first WS push lands. WS still drives updates.
-        if (d?.endpoint_summaries) {
+        if (d?.endpoint_summaries && !hasServerMetricsWsUpdate()) {
           serverMetrics.value = normalizeEndpointSummaries(d.endpoint_summaries);
         }
       }, epoch),
@@ -73,6 +92,9 @@ function Dashboard() {
 
   // Force re-render on every signal change via .value reads:
   connection.value; config.value;
+  const benchmarkRows = rowsFromMetrics(realtimeMetrics.value);
+  const telemetryRows = rowsFromMetrics(telemetryMetrics.value);
+  const serverRows = rowsFromServerMetrics(serverMetrics.value);
 
   return html`
     <div class="app">
@@ -91,10 +113,13 @@ function Dashboard() {
         <${ConfigBar} />
         <${RealtimeMetricsCard} />
         <${ThroughputLatencyChart} />
+        <${FullMetricsTable} title="Full Benchmark Metrics" rows=${benchmarkRows} />
         <${PhaseCards} />
         <${GpuTelemetryCard} />
+        <${FullMetricsTable} title="Full GPU Telemetry Metrics" rows=${telemetryRows} />
         <${WorkerTable} />
         <${ServerMetrics} />
+        <${FullMetricsTable} title="Full Server Metrics" rows=${serverRows} />
         <${LogPane} />
       </div>
     </div>

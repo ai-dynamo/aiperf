@@ -53,7 +53,7 @@ export function ServerMetrics() {
   const summaries = serverMetrics.value;
 
   return html`
-    <div class="card">
+    <div class="card server-metrics-card">
       <div class="card-title">Server Metrics</div>
       ${summaries.length === 0
         ? html`<div class="empty">No server-side metrics reported yet.</div>`

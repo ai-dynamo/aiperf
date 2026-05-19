@@ -460,6 +460,27 @@ class TestDatasetManagerCleanup:
         manager._backing_store.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_profile_start_keeps_rebroadcast_task_in_kubernetes_mode(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        cfg = _make_config(artifacts_dir=tmp_path)
+        manager = DatasetManager(
+            run=_make_run(cfg, artifact_dir=tmp_path),
+            service_id="dm-edge",
+        )
+        manager._compress_only = True
+        rebroadcast = asyncio.create_task(asyncio.sleep(60))
+        manager._rebroadcast_task = rebroadcast
+
+        await manager._on_profile_start(Command(cid="c", cmd=CommandType.PROFILE_START))
+
+        assert manager._rebroadcast_task is rebroadcast
+        assert not rebroadcast.done()
+        rebroadcast.cancel()
+        await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
     async def test_cleanup_cancels_rebroadcast_task(
         self,
         mock_tokenizer,
