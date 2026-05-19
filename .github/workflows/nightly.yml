@@ -881,10 +881,25 @@ jobs:
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
           STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
+          RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "${TMPDIR}"' EXIT
+
+          # Provenance properties attached to every staged wheel as
+          # Artifactory matrix parameters (key=value pairs after the
+          # path, separated by ';'). Two properties:
+          #   - github.run.url: link back to the workflow run that
+          #     produced this wheel. Viewable in Artifactory UI under
+          #     the file's Properties tab; surfaces in xray/audit too.
+          #   - git.commit.sha: full commit SHA the wheel was built from.
+          # github.run.url contains ':' and '/' which Artifactory
+          # accepts in matrix-parameter values, but URL-encoding the
+          # value is the safe form (handled below via python3 -c).
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          RUN_URL_ENC=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${RUN_URL}")
+          PROPS=";github.run.url=${RUN_URL_ENC};git.commit.sha=${RESOLVED_SHA}"
 
           # Single-object copies (no --recursive) so we only need s3:GetObject.
           # Stage both the canonical `aiperf` wheel and the renamed
@@ -907,13 +922,14 @@ jobs:
             HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
               -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
               -T "${TMPDIR}/${FN}" \
-              "${TARGET_URL}")
+              "${TARGET_URL}${PROPS}")
             if [ "${HTTP_CODE}" != "201" ]; then
               echo "::error::Artifactory deploy failed for ${FN}: HTTP ${HTTP_CODE} at ${TARGET_URL}"
               cat "${BODY_FILE}" || true
               exit 1
             fi
             echo "Wheel staged to Artifactory: ${TARGET_URL}"
+            echo "  properties: github.run.url=${RUN_URL}, git.commit.sha=${RESOLVED_SHA}"
           done
 
           # Note: explicit POST /api/pypi/<repo>/reindex was tried here but
