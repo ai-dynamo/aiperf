@@ -169,14 +169,23 @@ def hf_offline_mode():
     """Disable HuggingFace Hub network calls for the duration of this package.
 
     Scoped to package so it doesn't bleed into unit tests or other suites.
+
+    Both HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE are needed: the tokenizer
+    validator's prefetch-skip gate (tokenizer_validator.py) ANDs both vars,
+    and the prefetch path spawns ProcessPoolExecutor subprocesses that
+    bypass our in-process Tokenizer.from_pretrained patch and would
+    otherwise hit the real HF cache (EPERM under sandboxes/CI containers).
     """
-    prev = os.environ.get("HF_HUB_OFFLINE")
-    os.environ["HF_HUB_OFFLINE"] = "1"
+    keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    prev = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "1"
     yield
-    if prev is None:
-        os.environ.pop("HF_HUB_OFFLINE", None)
-    else:
-        os.environ["HF_HUB_OFFLINE"] = prev
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True, scope="package")

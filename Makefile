@@ -17,6 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
+		ci-install \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
@@ -212,6 +213,20 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	$(activate_venv) && pre-commit install --install-hooks
 
 	@# Print a success message
+	@printf "$(bold)$(green)Done!$(reset)\n"
+
+ci-install: #? CI-only environment setup: venv + project + plugin artifacts. No pre-commit hooks, no redundant mock-server install.
+	$(MAKE) setup-venv --no-print-directory
+
+	@printf "$(bold)$(green)Installing project (+ mock server)...$(reset)\n"
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install
+
+	@printf "$(bold)$(green)Generating plugin enum stubs...$(reset)\n"
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-enums
+
+	@printf "$(bold)$(green)Generating plugin overloads...$(reset)\n"
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-overloads
+
 	@printf "$(bold)$(green)Done!$(reset)\n"
 
 test-all: #? run all tests (unit, component integration, and integration).
