@@ -575,8 +575,8 @@ flowchart LR
 
 ```
 Request distribution (5000 requests)
-──────────────────────────────────────────────────────────────────────────────────────────
-  /v1/chat/completions              n=  4000
+──────────────────────────────────────────────
+  /v1/chat/completions              n=4000
     ISL    mean  1024.3   p50  1019   p99  1228
     OSL    mean   256.1   p50   256   p99   307
     ISL histogram (17 bins, n=4000, 52 unique)
@@ -588,10 +588,10 @@ Request distribution (5000 requests)
         25-   46   3 ██░░░░░░░░░░░░░░░░░░
         ... (10 rows total)
        210-  230   6 ████░░░░░░░░░░░░░░░░
-      min_tokens mean=    32.0 p50=    32
-      ignore_eos=true: 41
-      reasoning_effort: {'low': 100, 'medium': 250, 'high': 50}
-  /v1/embeddings                    n=  1000
+    min_tokens  mean    32.0   p50    32
+    ignore_eos=true: 41
+    reasoning_effort: {'low': 100, 'medium': 250, 'high': 50}
+  /v1/embeddings                    n=1000
     ISL    mean   512.7   p50   510   p99   683
     OSL    n/a
 ```
