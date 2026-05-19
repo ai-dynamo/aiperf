@@ -509,6 +509,13 @@ class _K8sEnvironment(BaseSettings):
         "it via AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE to steer traffic "
         "through toxiproxy for latency/blackhole injection.",
     )
+    APISERVER_TLS_SERVER_NAME_OVERRIDE: str | None = Field(
+        default=None,
+        description="Chaos-test hook: when KUBERNETES_SERVICE_HOST points at an "
+        "L4 proxy rather than kubernetes.default.svc, verify the apiserver "
+        "certificate against this hostname while still dialing the proxy. "
+        "Production MUST leave unset; C15 sets it to kubernetes.default.svc.",
+    )
 
     # Non-resource settings
     HEALTH: _HealthProbeSettings = Field(

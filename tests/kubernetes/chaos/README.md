@@ -38,13 +38,13 @@ tests/kubernetes/chaos/
   fixtures/
     toxiproxy.yaml                  # Toxiproxy Deployment + Service manifest (aiperf-chaos-toxiproxy ns)
   test_chaos_cancellation.py        # C1, C3
-  test_chaos_operator_resilience.py # C4, C5 (xfail)
-  test_chaos_jobset_pods.py         # C6, C7, C8, C9
-  test_chaos_helm.py                # H1, H2, H3, H4 (xfail)
+  test_chaos_operator_resilience.py # C4, C5
+  test_chaos_jobset_pods.py         # C6 (xfail), C7 (xfail), C8, C9
+  test_chaos_helm.py                # H1, H2, H3, H4
   test_chaos_churn.py               # C10, C11, C12 (xfail)
-  test_chaos_api_disruption.py      # C15 (xfail), C16
-  test_chaos_benchmark.py           # B1, B2, B3 (xfail)
-  test_chaos_infra.py               # K1 (xfail), K2 (xfail), K3 (xfail)
+  test_chaos_api_disruption.py      # C15 (xfail), C16 (xfail)
+  test_chaos_benchmark.py           # B1, B2, B3
+  test_chaos_infra.py               # K1, K2, K3
   findings-2026-04-23.md            # v1 run log
   findings-2026-04-23-v2.md         # v2 run log (populated during chaos session)
   README.md                         # this file
@@ -69,14 +69,14 @@ Wave 0 added an opt-in `podTemplate.shareProcessNamespace` Helm chart value (als
 | `test_c1_delete_aiperfjob_mid_ramp` | C1 | `lifecycle.on_delete` → `request_cancellation` + `close_progress_client` → owner-ref GC |
 | `test_c3_rapid_double_delete_is_idempotent` | C3 | `request_cancellation` / `close_progress_client` idempotence |
 | `test_c4_kill_operator_mid_benchmark_recovers` | C4 | kopf reconcile resume; durable `completion-claimed` annotation across operator restart |
-| `test_c5_orphaned_claim_recovers` (xfail) | C5b | recovery from "operator died between claim and handle_completion" — `_recover_orphaned_completion_claim` in `monitor.py` |
+| `test_c5_orphaned_claim_recovers` | C5b | recovery from "operator died between claim and handle_completion" — `_recover_orphaned_completion_claim` in `monitor.py` |
 
 ### JobSet / workload faults
 
 | Test | Design ID | Exercises |
 |------|-----------|-----------|
-| `test_c6_kill_controller_container_salvages` | C6 | `_maybe_recover_terminated_controller` salvage path after `kubectl exec` kill of `aiperf.cli` in control-plane container |
-| `test_c7_kill_worker_pod_mid_benchmark` | C7 | JobSet pod restartPolicy + controller tolerance of transient worker loss |
+| `test_c6_kill_controller_container_salvages` (xfail) | C6 | documents the current mid-profiling controller-kill salvage gap: final artifacts may not be recoverable yet, leaving the CR Running/profiling |
+| `test_c7_kill_worker_pod_mid_benchmark` (xfail) | C7 | JobSet pod restartPolicy; documents the current controller hang after worker replacement loses in-flight benchmark state |
 | `test_c8_kill_event_bus_sidecar` | C8 | sidecar restart + event-bus reconnect inside controller pod (cross-container kill via shared PID ns) |
 | `test_c9_kill_results_sidecar_mid_fetch` | C9 | `fetch_results_with_retry` backoff while the results sidecar restarts; interaction with orphaned-claim recovery |
 
@@ -87,32 +87,33 @@ Wave 0 added an opt-in `podTemplate.shareProcessNamespace` Helm chart value (als
 | `test_h1_install_job_uninstall_reinstall_is_clean` | H1 | Helm install → run CR → uninstall → reinstall; CRD + finalizer cleanup idempotence |
 | `test_h2_upgrade_with_inflight_job_preserves_cr` | H2 | `helm upgrade` mid-benchmark; CR + JobSet survive operator rollout |
 | `test_h3_invalid_values_fail_fast_and_recover` | H3 | Chart template error, rollback, clean reinstall |
-| `test_h4_missing_jobset_crd_surfaces_error` (xfail) | H4 | operator behavior when `jobsets.jobset.x-k8s.io` CRD is absent (exploratory — no contract yet) |
+| `test_h4_missing_jobset_crd_surfaces_error` | H4 | operator behavior when `jobsets.jobset.x-k8s.io` CRD is absent; missing JobSet CRD must surface through `status.conditions` or `phase=Failed` |
 | `test_c10_rapid_create_delete_recreate_same_name` | C10 | `on_create` `clear_cancellation` unsticks a re-created CR with the old name |
 | `test_c11_parallel_jobs_delete_subset` | C11 | parallel reconcile; deletion of 5/10 CRs doesn't destabilize the others |
 | `test_c12_invalid_spec_surfaces_conditions` (xfail) | C12 | malformed `spec.benchmark` surfaces as `phase=Failed` (exploratory — CRD schema is permissive) |
 | `test_c15_pause_apiserver_30s_recovers` (xfail) | C15 | 30 s apiserver pause via toxiproxy; operator reconcile retries + CR Completes (needs `KUBERNETES_SERVICE_HOST` override in operator Deployment) |
-| `test_c16_block_operator_controller_http_falls_back` | C16 | salvage path still completes CR when operator↔controller HTTP is dropped. Uses `operator_ready_toxiproxy_routed` (shared fixture in chaos conftest) to redeploy the operator with `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE` pinned at the toxiproxy Service; any future controller-HTTP fault-injection test should reuse that fixture. |
+| `test_c16_block_operator_controller_http_falls_back` (xfail) | C16 | operator↔controller HTTP routed through toxiproxy. Currently documents that the operator stays `Initializing` with Progress API connection errors after the proxy upstream is rewired; flips to pass once the toxiproxy data path is fixed and the salvage path reaches `Completed`. |
 | `test_b1_mock_server_500s_mid_run` | B1 | benchmark tolerates 10 s burst of HTTP 500 from mock-server; error-rate metric populated |
 | `test_b2_mock_server_restart_mid_run` | B2 | benchmark recovers across a mock-server Deployment restart (connection refused → reconnect) |
-| `test_b3_mock_server_latency_injection` (xfail) | B3 | per-request latency spike via toxiproxy toxic — needs fixture to expose an in-cluster listen port for mock-server traffic |
+| `test_b3_mock_server_latency_injection` | B3 | per-request latency spike via toxiproxy toxic through the in-cluster mock-server proxy port |
 
 ### Infrastructure faults
 
 | Test | Design ID | Exercises |
 |------|-----------|-----------|
-| `test_k1_image_pull_backoff_surfaces_pending` (xfail) | K1 | non-existent container image; asserts `ImagePullBackOff` / `ErrImagePull` surfaces on JobSet pods and CR phase stays `Pending` or reaches `Failed` — documents the "silent Pending forever" gap when operator doesn't propagate pull errors to the CR |
-| `test_k2_dns_resolution_failure_fails_fast` (xfail) | K2 | `endpoint.urls` pointing at an RFC 2606 `.invalid` hostname; asserts CR reaches `Failed` with a condition naming the resolution failure within 120 s — documents the "hang forever" gap when workers retry the DNS lookup indefinitely |
-| `test_k3_resource_quota_exhaustion_stays_pending` (xfail) | K3 | namespace `ResourceQuota` capped below the controller's memory request; asserts either CR `Failed` or a namespace event containing "exceeded quota" surfaces within 120 s. Quota is unconditionally deleted in `finally` |
+| `test_k1_image_pull_backoff_surfaces_pending` | K1 | non-existent container image; asserts `ImagePullBackOff` / `ErrImagePull` surfaces on JobSet pods and the CR reaches `Failed` within 120 s after the pod pull failure is visible |
+| `test_k2_dns_resolution_failure_fails_fast` | K2 | `endpoint.urls` pointing at an RFC 2606 `.invalid` hostname; asserts the CR reaches `Failed` within 120 s and status text names the DNS / endpoint failure domain |
+| `test_k3_resource_quota_exhaustion_fails_fast` | K3 | namespace `ResourceQuota` capped below the controller's memory request; asserts the CR reaches `Failed` within 120 s and status text or namespace events surface the quota admission rejection. Quota is unconditionally deleted in `finally` |
 
 ### Xfail scenarios and why
 
 Each xfail ships with `strict=False` so the test converts a controlled fault into a documented "not yet contracted" signal rather than a hard failure. Rationale from each Wave's report:
 
-- **H4 — missing JobSet CRD.** Chart does not pre-validate the `jobsets.jobset.x-k8s.io` CRD, so operator behavior when it's absent is observed rather than contract-asserted. Flips to pass when the chart adds a `requires:` check or the operator itself fails fast with a typed error.
+- **C6 — controller container kill.** Documents a known mid-profiling salvage gap: final artifacts may not be recoverable from the sidecar yet, so the CR can remain Running/profiling instead of reaching `Completed`.
+- **C7 — worker pod kill.** Documents the current worker-replacement hang: JobSet recreates the pod, but the controller can remain Running/profiling because the replacement worker does not recover in-flight benchmark state.
 - **C12 — invalid spec.** The CRD's OpenAPI schema is deliberately permissive (flat `spec.benchmark`), so bogus config is accepted at admission and only surfaces at operator-side validation. Test xfails when the operator logs-and-retries instead of stamping `phase=Failed` within 60 s.
 - **C15 — 30 s apiserver pause.** Requires redirecting the operator's apiserver traffic through toxiproxy, which needs the operator Deployment re-rendered with `KUBERNETES_SERVICE_HOST` / `KUBERNETES_SERVICE_PORT` pointed at the toxiproxy Service AND an SNI-preserving L4 route to `kubernetes.default.svc:443` (default HTTP proxy mode breaks TLS). Cross-cutting Helm change; deferred. Flips to pass when the chart adds apiserver-URL override envs.
-- **B3 — mock-server latency injection.** The toxiproxy fixture Service does not currently expose listen port `:20010` for mock-server traffic, and the test refuses to mutate the fixture inline. Flips to pass when `fixtures/toxiproxy.yaml` advertises an extra port + a helper points `AIPerfJobConfig.endpoint_url` at `toxiproxy.<ns>.svc:20010`.
+- **C16 — operator-controller HTTP block.** Documents the unverified toxiproxy data path: the operator currently stays `Initializing` with Progress API connection errors after the proxy upstream is rewired, and should flip to pass once the route is fixed and the salvage path reaches `Completed`.
 
 ## Manual-run recipes for deferred API-disruption scenarios
 
@@ -137,7 +138,7 @@ Important constraint: this needs an SNI-preserving L4 route to `kubernetes.defau
 
 ### C16 — block operator ↔ controller HTTP
 
-This one is runnable today.
+This one is currently xfailed: the operator remains `Initializing` with Progress API connection errors after the proxy upstream is rewired.
 
 Current manual recipe:
 

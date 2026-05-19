@@ -108,6 +108,10 @@ spec:
         - name: KUBERNETES_SERVICE_PORT
           value: {{ . | quote }}
         {{- end }}
+        {{- with .Values.chaos.apiserverTlsServerNameOverride }}
+        - name: AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE
+          value: {{ . | quote }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz

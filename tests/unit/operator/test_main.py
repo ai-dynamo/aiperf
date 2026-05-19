@@ -40,7 +40,11 @@ from aiperf.operator.handlers.monitor import (
 )
 from aiperf.operator.health import check_endpoint_health as _check_endpoint_health
 from aiperf.operator.main import configure
-from aiperf.operator.models import ControllerFetchResult, OwnerReference
+from aiperf.operator.models import (
+    ControllerFetchResult,
+    EndpointHealthResult,
+    OwnerReference,
+)
 from aiperf.operator.progress_client import ControllerAggregateWorkerStatus, JobProgress
 from aiperf.operator.status import Phase
 
@@ -3289,7 +3293,7 @@ class TestHandleCompletionBackfill:
 # =============================================================================
 
 
-class TestOnCreatePreflightIntegration:
+class TestOperatorPreflight:
     """Integration tests for on_create handler's preflight check interactions."""
 
     @pytest.fixture(autouse=True)
@@ -3349,6 +3353,59 @@ class TestOnCreatePreflightIntegration:
         mock_checker = MagicMock()
         mock_checker.run_all = AsyncMock(return_value=results)
         return mock_checker
+
+    @pytest.mark.asyncio
+    async def test_endpoint_dns_failure_marks_create_failed(
+        self,
+        mock_all_events: dict[str, MagicMock],
+        full_aiperfjob_spec: dict[str, Any],
+    ) -> None:
+        """DNS endpoint failures fail create-time validation permanently."""
+        from aiperf.operator.main import on_create
+
+        full_aiperfjob_spec["benchmark"]["endpoint"]["urls"] = [
+            "http://missing.invalid:8000/v1"
+        ]
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+
+        dns_error = (
+            "DNS resolution failed for missing.invalid: "
+            "[Errno -2] Name or service not known"
+        )
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.create.check_endpoint_health",
+                new_callable=AsyncMock,
+                return_value=EndpointHealthResult(reachable=False, error=dns_error),
+            ),
+            pytest.raises(kopf.PermanentError, match="Endpoint DNS resolution failed"),
+        ):
+            await on_create(
+                body=body,
+                spec=full_aiperfjob_spec,
+                name="test-job",
+                namespace="default",
+                uid="test-uid",
+                patch=kopf_patch,
+            )
+
+        assert kopf_patch.status["phase"] == "Failed"
+        assert "DNS resolution failed" in kopf_patch.status["error"]
+        conditions = kopf_patch.status.get("conditions", [])
+        endpoint_condition = next(
+            c for c in conditions if c["type"] == "EndpointReachable"
+        )
+        assert endpoint_condition["status"] == "False"
+        assert endpoint_condition["reason"] == "EndpointDNSResolutionFailed"
+        mock_all_events["event_failed"].assert_called_once()
 
     @pytest.mark.asyncio
     async def test_preflight_pass_sets_condition_and_creates_resources(

@@ -463,16 +463,6 @@ async def test_h3_invalid_values_fail_fast_and_recover(
             await _force_cleanup_release(bad_deployer, kubectl)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "H4 is exploratory: the chart does not pre-validate the JobSet CRD, "
-        "so operator behavior when the CRD is absent is observed rather than "
-        "contract-asserted. Mark xfail strict=False so either a clean "
-        "surfaced error (test passes) or an operator hang (test xfails) is "
-        "acceptable — both are documented in findings-2026-04-23-v2.md."
-    ),
-)
 @pytest.mark.timeout(_PER_TEST_TIMEOUT)
 async def test_h4_missing_jobset_crd_surfaces_error(
     kubectl: KubectlClient,
@@ -493,8 +483,7 @@ async def test_h4_missing_jobset_crd_surfaces_error(
     operator tries to create a JobSet for a newly-applied AIPerfJob CR,
     apiserver should return 404 on the JobSet kind. The operator should
     surface this through ``status.conditions`` or reach phase=Failed
-    within 60 s. If it hangs silently, that is itself a bug worth
-    capturing (xfail strict=False).
+    within 60 s.
     """
     from dev.versions import JOBSET_CRD_URL_TEMPLATE, JOBSET_VERSION
 

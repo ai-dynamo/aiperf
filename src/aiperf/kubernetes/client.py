@@ -19,6 +19,7 @@ preserves the single import surface:
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -98,6 +99,18 @@ __all__ = [
 # the patches propagate to the sibling ``client_jobs`` / ``client_jobsets`` /
 # ``client_pods`` modules that also import these names.
 
+APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV = "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE"
+
+
+def _apply_apiserver_tls_server_name_override() -> None:
+    """Apply the chaos-only apiserver TLS hostname override when configured."""
+    server_name = os.environ.get(APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV, "").strip()
+    if not server_name:
+        return
+    cfg = client.Configuration.get_default_copy()
+    cfg.assert_hostname = server_name
+    client.Configuration.set_default(cfg)
+
 
 @asynccontextmanager
 async def k8s_client(
@@ -132,6 +145,7 @@ async def k8s_client(
     suppress_noisy_http_loggers()
     try:
         config.load_incluster_config()
+        _apply_apiserver_tls_server_name_override()
     except config.ConfigException:
         await config.load_kube_config(config_file=kubeconfig, context=context)
     api = ApiClient()

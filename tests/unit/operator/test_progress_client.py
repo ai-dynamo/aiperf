@@ -13,6 +13,7 @@ import zstandard as zstd
 from pytest import param
 
 from aiperf.common.enums import SystemState, WorkerStartupState
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.operator.progress_client import (
     RETRYABLE_STATUS_CODES,
     JobProgress,
@@ -189,6 +190,26 @@ class TestProgressClientInit:
         """Test session is None before context manager."""
         client = ProgressClient()
         assert client._session is None
+
+    def test_controller_http_override_does_not_capture_results_sidecar(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Controller-API toxiproxy override must not block sidecar salvage."""
+        monkeypatch.setattr(
+            K8sEnvironment,
+            "CONTROLLER_HTTP_URL_OVERRIDE",
+            "http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002",
+        )
+
+        api_client = ProgressClient(port=K8sEnvironment.PORTS.API_SERVICE)
+        sidecar_client = ProgressClient(port=K8sEnvironment.PORTS.RESULTS_SIDECAR)
+
+        assert api_client._base_url("controller.ns.svc") == (
+            "http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002"
+        )
+        assert sidecar_client._base_url("controller.ns.svc") == (
+            f"http://controller.ns.svc:{K8sEnvironment.PORTS.RESULTS_SIDECAR}"
+        )
 
 
 class TestProgressClientContextManager:

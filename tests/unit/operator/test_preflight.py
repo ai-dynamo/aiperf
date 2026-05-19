@@ -596,6 +596,36 @@ class TestCheckResourceQuotas:
             result = await checker._check_resource_quotas()
         assert result.status == CheckStatus.WARN
 
+    @pytest.mark.asyncio
+    async def test_cpu_quota_overcommit_fails(self) -> None:
+        checker = _make_checker(num_pods=10)
+        quota = MagicMock()
+        quota.status = MagicMock()
+        quota.status.hard = {"requests.cpu": "1"}
+        quota.status.used = {"requests.cpu": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.FAIL
+        assert "CPU quota" in result.message
+
+    @pytest.mark.asyncio
+    async def test_memory_quota_overcommit_fails(self) -> None:
+        checker = _make_checker()
+        quota = MagicMock()
+        quota.status = MagicMock()
+        quota.status.hard = {"requests.memory": "256Mi"}
+        quota.status.used = {"requests.memory": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.FAIL
+        assert "memory quota" in result.message
+
 
 # =============================================================================
 # Tier 3: Secrets

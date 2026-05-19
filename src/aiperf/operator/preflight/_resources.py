@@ -314,9 +314,9 @@ class _ResourceChecksMixin:
                 if total_needed > parse_cpu(hard_cpu):
                     return CheckResult(
                         name="Resource Quotas",
-                        status=CheckStatus.WARN,
+                        status=CheckStatus.FAIL,
                         message=(
-                            f"Benchmark may exceed CPU quota: "
+                            f"Benchmark would exceed CPU quota: "
                             f"{format_cpu(total_needed)} needed vs {hard_cpu} limit. "
                             f"Request a quota increase or reduce worker count."
                         ),
@@ -326,9 +326,9 @@ class _ResourceChecksMixin:
                 if total_needed > parse_memory_gib(hard_mem):
                     return CheckResult(
                         name="Resource Quotas",
-                        status=CheckStatus.WARN,
+                        status=CheckStatus.FAIL,
                         message=(
-                            f"Benchmark may exceed memory quota: "
+                            f"Benchmark would exceed memory quota: "
                             f"{format_memory(total_needed)} needed vs {hard_mem} limit. "
                             f"Request a quota increase or reduce worker count."
                         ),

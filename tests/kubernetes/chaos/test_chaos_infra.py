@@ -13,8 +13,8 @@ Exercises these operator code paths:
 * ``src/aiperf/operator/handlers/create.py::on_create`` — CR accepted and
   the JobSet created, but downstream pods never become Ready because
   kubelet rejects the image pull (K1) or the quota admission webhook
-  rejects pod creation (K3). Tests that phase stays ``Pending`` or
-  reaches ``Failed`` with a surfaced condition, rather than retrying
+  rejects pod creation (K3). Tests that the operator now propagates those
+  infrastructure failures to CR phase ``Failed`` rather than retrying
   silently.
 * ``src/aiperf/operator/handlers/monitor.py::_monitor_tick`` — when the
   benchmark endpoint URL never resolves / never responds, the
@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import orjson
 import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
@@ -65,18 +66,41 @@ async def _phase(kubectl: KubectlClient, namespace: str, name: str) -> str:
     return res.stdout.strip()
 
 
+async def _status_text(kubectl: KubectlClient, namespace: str, name: str) -> str:
+    """Return serialized AIPerfJob status text for cause assertions."""
+    res = await kubectl.run(
+        "get",
+        "aiperfjob",
+        name,
+        "-n",
+        namespace,
+        "-o",
+        "json",
+        check=False,
+    )
+    if not res.stdout.strip():
+        return ""
+    body = orjson.loads(res.stdout)
+    status = body.get("status", {})
+    return orjson.dumps(status).decode()
+
+
+async def _namespace_events_text(kubectl: KubectlClient, namespace: str) -> str:
+    """Return serialized namespace events text for cause assertions."""
+    res = await kubectl.run(
+        "get",
+        "events",
+        "-n",
+        namespace,
+        "--sort-by=.lastTimestamp",
+        "-o",
+        "json",
+        check=False,
+    )
+    return res.stdout
+
+
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "K1 is exploratory: the operator creates the JobSet regardless of "
-        "whether the image exists, and there is no contract today that the "
-        "CR transitions to Failed when kubelet cannot pull the benchmark "
-        "image. Test passes if phase=Failed with a pull-error condition "
-        "within 120 s; otherwise xfails and we document the gap for a "
-        "follow-up (surface ImagePullBackOff as an explicit CR condition)."
-    ),
-)
 async def test_k1_image_pull_backoff_surfaces_pending(
     operator_ready: OperatorDeployer,  # noqa: ARG001  (operator must be running to reconcile the CR)
     chaos_injector: ChaosInjector,
@@ -93,11 +117,8 @@ async def test_k1_image_pull_backoff_surfaces_pending(
       container status ``ImagePullBackOff`` or ``ErrImagePull``.
     * ``kubectl describe pod`` surfaces the pull failure in the event
       stream (``Failed to pull image`` or ``ErrImagePull`` / ``Back-off``).
-    * The CR ``.status.phase`` stays ``Pending`` (or transitions to
-      ``Failed`` with a clear condition). If the operator silently
-      leaves phase Pending forever with no surfaced condition, the
-      xfail wrapper converts that gap into a documented warning rather
-      than a hard failure.
+    * The CR ``.status.phase`` transitions to ``Failed`` within 120 s
+      after the pod pull failure is visible.
     """
     name = "chaos-k1"
     bad_image_config = AIPerfJobConfig(
@@ -157,8 +178,7 @@ async def test_k1_image_pull_backoff_surfaces_pending(
             f"Describe output head:\n{describe.stdout[:2000]}"
         )
 
-        # The CR should either stay Pending (documented gap) or reach
-        # Failed with a clear condition. Poll for up to 120 s.
+        # The CR must now reach Failed once the pod pull error is visible.
         deadline = time.monotonic() + 120.0
         observed_phase = ""
         while time.monotonic() < deadline:
@@ -166,26 +186,16 @@ async def test_k1_image_pull_backoff_surfaces_pending(
             if observed_phase == "Failed":
                 break
             await asyncio.sleep(2.0)
-        assert observed_phase in ("Failed", "Pending", "Initializing", ""), (
-            f"K1: unexpected phase {observed_phase!r} — expected Pending "
-            "or Failed while image-pull is stuck"
+        assert observed_phase == "Failed", (
+            f"K1: CR did not reach Failed within 120 s after pod "
+            f"{pull_pod!r} surfaced ErrImagePull/ImagePullBackOff "
+            f"(observed phase={observed_phase!r})"
         )
     finally:
         await _force_delete(kubectl, operator_job_namespace, name)
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "K2 is exploratory: a benchmark pointed at an unresolvable "
-        "hostname surfaces the DNS failure in worker / system-controller "
-        "logs, but there is no contract today that the CR transitions to "
-        "Failed within 120 s. Test passes if phase=Failed with an "
-        "endpoint-reachability condition; otherwise xfails and documents "
-        "the hang-forever gap for a follow-up fix."
-    ),
-)
 async def test_k2_dns_resolution_failure_fails_fast(
     operator_ready: OperatorDeployer,  # noqa: ARG001  (operator must be running to reconcile the CR)
     chaos_injector: ChaosInjector,
@@ -198,15 +208,11 @@ async def test_k2_dns_resolution_failure_fails_fast(
     Creates a CR whose ``endpoint.urls`` point at a ``.invalid`` TLD
     (RFC 2606 — guaranteed never to resolve). The expectation:
 
-    * Worker / system-controller pods log a resolution failure within
-      60 s of becoming Ready.
-    * The CR reaches terminal ``Failed`` phase within 120 s, ideally
-      with an ``EndpointReachable=False`` or similarly-named condition.
+    * The CR reaches terminal ``Failed`` phase within 120 s.
+    * The CR status text names a DNS, resolution, endpoint, unreachable,
+      or ``.invalid`` cause.
 
-    If the operator lets the benchmark hang indefinitely without
-    surfacing the DNS error (e.g. retries forever inside the worker),
-    the xfail wrapper converts the hang into a documented gap. A
-    ``.invalid`` TLD is used over an unreachable-but-valid host so the
+    A ``.invalid`` TLD is used over an unreachable-but-valid host so the
     failure mode is deterministic across every cluster's DNS setup.
     """
     name = "chaos-k2"
@@ -239,46 +245,24 @@ async def test_k2_dns_resolution_failure_fails_fast(
             "operator"
         )
 
-        # Best-effort assertion that the Failed condition names a
-        # resolution / endpoint issue; accept any False condition as
-        # evidence the operator surfaced a problem.
-        cond = await kubectl.run(
-            "get",
-            "aiperfjob",
-            name,
-            "-n",
-            operator_job_namespace,
-            "-o",
-            "jsonpath={.status.conditions[*].status}|{.status.conditions[*].message}",
-            check=False,
+        # The Failed status must name the endpoint/DNS problem domain; an
+        # unrelated False condition is not enough evidence for this scenario.
+        status_text = await _status_text(kubectl, operator_job_namespace, name)
+        lower_status = status_text.lower()
+        assert any(
+            term in lower_status
+            for term in ("dns", "resolution", "endpoint", "unreachable", ".invalid")
+        ), (
+            "K2: CR reached Failed but status did not mention a DNS, "
+            "resolution, endpoint, unreachable, or .invalid cause. "
+            f"Observed status: {status_text!r}"
         )
-        statuses, _, messages = cond.stdout.partition("|")
-        assert "False" in statuses, (
-            "K2: CR reached Failed but no False condition was stamped — "
-            "operator must surface a human-readable cause for the DNS "
-            f"failure. Observed status conditions: {cond.stdout!r}"
-        )
-        # Soft hint that the message names the problem domain; don't
-        # assert because wording may evolve.
-        _ = messages  # kept for operator-log triage via pytest -s
     finally:
         await _force_delete(kubectl, operator_job_namespace, name)
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "K3 is exploratory: a namespace ResourceQuota cap below the "
-        "controller's memory request makes JobSet pod creation fail at "
-        "admission, but there is no contract today that this surfaces on "
-        "the AIPerfJob CR. Test passes if phase=Failed with a "
-        "quota-exceeded condition, or if phase stays Pending and the "
-        "JobSet's events name the quota cause; otherwise xfails and "
-        "documents the gap."
-    ),
-)
-async def test_k3_resource_quota_exhaustion_stays_pending(
+async def test_k3_resource_quota_exhaustion_fails_fast(
     operator_ready: OperatorDeployer,  # noqa: ARG001  (operator must be running to reconcile the CR)
     chaos_injector: ChaosInjector,
     operator_job_namespace: str,
@@ -290,12 +274,9 @@ async def test_k3_resource_quota_exhaustion_stays_pending(
     Applies a ``ResourceQuota`` capping namespace memory at 256Mi (well
     below any controller/worker request) and creates a CR. Asserts:
 
-    * Within 120 s the CR either (a) stays ``Pending`` with a JobSet
-      event naming the quota, or (b) reaches ``Failed`` with a surfaced
-      condition.
-    * A namespace event mentioning ``exceeded quota`` or
-      ``forbidden: exceeded`` is present — this is kube-apiserver's
-      canonical phrasing when quota admission rejects a pod.
+    * Within 120 s the CR reaches ``Failed`` and either CR status text
+      mentions quota or namespace events mention the quota admission
+      rejection.
 
     The quota is removed unconditionally in ``finally`` so subsequent
     tests in the same namespace can make forward progress. We do not
@@ -328,29 +309,36 @@ async def test_k3_resource_quota_exhaustion_stays_pending(
             config=config, name=name, namespace=operator_job_namespace
         )
 
-        # Poll for up to 120 s: either Failed phase, or a quota-named
-        # namespace event. Whichever shows up first satisfies the test.
+        # Poll for up to 120 s: quota admission rejection must now surface
+        # on the CR as Failed, not only in namespace events.
         deadline = time.monotonic() + 120.0
-        surfaced = False
         observed_phase = ""
         while time.monotonic() < deadline:
             observed_phase = await _phase(kubectl, operator_job_namespace, name)
             if observed_phase == "Failed":
-                surfaced = True
-                break
-            events = await kubectl.get_events(operator_job_namespace, limit=40)
-            lower = events.lower()
-            if "exceeded quota" in lower or "forbidden: exceeded" in lower:
-                surfaced = True
                 break
             await asyncio.sleep(2.0)
 
-        assert surfaced, (
-            f"K3: no quota-related signal surfaced within 120 s "
-            f"(phase={observed_phase!r}). Expected either phase=Failed "
-            "or a namespace event naming the quota; operator may be "
-            "silently retrying pod creation without propagating the "
-            "admission rejection to the CR"
+        assert observed_phase == "Failed", (
+            f"K3: CR did not reach Failed within 120 s after ResourceQuota "
+            f"{quota_name!r} rejected pod admission (observed phase="
+            f"{observed_phase!r})"
+        )
+
+        status_text = await _status_text(kubectl, operator_job_namespace, name)
+        events_text = await _namespace_events_text(kubectl, operator_job_namespace)
+        lower_status = status_text.lower()
+        lower_events = events_text.lower()
+        assert (
+            "quota" in lower_status
+            or "exceeded quota" in lower_events
+            or "forbidden: exceeded" in lower_events
+        ), (
+            "K3: CR reached Failed but neither CR status mentioned quota "
+            "nor namespace events mentioned an exceeded quota admission "
+            "rejection. "
+            f"Observed status: {status_text!r}\n"
+            f"Observed events: {events_text[-4000:]!r}"
         )
     finally:
         await _force_delete(kubectl, operator_job_namespace, name)

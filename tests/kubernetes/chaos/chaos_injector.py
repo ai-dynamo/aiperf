@@ -275,6 +275,8 @@ class ChaosInjector:
         Returns the phase that was observed.
         """
         deadline = time.monotonic() + (timeout or self.timings.completion_wait_seconds)
+        observed_phase = ""
+        observed_current_phase = ""
         while time.monotonic() < deadline:
             res = await self.kubectl.run(
                 "get",
@@ -287,13 +289,16 @@ class ChaosInjector:
                 check=False,
             )
             phase, _, curr = res.stdout.strip().partition("|")
+            observed_phase = phase
+            observed_current_phase = curr
             if phase in phases and (current_phase is None or curr == current_phase):
                 return phase
             await asyncio.sleep(1.0)
         raise TimeoutError(
             f"AIPerfJob {namespace}/{name} did not reach phase "
             f"{phases} (currentPhase={current_phase!r}) within "
-            f"{timeout or self.timings.completion_wait_seconds} s"
+            f"{timeout or self.timings.completion_wait_seconds} s "
+            f"(observed phase={observed_phase!r}, currentPhase={observed_current_phase!r})"
         )
 
     async def read_claim_annotation(self, namespace: str, name: str) -> str | None:
@@ -320,7 +325,13 @@ class ChaosInjector:
                 return value.strip('"').strip("'") or None
         return None
 
-    async def get_controller_pod_name(self, namespace: str, job_name: str) -> str:
+    async def get_controller_pod_name(
+        self,
+        namespace: str,
+        job_name: str,
+        *,
+        timeout: float = 60.0,
+    ) -> str:
         """Return the controller pod name for an AIPerfJob.
 
         The JobSet spawns a single controller replica named
@@ -331,26 +342,29 @@ class ChaosInjector:
             RuntimeError: When no controller pod is present (e.g. job still
                 Pending or already reaped).
         """
-        res = await self.kubectl.run(
-            "get",
-            "pods",
-            "-n",
-            namespace,
-            "-l",
-            f"jobset.sigs.k8s.io/jobset-name=aiperf-{job_name},"
-            "jobset.sigs.k8s.io/replicatedjob-name=controller",
-            "-o",
-            "jsonpath={.items[0].metadata.name}",
-            check=False,
-        )
-        name = res.stdout.strip()
-        if not name:
-            raise RuntimeError(
-                f"no controller pod found for AIPerfJob {namespace}/{job_name} "
-                f"(label jobset.sigs.k8s.io/jobset-name=aiperf-{job_name}); "
-                "is the job still Pending?"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            res = await self.kubectl.run(
+                "get",
+                "pods",
+                "-n",
+                namespace,
+                "-l",
+                f"jobset.sigs.k8s.io/jobset-name=aiperf-{job_name},"
+                "jobset.sigs.k8s.io/replicatedjob-name=controller",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+                check=False,
             )
-        return name
+            name = res.stdout.strip()
+            if name:
+                return name
+            await asyncio.sleep(1.0)
+        raise RuntimeError(
+            f"no controller pod found for AIPerfJob {namespace}/{job_name} "
+            f"(label jobset.sigs.k8s.io/jobset-name=aiperf-{job_name}); "
+            "is the job still Pending?"
+        )
 
     async def get_worker_pod_names(self, namespace: str, job_name: str) -> list[str]:
         """Return every worker pod name for an AIPerfJob.

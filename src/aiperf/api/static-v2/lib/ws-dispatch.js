@@ -47,16 +47,22 @@ function applyRecords(patch) {
  *  ``[{endpoint, metrics: [{name, value, unit}, ...]}, ...]``. The component
  *  shows one representative value per metric — first series, ``stats.avg``
  *  (or the only stats field that's set, e.g. ``rate`` for counters). */
+function isRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function normalizeEndpointSummaries(summaries) {
-  if (!summaries || typeof summaries !== 'object') return [];
-  return Object.entries(summaries).map(([endpoint, body]) => {
-    const metricsDict = body?.metrics ?? {};
-    const metrics = Object.entries(metricsDict).map(([name, m]) => {
-      const stats = m?.series?.[0]?.stats ?? {};
+  if (!isRecord(summaries)) return [];
+  return Object.entries(summaries).flatMap(([endpoint, body]) => {
+    if (!isRecord(body) || !isRecord(body.metrics)) return [];
+    const metrics = Object.entries(body.metrics).flatMap(([name, m]) => {
+      if (!isRecord(m) || !Array.isArray(m.series)) return [];
+      const stats = m.series[0]?.stats;
+      if (!isRecord(stats)) return [];
       const value = stats.avg ?? stats.rate ?? stats.value ?? null;
-      return { name, value, unit: m?.unit ?? null };
+      return [{ name, value, unit: m.unit ?? null }];
     });
-    return { endpoint, metrics };
+    return metrics.length ? [{ endpoint, metrics }] : [];
   });
 }
 

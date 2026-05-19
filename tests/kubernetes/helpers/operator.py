@@ -416,6 +416,7 @@ class OperatorDeployer:
         controller_http_url_override: str | None = None,
         apiserver_service_host_override: str | None = None,
         apiserver_service_port_override: str | None = None,
+        apiserver_tls_server_name_override: str | None = None,
     ) -> None:
         """Initialize operator deployer.
 
@@ -440,6 +441,8 @@ class OperatorDeployer:
                 to route operator -> apiserver traffic through toxiproxy.
             apiserver_service_port_override: Optional override for the in-cluster
                 ``KUBERNETES_SERVICE_PORT`` env var paired with the host override.
+            apiserver_tls_server_name_override: Optional TLS hostname used when
+                verifying the apiserver certificate while dialing a proxy host.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -449,6 +452,7 @@ class OperatorDeployer:
         self.controller_http_url_override = controller_http_url_override
         self.apiserver_service_host_override = apiserver_service_host_override
         self.apiserver_service_port_override = apiserver_service_port_override
+        self.apiserver_tls_server_name_override = apiserver_tls_server_name_override
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -618,6 +622,11 @@ class OperatorDeployer:
         if self.apiserver_service_port_override:
             env_pairs.append(
                 f"KUBERNETES_SERVICE_PORT={self.apiserver_service_port_override}"
+            )
+        if self.apiserver_tls_server_name_override:
+            env_pairs.append(
+                "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE="
+                f"{self.apiserver_tls_server_name_override}"
             )
         await self.kubectl.run(
             "set",

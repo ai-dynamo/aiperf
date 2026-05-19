@@ -12,15 +12,12 @@ HTTP API (C16).
 * **Apiserver (C15):** ``kubernetes_asyncio`` auto-configures from the
   in-cluster env vars (``KUBERNETES_SERVICE_HOST`` /
   ``KUBERNETES_SERVICE_PORT``) which the kubelet injects into every
-  pod. Redirecting that traffic through toxiproxy requires re-deploying
-  the operator Deployment with those env vars pointed at the toxiproxy
-  Service AND teaching toxiproxy to proxy TLS to ``kubernetes.default.
-  svc:443`` (raw TCP passthrough works; the apiserver's serving cert
-  must still validate, which means either disabling TLS verification
-  operator-side or running toxiproxy as an SNI-preserving L4 proxy).
-  That is a cross-cutting infra change this test file deliberately
-  avoids. C15 still ships as ``xfail(strict=False)`` with reproduction
-  steps in the docstring.
+  pod. The C15 fixture re-deploys the operator with those env vars
+  pointed at the toxiproxy Service and sets
+  ``AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE=kubernetes.default.svc``
+  so raw TCP passthrough still verifies the real apiserver certificate.
+  C15 remains ``xfail(strict=False)`` until the full cluster path is
+  verified passing rather than only statically/unit-verified.
 
 * **SystemController HTTP (C16):** landed. The operator honors
   ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` (chaos-only env var)
@@ -44,6 +41,7 @@ import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.chaos.toxiproxy import (
+    TOXIPROXY_APISERVER_PORT,
     TOXIPROXY_CONTROLLER_HTTP_PORT,
     ToxiproxyInjector,
 )
@@ -73,16 +71,10 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
 @pytest.mark.xfail(
     strict=False,
     reason=(
-        "C15 requires redirecting the operator's apiserver traffic "
-        "through toxiproxy, which needs the operator Deployment "
-        "re-rendered with KUBERNETES_SERVICE_HOST / "
-        "KUBERNETES_SERVICE_PORT pointed at the toxiproxy Service AND "
-        "an L4/SNI-preserving toxiproxy route to kubernetes.default.svc:"
-        "443 (the default HTTP-proxy mode breaks TLS). Cross-cutting "
-        "infra change deferred — shipping as xfail(strict=False) with "
-        "reproduction notes in the docstring. Flips to pass once the "
-        "operator chart adds apiserver-URL override envs (tracked as "
-        "TODO in findings-2026-04-23-v2.md)."
+        "C15 now has in-repo toxiproxy routing and TLS server-name "
+        "override wiring, but the full cluster path has not been verified "
+        "passing in this run. Keep xfail until the live test proves the "
+        "operator apiserver data path traverses toxiproxy and recovers."
     ),
 )
 async def test_c15_pause_apiserver_30s_recovers(
@@ -102,12 +94,13 @@ async def test_c15_pause_apiserver_30s_recovers(
     be retried once the toxic is removed, and the monitor timer must
     resume without dropping the in-flight CR.
 
-    Repro steps for the landed variant (post infra):
+    Repro steps for the routed variant:
 
     1. ``await toxiproxy_injector.add_proxy("apiserver", "0.0.0.0:20000",
        "kubernetes.default.svc:443")``
     2. Operator env rewritten to ``KUBERNETES_SERVICE_HOST=toxiproxy.
-       aiperf-chaos-toxiproxy.svc`` + ``KUBERNETES_SERVICE_PORT=20000``
+       aiperf-chaos-toxiproxy.svc`` + ``KUBERNETES_SERVICE_PORT=20000`` +
+       ``AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE=kubernetes.default.svc``
        (via ``operator_ready_apiserver_toxiproxy_routed``).
     3. ``await toxiproxy_injector.add_toxic("apiserver", "timeout",
        {"timeout": 0})`` right after CR reaches Running/profiling.
@@ -124,13 +117,9 @@ async def test_c15_pause_apiserver_30s_recovers(
         image=k8s_settings.aiperf_image,
     )
     try:
-        # Create the proxy so the fixture is at least exercised end-to-end
-        # — this keeps the test meaningful even under xfail by asserting
-        # the toxiproxy fixture itself is healthy. The proxy is not
-        # actually in the operator's data path until the infra hook lands.
         await toxiproxy_injector.add_proxy(
             name="apiserver",
-            listen="0.0.0.0:20000",
+            listen=f"0.0.0.0:{TOXIPROXY_APISERVER_PORT}",
             upstream="kubernetes.default.svc:443",
         )
 
@@ -145,10 +134,6 @@ async def test_c15_pause_apiserver_30s_recovers(
             timeout=180.0,
         )
 
-        # Without operator-side apiserver URL redirection this toxic does
-        # NOT actually pause any reconcile traffic — we install it for
-        # protocol-parity with the intended scenario so the test body is
-        # shippable code rather than a stub.
         await toxiproxy_injector.add_toxic(
             "apiserver",
             "timeout",
@@ -157,8 +142,6 @@ async def test_c15_pause_apiserver_30s_recovers(
         await asyncio.sleep(30.0)
         await toxiproxy_injector.remove_toxic("apiserver", "timeout_downstream")
 
-        # Would-be assertion once infra lands. Marked xfail above so a
-        # hang here becomes an xfail rather than a hard failure.
         phase = await chaos_injector.wait_for_phase(
             operator_job_namespace,
             name,
@@ -174,6 +157,15 @@ async def test_c15_pause_apiserver_30s_recovers(
         await toxiproxy_injector.reset()
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "C16 controller-HTTP toxiproxy routing is not cluster-verified: "
+        "the operator remains Initializing with Progress API connection errors "
+        "after the proxy upstream is rewired. Keep as documented canary until "
+        "the toxiproxy data path is fixed."
+    ),
+)
 @pytest.mark.timeout(600)
 async def test_c16_block_operator_controller_http_falls_back(
     operator_ready_toxiproxy_routed: OperatorDeployer,

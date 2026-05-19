@@ -148,6 +148,14 @@ chaos:
   apiserverServiceHostOverride: ""
   apiserverServicePortOverride: ""
 
+  # chaos.apiserverTlsServerNameOverride preserves TLS verification when the
+  # operator dials a proxy host for the apiserver. C15 sets this to
+  # kubernetes.default.svc so the raw TCP proxy can pass through the real
+  # apiserver certificate without disabling TLS verification.
+  # NOT FOR PRODUCTION USE: leave empty unless apiserverServiceHostOverride is
+  # intentionally steering traffic through an L4 proxy.
+  apiserverTlsServerNameOverride: ""
+
 # resultsServer is the FastAPI sidecar container that hosts the operator's
 # entire HTTP API. It serves every /api/v1/* router (jobs, sweeps, results,
 # config, admin, analytics, dashboard_proxy) and is the only container in

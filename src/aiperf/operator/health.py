@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 
 import aiohttp
 
@@ -41,6 +42,13 @@ async def check_endpoint_health(
                 async with session.get(check_url) as response:
                     if response.status < 500:
                         return EndpointHealthResult(reachable=True, error="")
+            except aiohttp.ClientConnectorError as e:
+                if isinstance(e.os_error, socket.gaierror):
+                    return EndpointHealthResult(
+                        reachable=False,
+                        error=f"DNS resolution failed for {check_url}: {e.os_error}",
+                    )
+                continue
             except aiohttp.ClientError:
                 continue
             except (asyncio.TimeoutError, OSError) as e:

@@ -110,6 +110,22 @@ async def _check_endpoint_reachable(
         )
         events.endpoint_reachable(body, endpoint_url)
     else:
+        if health.error.startswith("DNS resolution failed"):
+            error_msg = (
+                f"Endpoint DNS resolution failed for {endpoint_url}: {health.error}"
+            )
+            status.conditions.set_false(
+                ConditionType.ENDPOINT_REACHABLE,
+                "EndpointDNSResolutionFailed",
+                error_msg,
+            )
+            status.set_phase(Phase.FAILED).set_error(error_msg)
+            status.finalize()
+            events.failed(
+                body, body.get("metadata", {}).get("name", endpoint_url), error_msg
+            )
+            raise kopf.PermanentError(error_msg)
+
         status.conditions.set_false(
             ConditionType.ENDPOINT_REACHABLE,
             "EndpointUnreachable",

@@ -8,7 +8,6 @@ benchmark result files.
 """
 
 import asyncio
-import dataclasses
 import logging
 from pathlib import Path
 from types import TracebackType
@@ -67,8 +66,10 @@ class ProgressClient:
         ``localhost`` or any reachable IP/hostname is also accepted.
 
         When :attr:`K8sEnvironment.CONTROLLER_HTTP_URL_OVERRIDE` is set
-        (chaos tests only), ``controller_host`` is IGNORED and every
-        request is sent to the override URL instead. See :meth:`_base_url`.
+        (chaos tests only), controller API-port requests ignore
+        ``controller_host`` and go to the override URL instead. Sidecar-port
+        clients still use direct pod DNS so salvage can bypass API-port faults.
+        See :meth:`_base_url`.
 
     Example:
         >>> async with ProgressClient() as client:
@@ -117,17 +118,21 @@ class ProgressClient:
     def _base_url(self, controller_host: str) -> str:
         """Return the base URL (scheme+host+port) for controller HTTP calls.
 
-        Honors :attr:`K8sEnvironment.CONTROLLER_HTTP_URL_OVERRIDE` when set,
-        which rewrites ALL outgoing controller traffic to a single URL
-        regardless of which CR's controller_host was passed in. WHY: this
-        is the single toxiproxy hook point for chaos scenario C16 — letting
-        tests redirect operator -> controller HTTP through a fault-injecting
-        proxy without changing per-CR JobSet DNS. Production MUST leave the
-        env unset; otherwise multi-job isolation collapses (every CR ends
-        up funneling through one URL).
+        Honors :attr:`K8sEnvironment.CONTROLLER_HTTP_URL_OVERRIDE` for the
+        controller API port when set, rewriting progress/metrics/shutdown calls
+        to a single URL regardless of which CR's controller_host was passed in.
+        WHY: this is the single toxiproxy hook point for chaos scenario C16 —
+        letting tests redirect operator -> controller API traffic through a
+        fault-injecting proxy without changing per-CR JobSet DNS.
+
+        The override deliberately does not apply to non-API ports. The results
+        sidecar is the recovery channel when the controller API is blackholed,
+        so a sidecar client must keep using direct pod DNS. Production MUST
+        leave the env unset; otherwise multi-job isolation collapses for API
+        calls (every CR funnels through one URL).
         """
         override = K8sEnvironment.CONTROLLER_HTTP_URL_OVERRIDE
-        if override:
+        if override and self._port == K8sEnvironment.PORTS.API_SERVICE:
             return override.rstrip("/")
         return f"http://{controller_host}:{self._port}"
 

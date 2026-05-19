@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import kopf
 import pytest
@@ -27,7 +27,10 @@ from aiperf.operator.handlers.monitor import (
     _check_job_timeout,
     _classify_jobset_failure,
     _container_status_by_name,
+    _fail_on_fatal_pod_waiting_reason,
     _fail_unrecoverable_controller,
+    _fatal_pod_waiting_message,
+    _get_fatal_pod_waiting_reason,
     _get_terminated_controller_info,
     _handle_kueue_suspension,
     _recover_from_partial_checkpoints,
@@ -160,6 +163,129 @@ class TestHandleKueueSuspension:
         assert result is False
 
 
+class TestFatalPodWaitingReason:
+    """Tests for fatal container waiting-state detection."""
+
+    def _pod(
+        self,
+        *,
+        pod_name: str = "aiperf-bench-controller-0",
+        container_name: str = "control-plane",
+        reason: str = "ImagePullBackOff",
+        message: str = "Back-off pulling image 'missing:latest'",
+    ) -> SimpleNamespace:
+        waiting = SimpleNamespace(reason=reason, message=message)
+        state = SimpleNamespace(waiting=waiting)
+        status = SimpleNamespace(name=container_name, state=state)
+        return SimpleNamespace(
+            metadata=SimpleNamespace(name=pod_name),
+            status=SimpleNamespace(container_statuses=[status]),
+        )
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            param("ErrImagePull", id="err_image_pull"),
+            param("ImagePullBackOff", id="image_pull_backoff"),
+            param("CreateContainerConfigError", id="create_container_config_error"),
+        ],
+    )  # fmt: skip
+    def test_detects_fatal_waiting_reasons(self, reason: str) -> None:
+        """Fatal pod startup waiting reasons surface the offending container."""
+        waiting = _get_fatal_pod_waiting_reason([self._pod(reason=reason)])
+
+        assert waiting is not None
+        assert waiting.pod_name == "aiperf-bench-controller-0"
+        assert waiting.container_name == "control-plane"
+        assert waiting.reason == reason
+        assert waiting.message == "Back-off pulling image 'missing:latest'"
+
+    def test_ignores_container_creating(self) -> None:
+        """Normal ContainerCreating startup is not fatal."""
+        assert (
+            _get_fatal_pod_waiting_reason(
+                [self._pod(reason="ContainerCreating", message="creating container")]
+            )
+            is None
+        )
+
+    def test_message_names_jobset_reason_and_image_detail(self) -> None:
+        """Formatted operator error includes all user-actionable context."""
+        waiting = _get_fatal_pod_waiting_reason([self._pod()])
+        assert waiting is not None
+
+        message = _fatal_pod_waiting_message("aiperf-bench", "aiperf-bench-js", waiting)
+
+        assert "aiperf-bench" in message
+        assert "aiperf-bench-js" in message
+        assert "ImagePullBackOff" in message
+        assert "missing:latest" in message
+        assert "Back-off pulling image" in message
+
+
+class TestFailOnFatalPodWaitingReason:
+    """Tests for terminalizing active jobs on fatal pod waiting states."""
+
+    @pytest.mark.asyncio
+    async def test_marks_failed_and_deletes_jobset(self) -> None:
+        """Fatal image-pull backoff deletes the JobSet and marks the CR Failed."""
+        sb, status_patch = _make_status_builder()
+        pod = SimpleNamespace(
+            metadata=SimpleNamespace(name="aiperf-bench-worker-0"),
+            status=SimpleNamespace(
+                container_statuses=[
+                    SimpleNamespace(
+                        name="worker",
+                        state=SimpleNamespace(
+                            waiting=SimpleNamespace(
+                                reason="ImagePullBackOff",
+                                message="Back-off pulling image 'missing:latest'",
+                            )
+                        ),
+                    )
+                ]
+            ),
+        )
+        core = MagicMock()
+        core.list_namespaced_pod = AsyncMock(return_value=SimpleNamespace(items=[pod]))
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+        api = MagicMock()
+
+        with (
+            patch(
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=core,
+            ),
+            patch(
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=custom,
+            ),
+        ):
+            handled = await _fail_on_fatal_pod_waiting_reason(
+                api,
+                body={"kind": "AIPerfJob", "metadata": {"name": "aiperf-bench"}},
+                namespace="ns",
+                name="aiperf-bench",
+                jobset_name="aiperf-bench-js",
+                job_id="aiperf-bench",
+                key="ns/aiperf-bench",
+                sb=sb,
+            )
+
+        assert handled is True
+        assert status_patch.status["phase"] == str(Phase.FAILED)
+        assert "ImagePullBackOff" in status_patch.status["error"]
+        assert status_patch.status["completionTime"]
+        failed_condition = next(
+            condition
+            for condition in status_patch.status["conditions"]
+            if condition["type"] == "Failed"
+        )
+        assert failed_condition["status"] == "True"
+        custom.delete_namespaced_custom_object.assert_awaited_once()
+
+
 class TestContainerStatusByName:
     """Tests for ``_container_status_by_name``."""
 
@@ -226,6 +352,21 @@ class TestGetTerminatedControllerInfo:
             status=SimpleNamespace(container_statuses=[controller, sidecar])
         )
         assert _get_terminated_controller_info(pod) == (137, "OOMKilled")
+
+    def test_returns_exit_info_from_restarted_controller_last_state(self) -> None:
+        terminated = SimpleNamespace(exit_code=137, reason="Error")
+        controller = SimpleNamespace(
+            name="control-plane",
+            restart_count=1,
+            state=SimpleNamespace(terminated=None),
+            last_state=SimpleNamespace(terminated=terminated),
+        )
+        sidecar = SimpleNamespace(name="results-sidecar", state=None)
+        pod = SimpleNamespace(
+            status=SimpleNamespace(container_statuses=[controller, sidecar])
+        )
+
+        assert _get_terminated_controller_info(pod) == (137, "Error")
 
 
 class TestUpdateWorkerCounts:

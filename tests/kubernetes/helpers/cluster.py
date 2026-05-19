@@ -735,7 +735,7 @@ class MinikubeBackend:
 
 def _create_backend(config: ClusterConfig) -> ClusterBackend:
     """Create the appropriate backend for the given config."""
-    if config.benchmark.runtime is ClusterRuntime.KIND:
+    if config.runtime is ClusterRuntime.KIND:
         return KindBackend(config)
     return MinikubeBackend(config)
 
@@ -778,7 +778,7 @@ class LocalCluster:
     @property
     def runtime(self) -> ClusterRuntime:
         """Get the active cluster runtime."""
-        return self.config.benchmark.runtime
+        return self.config.runtime
 
     async def exists(self) -> bool:
         """Check if the cluster exists and is running."""

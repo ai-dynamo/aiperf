@@ -91,9 +91,47 @@ APISERVER_SERVICE_HOST_OVERRIDE = (
     f"{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local"
 )
 APISERVER_SERVICE_PORT_OVERRIDE = str(TOXIPROXY_APISERVER_PORT)
+APISERVER_TLS_SERVER_NAME_OVERRIDE = "kubernetes.default.svc"
 
 
-@pytest_asyncio.fixture(scope="package", loop_scope="package")
+@pytest_asyncio.fixture
+async def operator_ready_toxiproxy_routed(
+    kubectl: KubectlClient,
+    project_root: Path,
+    loaded_images,  # noqa: ANN001 - session-scoped helper, not typed in test surface
+    jobset_controller: None,
+    mock_server: None,
+    k8s_settings,  # noqa: ANN001 - test-fixture dataclass
+    operator_job_namespace: str,
+    toxiproxy_injector: ToxiproxyInjector,  # noqa: ARG001 - establishes ordering: toxiproxy must exist before we pin the operator at its Service
+) -> AsyncIterator[OperatorDeployer]:
+    """Operator redeployed with controller HTTP traffic routed through toxiproxy."""
+    deployer = OperatorDeployer(
+        kubectl=kubectl,
+        project_root=project_root,
+        operator_image=k8s_settings.aiperf_image,
+        default_job_namespace=operator_job_namespace,
+        controller_http_url_override=CONTROLLER_HTTP_OVERRIDE_URL,
+    )
+    await deployer.install_crd()
+    await kubectl.run("create", "namespace", operator_job_namespace, check=False)
+    await deployer.deploy_operator()
+    try:
+        yield deployer
+    finally:
+        if not k8s_settings.skip_cleanup:
+            await deployer.cleanup_all()
+            restore = OperatorDeployer(
+                kubectl=kubectl,
+                project_root=project_root,
+                operator_image=k8s_settings.aiperf_image,
+                default_job_namespace=operator_job_namespace,
+                controller_http_url_override=None,
+            )
+            await restore.deploy_operator()
+
+
+@pytest_asyncio.fixture
 async def operator_ready_apiserver_toxiproxy_routed(
     kubectl: KubectlClient,
     project_root: Path,
@@ -111,29 +149,23 @@ async def operator_ready_apiserver_toxiproxy_routed(
     operator -> apiserver traffic goes directly to ``kubernetes.default.svc``.
     For chaos scenario C15 we need that path to traverse toxiproxy instead.
     This fixture redeploys the operator once with those env vars pinned at the
-    chaos-namespace toxiproxy Service and restores a plain operator at teardown
-    so sibling package tests run with production-shaped routing.
+    chaos-namespace toxiproxy Service, while keeping TLS verification pinned to
+    ``kubernetes.default.svc``, and restores a plain operator at teardown so
+    sibling package tests run with production-shaped routing.
 
     **Proxy lifecycle is the caller's responsibility.** The toxiproxy
     proxy itself (``add_proxy(name=..., listen=..., upstream=...)``) is
-    NOT created here because the real upstream (per-CR controller pod IP)
-    is unknown until after the CR's JobSet spawns. Tests should:
+    NOT created here because tests need to choose when the proxy exists and
+    when toxics are installed. Tests should:
 
-    1. Create an AIPerfJob via the yielded ``OperatorDeployer``.
-    2. Poll for the controller pod IP via
-       ``ChaosInjector.get_controller_pod_name`` +
-       ``kubectl get pod ... -o jsonpath={.status.podIP}``.
-    3. Call ``toxiproxy_injector.add_proxy(name="controller",
-       listen=f"0.0.0.0:{TOXIPROXY_CONTROLLER_HTTP_PORT}",
-       upstream=f"{pod_ip}:19090")`` to open the data path.
-    4. Add toxics (``add_toxic("controller", "timeout", ...)``) to
-       inject faults.
-    5. ``await toxiproxy_injector.reset()`` in ``finally`` to wipe
+    1. Call ``toxiproxy_injector.add_proxy(name="apiserver",
+       listen=f"0.0.0.0:{TOXIPROXY_APISERVER_PORT}",
+       upstream="kubernetes.default.svc:443")`` before creating the CR.
+    2. Create an AIPerfJob via the yielded ``OperatorDeployer``.
+    3. Add toxics (``add_toxic("apiserver", "timeout", ...)``) to inject
+       apiserver faults.
+    4. ``await toxiproxy_injector.reset()`` in ``finally`` to wipe
        proxies+toxics for the next test.
-
-    Until step 3 runs, the operator's initial controller-HTTP calls fail
-    with a transport error against an unroutable proxy — the operator
-    retries and proceeds normally once the proxy is wired up.
 
     Scope: ``package`` (matches every other chaos fixture that requires
     a living operator Deployment). Do NOT compose this fixture with the
@@ -147,6 +179,7 @@ async def operator_ready_apiserver_toxiproxy_routed(
         default_job_namespace=operator_job_namespace,
         apiserver_service_host_override=APISERVER_SERVICE_HOST_OVERRIDE,
         apiserver_service_port_override=APISERVER_SERVICE_PORT_OVERRIDE,
+        apiserver_tls_server_name_override=APISERVER_TLS_SERVER_NAME_OVERRIDE,
     )
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)

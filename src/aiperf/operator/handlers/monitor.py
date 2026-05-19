@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -62,6 +63,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+FATAL_POD_WAITING_REASONS = frozenset(
+    {
+        "CreateContainerConfigError",
+        "CreateContainerError",
+        "ErrImagePull",
+        "ImagePullBackOff",
+        "InvalidImageName",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FatalPodWaitingReason:
+    """Fatal container waiting state observed on a JobSet pod."""
+
+    pod_name: str
+    container_name: str
+    reason: str
+    message: str
+
 
 def _get_elapsed_seconds(status: dict[str, Any]) -> float | None:
     """Calculate elapsed seconds since startTime, or None if unavailable."""
@@ -93,6 +114,43 @@ def _classify_jobset_failure(jobset_status: dict[str, Any]) -> tuple[bool, str |
     if workers_failed:
         return False, "workers"
     return True, None
+
+
+def _get_fatal_pod_waiting_reason(pods: list[Any]) -> FatalPodWaitingReason | None:
+    """Return the first fatal container waiting reason from a pod list."""
+    for pod in pods:
+        pod_name = getattr(getattr(pod, "metadata", None), "name", "") or "unknown"
+        statuses = (
+            getattr(getattr(pod, "status", None), "container_statuses", None) or []
+        )
+        for container_status in statuses:
+            state = getattr(container_status, "state", None)
+            waiting = getattr(state, "waiting", None) if state is not None else None
+            reason = getattr(waiting, "reason", None) if waiting is not None else None
+            if reason not in FATAL_POD_WAITING_REASONS:
+                continue
+            message = getattr(waiting, "message", "") or ""
+            if not message:
+                message = getattr(container_status, "image", "") or ""
+            return FatalPodWaitingReason(
+                pod_name=pod_name,
+                container_name=getattr(container_status, "name", "") or "unknown",
+                reason=reason,
+                message=message,
+            )
+    return None
+
+
+def _fatal_pod_waiting_message(
+    name: str, jobset_name: str, waiting: FatalPodWaitingReason
+) -> str:
+    """Format an actionable error for fatal pod startup waiting states."""
+    detail = f": {waiting.message}" if waiting.message else ""
+    return (
+        f"AIPerfJob {name} failed because JobSet {jobset_name} pod "
+        f"{waiting.pod_name} container {waiting.container_name} is waiting with "
+        f"fatal reason {waiting.reason}{detail}"
+    )
 
 
 def _apply_controller_progress_status(
@@ -264,6 +322,55 @@ async def _reconcile_missing_jobset(
     sb.set_phase(Phase.FAILED).set_error("JobSet not found")
     sb.finalize()
     return False
+
+
+async def _fail_on_fatal_pod_waiting_reason(
+    api: ApiClient,
+    *,
+    body: dict[str, Any],
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    job_id: str,
+    key: str,
+    sb: StatusBuilder,
+) -> bool:
+    """Fail active jobs when any JobSet pod is stuck in a fatal waiting reason."""
+    try:
+        pod_list = await client.CoreV1Api(api).list_namespaced_pod(
+            namespace=namespace,
+            label_selector=f"{JobSetLabels.JOBSET_NAME}={jobset_name}",
+        )
+    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.warning(
+            "Failed to inspect pods for fatal startup states on %s/%s: %s",
+            namespace,
+            name,
+            e,
+        )
+        return False
+
+    waiting = _get_fatal_pod_waiting_reason(pod_list.items)
+    if waiting is None:
+        return False
+
+    error = _fatal_pod_waiting_message(name, jobset_name, waiting)
+    await _delete_jobset_or_retry(
+        client.CustomObjectsApi(api),
+        namespace,
+        jobset_name,
+        context=f"fatal pod startup reason {waiting.reason}",
+    )
+    sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
+    sb.conditions.set_false(
+        ConditionType.WORKERS_READY,
+        "PodStartupFailed",
+        error,
+    )
+    sb.finalize()
+    events.failed(body, job_id, error)
+    await close_progress_client(key)
+    return True
 
 
 async def _check_job_timeout(
@@ -599,6 +706,18 @@ async def _run_worker_and_progress_phase(
         workers_ready > 0 or workers_succeeded > 0
     ):
         sb.set_phase(Phase.INITIALIZING)
+
+    if await _fail_on_fatal_pod_waiting_reason(
+        api,
+        body=body,
+        namespace=namespace,
+        name=name,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        key=key,
+        sb=sb,
+    ):
+        return
 
     if await _maybe_recover_terminated_controller(
         api,
@@ -1105,6 +1224,11 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
         if controller_status.state and controller_status.state.terminated
         else None
     )
+    if not terminated and int(getattr(controller_status, "restart_count", 0) or 0) > 0:
+        last_state = getattr(controller_status, "last_state", None)
+        terminated = (
+            last_state.terminated if last_state and last_state.terminated else None
+        )
     if not terminated:
         return None
 

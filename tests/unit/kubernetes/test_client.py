@@ -200,6 +200,44 @@ class TestK8sClient:
                 pass
         fake_api.close.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_k8s_client_applies_apiserver_tls_server_name_override(self) -> None:
+        """Chaos apiserver proxy can dial toxiproxy while verifying the real apiserver name."""
+        from kubernetes_asyncio import client as k8s_async_client
+
+        original_config = k8s_async_client.Configuration.get_default_copy()
+        fake_api = MagicMock()
+        fake_api.close = AsyncMock()
+
+        def load_incluster_config() -> None:
+            cfg = k8s_async_client.Configuration()
+            cfg.host = (
+                "https://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20000"
+            )
+            k8s_async_client.Configuration.set_default(cfg)
+
+        try:
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE": "kubernetes.default.svc"
+                    },
+                ),
+                patch("aiperf.kubernetes.client.suppress_noisy_http_loggers"),
+                patch(
+                    "aiperf.kubernetes.client.config.load_incluster_config",
+                    side_effect=load_incluster_config,
+                ),
+                patch("aiperf.kubernetes.client.ApiClient", return_value=fake_api),
+            ):
+                async with k8s_client():
+                    pass
+            cfg = k8s_async_client.Configuration.get_default_copy()
+            assert cfg.assert_hostname == "kubernetes.default.svc"
+        finally:
+            k8s_async_client.Configuration.set_default(original_config)
+
 
 # ============================================================
 # Label selectors

@@ -279,11 +279,21 @@ def _configure_rich_logging() -> None:
     k8s_logger.propagate = False
 
 
+def _is_chaos_invocation(config: pytest.Config) -> bool:
+    """Return True when the pytest command targets the chaos suite."""
+    return any(
+        "tests/kubernetes/chaos" in str(arg) for arg in config.invocation_params.args
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest for kubernetes tests."""
     # Resolve and stash settings
     settings = _resolve_settings(config)
     config.stash[_SETTINGS_KEY] = settings
+
+    if _is_chaos_invocation(config) and getattr(config.option, "dist", None):
+        config.option.dist = "loadgroup"
 
     # Skip local preflight when only GPU tests are being collected
     # (GPU tests run their own preflight in gpu/conftest.py).
@@ -524,13 +534,19 @@ def pytest_runtest_logfinish(nodeid: str, location: tuple) -> None:
         print(f"{'=' * 60}\n", file=sys.stderr)
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Add k8s marker to all tests in this directory."""
     for item in items:
-        if "kubernetes" in str(item.fspath):
+        path = str(item.fspath)
+        if "kubernetes" in path:
             item.add_marker(pytest.mark.k8s)
+        if "tests/kubernetes/chaos" in path:
+            item.add_marker(pytest.mark.xdist_group("kubernetes-chaos"))
+            if "@kubernetes-chaos" not in item.nodeid:
+                item._nodeid = f"{item.nodeid}@kubernetes-chaos"
 
 
 @pytest.fixture(scope="package")
