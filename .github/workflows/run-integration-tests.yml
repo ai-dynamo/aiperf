@@ -18,17 +18,27 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Set up uv with cache
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
+
     - name: Install dependencies
       run: |
-        make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
+        make ci-install PYTHON_VERSION=${{ matrix.python-version }}
 
     - name: Run integration tests
+      env:
+        # Caps pytest-xdist workers on the 48-vCPU / 6-GiB-RAM Linux
+        # builder pod. -n auto without this OOM-kills the runner agent.
+        PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
         make integration-tests-ci
