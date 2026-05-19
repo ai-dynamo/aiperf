@@ -255,10 +255,14 @@ test-ci: #? run the tests using pytest-xdist for CI.
 		exit $$exit_code; \
 	fi
 
-stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
-	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
+stress-tests test-stress: #? run stress tests.
+	@printf "$(bold)$(blue)Running unit stress tests...$(reset)\n"
+	$(activate_venv) && pytest tests/unit/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(blue)Running component integration stress tests...$(reset)\n"
+	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(blue)Running integration stress tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
-	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
+	@printf "$(bold)$(green)AIPerf stress tests passed!$(reset)\n"
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
