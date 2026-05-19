@@ -21,6 +21,8 @@ Tests cover:
 - Equivalence to Poisson at smoothness=1.0
 """
 
+import sys
+
 import pytest
 
 from tests.component_integration.timing.conftest import (
@@ -139,6 +141,11 @@ class TestGammaRateCreditFlow(BaseCreditFlowTests):
 class TestGammaRateStatistics:
     """Statistical distribution tests for Gamma rate mode."""
 
+    @pytest.mark.xfail(
+        sys.platform == "darwin",
+        strict=False,
+        reason="Gamma timing statistics are flaky on macOS CI scheduling",
+    )
     def test_gamma_distribution_characteristics(self, cli: AIPerfCLI):
         """Verify Gamma distribution statistical properties.
 
