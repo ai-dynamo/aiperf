@@ -7,9 +7,15 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.models import Conversation
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MultiTurn
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from tests.unit.conftest import make_run_from_cli
+
+
+def _make_run():
+    return make_run_from_cli(CLIConfig(model_names=["test-model"]))
 
 
 def _qid(label: str) -> str:
@@ -45,14 +51,13 @@ def _write_speed_bench_file(create_jsonl_file, rows: list[dict]) -> str:
 
 def _load_speed_bench_file(
     create_jsonl_file,
-    default_user_config,
     rows: list[dict],
     category: str | None = None,
 ):
     filename = _write_speed_bench_file(create_jsonl_file, rows)
     loader = SpeedBenchLoader(
+        run=_make_run(),
         filename=filename,
-        user_config=default_user_config,
         category=category,
     )
     return loader, loader.load_dataset()
@@ -65,12 +70,9 @@ class TestSpeedBenchLoader:
             == DatasetSamplingStrategy.SEQUENTIAL
         )
 
-    def test_loads_single_speed_bench_jsonl_row(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_loads_single_speed_bench_jsonl_row(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"),
@@ -96,12 +98,9 @@ class TestSpeedBenchLoader:
             "Write a Python function that flips letter case."
         )
 
-    def test_loads_each_jsonl_row_as_separate_session(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_loads_each_jsonl_row_as_separate_session(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"),
@@ -126,10 +125,9 @@ class TestSpeedBenchLoader:
             dataset[_qid("speed-math-1")][0].turns[0].text == "Find the factors of 84."
         )
 
-    def test_loads_all_messages_in_order(self, create_jsonl_file, default_user_config):
+    def test_loads_all_messages_in_order(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-chat-1"),
@@ -146,29 +144,24 @@ class TestSpeedBenchLoader:
         assert [turn.role for turn in turns] == ["system", "user"]
         assert [turn.text for turn in turns] == ["Answer tersely.", "What is Python?"]
 
-    def test_blank_lines_are_skipped(self, create_jsonl_file, default_user_config):
+    def test_blank_lines_are_skipped(self, create_jsonl_file):
         row = _make_speed_bench_row(question_id=_qid("speed-coding-1"))
         filename = create_jsonl_file(["", json.dumps(row), "   "])
-        loader = SpeedBenchLoader(filename=filename, user_config=default_user_config)
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
 
         dataset = loader.load_dataset()
 
         assert set(dataset) == {_qid("speed-coding-1")}
 
-    def test_empty_file_returns_empty_dataset(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_empty_file_returns_empty_dataset(self, create_jsonl_file):
         filename = create_jsonl_file([])
-        loader = SpeedBenchLoader(filename=filename, user_config=default_user_config)
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
 
         assert dict(loader.load_dataset()) == {}
 
-    def test_converts_loaded_dataset_to_conversations(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_converts_loaded_dataset_to_conversations(self, create_jsonl_file):
         loader, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-chat-1"),
@@ -212,10 +205,9 @@ class TestSpeedBenchLoader:
 
 
 class TestSpeedBenchLoaderCategoryFiltering:
-    def test_no_category_returns_all_rows(self, create_jsonl_file, default_user_config):
+    def test_no_category_returns_all_rows(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"), category="coding"
@@ -228,12 +220,9 @@ class TestSpeedBenchLoaderCategoryFiltering:
 
         assert set(dataset) == {_qid("speed-coding-1"), _qid("speed-math-1")}
 
-    def test_category_filter_returns_matching_rows(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_category_filter_returns_matching_rows(self, create_jsonl_file):
         loader, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"), category="coding"
@@ -252,12 +241,9 @@ class TestSpeedBenchLoaderCategoryFiltering:
             == "Implement binary search."
         )
 
-    def test_category_filter_no_matches_returns_empty(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_category_filter_no_matches_returns_empty(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-math-1"), category="math"
@@ -271,10 +257,9 @@ class TestSpeedBenchLoaderCategoryFiltering:
 
         assert dict(dataset) == {}
 
-    def test_category_stored_on_loader(self, create_jsonl_file, default_user_config):
+    def test_category_stored_on_loader(self, create_jsonl_file):
         unfiltered_loader, _ = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"), category="coding"
@@ -283,7 +268,6 @@ class TestSpeedBenchLoaderCategoryFiltering:
         )
         filtered_loader, _ = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"), category="coding"
@@ -295,12 +279,9 @@ class TestSpeedBenchLoaderCategoryFiltering:
         assert unfiltered_loader.category is None
         assert filtered_loader.category == "coding"
 
-    def test_throughput_entropy_tier_filtering(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_throughput_entropy_tier_filtering(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
             create_jsonl_file,
-            default_user_config,
             [
                 _make_speed_bench_row(
                     question_id=_qid("speed-low-entropy-1"),
@@ -326,28 +307,26 @@ class TestSpeedBenchLoaderCategoryFiltering:
 
 class TestSpeedBenchLoaderRowValidation:
     def test_load_dataset_missing_question_id_raises_validation_error_naming_field(
-        self, create_jsonl_file, default_user_config
+        self, create_jsonl_file
     ):
         malformed_row = {
             "category": "coding",
             "messages": [{"role": "user", "content": "Implement binary search."}],
         }
         filename = _write_speed_bench_file(create_jsonl_file, [malformed_row])
-        loader = SpeedBenchLoader(filename=filename, user_config=default_user_config)
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
 
         with pytest.raises(ValidationError, match="question_id"):
             loader.load_dataset()
 
-    def test_load_dataset_rejects_placeholder_content(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_load_dataset_rejects_placeholder_content(self, create_jsonl_file):
         placeholder_row = _make_speed_bench_row(
             question_id="0123456789abcdef0123456789abcdef",
             category="coding",
             messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}],
         )
         filename = _write_speed_bench_file(create_jsonl_file, [placeholder_row])
-        loader = SpeedBenchLoader(filename=filename, user_config=default_user_config)
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
 
         with pytest.raises(ValidationError, match="placeholder"):
             loader.load_dataset()

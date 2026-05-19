@@ -21,6 +21,7 @@ from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseRawPayloadLoader, LoaderProbeData
 from aiperf.dataset.loader.models import RawPayload
+from aiperf.dataset.loader.speed_bench import is_speed_bench_row
 
 
 class RawPayloadDatasetLoader(BaseRawPayloadLoader):
@@ -48,6 +49,8 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
         InputsFile structures (``data`` key holding a list).
         """
         if data is not None:
+            if is_speed_bench_row(data):
+                return False
             if not isinstance(data.get("messages"), list):
                 return False
             if "conversation_id" in data:

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import json
 import tempfile
 from pathlib import Path
 
@@ -11,8 +12,25 @@ from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
-from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
+from aiperf.dataset.loader.speed_bench import (
+    SpeedBenchLoader,
+    SpeedBenchQualitativeLoader,
+    SpeedBenchRow,
+    SpeedBenchThroughput1KLoader,
+    SpeedBenchThroughput2KLoader,
+    SpeedBenchThroughput8KLoader,
+    SpeedBenchThroughput16KLoader,
+    SpeedBenchThroughput32KLoader,
+)
 from aiperf.plugin.enums import CustomDatasetType
+
+
+def _speed_bench_probe(category: str = "coding") -> dict:
+    return {
+        "question_id": "speed-coding-1".ljust(32, "0"),
+        "category": category,
+        "messages": [{"role": "user", "content": "Implement binary search."}],
+    }
 
 
 class TestSingleTurnCanLoad:
@@ -156,6 +174,33 @@ class TestSpeedBenchCanLoad:
     def test_can_load(self, data, expected):
         assert SpeedBenchLoader.can_load(data) is expected
 
+    @pytest.mark.parametrize(
+        "loader,filename",
+        [
+            param(SpeedBenchQualitativeLoader, "qualitative.jsonl", id="qualitative"),
+            param(SpeedBenchThroughput1KLoader, "throughput_1k.jsonl", id="throughput_1k"),
+            param(SpeedBenchThroughput2KLoader, "throughput_2k.jsonl", id="throughput_2k"),
+            param(SpeedBenchThroughput8KLoader, "throughput_8k.jsonl", id="throughput_8k"),
+            param(SpeedBenchThroughput16KLoader, "throughput_16k.jsonl", id="throughput_16k"),
+            param(SpeedBenchThroughput32KLoader, "throughput_32k.jsonl", id="throughput_32k"),
+        ],
+    )  # fmt: skip
+    def test_split_loaders_match_expected_filename(self, loader, filename):
+        assert loader.can_load(_speed_bench_probe(), filename=Path(filename)) is True
+
+    @pytest.mark.parametrize(
+        "loader",
+        [
+            param(SpeedBenchQualitativeLoader, id="qualitative"),
+            param(SpeedBenchThroughput1KLoader, id="throughput_1k"),
+        ],
+    )  # fmt: skip
+    def test_split_loaders_reject_missing_or_wrong_filename(self, loader):
+        data = _speed_bench_probe()
+
+        assert loader.can_load(data) is False
+        assert loader.can_load(data, filename=Path("other.jsonl")) is False
+
 
 class TestRandomPoolCanLoad:
     """Tests for RandomPoolDatasetLoader.can_load() method.
@@ -231,6 +276,7 @@ class TestMooncakeTraceCanLoad:
             param({"text_input": "Hello world"}, True, id="text_input_only"),
             param({"timestamp": 1000, "session_id": "abc"}, False, id="no_required_fields"),
             param({"output_length": 50}, False, id="only_output_length"),
+            param(_speed_bench_probe(), False, id="speed_bench_row"),
             param(None, False, id="none_data"),
         ],
     )  # fmt: skip
@@ -258,6 +304,12 @@ class TestCustomDatasetComposerInferType:
             param({"text_input": "Hello"}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_text_input"),
             param({"type": "bailian_trace", "chat_id": 1, "timestamp": 0.0, "input_length": 100, "output_length": 50}, None, CustomDatasetType.BAILIAN_TRACE, id="bailian_explicit"),
             param({"chat_id": 1, "timestamp": 0.0, "input_length": 100, "output_length": 50, "type": "text"}, None, CustomDatasetType.BAILIAN_TRACE, id="bailian_structural_with_request_type"),
+            param(_speed_bench_probe(), Path("qualitative.jsonl"), CustomDatasetType("speed_bench_qualitative"), id="speed_bench_qualitative"),
+            param(_speed_bench_probe("low_entropy"), Path("throughput_1k.jsonl"), CustomDatasetType("speed_bench_throughput_1k"), id="speed_bench_throughput_1k"),
+            param(_speed_bench_probe("mixed"), Path("throughput_2k.jsonl"), CustomDatasetType("speed_bench_throughput_2k"), id="speed_bench_throughput_2k"),
+            param(_speed_bench_probe("high_entropy"), Path("throughput_8k.jsonl"), CustomDatasetType("speed_bench_throughput_8k"), id="speed_bench_throughput_8k"),
+            param(_speed_bench_probe("mixed"), Path("throughput_16k.jsonl"), CustomDatasetType("speed_bench_throughput_16k"), id="speed_bench_throughput_16k"),
+            param(_speed_bench_probe("mixed"), Path("throughput_32k.jsonl"), CustomDatasetType("speed_bench_throughput_32k"), id="speed_bench_throughput_32k"),
         ],
     )  # fmt: skip
     def test_infer_from_data(
@@ -345,6 +397,28 @@ class TestCustomDatasetComposerInferDatasetType:
         _, composer = create_cfg_and_composer()
         filepath = create_jsonl_file(content)
         result = composer._infer_dataset_type(filepath)
+        assert result == expected_type
+
+    @pytest.mark.parametrize(
+        "filename,expected_type",
+        [
+            param("qualitative.jsonl", CustomDatasetType("speed_bench_qualitative"), id="qualitative"),
+            param("throughput_1k.jsonl", CustomDatasetType("speed_bench_throughput_1k"), id="throughput_1k"),
+            param("throughput_2k.jsonl", CustomDatasetType("speed_bench_throughput_2k"), id="throughput_2k"),
+            param("throughput_8k.jsonl", CustomDatasetType("speed_bench_throughput_8k"), id="throughput_8k"),
+            param("throughput_16k.jsonl", CustomDatasetType("speed_bench_throughput_16k"), id="throughput_16k"),
+            param("throughput_32k.jsonl", CustomDatasetType("speed_bench_throughput_32k"), id="throughput_32k"),
+        ],
+    )  # fmt: skip
+    def test_infer_speed_bench_split_from_file_name(
+        self, create_cfg_and_composer, tmp_path, filename, expected_type
+    ):
+        _, composer = create_cfg_and_composer()
+        filepath = tmp_path / filename
+        filepath.write_text(json.dumps(_speed_bench_probe()) + "\n")
+
+        result = composer._infer_dataset_type(str(filepath))
+
         assert result == expected_type
 
     @pytest.mark.parametrize(

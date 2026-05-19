@@ -56,6 +56,18 @@ class SpeedBenchRow(AIPerfBaseModel):
         return self
 
 
+def is_speed_bench_row(data: object) -> bool:
+    """Return whether data matches the SPEED-Bench JSONL row shape."""
+    if not isinstance(data, dict):
+        return False
+
+    try:
+        SpeedBenchRow.model_validate(data)
+        return True
+    except ValidationError:
+        return False
+
+
 class SpeedBenchLoader(MultiTurnDatasetLoader):
     """HuggingFace dataset loader for nvidia/SPEED-Bench.
 
@@ -80,15 +92,15 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
     Example plugins.yaml entries::
 
         speed_bench_qualitative:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
 
         speed_bench_coding:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeCategoryLoader
           metadata:
             category: coding
 
         speed_bench_throughput_1k_mixed:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KCategoryLoader
           metadata:
             category: mixed
     """
@@ -108,14 +120,7 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
     ) -> bool:
         """Return whether a JSON object matches the SPEED-Bench JSONL shape."""
-        if data is None or not isinstance(data, dict):
-            return False
-
-        try:
-            SpeedBenchRow.model_validate(data)
-            return True
-        except ValidationError:
-            return False
+        return is_speed_bench_row(data)
 
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load SPEED-Bench multi-turn data from a JSONL file.
@@ -166,3 +171,54 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
             )
 
         return data
+
+
+class SpeedBenchSplitLoader(SpeedBenchLoader):
+    """Base loader for a concrete SPEED-Bench JSONL split."""
+
+    split_filename: ClassVar[str]
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        if filename is None or Path(filename).name != cls.split_filename:
+            return False
+
+        return super().can_load(data, filename)
+
+
+class SpeedBenchQualitativeLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench qualitative split."""
+
+    split_filename = "qualitative.jsonl"
+
+
+class SpeedBenchThroughput1KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 1K split."""
+
+    split_filename = "throughput_1k.jsonl"
+
+
+class SpeedBenchThroughput2KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 2K split."""
+
+    split_filename = "throughput_2k.jsonl"
+
+
+class SpeedBenchThroughput8KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 8K split."""
+
+    split_filename = "throughput_8k.jsonl"
+
+
+class SpeedBenchThroughput16KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 16K split."""
+
+    split_filename = "throughput_16k.jsonl"
+
+
+class SpeedBenchThroughput32KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 32K split."""
+
+    split_filename = "throughput_32k.jsonl"
