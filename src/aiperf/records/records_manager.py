@@ -240,13 +240,13 @@ def _render_realtime_block(
         out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
         rows.append(f"{indent}tot  in={in_str:<14} out={out_str}")
 
-    # Server-side row — cumulative cache hit rate, KV usage, scheduler
-    # queue depth, and preemptions from the live ServerMetricsAccumulator
-    # snapshot. Sourced from the /metrics scrape, so populates only when
-    # server-metrics collection is enabled and the inference server
-    # actually serves Prometheus. Each part is rendered only when its
-    # backing metric is present, so e.g. cpu_kv / ext_cache_hit show up
-    # only on offload=cpu runs.
+    # Server-side row — cumulative cache hit rate, KV usage, and scheduler
+    # queue depth from the live ServerMetricsAccumulator snapshot. Sourced
+    # from the /metrics scrape, so populates only when server-metrics
+    # collection is enabled and the inference server actually serves
+    # Prometheus. Each part is rendered only when its backing metric is
+    # present, so e.g. cpu_kv / ext_cache_hit show up only on offload=cpu
+    # runs.
     if server_snapshot:
         srv_parts: list[str] = []
         if "prefix_cache_hit_rate" in server_snapshot:
@@ -267,8 +267,6 @@ def _render_realtime_block(
             running = int(server_snapshot.get("num_running", 0))
             waiting = int(server_snapshot.get("num_waiting", 0))
             srv_parts.append(f"queue={running}r/{waiting}w")
-        if "num_preemptions" in server_snapshot:
-            srv_parts.append(f"preemptions={int(server_snapshot['num_preemptions'])}")
         if "input_token_throughput_srv" in server_snapshot:
             srv_parts.append(
                 f"tput_in_srv={int(round(server_snapshot['input_token_throughput_srv'])):,}/s"
