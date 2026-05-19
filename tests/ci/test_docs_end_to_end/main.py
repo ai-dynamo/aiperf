@@ -113,15 +113,30 @@ def main():
     if args.shard_total > 1:
         server = servers[args.server]
         n = len(server.aiperf_commands)
-        # Contiguous-chunk slicing: gives 1 slow test per shard at most,
-        # assuming slow tests are interspersed (not clustered) in the docs.
-        start = (n * args.shard_index) // args.shard_total
-        end = (n * (args.shard_index + 1)) // args.shard_total
-        server.aiperf_commands = server.aiperf_commands[start:end]
+        # LPT (Longest Processing Time) bin-packing: sort commands by their
+        # author-annotated ``weight=`` hint (seconds), then greedily place
+        # each into the currently-lightest shard. Within a shard, restore
+        # docs order so the runner's per-test logs read top-to-bottom.
+        # Pure greedy LPT has a 4/3 - 1/(3m) makespan approximation —
+        # close enough to optimal for the ~50-command scale here, and
+        # immune to docs reordering (unlike contiguous-chunk slicing).
+        shard_bins: list[list] = [[] for _ in range(args.shard_total)]
+        shard_load: list[int] = [0] * args.shard_total
+        sorted_cmds = sorted(
+            server.aiperf_commands, key=lambda c: c.weight, reverse=True
+        )
+        for cmd in sorted_cmds:
+            target = min(range(args.shard_total), key=lambda i: shard_load[i])
+            shard_bins[target].append(cmd)
+            shard_load[target] += cmd.weight
+        my_bin = shard_bins[args.shard_index]
+        my_bin.sort(key=lambda c: (c.file_path, c.start_line))
+        server.aiperf_commands = my_bin
         logger.info(
             f"Shard {args.shard_index + 1}/{args.shard_total} of "
-            f"'{args.server}': running commands [{start}:{end}] of {n} "
-            f"({len(server.aiperf_commands)} commands this shard)"
+            f"'{args.server}': {len(my_bin)} of {n} commands, "
+            f"estimated weight {shard_load[args.shard_index]}s "
+            f"(shard weights: {shard_load})"
         )
 
     if args.dry_run:

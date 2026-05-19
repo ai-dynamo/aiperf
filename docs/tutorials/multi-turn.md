@@ -285,7 +285,7 @@ aiperf profile \
 
 Test model performance with long conversations that accumulate substantial context:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=1100 -->
 ```bash
 # Test long conversations with growing context
 aiperf profile \
