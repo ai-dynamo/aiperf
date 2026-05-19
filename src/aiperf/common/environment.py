@@ -787,7 +787,7 @@ class _ServiceSettings(BaseSettings):
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
-        default=300.0,
+        default=600.0,
         description="Timeout in seconds for profile configure command",
     )
     PROFILE_START_TIMEOUT: float = Field(
