@@ -382,14 +382,7 @@ class TestTraceDatasetTimingDetection:
         must short-circuit on non-dict scalars and continue scanning.
         """
         mock_file_content = (
-            "{\n"
-            '  "id": "trace-x",\n'
-            '  "hash_ids": [\n'
-            "    0,\n"
-            "    1,\n"
-            "    62\n"
-            "  ]\n"
-            "}\n"
+            '{\n  "id": "trace-x",\n  "hash_ids": [\n    0,\n    1,\n    62\n  ]\n}\n'
         )
 
         config = UserConfig(

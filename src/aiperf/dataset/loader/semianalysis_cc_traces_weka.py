@@ -13,9 +13,9 @@ Two variants are registered against this class in ``plugins.yaml``:
 
 * ``semianalysis_cc_traces_weka`` — original 042026 corpus, 739 traces
   with full subagent fan-out structure.
-* ``semianalysis_cc_traces_weka_no_subagents`` — 051226 derivative, 949
-  traces with all subagent blocks stripped (main-agent linear streams
-  only). Default for the InferenceX AgentX-MVP scenario.
+* ``semianalysis_cc_traces_weka_no_subagents`` — 051826 derivative, 98
+  traces (v5-only, CC ≥ 2.1.139, subagent blocks stripped, ≥20 turns
+  per trace). Default for the InferenceX AgentX-MVP scenario.
 
 Which dataset is downloaded is governed by the ``hf_dataset_name``
 plugin metadata field; the loader itself is variant-agnostic.
@@ -49,9 +49,10 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
 
     Two variants are registered against this class:
     ``semianalysis_cc_traces_weka`` (042026, 739 traces, full subagent
-    fan-out) and ``semianalysis_cc_traces_weka_no_subagents`` (051226,
-    949 traces, main-agent linear streams only). The loader code is
-    identical for both — only ``hf_dataset_name`` differs.
+    fan-out) and ``semianalysis_cc_traces_weka_no_subagents`` (051826,
+    98 traces, v5-only + CC ≥ 2.1.139 filtered, main-agent linear
+    streams only, ≥20 turns each). The loader code is identical for
+    both — only ``hf_dataset_name`` differs.
     """
 
     tag: ClassVar[str] = "SemiAnalysisCCTracesWeka"
@@ -93,7 +94,7 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         100) to avoid reconstructing the full corpus when the benchmark
         only needs a subset. Pass a value at or above the registered
         variant's corpus size to load every trace (739 for the 042026
-        full-subagent variant, 949 for the 051226 no-subagents variant).
+        full-subagent variant, 98 for the 051826 no-subagents variant).
         For variants with subagents, each row produces 1 parent
         conversation plus 1 child conversation per subagent, so N rows
         typically yields 2-10x N conversations downstream; for the
