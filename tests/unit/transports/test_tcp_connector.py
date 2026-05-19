@@ -122,8 +122,10 @@ class TestCreateTcpConnector:
                     option_level, option_name, option_value
                 )
 
-    # Only run these tests on Linux
-    if hasattr(socket, "TCP_KEEPIDLE"):
+    # Only run these tests on Linux. ``TCP_KEEPIDLE`` alone is no longer a
+    # Linux-only signal: Python 3.13 added it to Windows. ``TCP_QUICKACK``
+    # remains Linux-only, so gate on it instead.
+    if hasattr(socket, "TCP_QUICKACK"):
 
         @pytest.mark.parametrize(
             "has_attribute,attribute_name,tcp_option,expected_value",
