@@ -48,8 +48,6 @@ from tests.unit.timing.test_branch_orchestrator_adversarial_full import (
     _mk_source,
 )
 
-pytestmark = pytest.mark.stress
-
 # ---------------------------------------------------------------------------
 # Helpers specific to this attack suite
 # ---------------------------------------------------------------------------

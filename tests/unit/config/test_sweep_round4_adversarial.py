@@ -24,8 +24,6 @@ from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.config.sweep.expand import detect_sweep_fields, expand_sweep
 from aiperf.search_recipes._post_process import PostProcessSpec
 
-pytestmark = pytest.mark.stress
-
 # -- H20: SLAFilter validation -----------------------------------------------
 
 

@@ -35,8 +35,6 @@ from aiperf.common.models.dataset_models import (
 from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
-pytestmark = pytest.mark.stress
-
 FIXTURES_DIR = Path(__file__).parents[3] / "fixtures" / "dag"
 
 

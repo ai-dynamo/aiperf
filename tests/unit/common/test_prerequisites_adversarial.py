@@ -8,8 +8,6 @@ from pydantic import ValidationError
 from aiperf.common.enums import PrerequisiteKind
 from aiperf.common.models import TurnPrerequisite
 
-pytestmark = pytest.mark.stress
-
 
 def test_turn_prerequisite_rejects_unknown_kind_string():
     """Unknown kind strings must fail enum validation."""

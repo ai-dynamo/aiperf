@@ -21,8 +21,6 @@ from aiperf.config.sweep import (
 )
 from aiperf.config.sweep.expand_qmc import expand_qmc_sweep
 
-pytestmark = pytest.mark.stress
-
 
 class TestH1EmptyChoicesRejected:
     """H1: SamplingDimension(choices=[]) used to pass validation and then

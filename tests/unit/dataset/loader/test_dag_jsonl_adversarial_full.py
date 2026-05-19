@@ -34,8 +34,6 @@ from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.dataset.loader.dag_jsonl_models import DagSpawn
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
-pytestmark = pytest.mark.stress
-
 
 def _write(tmp_path: Path, lines: list[dict]) -> Path:
     p = tmp_path / "dag.jsonl"

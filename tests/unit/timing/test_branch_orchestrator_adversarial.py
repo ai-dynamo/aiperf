@@ -35,8 +35,6 @@ from aiperf.timing.branch_orchestrator import (
     PrereqState,
 )
 
-pytestmark = pytest.mark.stress
-
 # -- shared harness helpers (mirrors test_branch_orchestrator_join.py) -------
 
 

@@ -26,8 +26,6 @@ from aiperf.config.loader.errors import ConfigurationError
 from aiperf.config.loader.jinja import render_jinja2_templates
 from aiperf.config.sweep.config import GridSweep, ZipSweep
 
-pytestmark = pytest.mark.stress
-
 # ---------- jinja: orphan delimiters ----------
 
 

@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial shape / JSON round-trip tests for DAG prereq and branch metadata."""
 
-import pytest
-
 from aiperf.common.enums import (
     ConversationBranchMode,
     PrerequisiteKind,
@@ -17,8 +15,6 @@ from aiperf.common.models import (
     TurnPrerequisite,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
-
-pytestmark = pytest.mark.stress
 
 
 def _kind_kwargs(kind: PrerequisiteKind) -> dict:

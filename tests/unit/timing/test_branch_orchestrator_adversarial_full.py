@@ -56,8 +56,6 @@ from aiperf.timing.branch_orchestrator import (
     PrereqState,
 )
 
-pytestmark = pytest.mark.stress
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
