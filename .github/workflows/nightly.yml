@@ -839,6 +839,7 @@ jobs:
           WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
           WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
+          TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
@@ -857,7 +858,11 @@ jobs:
             # (/api/pypi/) does not accept sub-path deploys — it expects the
             # repo root URL. ARTIFACTORY_URL must be the generic repo base:
             # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
-            TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${FN}"
+            # Wheels land under nightly/<YYYYMMDD>/ so the date in the wheel
+            # filename (e.g. aiperf-0.8.0.dev20260518-...whl) matches the
+            # folder name by construction — both come from TIMESTAMP, which
+            # prepare-nightly computes once and pins for the whole run.
+            TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${TIMESTAMP}/${FN}"
             BODY_FILE=$(mktemp)
             HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
               -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
@@ -870,6 +875,28 @@ jobs:
             fi
             echo "Wheel staged to Artifactory: ${TARGET_URL}"
           done
+
+          # Generic deploys bypass Artifactory's PyPI metadata extractor, so
+          # the simple index does not auto-update — `pip install aiperf-nightly`
+          # would not see the new wheel until the next manual recalc. Trigger
+          # a reindex explicitly. Derive the API URL from ARTIFACTORY_URL
+          # (which is the generic repo base, https://<host>/artifactory/<repo>):
+          # split off the trailing repo name and rejoin under /api/pypi/<repo>/.
+          ART_REPO="${ARTIFACTORY_URL##*/}"
+          ART_BASE="${ARTIFACTORY_URL%/*}"
+          REINDEX_URL="${ART_BASE}/api/pypi/${ART_REPO}/reindex"
+          BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -X POST \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            "${REINDEX_URL}")
+          # Artifactory returns 200 (sync recalc) or 202 (queued); both OK.
+          if [ "${HTTP_CODE}" != "200" ] && [ "${HTTP_CODE}" != "202" ]; then
+            echo "::error::Artifactory PyPI reindex failed: HTTP ${HTTP_CODE} at ${REINDEX_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "PyPI simple index recalculated (HTTP ${HTTP_CODE}): ${REINDEX_URL}"
 
   # ============================================================================
   # PHASE 5: TRIGGER GITLAB SECURITY SCAN
@@ -895,6 +922,7 @@ jobs:
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
           RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -903,6 +931,13 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
             RELEASE_TYPE="nightly"
           fi
+
+          # Repo-relative paths to the staged wheels under
+          # nightly/<YYYYMMDD>/. Pass both bare TIMESTAMP and explicit paths
+          # so GitLab can either compose its own URLs or use the paths
+          # directly without having to know the layout convention.
+          ARTIFACTORY_WHEEL_PATH="nightly/${TIMESTAMP}/${WHEEL_FILENAME}"
+          ARTIFACTORY_NIGHTLY_WHEEL_PATH="nightly/${TIMESTAMP}/${NIGHTLY_WHEEL_FILENAME}"
 
           TOKEN_FILE=$(mktemp)
           echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
@@ -925,6 +960,9 @@ jobs:
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
             --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
+            --form "variables[ARTIFACTORY_WHEEL_PATH]=${ARTIFACTORY_WHEEL_PATH}" \
+            --form "variables[ARTIFACTORY_NIGHTLY_WHEEL_PATH]=${ARTIFACTORY_NIGHTLY_WHEEL_PATH}" \
+            --form "variables[TIMESTAMP]=${TIMESTAMP}" \
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
