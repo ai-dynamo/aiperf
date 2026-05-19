@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from importlib.metadata import version as get_package_version
-
 import pytest
 
+from aiperf import __version__ as aiperf_version
 from tests.harness.utils import AIPerfCLI
 
 
@@ -46,6 +45,5 @@ class TestCLIVersion:
         result = cli.run_sync("aiperf --version", assert_success=False)
         assert result.exit_code == 0
 
-        expected_version = get_package_version("aiperf")
         actual_version = result.stdout.strip()
-        assert actual_version == expected_version
+        assert actual_version == aiperf_version

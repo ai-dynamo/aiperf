@@ -4,6 +4,7 @@
 
 import json
 import math
+import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -176,6 +177,25 @@ class TestExpandQMC:
             options={"scramble": True},
         )
         assert len(out) == 16
+
+    def test_power_of_two_sobol_uses_balanced_base2_points(self):
+        from scipy.stats import qmc
+
+        dims = [SamplingDimension(path="x", lo=0.0, hi=1.0)]
+        expected = qmc.Sobol(d=1, scramble=True, seed=42).random_base2(m=4)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = expand_qmc_sweep(
+                _base_data(),
+                sweep_type="sobol",
+                samples=16,
+                seed=42,
+                dimensions=dims,
+                options={"scramble": True},
+            )
+
+        assert [var.values["x"] for _, var in out] == [row[0] for row in expected]
 
     def test_deterministic_with_seed(self):
         dims = [

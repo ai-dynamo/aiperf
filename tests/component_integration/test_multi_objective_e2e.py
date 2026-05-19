@@ -74,6 +74,7 @@ class _ParetoSurfaceStubExecutor(RunExecutor):
         )
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_qlognehvi_two_objective_search(tmp_path: Path):
     """qNEHVI two-objective sweep emits a multi-point Pareto front to disk."""

@@ -142,10 +142,11 @@ def test_optuna_feasibility_view_agrees_with_history_on_nan() -> None:
 
     planner = OptunaSearchPlanner(_real_base_config(), _bo_cfg(max_iterations=5))
     _, variation = planner.ask()  # type: ignore[misc]
-    planner.tell(
-        variation,
-        [_result(variation, throughput=100.0, ttft_p95=float("nan"))],
-    )
+    with pytest.warns(RuntimeWarning, match="non-finite value"):
+        planner.tell(
+            variation,
+            [_result(variation, throughput=100.0, ttft_p95=float("nan"))],
+        )
     iteration = planner.history()[0]
     assert iteration.feasible is False
 

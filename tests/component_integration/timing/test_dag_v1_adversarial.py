@@ -27,7 +27,7 @@ from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v
 from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
-pytestmark = pytest.mark.component_integration
+pytestmark = [pytest.mark.component_integration, pytest.mark.stress]
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "dag"
 
