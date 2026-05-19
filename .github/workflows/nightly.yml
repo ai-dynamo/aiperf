@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: 'Commit SHA to build. Required. Must be on main.'
+        description: 'Commit SHA to build. Required. Must be on harrison/fix-nightly (TEMPORARY — revert to main before merging).'
         required: true
       release:
         description: 'Stage artifacts and trigger GitLab security scan. Schedule always sets release=true.'
@@ -85,31 +85,36 @@ jobs:
       resolved_sha:           ${{ steps.version.outputs.resolved_sha }}
       release:                ${{ steps.release.outputs.release }}
     steps:
-      # Workflow file itself must come from main on dispatch.
-      - name: Require dispatch from main
-        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+      # TEMPORARY: branch gates point at harrison/fix-nightly so the
+      # nightly fixes on that branch can be exercised end-to-end before
+      # merge. Revert this block (and the two below) to 'main' before
+      # merging.
+      - name: Require dispatch from harrison/fix-nightly
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/harrison/fix-nightly' }}
         run: |
-          echo "::error::Dispatch this workflow from main (got '${GITHUB_REF}')."
+          echo "::error::Dispatch this workflow from harrison/fix-nightly (got '${GITHUB_REF}')."
           exit 1
 
-      # Schedule → tip of main. Dispatch → user-supplied SHA.
-      # fetch-depth: 0 so the next step can run merge-base against origin/main.
+      # TEMPORARY: Schedule → tip of harrison/fix-nightly. Dispatch →
+      # user-supplied SHA. fetch-depth: 0 so the next step can run
+      # merge-base against origin/harrison/fix-nightly.
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha || 'main' }}
+          ref: ${{ inputs.sha || 'harrison/fix-nightly' }}
           fetch-depth: 0
 
-      - name: Verify SHA is on main
+      # TEMPORARY: verify SHA is on harrison/fix-nightly instead of main.
+      - name: Verify SHA is on harrison/fix-nightly
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           BUILD_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "${BUILD_SHA}" origin/main; then
-            echo "::error::SHA ${BUILD_SHA} is not on main."
+          if ! git merge-base --is-ancestor "${BUILD_SHA}" origin/harrison/fix-nightly; then
+            echo "::error::SHA ${BUILD_SHA} is not on harrison/fix-nightly."
             exit 1
           fi
-          echo "Verified ${BUILD_SHA} is on main."
+          echo "Verified ${BUILD_SHA} is on harrison/fix-nightly."
 
       - name: Restore version artifact from prior attempt
         id: restore
