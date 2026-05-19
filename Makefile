@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
-		ci-install \
+		ci-install check-mock-server-install \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
@@ -162,6 +162,9 @@ version: #? print the version of the project.
 install-mock-server: #? install the mock server in editable mode.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]"
 
+check-mock-server-install: #? verify the mock server package and CLI entry point are installed.
+	$(activate_venv) && python -c "import aiperf_mock_server" && command -v aiperf-mock-server >/dev/null
+
 clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files.
 	rm -rf .pytest_cache/
 	rm -rf .ruff_cache/
@@ -221,6 +224,9 @@ ci-install: #? CI-only environment setup: venv + project + plugin artifacts. No 
 	@printf "$(bold)$(green)Installing project (+ mock server)...$(reset)\n"
 	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install
 
+	@printf "$(bold)$(green)Verifying mock server install...$(reset)\n"
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory check-mock-server-install
+
 	@printf "$(bold)$(green)Generating plugin enum stubs...$(reset)\n"
 	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-enums
 
@@ -249,10 +255,14 @@ test-ci: #? run the tests using pytest-xdist for CI.
 		exit $$exit_code; \
 	fi
 
-stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
-	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
+stress-tests test-stress: #? run stress tests.
+	@printf "$(bold)$(blue)Running unit stress tests...$(reset)\n"
+	$(activate_venv) && pytest tests/unit/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(blue)Running component integration stress tests...$(reset)\n"
+	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(blue)Running integration stress tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
-	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
+	@printf "$(bold)$(green)AIPerf stress tests passed!$(reset)\n"
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
@@ -261,6 +271,7 @@ integration-tests test-integration: #? run integration tests with with AIPerf Mo
 
 integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory check-mock-server-install
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress and not slow' -n auto -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
 

@@ -27,6 +27,7 @@ from tests.harness.utils import AIPerfCLI
 class TestSearchRecipes:
     """One test per recipe; each pins the plausible answer the recipe lands on."""
 
+    @pytest.mark.slow
     async def test_concurrency_ramp_detects_degradation_knee(
         self,
         cli: AIPerfCLI,
@@ -87,6 +88,7 @@ class TestSearchRecipes:
         assert knee["swept_metric"] == "request_latency"
         assert len(knee["all_points"]) >= 2, knee
 
+    @pytest.mark.slow
     async def test_prefill_ttft_curve_fits_linear_with_isl_penalty(
         self,
         cli: AIPerfCLI,
@@ -152,6 +154,7 @@ class TestSearchRecipes:
             # as the points it fitted are ours.
             assert len(curve["coefficients"]) == 3, curve
 
+    @pytest.mark.slow
     async def test_decode_itl_curve_emits_2d_surface(
         self,
         cli: AIPerfCLI,
@@ -283,6 +286,7 @@ class TestSearchRecipes:
         if feasible_max is not None:
             assert feasible_max["value"] >= 1, history
 
+    @pytest.mark.slow
     async def test_max_goodput_under_slo_lands_near_collapse_point(
         self,
         cli: AIPerfCLI,
