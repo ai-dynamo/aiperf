@@ -159,7 +159,9 @@ def _make_credit(
         id=0,
         phase=phase,
         conversation_id=conversation_id,
-        x_correlation_id=x_correlation_id if x_correlation_id is not None else uuid.uuid4().hex,
+        x_correlation_id=x_correlation_id
+        if x_correlation_id is not None
+        else uuid.uuid4().hex,
         turn_index=turn_index,
         num_turns=num_turns,
         issued_at_ns=0,
