@@ -133,6 +133,15 @@ class TurnMetadata(AIPerfBaseModel):
         default_factory=list,
         description="Conditions gating dispatch of this turn (DAG projection).",
     )
+    input_length: int | None = Field(
+        default=None,
+        description="Input token count for this turn in the source dataset's "
+        "tokenizer (weka 'in' field; proxy tokenizer for cc-traces). "
+        "Populated by trace loaders that carry per-turn token-count "
+        "metadata; None for synthetic / payload-only loaders. Used by "
+        "TrajectorySource to surface per-trajectory start-token counts "
+        "in its summary log.",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -221,6 +230,14 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    input_length: int | None = Field(
+        default=None,
+        description="Input token count for this turn in the source dataset's "
+        "tokenizer (weka 'in' field; proxy tokenizer for cc-traces). "
+        "Set by trace loaders that carry per-turn token-count metadata; "
+        "None otherwise. Propagated to TurnMetadata for surfacing in "
+        "summary logs.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -229,6 +246,7 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             branch_ids=self.branch_ids,
             prerequisites=self.prerequisites,
+            input_length=self.input_length,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -469,6 +487,7 @@ class Conversation(AIPerfBaseModel):
                     delay_ms=turn.delay,
                     branch_ids=turn.branch_ids,
                     has_forks=has_forks,
+                    input_length=turn.input_length,
                 )
             )
         return ConversationMetadata(

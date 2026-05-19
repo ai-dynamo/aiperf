@@ -766,6 +766,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=self._cap_output(req),
                         raw_messages=delta.delta_messages,
                         reset_context=delta.reset_context,
+                        input_length=req.input_length,
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
