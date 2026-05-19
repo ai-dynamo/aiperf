@@ -308,6 +308,13 @@ def _print_summary(summary: dict[str, Any]) -> None:
                     f"    {label}    mean {s['mean']:7.1f}"
                     f"   p50 {s['p50']:5.0f}   p99 {s['p99']:5.0f}"
                 )
+        for label, s in (("ISL", stats["isl"]), ("OSL", stats["requested_osl"])):
+            if s is None or s.get("histogram") is None:
+                continue
+            for line in _render_histogram(
+                label, s["histogram"], stats["count"], s["unique_values"]
+            ):
+                print(line)
         mn = stats["min_tokens"]
         if mn is not None:
             print(f"    min_tokens  mean {mn['mean']:7.1f}   p50 {mn['p50']:5.0f}")

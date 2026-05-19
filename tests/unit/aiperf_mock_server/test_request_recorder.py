@@ -8,6 +8,7 @@ import pytest
 from aiperf_mock_server.request_recorder import (
     _build_summary,
     _histogram,
+    _print_summary,
     _render_histogram,
 )
 from pytest import param
@@ -168,3 +169,81 @@ class TestRenderHistogram:
         assert len(lines) == 2
         # label_width=2 (from "42"), count_width=3 (floor), bar fully filled.
         assert lines[1] == "      42- 42    3 " + "█" * 20
+
+
+class TestPrintSummary:
+    def test_isl_histogram_block_printed(self, capsys) -> None:
+        summary = {
+            "total_requests": 4,
+            "per_endpoint": {
+                "/v1/chat/completions": {
+                    "count": 4,
+                    "streamed_count": 0,
+                    "ignore_eos_count": 0,
+                    "reasoning_effort_counts": None,
+                    "isl": {
+                        "min": 10.0,
+                        "max": 40.0,
+                        "mean": 25.0,
+                        "stdev": 12.91,
+                        "p50": 25.0,
+                        "p90": 38.0,
+                        "p95": 39.0,
+                        "p99": 39.8,
+                        "unique_values": 4,
+                        "histogram": {
+                            "bin_edges": [
+                                10.0,
+                                13.0,
+                                16.0,
+                                19.0,
+                                22.0,
+                                25.0,
+                                28.0,
+                                31.0,
+                                34.0,
+                                37.0,
+                                40.0,
+                            ],
+                            "counts": [1, 0, 0, 0, 1, 0, 0, 0, 1, 1],
+                        },
+                    },
+                    "requested_osl": None,
+                    "min_tokens": None,
+                },
+            },
+        }
+        _print_summary(summary)
+        out = capsys.readouterr().out
+        assert "ISL histogram (10 bins, n=4, 4 unique)" in out
+
+    def test_osl_histogram_skipped_when_null(self, capsys) -> None:
+        summary = {
+            "total_requests": 2,
+            "per_endpoint": {
+                "/v1/embeddings": {
+                    "count": 2,
+                    "streamed_count": 0,
+                    "ignore_eos_count": 0,
+                    "reasoning_effort_counts": None,
+                    "isl": {
+                        "min": 5.0,
+                        "max": 6.0,
+                        "mean": 5.5,
+                        "stdev": 0.5,
+                        "p50": 5.5,
+                        "p90": 6.0,
+                        "p95": 6.0,
+                        "p99": 6.0,
+                        "unique_values": 2,
+                        "histogram": {"bin_edges": [5.0, 5.5, 6.0], "counts": [1, 1]},
+                    },
+                    "requested_osl": None,
+                    "min_tokens": None,
+                },
+            },
+        }
+        _print_summary(summary)
+        out = capsys.readouterr().out
+        assert "ISL histogram" in out
+        assert "OSL histogram" not in out
