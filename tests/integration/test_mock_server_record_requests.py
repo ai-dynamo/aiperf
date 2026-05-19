@@ -144,6 +144,25 @@ class TestRecordRequests:
         assert emb_stats["ignore_eos_count"] == 0
         assert emb_stats["reasoning_effort_counts"] is None
 
+        # Histogram + unique_values on the chat ISL block.
+        assert chat_stats["isl"]["histogram"] is not None
+        chat_isl_hist = chat_stats["isl"]["histogram"]
+        assert len(chat_isl_hist["bin_edges"]) == len(chat_isl_hist["counts"]) + 1
+        assert sum(chat_isl_hist["counts"]) == chat_stats["count"]
+        assert chat_stats["isl"]["unique_values"] >= 1
+
+        # Resolved requested_osl spans six distinct values across the chat fixture:
+        # max_tokens in {16, 32, 64, 128, 256} on five requests plus
+        # max_completion_tokens=192 on the sixth.
+        assert chat_stats["requested_osl"]["unique_values"] == 6
+        chat_osl_hist = chat_stats["requested_osl"]["histogram"]
+        assert chat_osl_hist is not None
+        assert sum(chat_osl_hist["counts"]) == chat_stats["count"]
+
+        # Embeddings: ISL still has a histogram and unique_values.
+        assert emb_stats["isl"]["histogram"] is not None
+        assert emb_stats["isl"]["unique_values"] >= 1
+
     async def test_record_requests_forces_workers_to_one(self) -> None:
         """The validator must collapse workers to 1 whenever recording is on —
         the recorder keeps per-request stats in-process, so a single uvicorn
