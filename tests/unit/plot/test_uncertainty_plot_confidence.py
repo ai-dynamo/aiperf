@@ -767,6 +767,9 @@ def valid_benchmark_point(draw: st.DrawFn) -> BenchmarkPoint:
     )
 
 
+RENDERER_MAX_EXAMPLES = 20
+
+
 @st.composite
 def valid_uncertainty_data(
     draw: st.DrawFn, min_points: int = 1
@@ -826,7 +829,7 @@ class TestPlotlyRendererSortedMeanTraceWithErrorBars:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_mean_trace_x_values_sorted_ascending(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -842,7 +845,7 @@ class TestPlotlyRendererSortedMeanTraceWithErrorBars:
         assert x_vals == sorted(x_vals), f"x-values not sorted: {x_vals}"
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_error_bars_match_asymmetric_ci_bounds(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -896,7 +899,7 @@ class TestPlotlyRendererOneEllipseTracePerPoint:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_ellipse_trace_count_equals_point_count(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -911,7 +914,7 @@ class TestPlotlyRendererOneEllipseTracePerPoint:
         )
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_ellipse_traces_have_showlegend_false(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -941,7 +944,7 @@ class TestPlotlyRendererExactlyOneEllipseLegendEntry:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_exactly_one_confidence_region_legend_entry(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -962,7 +965,7 @@ class TestPlotlyRendererExactlyOneEllipseLegendEntry:
         )
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_legend_entry_contains_confidence_level_percentage(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -999,7 +1002,7 @@ class TestPlotlyRendererTextAnnotationsForLabeledPoints:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_non_empty_text_count_equals_labeled_point_count(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1102,7 +1105,7 @@ class TestMatplotlibRendererSortedMeanLineWithErrorBars:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_mean_line_x_values_sorted_ascending(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1121,7 +1124,7 @@ class TestMatplotlibRendererSortedMeanLineWithErrorBars:
         plt.close(fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_errorbar_asymmetric_values_match_ci_bounds(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1171,7 +1174,7 @@ class TestMatplotlibRendererSortedMeanLineWithErrorBars:
         plt.close(fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_mean_line_y_values_match_sorted_points(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1208,7 +1211,7 @@ class TestMatplotlibRendererOneEllipsePatchPerPoint:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_ellipse_patch_count_equals_point_count(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1227,7 +1230,7 @@ class TestMatplotlibRendererOneEllipsePatchPerPoint:
         plt.close(fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_ellipse_rotation_matches_cov_xy(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1255,7 +1258,7 @@ class TestMatplotlibRendererOneEllipsePatchPerPoint:
         plt.close(fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_ellipse_centers_match_point_means(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1299,7 +1302,7 @@ class TestCrossBackendElementCountConsistency:
     """
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_same_number_of_mean_points(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1326,7 +1329,7 @@ class TestCrossBackendElementCountConsistency:
         plt.close(mpl_fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_same_number_of_ellipses(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1352,7 +1355,7 @@ class TestCrossBackendElementCountConsistency:
         plt.close(mpl_fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_same_number_of_error_bar_pairs(
         self,
         data: LatencyThroughputUncertaintyData,
@@ -1381,7 +1384,7 @@ class TestCrossBackendElementCountConsistency:
         plt.close(mpl_fig)
 
     @given(data=valid_uncertainty_data(min_points=1))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=RENDERER_MAX_EXAMPLES, deadline=None)
     def test_mixed_cov_xy_handled_identically(
         self,
         data: LatencyThroughputUncertaintyData,

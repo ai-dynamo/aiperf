@@ -193,8 +193,8 @@ class TestRecordsManagerRace:
 
 @pytest.mark.asyncio
 class TestStickyRouterWorkerRace:
-    async def test_credit_to_unregistered_worker(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_credit_to_unregistered_worker(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._workers = {"w1": WorkerLoad(worker_id="w1", in_flight_credits=5)}
         r._workers["w1"].active_credit_ids = set(range(5))
         r._workers_cache = list(r._workers.values())
@@ -202,8 +202,8 @@ class TestStickyRouterWorkerRace:
         r._unregister_worker("w1")
         r._track_credit_returned("w1", 0, cancelled=True, error_reported=False)
 
-    async def test_worker_registration_during_routing(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_worker_registration_during_routing(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._register_worker("w1")
         assert len(r._workers) == 1
         r._register_worker("w2")
@@ -212,8 +212,8 @@ class TestStickyRouterWorkerRace:
             "w2",
         }
 
-    async def test_worker_unregister_clears_cache(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_worker_unregister_clears_cache(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._register_worker("w1")
         r._register_worker("w2")
         r._unregister_worker("w1")
@@ -344,8 +344,8 @@ class TestDeadlockPrevention:
 
 @pytest.mark.asyncio
 class TestStickySessionRace:
-    async def test_session_eviction_before_turn_completes(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_session_eviction_before_turn_completes(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._router_client.send_to = AsyncMock()
         r._register_worker("w1")
         xcid = "multi"
@@ -370,8 +370,8 @@ class TestStickySessionRace:
             and r._workers["w1"].total_completed_credits == 3
         )
 
-    async def test_worker_unregisters_mid_session(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_worker_unregisters_mid_session(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._router_client.send_to = AsyncMock()
         r._register_worker("w1")
         r._register_worker("w2")
@@ -635,8 +635,8 @@ class TestWarmupToProfilingTransition:
 
 @pytest.mark.asyncio
 class TestRouterLoadBalancing:
-    async def test_tie_selection(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_tie_selection(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._router_client.send_to = AsyncMock()
         for w in ["w1", "w2", "w3"]:
             r._register_worker(w)
@@ -650,8 +650,8 @@ class TestRouterLoadBalancing:
             sel.add(r._router_client.send_to.call_args[0][0])
         assert all(w in {"w1", "w2", "w3"} for w in sel)
 
-    async def test_prefers_lower_load(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_prefers_lower_load(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._router_client.send_to = AsyncMock()
         for w in ["w1", "w2", "w3"]:
             r._register_worker(w)
@@ -670,8 +670,8 @@ class TestRouterLoadBalancing:
             await r.send_credit(_credit(cid=i, conv=f"c{i}"))
             assert r._router_client.send_to.call_args[0][0] == "w2"
 
-    async def test_atomic_load_updates(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_atomic_load_updates(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._register_worker("w1")
         w = r._workers["w1"]
         for i in range(100):
@@ -689,8 +689,8 @@ class TestRouterLoadBalancing:
 
 @pytest.mark.asyncio
 class TestCancellation:
-    async def test_cancel_snapshots_state(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_cancel_snapshots_state(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._router_client = MagicMock()
         r._router_client.send_to = AsyncMock()
         r._workers = {
@@ -708,8 +708,8 @@ class TestCancellation:
         }
         assert calls["w1"] == {1, 2, 3} and calls["w2"] == {4, 5}
 
-    async def test_cancel_skips_no_inflight(self, service_config):
-        r = StickyCreditRouter(service_config=service_config, service_id="tr")
+    async def test_cancel_skips_no_inflight(self, benchmark_run):
+        r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._router_client = MagicMock()
         r._router_client.send_to = AsyncMock()
         r._workers = {

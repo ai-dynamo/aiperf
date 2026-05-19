@@ -8,31 +8,27 @@ import pytest
 from rich.console import Console
 
 from aiperf.accuracy.accuracy_console_exporter import AccuracyConsoleExporter
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_benchmark_run
 
 
 def _make_exporter(records: list[MetricResult] | None) -> AccuracyConsoleExporter:
-    user_config = UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
-    )
+    cfg = make_benchmark_run(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+    ).cfg
     results = (
         ProfileResults(records=records, completed=0, start_ns=0, end_ns=1)
         if records is not None
         else None
     )
     exporter_config = ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        cfg=cfg,
         results=results,
         telemetry_results=None,
     )
@@ -125,3 +121,56 @@ class TestAccuracyConsoleExporterExport:
         await exporter.export(console)
 
         assert "60.00%" in buf.getvalue()
+
+    async def test_warns_when_all_responses_unparsed(self) -> None:
+        """Smoke-test J regression: when 100% of responses fail to parse,
+        the exporter must surface a loud diagnostic so users do not
+        mistake mock-server / misconfigured-endpoint output for real
+        accuracy=0% results."""
+        exporter = _make_exporter(
+            records=[
+                _make_metric("accuracy.overall", correct=0, total=5, accuracy=0.0),
+                _make_metric(
+                    "accuracy.task.abstract_algebra",
+                    correct=0,
+                    total=5,
+                    accuracy=0.0,
+                ),
+                _make_metric("accuracy.unparsed", correct=5, total=5, accuracy=1.0),
+                _make_metric(
+                    "accuracy.unparsed.task.abstract_algebra",
+                    correct=5,
+                    total=5,
+                    accuracy=1.0,
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, highlight=False)
+        await exporter.export(console)
+
+        output = buf.getvalue()
+        assert "Warning" in output
+        assert "unparsed" in output
+        assert "inference server" in output
+
+    async def test_no_warning_when_partial_unparsed(self) -> None:
+        """Mixed parsed/unparsed runs are normal — the diagnostic must
+        only fire on the 100%-unparsed pathology."""
+        exporter = _make_exporter(
+            records=[
+                _make_metric("accuracy.overall", correct=2, total=5, accuracy=0.4),
+                _make_metric("accuracy.task.algebra", correct=2, total=5, accuracy=0.4),
+                _make_metric("accuracy.unparsed", correct=2, total=5, accuracy=0.4),
+                _make_metric(
+                    "accuracy.unparsed.task.algebra", correct=2, total=5, accuracy=0.4
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, highlight=False)
+        await exporter.export(console)
+
+        output = buf.getvalue()
+        assert "Warning" not in output
+        assert "inference server" not in output

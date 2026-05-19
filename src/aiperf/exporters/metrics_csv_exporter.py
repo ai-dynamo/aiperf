@@ -20,11 +20,11 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 
 
 class MetricsCsvExporter(MetricsBaseExporter):
-    """Exports records to a CSV file in a legacy, two-section format."""
+    """Exports records to a CSV file in a two-section format."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        self._file_path = exporter_config.user_config.output.profile_export_csv_file
+        self._file_path = exporter_config.cfg.artifacts.profile_export_csv_file
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
         self.trace_or_debug(
             lambda: f"Initializing MetricsCsvExporter with config: {exporter_config}",

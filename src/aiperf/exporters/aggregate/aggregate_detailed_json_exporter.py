@@ -4,6 +4,7 @@
 
 import orjson
 
+from aiperf.common.finite import scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
@@ -36,4 +37,6 @@ class AggregateDetailedJsonExporter(AggregateBaseExporter):
             "metrics": self._result.metrics,
         }
 
-        return orjson.dumps(output, option=orjson.OPT_INDENT_2).decode("utf-8")
+        return orjson.dumps(
+            scrub_non_finite(output), option=orjson.OPT_INDENT_2
+        ).decode("utf-8")

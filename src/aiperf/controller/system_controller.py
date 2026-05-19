@@ -4,7 +4,7 @@ import asyncio
 import os
 import sys
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from rich.console import Console
 from rich.panel import Panel
@@ -15,8 +15,6 @@ from aiperf.cli_utils import (
     warn_osl_without_ignore_eos,
 )
 from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -28,6 +26,7 @@ from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
+    BaseServiceErrorMessage,
     CommandErrorResponse,
     CommandResponse,
     CommandSuccessResponse,
@@ -56,6 +55,7 @@ from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import ServiceTypeT
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
@@ -65,6 +65,9 @@ from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class SystemController(SignalHandlerMixin, BaseService):
@@ -76,14 +79,12 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        run: "BenchmarkRun",
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             **kwargs,
         )
@@ -108,9 +109,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.WORKER_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
         }
-        if self.service_config.record_processor_service_count is not None:
+        if self.run.cfg.record_processor_service_count is not None:
             self.required_services[ServiceType.RECORD_PROCESSOR] = (
-                self.service_config.record_processor_service_count
+                self.run.cfg.record_processor_service_count
             )
             self.scale_record_processors_with_workers = False
         else:
@@ -119,29 +120,34 @@ class SystemController(SignalHandlerMixin, BaseService):
         # In Kubernetes mode, workers are external pods that connect via TCP.
         # We must wait for at least one worker to register before starting profiling.
         # In Multi-Process mode, workers are spawned locally and register automatically.
-        if self.service_config.service_run_type == ServiceRunType.KUBERNETES:
+        # KUBERNETES is registered in plugins.yaml only when the operator/k8s
+        # service-manager is present; in this build it is intentionally
+        # absent, so probe via getattr rather than referencing the enum
+        # member directly.
+        kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
+        if (
+            kubernetes_run_type is not None
+            and self.run.cfg.runtime.service_run_type == kubernetes_run_type
+        ):
             self.required_services[ServiceType.WORKER] = 1
 
-        self.proxy_manager: ProxyManager = ProxyManager(
-            service_config=self.service_config
-        )
+        self.proxy_manager: ProxyManager = ProxyManager(run=self.run)
+        service_run_type = self.run.cfg.runtime.service_run_type
         ServiceManagerClass = plugins.get_class(
-            PluginType.SERVICE_MANAGER, self.service_config.service_run_type
+            PluginType.SERVICE_MANAGER, service_run_type
         )
 
-        using_dashboard = self.service_config.ui_type == UIType.DASHBOARD
+        using_dashboard = self.run.cfg.ui_type == UIType.DASHBOARD
         log_queue = get_global_log_queue() if using_dashboard else None
 
         self.service_manager: ServiceManagerProtocol = ServiceManagerClass(
             required_services=self.required_services,
-            user_config=self.user_config,
-            service_config=self.service_config,
+            run=self.run,
             log_queue=log_queue,
         )
-        UIClass = plugins.get_class(PluginType.UI, self.service_config.ui_type)
+        UIClass = plugins.get_class(PluginType.UI, self.run.cfg.ui_type)
         self.ui: AIPerfUIProtocol = UIClass(
-            service_config=self.service_config,
-            user_config=self.user_config,
+            run=self.run,
             log_queue=log_queue,
             controller=self,
         )
@@ -165,11 +171,13 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
         """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
-        osl_mean = self.user_config.input.prompt.output_tokens.mean
-        if osl_mean is None:
+        dataset = self.run.cfg.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        osl = getattr(prompts, "osl", None) if prompts else None
+        if osl is None:
             return False
 
-        extra_inputs = self.user_config.input.extra
+        extra_inputs = self.run.cfg.endpoint.extra
         if not extra_inputs:
             return True
 
@@ -179,9 +187,10 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     def _should_warn_accuracy_temperature(self) -> bool:
         """Check if accuracy mode is active without temperature=0 in extra inputs."""
-        if not self.user_config.accuracy.enabled:
+        accuracy = self.run.cfg.accuracy
+        if accuracy is None or not accuracy.enabled:
             return False
-        extra_inputs = self.user_config.input.extra
+        extra_inputs = self.run.cfg.endpoint.extra
         if not extra_inputs:
             return True
         val = dict(extra_inputs).get("temperature")
@@ -236,13 +245,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self.service_manager.start()
 
         # Start optional services before waiting for registration so they can participate in configuration
-        if not self.user_config.gpu_telemetry_disabled:
+        if self.run.cfg.gpu_telemetry.enabled:
             await self.service_manager.run_service(ServiceType.GPU_TELEMETRY_MANAGER)
         else:
             self.info("GPU telemetry disabled via --no-gpu-telemetry")
             self._should_wait_for_telemetry = False
 
-        if not self.user_config.server_metrics_disabled:
+        if self.run.cfg.server_metrics.enabled:
             self.debug("Starting optional ServerMetricsManager service")
             await self.service_manager.run_service(ServiceType.SERVER_METRICS_MANAGER)
         else:
@@ -250,8 +259,8 @@ class SystemController(SignalHandlerMixin, BaseService):
             self._should_wait_for_server_metrics = False
 
         # Start AIPerf API if enabled
-        api_port = self.service_config.api_port or Environment.API_SERVER.PORT
-        api_host = self.service_config.api_host or Environment.API_SERVER.HOST
+        api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        api_host = self.run.cfg.runtime.api_host or Environment.API_SERVER.HOST
         if api_port is not None and api_host is not None:
             self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
             await self.service_manager.run_service(ServiceType.API)
@@ -279,7 +288,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         responses = await self.send_command_and_wait_until_first_error(
             ProfileConfigureCommand(
                 service_id=self.service_id,
-                config=self.user_config,
             ),
             list(self.service_manager.service_id_map.keys()),
             timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
@@ -410,6 +418,31 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_id = message.service_id
         self.info(f"Received credits complete from '{service_id}'")
 
+    @on_message(MessageType.SERVICE_ERROR)
+    async def _process_service_error_message(
+        self, message: BaseServiceErrorMessage
+    ) -> None:
+        """Record a service-reported failure so the run exits non-zero.
+
+        Sources include ``BaseService._kill`` (FAILED-state self-kill) and
+        TimingManager's phase-orchestrator done-callback. Without this
+        handler the failure logs but ``_exit_errors`` stays empty, so
+        ``os._exit(0)`` masks the failure — particularly visible when
+        FixedScheduleStrategy rejects a dataset whose first-turn timestamp
+        was filtered out by the offset window.
+        """
+        self.error(
+            f"Received service error from '{message.service_id}': "
+            f"{message.error.message}"
+        )
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=message.error,
+                operation="service_runtime",
+                service_id=message.service_id,
+            )
+        )
+
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
         """Process a generic service lifecycle status message.
@@ -461,11 +494,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._should_wait_for_telemetry = message.enabled
 
         if not message.enabled:
-            reason_msg = f" - {message.reason}" if message.reason else ""
-            self.info(f"GPU telemetry disabled{reason_msg}")
+            reason_msg = f": {message.reason}" if message.reason else ""
+            self.info(f"DCGM telemetry skipped{reason_msg}")
         else:
             self.info(
-                f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
+                f"DCGM telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
             )
 
         # Re-check shutdown readiness in case results arrived before status message
@@ -869,7 +902,16 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Broadcast a shutdown command to all services
         await self.publish(ShutdownCommand(service_id=self.service_id))
 
-        # TODO: HACK: Wait for 0.5 seconds to ensure the shutdown command is received
+        # ShutdownCommand is fire-and-forget on the pub/sub bus: BaseComponentService's
+        # SHUTDOWN handler raises asyncio.CancelledError instead of returning, so the
+        # CommandHandlerMixin wrapper never publishes an ack we could await. Child
+        # processes also ignore SIGTERM (see bootstrap.py), so process.terminate()
+        # in shutdown_all_services() does nothing useful — only a successful
+        # message-bus delivery here results in graceful shutdown rather than the
+        # eventual SIGKILL fallback. This grace period gives ZMQ inproc/IPC pub/sub
+        # time to deliver the broadcast to every subscriber before we start joining
+        # processes. 500ms is empirically sufficient under normal load and well
+        # under the per-process join timeout in _wait_for_process.
         await asyncio.sleep(0.5)
 
         await self.service_manager.shutdown_all_services()
@@ -908,7 +950,47 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Print post benchmark info and metrics to the console."""
         if not self._profile_results or not self._profile_results.results.records:
             self.error("No profile results to export")
-            sys.exit(1)
+            # Record the failure in _exit_errors so the caller's
+            # ``os._exit(1 if self._exit_errors else 0)`` exits non-zero.
+            # ``sys.exit(1)`` here is swallowed because we run inside an
+            # asyncio task hook, leaving the process to exit cleanly.
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails(
+                        message="No profile results to export. "
+                        "A required service likely failed before any "
+                        "records could be collected — see prior log output.",
+                    ),
+                    operation="export_results",
+                    service_id=self.id,
+                )
+            )
+            self._print_exit_errors_and_log_file()
+            return
+
+        results = self._profile_results.results
+        if results.successful_request_count == 0 and results.error_request_count > 0:
+            self.error(
+                f"All {results.error_request_count} inference request(s) failed; "
+                "no successful responses were collected."
+            )
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails(
+                        message=(
+                            f"All {results.error_request_count} inference "
+                            "request(s) failed. No successful responses were "
+                            "collected — check the server URL, endpoint path, "
+                            "and response format. See prior log output for "
+                            "per-request error details."
+                        ),
+                    ),
+                    operation="export_results",
+                    service_id=self.id,
+                )
+            )
+            self._print_exit_errors_and_log_file()
+            return
 
         console = Console()
         if console.width < 100:
@@ -916,8 +998,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,
-            user_config=self.user_config,
-            service_config=self.service_config,
+            run=self.run,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
         )
@@ -944,7 +1025,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     def _print_log_file_info(self, console: Console) -> None:
         """Print the log file info."""
         log_file = (
-            self.user_config.output.artifact_directory
+            self.run.cfg.artifacts.dir
             / OutputDefaults.LOG_FOLDER
             / OutputDefaults.LOG_FILE
         )
@@ -964,8 +1045,9 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     def _print_cli_command(self, console: Console) -> None:
         """Print the CLI command that was used to run the benchmark."""
+        cli_command = self.run.cli_command
         console.print(
-            f"[bold green]CLI Command:[/bold green] [italic]{self.user_config.cli_command}[/italic]"
+            f"[bold green]CLI Command:[/bold green] [italic]{cli_command}[/italic]"
         )
 
     def _print_benchmark_duration(self, console: Console) -> None:

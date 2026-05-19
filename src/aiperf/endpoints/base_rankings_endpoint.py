@@ -91,8 +91,8 @@ class BaseRankingsEndpoint(BaseEndpoint):
         model_name = turn.model or model_endpoint.primary_model_name
 
         payload = self.build_payload(query_text, passage_texts, model_name)
-        if extra:
-            payload.update(extra)
+        payload.update(extra or {})
+        payload.update(turn.extra_body or {})
 
         self.trace(lambda: f"Formatted rankings payload: {payload}")
         return payload

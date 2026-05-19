@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Public Dataset (ShareGPT)
+# description: Use real multi-turn conversations from the ShareGPT public dataset.
+# category: Datasets
+# tags: sharegpt, public, real-data
+# difficulty: beginner
+# features: public dataset, auto-download
+#
+# Public Dataset Benchmark
+# ========================
+# Benchmarks with real conversation data instead of synthetic prompts.
+# ShareGPT contains ~90K multi-turn conversations from ChatGPT users,
+# giving realistic ISL/OSL distributions and conversation patterns.
+#
+# The dataset is downloaded from HuggingFace on first use (~200MB).
+# Use entries: to limit how many conversations to sample.
+#
+# Run: aiperf profile --config public_dataset.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 180.0
+
+  dataset:
+    type: public
+    dataset: sharegpt
+    entries: 1000     # Sample 1000 conversations (full dataset is ~90K)
+    sampling: shuffle  # Randomize order for diverse workload per run
+
+  warmup:
+    type: concurrency
+    requests: 50
+    concurrency: 8
+
+  profiling:
+    type: concurrency
+    requests: 1000
+    concurrency: 32
+    duration: 300
+    gracePeriod: 120  # Multi-turn conversations need time to finish all turns
+
+  artifacts:
+    dir: ./artifacts/public_dataset
+    summary: [json]
+    records: [jsonl]

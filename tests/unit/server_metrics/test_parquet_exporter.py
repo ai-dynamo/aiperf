@@ -17,10 +17,11 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import TimeRangeFilter
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import (
@@ -31,6 +32,7 @@ from aiperf.server_metrics.storage import (
     ServerMetricsHierarchy,
     ServerMetricsTimeSeries,
 )
+from tests.unit.conftest import make_run_from_cli
 
 # =============================================================================
 # Mock Data Builders
@@ -100,12 +102,12 @@ def build_hierarchy(
 
 
 def create_mock_accumulator(
-    user_config: UserConfig,
+    run: BenchmarkRun,
     hierarchy: ServerMetricsHierarchy,
 ) -> MagicMock:
     """Create a mock accumulator that returns the given hierarchy."""
     mock = MagicMock()
-    mock.user_config = user_config
+    mock.run = run
     mock.get_hierarchy_for_export.return_value = hierarchy
     return mock
 
@@ -128,30 +130,31 @@ def verify_no_filesystem_pollution(tmp_path):
 
 
 @pytest.fixture
-def mock_user_config(tmp_path):
-    """Create a UserConfig with Parquet format enabled.
+def mock_cfg(tmp_path) -> BenchmarkRun:
+    """Create a BenchmarkRun with Parquet format enabled.
 
     Uses pytest's tmp_path fixture to ensure all files are created in
     a temporary directory that is automatically cleaned up after tests.
+    The fixture name is preserved so the existing test bodies (which
+    reference ``mock_cfg.cfg.artifacts.server_metrics_export_parquet_file``)
+    continue to read fluently.
     """
-    config = UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="/v1/chat/completions",
-        ),
-        output={"artifact_directory": str(tmp_path)},
+    user_cfg = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        custom_endpoint="/v1/chat/completions",
+        artifact_directory=str(tmp_path),
         server_metrics_formats=[ServerMetricsFormat.PARQUET],
     )
+    run = make_run_from_cli(user_cfg)
 
     # Verify that output path is within tmp_path (isolation check)
-    assert str(config.output.server_metrics_export_parquet_file).startswith(
-        str(tmp_path)
-    ), (
-        f"Parquet file path {config.output.server_metrics_export_parquet_file} is not within tmp_path {tmp_path}"
+    parquet_path = run.cfg.artifacts.server_metrics_export_parquet_file
+    assert str(parquet_path).startswith(str(tmp_path)), (
+        f"Parquet file path {parquet_path} is not within tmp_path {tmp_path}"
     )
 
-    return config
+    return run
 
 
 @pytest.fixture
@@ -238,26 +241,26 @@ def histogram_hierarchy():
 class TestParquetExporterBasics:
     """Tests for basic Parquet exporter functionality."""
 
-    def test_parquet_disabled_when_format_not_selected(self, mock_user_config):
+    def test_parquet_disabled_when_format_not_selected(self, mock_cfg):
         """Exporter is disabled when Parquet format not selected."""
-        mock_user_config.server_metrics_formats = [ServerMetricsFormat.JSON]
+        mock_cfg.cfg.server_metrics.formats = [ServerMetricsFormat.JSON]
         hierarchy = build_hierarchy({})
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
 
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         with pytest.raises(DataExporterDisabled, match="format not selected"):
             ServerMetricsParquetExporter(mock_accumulator, time_filter)
 
-    async def test_parquet_file_created(self, mock_user_config, gauge_hierarchy):
+    async def test_parquet_file_created(self, mock_cfg, gauge_hierarchy):
         """Parquet file is created with valid schema."""
-        mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
         assert parquet_file.exists()
 
         table = pq.read_table(parquet_file)
@@ -272,7 +275,7 @@ class TestParquetExporterBasics:
 class TestSchemaDiscovery:
     """Tests for dynamic schema discovery."""
 
-    async def test_label_keys_discovered(self, mock_user_config):
+    async def test_label_keys_discovered(self, mock_cfg):
         """Label keys are discovered from all metrics."""
         hierarchy = build_hierarchy(
             {
@@ -296,7 +299,7 @@ class TestSchemaDiscovery:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
@@ -307,7 +310,7 @@ class TestSchemaDiscovery:
         assert "method" in label_keys
         assert "status" in label_keys
 
-    async def test_buckets_in_normalized_rows(self, mock_user_config):
+    async def test_buckets_in_normalized_rows(self, mock_cfg):
         """Histogram buckets are exported as separate rows (normalized schema)."""
         hierarchy = build_hierarchy(
             {
@@ -329,15 +332,13 @@ class TestSchemaDiscovery:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -347,7 +348,7 @@ class TestSchemaDiscovery:
         assert bucket_les == {"0.01", "0.1", "1.0", "+Inf"}
         assert hist_rows["bucket_count"].notna().all()
 
-    async def test_reserved_label_names_filtered(self, mock_user_config):
+    async def test_reserved_label_names_filtered(self, mock_cfg):
         """Labels with reserved names are filtered out."""
         hierarchy = build_hierarchy(
             {
@@ -363,13 +364,13 @@ class TestSchemaDiscovery:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         schema_names = table.schema.names
 
@@ -387,17 +388,15 @@ class TestDeltaCalculations:
     """Tests for delta calculation logic."""
 
     @pytest.mark.asyncio
-    async def test_gauge_raw_values(self, mock_user_config, gauge_hierarchy):
+    async def test_gauge_raw_values(self, mock_cfg, gauge_hierarchy):
         """Gauge metrics export raw values without delta calculations."""
-        mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         gauge_rows = df[df["metric_type"] == "gauge"].sort_values("timestamp_ns")
@@ -407,17 +406,15 @@ class TestDeltaCalculations:
         np.testing.assert_array_almost_equal(values, [50.0, 60.0, 55.0])
 
     @pytest.mark.asyncio
-    async def test_counter_cumulative_deltas(self, mock_user_config, counter_hierarchy):
+    async def test_counter_cumulative_deltas(self, mock_cfg, counter_hierarchy):
         """Counter metrics export cumulative deltas from reference point."""
-        mock_accumulator = create_mock_accumulator(mock_user_config, counter_hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, counter_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -430,21 +427,15 @@ class TestDeltaCalculations:
         assert all(values[i] <= values[i + 1] for i in range(len(values) - 1))
 
     @pytest.mark.asyncio
-    async def test_histogram_cumulative_deltas(
-        self, mock_user_config, histogram_hierarchy
-    ):
+    async def test_histogram_cumulative_deltas(self, mock_cfg, histogram_hierarchy):
         """Histogram metrics export cumulative sum/count/bucket deltas."""
-        mock_accumulator = create_mock_accumulator(
-            mock_user_config, histogram_hierarchy
-        )
+        mock_accumulator = create_mock_accumulator(mock_cfg, histogram_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"].sort_values(
@@ -477,7 +468,7 @@ class TestTimeFilteringEdgeCases:
     """Tests for time filtering edge cases and boundary conditions."""
 
     @pytest.mark.asyncio
-    async def test_all_data_before_filter_returns_empty(self, mock_user_config):
+    async def test_all_data_before_filter_returns_empty(self, mock_cfg):
         """Test returns empty file when all data falls before time filter."""
         hierarchy = build_hierarchy(
             {
@@ -495,7 +486,7 @@ class TestTimeFilteringEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
@@ -504,7 +495,7 @@ class TestTimeFilteringEdgeCases:
         assert result.export_type == "Server Metrics Parquet Export"
 
     @pytest.mark.asyncio
-    async def test_single_timestamp_in_filter(self, mock_user_config):
+    async def test_single_timestamp_in_filter(self, mock_cfg):
         """Test with only one timestamp within filter range."""
         hierarchy = build_hierarchy(
             {
@@ -522,22 +513,20 @@ class TestTimeFilteringEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert len(df) == 1
         assert df["value"].values[0] == 50.0  # Delta from reference
 
     @pytest.mark.asyncio
-    async def test_no_reference_point_available(self, mock_user_config):
+    async def test_no_reference_point_available(self, mock_cfg):
         """Test counter when no reference point before filter start."""
         hierarchy = build_hierarchy(
             {
@@ -555,15 +544,13 @@ class TestTimeFilteringEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -588,9 +575,7 @@ class TestNumericEdgeCases:
             ([1e10, 1e10 + 1000, 1e10 + 500], [0.0, 1000.0, 500.0]),  # Large values
         ],
     )
-    async def test_counter_reset_scenarios(
-        self, mock_user_config, values, expected_deltas
-    ):
+    async def test_counter_reset_scenarios(self, mock_cfg, values, expected_deltas):
         """Test various counter reset and edge case scenarios."""
         # Build timestamps: reference at 500ms, then data points starting at 1000ms
         timestamps = [500_000_000] + [
@@ -612,15 +597,13 @@ class TestNumericEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=10_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -629,7 +612,7 @@ class TestNumericEdgeCases:
         )
 
     @pytest.mark.asyncio
-    async def test_very_large_histogram_bucket_counts(self, mock_user_config):
+    async def test_very_large_histogram_bucket_counts(self, mock_cfg):
         """Test histogram with very large bucket counts."""
         hierarchy = build_hierarchy(
             {
@@ -654,15 +637,13 @@ class TestNumericEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -670,7 +651,7 @@ class TestNumericEdgeCases:
         assert hist_rows["sum"].iloc[0] == 50_000.0
 
     @pytest.mark.asyncio
-    async def test_zero_values_preserved(self, mock_user_config):
+    async def test_zero_values_preserved(self, mock_cfg):
         """Test that zero values are preserved (not treated as null)."""
         hierarchy = build_hierarchy(
             {
@@ -686,15 +667,13 @@ class TestNumericEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert df["value"].iloc[0] == 0.0
@@ -710,7 +689,7 @@ class TestLabelHandlingEdgeCases:
     """Tests for edge cases in label handling."""
 
     @pytest.mark.asyncio
-    async def test_metrics_with_no_labels(self, mock_user_config):
+    async def test_metrics_with_no_labels(self, mock_cfg):
         """Test metrics without any labels."""
         hierarchy = build_hierarchy(
             {
@@ -726,22 +705,20 @@ class TestLabelHandlingEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert len(df) == 1
         assert df["value"].iloc[0] == 50.0
 
     @pytest.mark.asyncio
-    async def test_mixed_label_sets(self, mock_user_config):
+    async def test_mixed_label_sets(self, mock_cfg):
         """Test metrics with completely different label sets."""
         hierarchy = build_hierarchy(
             {
@@ -765,15 +742,13 @@ class TestLabelHandlingEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert "method" in df.columns
@@ -790,7 +765,7 @@ class TestLabelHandlingEdgeCases:
         assert pd.isna(gauge_row["method"])
 
     @pytest.mark.asyncio
-    async def test_empty_label_values(self, mock_user_config):
+    async def test_empty_label_values(self, mock_cfg):
         """Test labels with empty string values."""
         hierarchy = build_hierarchy(
             {
@@ -806,15 +781,13 @@ class TestLabelHandlingEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert df["method"].iloc[0] == ""
@@ -830,7 +803,7 @@ class TestHistogramBucketEdgeCases:
     """Tests for histogram-specific edge cases."""
 
     @pytest.mark.asyncio
-    async def test_histogram_with_single_bucket(self, mock_user_config):
+    async def test_histogram_with_single_bucket(self, mock_cfg):
         """Test histogram with only +Inf bucket."""
         hierarchy = build_hierarchy(
             {
@@ -852,15 +825,13 @@ class TestHistogramBucketEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -869,7 +840,7 @@ class TestHistogramBucketEdgeCases:
         assert hist_rows["bucket_count"].iloc[0] == 100.0
 
     @pytest.mark.asyncio
-    async def test_histogram_with_many_buckets(self, mock_user_config):
+    async def test_histogram_with_many_buckets(self, mock_cfg):
         """Test histogram with many buckets (50+)."""
         bucket_les = tuple(f"{i * 0.1:.1f}" for i in range(1, 51)) + ("+Inf",)
         bucket_counts = [[float(i * 10) for i in range(1, 51)] + [500.0]]
@@ -894,15 +865,13 @@ class TestHistogramBucketEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -911,7 +880,7 @@ class TestHistogramBucketEdgeCases:
         assert hist_rows["count"].nunique() == 1
 
     @pytest.mark.asyncio
-    async def test_histogram_reset_negative_deltas(self, mock_user_config):
+    async def test_histogram_reset_negative_deltas(self, mock_cfg):
         """Test histogram reset produces zero deltas."""
         hierarchy = build_hierarchy(
             {
@@ -933,15 +902,13 @@ class TestHistogramBucketEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -960,9 +927,7 @@ class TestSchemaConsistency:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("num_endpoints", [1, 3, 10])
-    async def test_schema_consistent_across_endpoints(
-        self, mock_user_config, num_endpoints
-    ):
+    async def test_schema_consistent_across_endpoints(self, mock_cfg, num_endpoints):
         """Test schema is consistent regardless of number of endpoints."""
         endpoints_data = {}
         for i in range(num_endpoints):
@@ -978,22 +943,20 @@ class TestSchemaConsistency:
             ]
 
         hierarchy = build_hierarchy(endpoints_data)
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert len(df) == num_endpoints
         assert len(df.columns) > 0
 
     @pytest.mark.asyncio
-    async def test_mixed_metrics_all_types(self, mock_user_config):
+    async def test_mixed_metrics_all_types(self, mock_cfg):
         """Test file with mix of all metric types from multiple endpoints."""
         endpoints_data = {}
         for endpoint in (
@@ -1034,15 +997,13 @@ class TestSchemaConsistency:
             ]
 
         hierarchy = build_hierarchy(endpoints_data)
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         # 2 gauges + 2 counters + (2 histograms × 2 buckets) = 8 rows
@@ -1061,7 +1022,7 @@ class TestMultiEndpoint:
     """Tests for multi-endpoint scenarios."""
 
     @pytest.mark.asyncio
-    async def test_multiple_endpoints(self, mock_user_config):
+    async def test_multiple_endpoints(self, mock_cfg):
         """Multiple endpoints are included in Parquet export."""
         hierarchy = build_hierarchy(
             {
@@ -1087,15 +1048,13 @@ class TestMultiEndpoint:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         endpoints = df["endpoint_url"].unique()
@@ -1113,7 +1072,7 @@ class TestEdgeCases:
     """Tests for edge cases."""
 
     @pytest.mark.asyncio
-    async def test_counter_reset_handling(self, mock_user_config):
+    async def test_counter_reset_handling(self, mock_cfg):
         """Counter resets (negative deltas) are handled correctly."""
         hierarchy = build_hierarchy(
             {
@@ -1132,15 +1091,13 @@ class TestEdgeCases:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -1151,10 +1108,10 @@ class TestEdgeCases:
         assert values[1] == 0.0
 
     @pytest.mark.asyncio
-    async def test_empty_data_no_file_created(self, mock_user_config, tmp_path):
+    async def test_empty_data_no_file_created(self, mock_cfg, tmp_path):
         """No Parquet file created when no data available."""
         hierarchy = build_hierarchy({})
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
@@ -1173,7 +1130,7 @@ class TestDataValidation:
     """Tests for exported data validation."""
 
     @pytest.mark.asyncio
-    async def test_all_metric_types_in_single_file(self, mock_user_config):
+    async def test_all_metric_types_in_single_file(self, mock_cfg):
         """Gauge, counter, and histogram metrics all in single Parquet file."""
         hierarchy = build_hierarchy(
             {
@@ -1211,15 +1168,13 @@ class TestDataValidation:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         metric_types = set(df["metric_type"].unique())
@@ -1228,7 +1183,7 @@ class TestDataValidation:
         assert "histogram" in metric_types
 
     @pytest.mark.asyncio
-    async def test_timestamps_sorted_per_metric(self, mock_user_config):
+    async def test_timestamps_sorted_per_metric(self, mock_cfg):
         """Timestamps are sorted within each metric."""
         hierarchy = build_hierarchy(
             {
@@ -1247,15 +1202,13 @@ class TestDataValidation:
                 ],
             }
         )
-        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=4_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(
-            mock_user_config.output.server_metrics_export_parquet_file
-        )
+        table = pq.read_table(mock_cfg.cfg.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         timestamps = df["timestamp_ns"].values
@@ -1269,16 +1222,16 @@ class TestParquetMetadataFields:
 
     @pytest.mark.asyncio
     async def test_parquet_has_all_core_metadata_fields(
-        self, mock_user_config, gauge_hierarchy
+        self, mock_cfg, gauge_hierarchy
     ):
         """Verify Parquet metadata includes schema_version, aiperf.version, and benchmark_id."""
-        mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1295,7 +1248,9 @@ class TestParquetMetadataFields:
         assert version != "unknown"
 
         benchmark_id = metadata[b"aiperf.benchmark_id"].decode()
-        assert len(benchmark_id) == 36  # UUID format
+        # v2 ArtifactsConfig stores benchmark_id as a 32-char hex string
+        # (uuid4().hex); v1 used the 36-char dashed form. Accept either.
+        assert len(benchmark_id) in (32, 36)
 
         # Verify it's a valid UUID
         import uuid
@@ -1303,17 +1258,15 @@ class TestParquetMetadataFields:
         uuid.UUID(benchmark_id)
 
     @pytest.mark.asyncio
-    async def test_parquet_has_environment_metadata(
-        self, mock_user_config, gauge_hierarchy
-    ):
+    async def test_parquet_has_environment_metadata(self, mock_cfg, gauge_hierarchy):
         """Verify Parquet includes hostname, python_version, pyarrow_version."""
-        mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1332,39 +1285,37 @@ class TestParquetMetadataFields:
         assert len(pyarrow_ver) > 0
 
     @pytest.mark.asyncio
-    async def test_parquet_benchmark_id_matches_user_config(
-        self, mock_user_config, gauge_hierarchy
+    async def test_parquet_benchmark_id_matches_cli_config(
+        self, mock_cfg, gauge_hierarchy
     ):
-        """Verify Parquet benchmark_id matches UserConfig benchmark_id."""
-        mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
+        """Verify Parquet benchmark_id matches CLIConfig benchmark_id."""
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
         parquet_benchmark_id = metadata[b"aiperf.benchmark_id"].decode()
-        assert parquet_benchmark_id == mock_user_config.benchmark_id
+        assert parquet_benchmark_id == mock_cfg.benchmark_id
 
     @pytest.mark.asyncio
-    async def test_parquet_has_complete_metadata_set(
-        self, mock_user_config, gauge_hierarchy
-    ):
+    async def test_parquet_has_complete_metadata_set(self, mock_cfg, gauge_hierarchy):
         """Verify Parquet has all expected metadata keys.
 
         Note: row_count is not stored in custom metadata since it's available
         via Parquet's built-in metadata: pq.read_metadata(path).num_rows
         """
-        mock_accumulator = create_mock_accumulator(mock_user_config, gauge_hierarchy)
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
 
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_user_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 

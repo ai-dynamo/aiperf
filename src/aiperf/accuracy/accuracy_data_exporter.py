@@ -31,7 +31,8 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
-        if not exporter_config.user_config.accuracy.enabled:
+        accuracy_cfg = exporter_config.cfg.accuracy
+        if accuracy_cfg is None or not accuracy_cfg.enabled:
             raise DataExporterDisabled(
                 "Accuracy data exporter is disabled: accuracy mode is not enabled"
             )
@@ -39,7 +40,7 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.exporter_config = exporter_config
 
-        artifact_dir = Path(exporter_config.user_config.output.artifact_directory)
+        artifact_dir = Path(exporter_config.cfg.artifacts.artifact_directory)
         self._csv_path = artifact_dir / "accuracy_results.csv"
 
     def get_export_info(self) -> FileExportInfo:

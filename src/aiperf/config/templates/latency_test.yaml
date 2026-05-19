@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Latency Test (Controlled QPS)
+# description: Measure TTFT, ITL, and E2E latency at a controlled request rate.
+# category: Load Testing
+# tags: latency, poisson, ttft, itl
+# difficulty: beginner
+# features: poisson arrival, streaming, latency metrics
+#
+# Latency Test with Controlled Request Rate
+# ==========================================
+# Measures latency characteristics (TTFT, ITL, E2E) under controlled load.
+# Poisson arrivals model real traffic where requests arrive independently,
+# unlike concurrency mode which immediately fires when a slot opens.
+#
+# Key metrics produced:
+#   TTFT  - Time to first token (requires streaming: true)
+#   ITL   - Inter-token latency (time between consecutive tokens)
+#   E2E   - End-to-end request latency
+#   TPS   - Tokens per second per request
+#
+# Run: aiperf profile --config latency_test.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true # Required for TTFT and ITL — without streaming, only E2E is measured
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 3000
+    isl: {mean: 256, stddev: 50}
+    osl: {mean: 128, stddev: 25}
+
+  # "profiling:" is shorthand for phases: [{name: profiling, ...}]
+  # (warmup/profiling under benchmark auto-wrap into phases)
+  profiling:
+    type: poisson
+    duration: 120
+    rate: 20.0          # Target QPS — tune this to your server's capacity
+    concurrency: 100    # Safety cap to prevent unbounded queue growth
+    gracePeriod: 60
+
+  artifacts:
+    dir: ./artifacts/latency_test
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 30 # 30-second windows to see if latency drifts over time

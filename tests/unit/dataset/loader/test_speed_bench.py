@@ -7,8 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.models import Conversation
-from aiperf.dataset.loader.models import MultiTurn, SpeedBenchRow
-from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
+from aiperf.dataset.loader.models import MultiTurn
+from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 

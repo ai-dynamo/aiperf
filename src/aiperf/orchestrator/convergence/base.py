@@ -2,15 +2,39 @@
 # SPDX-License-Identifier: Apache-2.0
 """Base class for convergence criteria."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from typing_extensions import Self
 
 from aiperf.orchestrator.jsonl_loader import DEFAULT_JSONL_FILENAME, load_single_metric
 from aiperf.orchestrator.models import RunResult
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkPlan
+
+__all__ = [
+    "DEFAULT_JSONL_FILENAME",
+    "ConvergenceCriterion",
+]
+
 
 class ConvergenceCriterion(ABC):
     """Abstract base for determining whether benchmark metrics have converged across runs."""
+
+    @classmethod
+    @abstractmethod
+    def from_plan(cls, plan: BenchmarkPlan) -> Self:
+        """Build an instance from a fully-validated BenchmarkPlan.
+
+        Each subclass owns the mapping from plan fields to its constructor
+        kwargs. Used by the plugin-registry dispatch in
+        ``aiperf.cli_runner._strategy._build_convergence_criterion`` so
+        heterogeneous constructor signatures still dispatch uniformly.
+        """
 
     @abstractmethod
     def is_converged(self, results: list[RunResult]) -> bool:

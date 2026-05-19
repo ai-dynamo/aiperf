@@ -1,15 +1,59 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError, model_validator
 
-from aiperf.common.config.user_config import UserConfig
-from aiperf.dataset.loader.models import MultiTurn, SingleTurn, SpeedBenchRow
+from aiperf.common.models import AIPerfBaseModel
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
+
+class SpeedBenchRow(AIPerfBaseModel):
+    """Defines the schema for Speed-Bench row data.
+
+    Each entry represents a single line in the Speed-Bench JSONL file, which contains the following fields:
+    - question_id: Unique identifier for the question
+    - category: Category of the question
+    - messages: List of messages in the conversation
+    """
+
+    TURNS_PLACEHOLDER: ClassVar[str] = (
+        "FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE SOURCE USING SPECDEC_BENCH"
+    )
+
+    question_id: str = Field(
+        description="Unique identifier for the question", min_length=32, max_length=32
+    )
+    category: str = Field(description="Category of the question", min_length=1)
+    messages: list[dict[str, Any]] = Field(
+        description="List of messages in the conversation", min_length=1
+    )
+
+    @model_validator(mode="after")
+    def validate_messages_structure(self) -> SpeedBenchRow:
+        """Validate the messages field structure."""
+        if not all(
+            isinstance(message, dict)
+            and isinstance(message.get("role"), str)
+            and bool(message["role"].strip())
+            and isinstance(message.get("content"), str)
+            and bool(message["content"].strip())
+            and message["content"] != self.TURNS_PLACEHOLDER
+            for message in self.messages
+        ):
+            raise ValueError(
+                "messages must be a non-empty list of dictionaries with role and content fields, and the content must not be the placeholder string"
+            )
+        return self
 
 
 class SpeedBenchLoader(MultiTurnDatasetLoader):
@@ -52,12 +96,12 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
     def __init__(
         self,
         filename: str,
-        user_config: UserConfig,
+        run: BenchmarkRun | None = None,
         category: str | None = None,
         **kwargs: Any,
     ) -> None:
         self.category = category
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        super().__init__(filename=filename, run=run, **kwargs)
 
     @classmethod
     def can_load(

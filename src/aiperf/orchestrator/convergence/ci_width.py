@@ -2,14 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """CI width convergence criterion using Student's t confidence interval."""
 
+from __future__ import annotations
+
 import logging
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.stats import t as t_dist
 
 from aiperf.orchestrator.convergence.base import ConvergenceCriterion
 from aiperf.orchestrator.models import RunResult
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkPlan
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,20 @@ class CIWidthConvergence(ConvergenceCriterion):
         self._threshold = threshold
         self._confidence_level = confidence_level
         self._min_runs = min_runs
+
+    @classmethod
+    def from_plan(cls, plan: BenchmarkPlan) -> CIWidthConvergence:
+        convergence = plan.multi_run.convergence
+        assert convergence is not None  # gated by _build_convergence_criterion
+        kwargs: dict[str, object] = {
+            "metric": convergence.metric,
+            "stat": convergence.stat,
+            "confidence_level": plan.confidence_level,
+            "min_runs": convergence.min_runs,
+        }
+        if convergence.threshold is not None:
+            kwargs["threshold"] = convergence.threshold
+        return cls(**kwargs)  # type: ignore[arg-type]
 
     def is_converged(self, results: list[RunResult]) -> bool:
         """Check whether the CI width ratio is below the threshold.

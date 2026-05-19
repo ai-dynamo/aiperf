@@ -41,10 +41,10 @@ HISTOGRAM_STAT_KEYS = [
 
 STAT_KEYS_MAP = {
     PrometheusMetricType.GAUGE: GAUGE_STAT_KEYS,
+    PrometheusMetricType.UNKNOWN: GAUGE_STAT_KEYS,
     PrometheusMetricType.COUNTER: COUNTER_STAT_KEYS,
     PrometheusMetricType.HISTOGRAM: HISTOGRAM_STAT_KEYS,
 }
-
 
 __all__ = ["ServerMetricsCsvExporter"]
 
@@ -90,14 +90,11 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         Raises:
             DataExporterDisabled: If server metrics are disabled or no data is available
         """
-        if exporter_config.user_config.server_metrics_disabled:
+        if exporter_config.cfg.server_metrics_disabled:
             raise DataExporterDisabled("Server metrics is disabled")
 
         # Check if CSV format is enabled
-        if (
-            ServerMetricsFormat.CSV
-            not in exporter_config.user_config.server_metrics_formats
-        ):
+        if ServerMetricsFormat.CSV not in exporter_config.cfg.server_metrics_formats:
             raise DataExporterDisabled(
                 "Server metrics CSV export disabled: format not selected"
             )
@@ -112,9 +109,7 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
             )
 
         super().__init__(exporter_config, **kwargs)
-        self._file_path = (
-            exporter_config.user_config.output.server_metrics_export_csv_file
-        )
+        self._file_path = exporter_config.cfg.artifacts.server_metrics_export_csv_file
         self.trace_or_debug(
             lambda: f"Initializing ServerMetricsCsvExporter with config: {exporter_config}",
             lambda: f"Initializing ServerMetricsCsvExporter with file path: {self._file_path}",
@@ -181,14 +176,14 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
             if not metrics_by_type[PrometheusMetricType.GAUGE]:
                 del metrics_by_type[PrometheusMetricType.GAUGE]
 
-        # Write sections in order: gauge, counter, histogram
+        # Write sections in order: gauge, counter, histogram, unknown
         section_order = [
             PrometheusMetricType.GAUGE,
             PrometheusMetricType.COUNTER,
             PrometheusMetricType.HISTOGRAM,
+            PrometheusMetricType.UNKNOWN,
         ]
         first_section = True
-
         for metric_type in section_order:
             if metric_type not in metrics_by_type:
                 continue

@@ -98,7 +98,7 @@ class TestVideoGenerationEndpoint:
         turn = Turn(texts=[], model="sora-2")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="requires text prompt"):
+        with pytest.raises(ValueError, match="requires a text prompt"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_empty_text_contents_raises(self, endpoint, model_endpoint):
@@ -106,8 +106,39 @@ class TestVideoGenerationEndpoint:
         turn = Turn(texts=[Text(contents=[])], model="sora-2")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="requires text prompt"):
+        with pytest.raises(ValueError, match="requires a text prompt"):
             endpoint.format_payload(request_info)
+
+    def test_extra_body_shallow_merges_into_payload(self, endpoint, model_endpoint):
+        """Test that Turn.extra_body shallow-merges into the payload."""
+        turn = Turn(
+            texts=[Text(contents=["a sunset"])],
+            extra_body={"vendor_fps": 24},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_fps"] == 24
+
+    def test_format_payload_uses_dispatching_turn(self, endpoint, model_endpoint):
+        parent_turn = Turn(
+            texts=[Text(contents=["parent video"])],
+            model="parent-model",
+            extra_body={"vendor_fps": 12},
+        )
+        child_turn = Turn(
+            texts=[Text(contents=["child video"])],
+            model="child-model",
+            extra_body={"vendor_fps": 24},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(
+                model_endpoint=model_endpoint, turns=[parent_turn, child_turn]
+            )
+        )
+        assert payload["prompt"] == "child video"
+        assert payload["model"] == "child-model"
+        assert payload["vendor_fps"] == 24
 
     # ===== parse_response tests =====
 

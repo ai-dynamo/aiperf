@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: KV Cache / Prefix Caching
+# description: Test KV cache efficiency with shared system prompts using user-centric mode.
+# category: Advanced
+# tags: kv-cache, prefix, user-centric
+# difficulty: advanced
+# features: user_centric mode, shared prefix, per-user rate
+#
+# KV Cache / Prefix Caching Benchmark
+# ====================================
+# Measures how well the server reuses cached KV states for shared prefixes.
+# Servers like vLLM and TRT-LLM can cache the KV computation for system
+# prompts and shared context, serving subsequent requests faster.
+#
+# This template uses the prefix-pool approach: N distinct prefixes are
+# randomly assigned to requests, so a small `poolSize` relative to `entries`
+# yields a high cache hit rate. To instead model a fixed system prompt with
+# per-session context (RAG-style), replace `prefixPrompts` with:
+#
+#     prefixPrompts:
+#       sharedSystemLength: 1000   # Same N-token system prompt for everyone
+#       userContextLength: 256     # Unique per-session context
+#
+# Check server metrics for cache hit rates (vLLM: vllm:prefix_cache_hit_rate,
+# TRT-LLM: kv_cache_reuse_rate) to validate caching is working.
+#
+# Run: aiperf profile --config kv_cache_test.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
+
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 256, stddev: 30}
+      osl: {mean: 128, stddev: 20}
+    prefixPrompts:
+      poolSize: 10 # 10 distinct prefixes — expect ~10% unique, ~90% cache hits
+      length: 512  # Each prefix is 512 tokens
+    turns: {mean: 4, stddev: 1}  # user_centric needs multi-turn sessions
+    turnDelay: {mean: 1500, stddev: 500}
+
+  phases:
+    - name: warmup
+      type: user_centric
+      excludeFromResults: true
+      duration: 30
+      users: 10
+      rate: 1.0
+
+    - name: profiling
+      type: user_centric
+      duration: 120
+      users: 30       # 30 simulated users sharing the global rate
+      rate: 2.0       # 2 QPS total (each user sends ~0.067 QPS)
+      gracePeriod: 60
+
+  artifacts:
+    dir: ./artifacts/kv_cache_test
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 30 # Watch for cache warm-up — early slices should be slower
+
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv]

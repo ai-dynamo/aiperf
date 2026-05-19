@@ -4,6 +4,7 @@
 """Tests for HuggingFace cache detection in the tokenizer module."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -121,3 +122,142 @@ class TestFindCachedModelForAlias:
         (hf_cache / "models--org-a--gpt2").mkdir()
         (hf_cache / "models--org-b--gpt2").mkdir()
         assert Tokenizer._find_cached_model_for_alias("gpt2") is None
+
+
+class TestTokenizerOnlyRepoCacheLoad:
+    """Regression: tokenizer-only HF repos lack ``config.json``.
+
+    Before the fix, ``Tokenizer.from_pretrained`` switched to
+    ``local_files_only=True`` whenever ``_is_hf_cached`` returned True,
+    which made ``AutoTokenizer`` fail on its initial ``PreTrainedConfig``
+    lookup with a misleading "Cannot connect to HuggingFace Hub and files
+    not cached" error — even though the cache was warm and HF was reachable.
+    """
+
+    def _materialize_tokenizer_only_snapshot(
+        self,
+        hf_cache: Path,
+        repo_id: str,
+        revision: str,
+        commit: str,
+    ) -> Path:
+        """Build a minimal HF cache layout that mirrors a tokenizer-only repo."""
+        model_dir = hf_cache / f"models--{repo_id.replace('/', '--')}"
+        snapshot_dir = model_dir / "snapshots" / commit
+        snapshot_dir.mkdir(parents=True)
+        (model_dir / "refs").mkdir()
+        (model_dir / "refs" / revision).write_text(commit)
+        # Tokenizer files only — no config.json (this is the whole point).
+        (snapshot_dir / "tokenizer.json").write_text("{}")
+        (snapshot_dir / "tokenizer_config.json").write_text("{}")
+        return snapshot_dir
+
+    def test_online_cached_load_does_not_force_local_files_only(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        """When online and cache is warm, ``local_files_only`` must NOT be set.
+
+        Forcing ``local_files_only=True`` was the bug: tokenizer-only repos
+        lack ``config.json``, so the offline path mistakes the missing file
+        for a missing cache and surfaces the wrong error.
+        """
+        repo = "hf-internal-testing/llama-tokenizer"
+        self._materialize_tokenizer_only_snapshot(hf_cache, repo, "main", "deadbeef")
+
+        # Ensure online (offline env vars cleared).
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        seen_kwargs: dict[str, object] = {}
+
+        def fake_from_pretrained(name_or_path, **kwargs):
+            seen_kwargs["name_or_path"] = name_or_path
+            seen_kwargs.update(kwargs)
+            # Return a sentinel — we only care about the call shape, not
+            # an actual tokenizer.
+            return _FakeHfTokenizer()
+
+        with patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            side_effect=fake_from_pretrained,
+        ):
+            Tokenizer.from_pretrained(repo, revision="main", resolve_alias=False)
+
+        assert "local_files_only" not in seen_kwargs, (
+            "Online cached load must not pass local_files_only=True; "
+            "transformers cannot distinguish a missing-on-server file (e.g. "
+            "config.json for a tokenizer-only repo) from a missing cache "
+            "entry, and surfaces a misleading 'Cannot connect to HF Hub' error."
+        )
+        assert seen_kwargs["name_or_path"] == repo
+        assert seen_kwargs["revision"] == "main"
+
+    def test_offline_cached_load_uses_snapshot_path(
+        self, hf_cache, monkeypatch
+    ) -> None:
+        """Offline + cached: must hand AutoTokenizer the snapshot directory.
+
+        Loading via a path bypasses transformers' ``config.json`` lookup,
+        which is the only way a tokenizer-only repo loads cleanly under
+        ``HF_HUB_OFFLINE=1``.
+        """
+        repo = "hf-internal-testing/llama-tokenizer"
+        commit = "deadbeefcafebabe"
+        snapshot = self._materialize_tokenizer_only_snapshot(
+            hf_cache, repo, "main", commit
+        )
+
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+        # Stub snapshot_download so it returns our materialized path without
+        # touching the network or the real cache (it would otherwise key off
+        # huggingface_hub.constants.HF_HUB_CACHE which is monkeypatched but
+        # the local copy huggingface_hub already imported elsewhere may not
+        # see the patch).
+        from aiperf.common import tokenizer as tk_module
+
+        def fake_snapshot_download(name, revision, local_files_only):
+            assert local_files_only is True
+            assert name == repo
+            assert revision == "main"
+            return str(snapshot)
+
+        monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+
+        seen: dict[str, object] = {}
+
+        def fake_from_pretrained(name_or_path, **kwargs):
+            seen["name_or_path"] = name_or_path
+            seen.update(kwargs)
+            return _FakeHfTokenizer()
+
+        with patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            side_effect=fake_from_pretrained,
+        ):
+            tk_module.Tokenizer.from_pretrained(
+                repo, revision="main", resolve_alias=False
+            )
+
+        assert seen["name_or_path"] == str(snapshot), (
+            "Offline cached load must pass the snapshot directory path so "
+            "AutoTokenizer skips the config.json round-trip."
+        )
+        # No revision/local_files_only when loading via path; transformers
+        # infers everything from the directory contents.
+        assert "revision" not in seen
+        assert "local_files_only" not in seen
+
+
+class _FakeHfTokenizer:
+    """Minimal stub that satisfies ``Tokenizer._apply_kwarg_overrides``."""
+
+    def encode(self, text, **kwargs):
+        return []
+
+    def decode(self, ids, **kwargs):
+        return ""
+
+    def __call__(self, text, **kwargs):
+        return {"input_ids": []}

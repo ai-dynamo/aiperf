@@ -10,6 +10,7 @@ import orjson
 import pytest
 
 from aiperf.common import readiness_probe
+from aiperf.config.flags.cli_config import CLIConfig
 
 
 class _FakeRecord:
@@ -143,7 +144,6 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
     every URL the client sees is well-formed (starts with `http://` or
     `https://`).
     """
-    from aiperf.common.config import EndpointConfig
 
     fake = _FakeMultiClient(
         models_payload=orjson.dumps({"data": [{"id": "served-model"}]})
@@ -156,7 +156,7 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
         lambda *args, **kwargs: fake,
     )
 
-    config = EndpointConfig(model_names=["served-model"], urls=["localhost:8000"])
+    config = CLIConfig(model_names=["served-model"], urls=["localhost:8000"])
     assert config.urls == ["http://localhost:8000"], (
         "EndpointConfig must prepend http:// to scheme-less URLs"
     )

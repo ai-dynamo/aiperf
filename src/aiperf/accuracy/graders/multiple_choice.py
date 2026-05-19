@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 # Matches a lone A-D letter not adjacent to a word character, e.g. "B.", "**B**", "(B)", "answer is B".
 _LETTER_RE = re.compile(r"(?<!\w)([A-D])(?!\w)")
@@ -35,8 +39,8 @@ class MultipleChoiceGrader(BaseGrader):
     - Score: 1 if gold == pred else 0
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
 
     def _extract_with_flag(self, response_text: str) -> tuple[str, bool]:
         """Return (answer, unparsed). unparsed=True when regex fallback was used."""

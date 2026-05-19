@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Audio/Speech Model Benchmark
+# description: Benchmark speech-to-text or audio understanding models.
+# category: Multimodal
+# tags: audio, speech, multimodal
+# difficulty: intermediate
+# features: audio config, duration distributions
+#
+# Audio/Speech Multimodal Benchmark
+# ==================================
+# Generates synthetic audio clips and sends them as multimodal requests.
+# Audio is random noise at the configured sample rate — the content doesn't
+# matter, only the data size and processing overhead.
+#
+# Note: AIPerf has no dedicated audio-transcriptions endpoint plugin yet,
+# so this template targets the chat-completions endpoint with audio attached
+# as a multimodal content part. Suitable for servers that accept chat-shaped
+# multimodal payloads with audio (e.g. GPT-4o-style audio input). Pure
+# Whisper-style /v1/audio/transcriptions endpoints (multipart upload) are
+# not supported by the chat plugin — track future audio-endpoint support
+# before pointing this at a Whisper server.
+#
+# Run: aiperf profile --config audio_multimodal.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: Qwen/Qwen2-Audio-7B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    timeout: 180.0
+
+  # Mixed-length audio: lognormal-ish distribution covers voice commands
+  # (~5-10s) through meeting/podcast clips (~30-60s) in one workload.
+  dataset:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: 50
+      osl: {mean: 300, stddev: 100}
+    audio:
+      batchSize: 1
+      length: {mean: 20.0, stddev: 12.0}
+      format: wav
+      sampleRates: [16.0] # 16kHz — standard for speech recognition
+      depths: [16]        # 16-bit PCM
+      channels: 1
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 20
+      concurrency: 4
+
+    - name: profiling
+      type: poisson
+      requests: 500
+      concurrency: 8
+      rate: 5.0
+      duration: 300
+      gracePeriod: 180 # Long clips can take a while to process
+
+  artifacts:
+    dir: ./artifacts/audio_multimodal
+    summary: [json]
+    records: [jsonl]

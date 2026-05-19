@@ -70,6 +70,41 @@ ACRONYMS = frozenset(
     {"ui", "zmq", "gpu", "api", "cpu", "llm", "json", "yaml", "csv", "id"}
 )
 
+# =============================================================================
+# Composite Enums Configuration
+# =============================================================================
+# Composite enums merge multiple categories with optional renames and exclusions.
+# These are user-facing enums that abstract implementation details.
+# =============================================================================
+
+COMPOSITE_ENUMS = {
+    "PhaseType": {
+        "description": "Load generation type for benchmark phases.",
+        "sources": [
+            {
+                "category": "arrival_pattern",
+                "renames": {"concurrency_burst": "concurrency"},
+            },
+            {
+                "category": "timing_strategy",
+                "excludes": {"request_rate"},  # Internal implementation detail
+                "renames": {"user_centric_rate": "user_centric"},
+            },
+        ],
+    },
+    "DatasetFormat": {
+        "description": (
+            "Format of file-based datasets. Mirrors the custom_dataset_loader "
+            "plugin registry: every loader name surfaces here, because "
+            "``--custom-dataset-type`` resolves into "
+            "``benchmark.datasets[].file.format``."
+        ),
+        "sources": [
+            {"category": "custom_dataset_loader"},
+        ],
+    },
+}
+
 GENERATED_HEADER = (
     *make_generated_header("generate_plugin_artifacts"),
     "# fmt: off",
@@ -260,6 +295,9 @@ def generate_enums_py() -> str:
     names = ["PluginType", "PluginTypeStr"]
     for _, enum_name, _ in enum_data:
         names.extend([enum_name, f"{enum_name}Str"])
+    # Add composite enums
+    for enum_name in COMPOSITE_ENUMS:
+        names.extend([enum_name, f"{enum_name}Str"])
 
     lines = [
         *GENERATED_HEADER,
@@ -302,7 +340,85 @@ def generate_enums_py() -> str:
             ]
         )
 
+    # Generate composite enums
+    if COMPOSITE_ENUMS:
+        lines.extend(
+            [
+                "# =============================================================================",
+                "# Composite Enums (merged from multiple categories)",
+                "# =============================================================================",
+                "",
+            ]
+        )
+
+    for enum_name, config in COMPOSITE_ENUMS.items():
+        lines.extend(_generate_composite_enum_py(enum_name, config, plugins))
+
     return "\n".join(lines)
+
+
+def _generate_composite_enum_py(
+    enum_name: str, config: dict, plugins_data: dict
+) -> list[str]:
+    """Generate dynamic Python code for a composite enum.
+
+    The generated code loads from plugins at runtime, making it extensible.
+    """
+    lines = []
+    desc = config.get("description", "Composite enum merging multiple categories.")
+
+    # Generate the dynamic creation code. Build the members dict inside a
+    # function so there's no module-level mutable state.
+    builder = f"_build_{enum_name.lower()}_members"
+    lines.append(f"{enum_name}Str: TypeAlias = str")
+    lines.append(f"def {builder}() -> dict[str, str]:")
+    lines.append("    members: dict[str, str] = {}")
+
+    for source in config["sources"]:
+        cat = source["category"]
+        renames = source.get("renames", {})
+        excludes = source.get("excludes", set())
+        plugin_type_member = to_enum_member(cat)
+
+        renames_repr = repr(renames) if renames else "{}"
+
+        lines.append(
+            f"    for entry in plugins.list_entries(PluginType.{plugin_type_member}):"
+        )
+
+        # Add exclusion check if needed
+        if excludes:
+            excludes_repr = repr(excludes)
+            lines.append(f"        if entry.name in {excludes_repr}:")
+            lines.append("            continue")
+
+        lines.append(f"        alias = {renames_repr}.get(entry.name, entry.name)")
+        lines.append("        if alias.upper() not in members:")
+        lines.append("            members[alias.upper()] = alias")
+
+    lines.append("    return members")
+    lines.append(
+        f'{enum_name} = create_enum("{enum_name}", {builder}(), module=__name__)'
+    )
+
+    # Build example from current plugins for docstring
+    members = []
+    for source in config["sources"]:
+        cat = source["category"]
+        renames = source.get("renames", {})
+        excludes = source.get("excludes", set())
+        for plugin_name in plugins_data.get(cat, {}):
+            if plugin_name in excludes:
+                continue
+            alias = renames.get(plugin_name, plugin_name)
+            members.append((to_enum_member(alias), alias))
+    members = sorted(set(members))
+    examples = ", ".join(f"{enum_name}.{m[0]}" for m in members[:3])
+
+    lines.append(f'"""{desc} Example: {examples}"""')
+    lines.append("")
+
+    return lines
 
 
 def generate_enums_pyi() -> str | None:
@@ -389,7 +505,59 @@ def generate_enums_pyi() -> str | None:
             ["", f"{enum_name}Str: TypeAlias = Literal[{literal_members}]", ""]
         )
 
+    # Generate composite enum stubs
+    yaml_plugins_for_composite = load_plugins()
+    for enum_name, config in COMPOSITE_ENUMS.items():
+        lines.extend(
+            _generate_composite_enum_pyi(enum_name, config, yaml_plugins_for_composite)
+        )
+
     return "\n".join(lines) + "\n"
+
+
+def _generate_composite_enum_pyi(
+    enum_name: str, config: dict, plugins_data: dict
+) -> list[str]:
+    """Generate type stub for a composite enum."""
+    lines = []
+    desc = config.get("description", "Composite enum merging multiple categories.")
+
+    # Collect all members with renames
+    members = []
+    for source in config["sources"]:
+        cat = source["category"]
+        renames = source.get("renames", {})
+        excludes = source.get("excludes", set())
+        for plugin_name in plugins_data.get(cat, {}):
+            if plugin_name in excludes:
+                continue
+            alias = renames.get(plugin_name, plugin_name)
+            members.append((to_enum_member(alias), alias))
+
+    # Sort and dedupe
+    members = sorted(set(members))
+
+    lines.extend(
+        [
+            f"class {enum_name}(ExtensibleStrEnum):",
+            f'    """{desc}"""',
+            "",
+        ]
+    )
+
+    for member, value in members:
+        lines.append(f'    {member} = "{value}"')
+
+    literal_members = ", ".join(f'"{m[1]}"' for m in members)
+    lines.extend(
+        [
+            "",
+            f"{enum_name}Str: TypeAlias = Literal[{literal_members}]",
+            "",
+        ]
+    )
+
+    return lines
 
 
 def generate_enums(check: bool = False) -> int:

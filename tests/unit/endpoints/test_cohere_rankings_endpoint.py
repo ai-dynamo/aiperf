@@ -185,3 +185,18 @@ class TestCohereRankingsEndpoint:
         assert rankings[0]["score"] == 0.95
         assert rankings[1]["index"] == 2
         assert rankings[1]["score"] == 0.10
+
+    def test_extra_body_shallow_merges_into_payload(self, converter, model_endpoint):
+        turn = Turn(
+            texts=[
+                Text(name="query", contents=["q"]),
+                Text(name="passages", contents=["p1", "p2"]),
+            ],
+            extra_body={"vendor_top_k": 5, "model": "override-model"},
+        )
+        payload = converter.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+        assert payload["vendor_top_k"] == 5
+        # extra_body wins over formatter-built `model` key.
+        assert payload["model"] == "override-model"

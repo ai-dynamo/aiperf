@@ -2,12 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """CV convergence criterion using coefficient of variation."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from aiperf.orchestrator.convergence.base import ConvergenceCriterion
 from aiperf.orchestrator.models import RunResult
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkPlan
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +32,19 @@ class CVConvergence(ConvergenceCriterion):
         self._threshold = threshold
         self._min_runs = min_runs
         self._stat = stat
+
+    @classmethod
+    def from_plan(cls, plan: BenchmarkPlan) -> CVConvergence:
+        convergence = plan.multi_run.convergence
+        assert convergence is not None  # gated by _build_convergence_criterion
+        kwargs: dict[str, object] = {
+            "metric": convergence.metric,
+            "stat": convergence.stat,
+            "min_runs": convergence.min_runs,
+        }
+        if convergence.threshold is not None:
+            kwargs["threshold"] = convergence.threshold
+        return cls(**kwargs)  # type: ignore[arg-type]
 
     def is_converged(self, results: list[RunResult]) -> bool:
         """Check whether the CV is below the threshold.

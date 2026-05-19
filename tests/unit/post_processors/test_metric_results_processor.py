@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
@@ -22,11 +21,9 @@ from tests.unit.post_processors.conftest import create_metric_records_message
 class TestMetricResultsProcessor:
     """Test cases for MetricResultsProcessor."""
 
-    def test_initialization(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
-    ) -> None:
+    def test_initialization(self, mock_metric_registry: Mock, mock_run) -> None:
         """Test processor initialization sets up necessary data structures."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
 
         assert isinstance(processor.derive_funcs, dict)
         assert isinstance(processor._results, dict)
@@ -36,10 +33,10 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_process_result_record_metric(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test processing result for record metric accumulates values in the array."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         message = create_metric_records_message(
@@ -63,14 +60,14 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_process_result_record_metric_list_values(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """List-valued record metrics use the t-digest aggregator (not MetricArray).
 
         T-digest preserves count/sum/min/max exactly; percentiles are
         approximate but irrelevant to this test (3 samples).
         """
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         message = create_metric_records_message(
@@ -94,10 +91,10 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_process_result_aggregate_metric(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test processing result for aggregate metric updates aggregated value."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
         processor._instances_map = {RequestCountMetric.tag: RequestCountMetric()}
 
@@ -119,14 +116,14 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_update_derived_metrics(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test derived metrics are computed correctly."""
 
         def mock_derive_func(results_dict: MetricResultsDict):
             return 100.0
 
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor.derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
 
         await processor.update_derived_metrics()
@@ -135,14 +132,14 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_update_derived_metrics_handles_no_metric_value(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test derived metrics gracefully handle NoMetricValue exceptions."""
 
         def failing_derive_func(results_dict: MetricResultsDict):
             raise NoMetricValue("Cannot derive value")
 
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor.derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
 
         with patch.object(processor, "debug") as mock_debug:
@@ -153,14 +150,14 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_update_derived_metrics_handles_value_error_exception(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test derived metrics gracefully handle ValueError exceptions."""
 
         def failing_derive_func(results_dict: MetricResultsDict):
             raise ValueError("Calculation error")
 
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor.derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
 
         with patch.object(processor, "warning") as mock_warning:
@@ -170,9 +167,7 @@ class TestMetricResultsProcessor:
             mock_warning.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_summarize(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
-    ) -> None:
+    async def test_summarize(self, mock_metric_registry: Mock, mock_run) -> None:
         """Test summarize returns list of MetricResult objects in display units.
 
         RequestLatencyMetric has unit=ns and display_unit=ms, so nanosecond
@@ -180,7 +175,7 @@ class TestMetricResultsProcessor:
         """
         mock_metric_registry.get_class.return_value = RequestLatencyMetric
 
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
 
@@ -196,15 +191,13 @@ class TestMetricResultsProcessor:
         assert results[0].avg == 42.0
 
     @pytest.mark.asyncio
-    async def test_full_metrics(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
-    ) -> None:
+    async def test_full_metrics(self, mock_metric_registry: Mock, mock_run) -> None:
         """Test full_metrics returns the complete results dict including derived metrics."""
 
         def mock_derive_func(results_dict: MetricResultsDict):
             return 200.0
 
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor.derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
         processor._results["base_metric"] = 100.0
 
@@ -216,10 +209,10 @@ class TestMetricResultsProcessor:
         assert full_results[RequestThroughputMetric.tag] == 200.0
 
     def test_create_metric_result_from_scalar(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test creating MetricResult from scalar value."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
 
         result = processor._create_metric_result(RequestLatencyMetric.tag, 42)
@@ -232,10 +225,10 @@ class TestMetricResultsProcessor:
         assert result.count == 1
 
     def test_create_metric_result_from_metric_array(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test creating MetricResult from MetricArray."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
         metric_array = MetricArray()
         metric_array.extend([10.0, 20.0, 30.0])
@@ -259,10 +252,10 @@ class TestMetricResultsProcessor:
         )
 
     def test_create_metric_result_invalid_type(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test creating MetricResult with invalid value type raises a ValueError."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
 
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
         with pytest.raises(ValueError, match="Unexpected values type"):
@@ -272,10 +265,10 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_get_instances_map_default_behavior(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test default get_instances_map returns shared instances map regardless of request_start_ns."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
 
         # Set up a metric
         processor._instances_map = {RequestCountMetric.tag: RequestCountMetric()}
@@ -293,10 +286,10 @@ class TestMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_get_results_default_behavior(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Test default get_results returns shared results dict regardless of request_start_ns."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
 
         # Set up some results
         processor._results["test_metric"] = 42
@@ -324,29 +317,27 @@ class TestShouldIncludeInSummary:
     """
 
     def test_unknown_tag_raises_key_error(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """Unknown tags (not in _instances_map) raise KeyError."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {}
 
         with pytest.raises(KeyError):
             processor._should_include_in_summary("nonexistent_tag")
 
-    def test_public_metric_included(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
-    ) -> None:
+    def test_public_metric_included(self, mock_metric_registry: Mock, mock_run) -> None:
         """Metrics with no special flags are always included."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
 
         assert processor._should_include_in_summary(RequestLatencyMetric.tag) is True
 
     def test_internal_metric_excluded_by_default(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """INTERNAL metrics are excluded when SHOW_INTERNAL_METRICS is False."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {
             CreditDropLatencyMetric.tag: CreditDropLatencyMetric()
         }
@@ -363,10 +354,10 @@ class TestShouldIncludeInSummary:
             )
 
     def test_internal_metric_included_when_flag_enabled(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_run
     ) -> None:
         """INTERNAL metrics are included when SHOW_INTERNAL_METRICS is True."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {
             CreditDropLatencyMetric.tag: CreditDropLatencyMetric()
         }
@@ -393,13 +384,13 @@ class TestShouldIncludeInSummary:
     def test_experimental_metric_filtering(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_run,
         experimental_metric_cls,
         show_experimental: bool,
         expected: bool,
     ) -> None:
         """EXPERIMENTAL metrics respect the SHOW_EXPERIMENTAL_METRICS flag."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {
             experimental_metric_cls.tag: experimental_metric_cls()
         }
@@ -418,11 +409,11 @@ class TestShouldIncludeInSummary:
     def test_internal_and_experimental_metric_excluded_when_both_disabled(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_run,
         dual_flag_metric_cls,
     ) -> None:
         """Metrics with both INTERNAL and EXPERIMENTAL flags are excluded when both flags are disabled."""
-        processor = MetricResultsProcessor(mock_user_config)
+        processor = MetricResultsProcessor(mock_run)
         processor._instances_map = {dual_flag_metric_cls.tag: dual_flag_metric_cls()}
 
         with patch(

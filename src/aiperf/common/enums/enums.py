@@ -74,6 +74,16 @@ class CommAddress(CaseInsensitiveStrEnum):
     RAW_INFERENCE_PROXY_BACKEND = "raw_inference_proxy_backend"
     """Backend address for the InferenceParser to receive raw inference messages from Workers."""
 
+    # Referenced by aiperf.config.comm.*.
+    CREDIT_RETURN_ROUTER = "credit_return_router"
+    """Address for credit-return ROUTER-DEALER traffic (separate from CREDIT_ROUTER for high-throughput modes)."""
+
+    CONTROL = "control"
+    """Control-plane address for service-manager commands."""
+
+    GROUP_LIFECYCLE = "group_lifecycle"
+    """Address for worker-group lifecycle signaling."""
+
 
 class CommandType(CaseInsensitiveStrEnum):
     REALTIME_METRICS = "realtime_metrics"
@@ -94,6 +104,58 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     FAILURE = "failure"
     SUCCESS = "success"
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
+
+
+class ConversationBranchMode(CaseInsensitiveStrEnum):
+    """Mode discriminator for ``ConversationBranchInfo``.
+
+    Distinguishes two kinds of DAG branches sharing one primitive:
+
+    - ``FORK``: child inherits the parent's accumulated message context and
+      sticky-routes to the parent's worker (prefix-cache locality). Used by
+      aiperf's native DAG conversation-forking semantics.
+    - ``SPAWN``: child starts with a fresh context, free routing. Used for
+      pre-session sub-agent dispatch.
+    """
+
+    FORK = "fork"
+    """Child inherits parent's turn_list (accumulated message history + captured
+    live responses); sticky-routes to parent's worker for prefix-cache locality."""
+
+    SPAWN = "spawn"
+    """Child gets a fresh context; free routing (no sticky pin to parent).
+
+    Disambiguation note: this SPAWN is the DAG-branch mode (a child
+    *conversation* that runs alongside its parent). It is unrelated to
+    ``SpawnWorkersCommand`` (the controller->worker-manager command that
+    spawns *worker processes*). One is dataset/orchestration semantics;
+    the other is process lifecycle.
+    """
+
+
+class PrerequisiteKind(CaseInsensitiveStrEnum):
+    """Types of conditions that can gate a turn's dispatch.
+
+    Extensible: v1 orchestrator only honors SPAWN_JOIN; the remaining values
+    are reserved and rejected at load time by
+    ``validate_for_orchestrator_v1``. Each deferred value is pinned to a
+    future orchestrator capability in the DAG prereq-gating design doc.
+    """
+
+    SPAWN_JOIN = "spawn_join"
+    """All blocking children from a named branch have completed."""
+
+    CHILD_SESSION_COMPLETE = "child_session_complete"
+    """A specific child runtime session has completed (reserved)."""
+
+    TIMER = "timer"
+    """Wall-clock delay has elapsed (reserved)."""
+
+    EXTERNAL_EVENT = "external_event"
+    """Named external signal has been received (reserved)."""
+
+    BARRIER = "barrier"
+    """Runtime-diamond join on a shared barrier_id (reserved)."""
 
 
 class ConversationContextMode(CaseInsensitiveStrEnum):
@@ -210,6 +272,17 @@ class ImageFormat(CaseInsensitiveStrEnum):
     """Randomly select PNG or JPEG for each image."""
 
 
+class ImageSource(CaseInsensitiveStrEnum):
+    """Source image generation mode for multimodal benchmarking."""
+
+    ASSETS = "assets"
+    """Load source images from the bundled assets/source_images directory."""
+
+    NOISE = "noise"
+    """Generate random noise images on the fly. Produces diverse, unique images
+    without requiring files on disk."""
+
+
 class IPVersion(CaseInsensitiveStrEnum):
     """IP version for HTTP socket connections."""
 
@@ -269,6 +342,7 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"
@@ -301,6 +375,9 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
     RANDOM = "random"
     """Randomly select a model for each prompt using uniform distribution."""
+
+    WEIGHTED = "weighted"
+    """Select a model with probability proportional to a per-model weight."""
 
 
 class PrometheusMetricType(CaseInsensitiveStrEnum):
@@ -524,3 +601,81 @@ class WorkerStatus(CaseInsensitiveStrEnum):
     ERROR = "error"
     IDLE = "idle"
     STALE = "stale"
+
+
+# =============================================================================
+# Surface consumed by `aiperf.config` (BenchmarkPlan, SweepConfig,
+# ArtifactsConfig, etc.).
+# =============================================================================
+
+
+class CommunicationType(CaseInsensitiveStrEnum):
+    """Type of inter-process communication transport."""
+
+    IPC = "ipc"
+    """Unix domain sockets (single machine)."""
+
+    TCP = "tcp"
+    """TCP sockets (multi-machine)."""
+
+    DUAL = "dual"
+    """Dual-bind: IPC for co-located services, TCP for remote workers (Kubernetes)."""
+
+
+class DatasetType(CaseInsensitiveStrEnum):
+    """Defines the source type for benchmark datasets."""
+
+    SYNTHETIC = "synthetic"
+    """Generate synthetic prompts programmatically."""
+
+    FILE = "file"
+    """Load prompts from a local file."""
+
+    PUBLIC = "public"
+    """Use a well-known public dataset."""
+
+
+class OptimizationDirection(CaseInsensitiveStrEnum):
+    """Direction of optimization for a metric.
+
+    MAXIMIZE: Higher values are preferred (e.g. throughput, goodput).
+    MINIMIZE: Lower values are preferred (e.g. latency, TTFT, p99).
+    """
+
+    MAXIMIZE = "maximize"
+    MINIMIZE = "minimize"
+
+
+class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
+    """Mode for discovering server metrics endpoints in distributed environments."""
+
+    AUTO = "auto"
+    """Automatically detect environment and use appropriate discovery method."""
+
+    KUBERNETES = "kubernetes"
+    """Use Kubernetes API to discover inference-server pods."""
+
+    DISABLED = "disabled"
+    """Disable automatic discovery. Only use explicitly provided URLs."""
+
+
+class SweepMode(CaseInsensitiveStrEnum):
+    """Execution order for sweep + confidence composition.
+
+    REPEATED: for trial in trials: for value in values
+        All values tested per trial before moving to next trial.
+
+    INDEPENDENT: for value in values: for trial in trials
+        All trials completed per value before moving to next value.
+    """
+
+    INDEPENDENT = "independent"
+    REPEATED = "repeated"
+
+
+class ExportFormat(CaseInsensitiveStrEnum):
+    """Defines the file format for record-level exports."""
+
+    JSON = "json"
+    JSONL = "jsonl"
+    CSV = "csv"

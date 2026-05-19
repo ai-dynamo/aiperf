@@ -8,9 +8,9 @@ import numpy as np
 import soundfile as sf
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import AudioConfig
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import ConfigurationError
+from aiperf.config.dataset.content import AudioConfig
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
 
 # MP3 supported sample rates in Hz
@@ -47,9 +47,13 @@ class AudioGenerator(BaseGenerator):
     parameters to ensure compatibility with chosen formats.
     """
 
-    def __init__(self, config: AudioConfig, **kwargs):
+    def __init__(self, config: AudioConfig | None, **kwargs):
         super().__init__(**kwargs)
-        self.config = config
+        # Fall back to default AudioConfig when the dataset doesn't configure
+        # audio. The composer's ``include_audio`` gate normally prevents
+        # ``generate()`` from running in that case; the fallback simplifies
+        # callers (no None-checks on every field read).
+        self.config = config if config is not None else AudioConfig()
 
         # Separate RNGs for independent concerns
         self._duration_rng = rng.derive("dataset.audio.duration")
@@ -105,22 +109,18 @@ class AudioGenerator(BaseGenerator):
         Raises:
             ConfigurationError: If any of the following conditions are met:
                 - audio length is less than 0.01 seconds
-                - channels is not 1 (mono) or 2 (stereo)
                 - sampling rate is not supported for MP3 format
                 - bit depth is not supported (must be 8, 16, 24, or 32)
-                - audio format is not supported (must be 'wav' or 'mp3')
         """
-        if self.config.num_channels not in (1, 2):
-            raise ConfigurationError(
-                "Only mono (1) and stereo (2) channels are supported"
-            )
-
-        if self.config.length.mean < 0.01:
+        length_dist = self.config.length
+        length_mean = float(length_dist.expected_value)
+        length_stddev = float(getattr(length_dist, "stddev", 0) or 0)
+        if length_mean < 0.01:
             raise ConfigurationError("Audio length must be greater than 0.01 seconds")
 
         # Sample audio length (in seconds) using rejection sampling
         audio_length = self._duration_rng.sample_normal(
-            self.config.length.mean, self.config.length.stddev, lower=0.01
+            length_mean, length_stddev, lower=0.01
         )
 
         # Randomly select sampling rate and bit depth
@@ -136,7 +136,7 @@ class AudioGenerator(BaseGenerator):
         # Generate synthetic audio data (gaussian noise)
         num_samples = int(audio_length * sampling_rate_hz)
         signal = generate_noise_signal(
-            self._data_rng, num_samples, self.config.num_channels
+            self._data_rng, num_samples, self.config.channels
         )
 
         # Scale to the appropriate bit depth range
@@ -154,11 +154,6 @@ class AudioGenerator(BaseGenerator):
             subtype = "MPEG_LAYER_III"
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
-        else:
-            raise ConfigurationError(
-                f"Unsupported audio format: {self.config.format}. "
-                f"Supported formats are: {AudioFormat.WAV.name}, {AudioFormat.MP3.name}"
-            )
 
         sf.write(
             output_buffer,

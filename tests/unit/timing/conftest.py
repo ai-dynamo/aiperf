@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress, CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
@@ -18,6 +17,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.structs import Credit, CreditContext, TurnToSend
 from aiperf.plugin import plugins
@@ -441,13 +441,13 @@ class InstantWorker(Worker):
 
 
 class TimingHarness:
-    def __init__(self, service_config: ServiceConfig, user_config) -> None:
+    def __init__(self, cli_config: CLIConfig) -> None:
         from aiperf.credit.sticky_router import StickyCreditRouter
 
         self.bus = FakeCommunicationBus()
         FakeCommunication.set_shared_bus(self.bus)
         self.router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
+            cli_config=cli_config, service_id="test-router"
         )
         self.publisher = PhasePublisher(
             pub_client=self.router.comms.create_pub_client(
@@ -456,8 +456,7 @@ class TimingHarness:
             service_id="test-service",
         )
         self._worker = InstantWorker(
-            service_config=service_config,
-            user_config=user_config,
+            cli_config=cli_config,
             service_id="instant-worker-1",
         )
 
@@ -517,10 +516,8 @@ class MockCreditSender:
 
 
 @pytest.fixture
-def timing_harness(
-    service_config, user_config, skip_service_registration
-) -> TimingHarness:
-    return TimingHarness(service_config=service_config, user_config=user_config)
+def timing_harness(cli_config, skip_service_registration) -> TimingHarness:
+    return TimingHarness(cli_config=cli_config)
 
 
 @pytest.fixture
@@ -529,10 +526,10 @@ def mock_credit_sender() -> MockCreditSender:
 
 
 @pytest.fixture
-def router_with_worker(service_config):
+def router_with_worker(cli_config):
     from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 
-    router = StickyCreditRouter(service_config=service_config, service_id="test-router")
+    router = StickyCreditRouter(cli_config=cli_config, service_id="test-router")
     router._workers = {
         "worker-1": WorkerLoad(worker_id="worker-1", in_flight_credits=0)
     }

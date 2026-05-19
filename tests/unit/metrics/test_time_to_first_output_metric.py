@@ -177,7 +177,7 @@ class TestTimeToFirstOutputMetric:
             start_ns=100,
             responses=[
                 ParsedResponse(
-                    perf_ns=115, data=ToolCallResponseData(text="func_name{}")
+                    perf_ns=115, data=ToolCallResponseData(tool_call_text="func_name{}")
                 ),
             ],
         )
@@ -196,7 +196,7 @@ class TestTimeToFirstOutputMetric:
                     data=ReasoningResponseData(reasoning="thinking", content=None),
                 ),
                 ParsedResponse(
-                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                    perf_ns=120, data=ToolCallResponseData(tool_call_text="func_name{}")
                 ),
             ],
         )
@@ -212,7 +212,7 @@ class TestTimeToFirstOutputMetric:
             responses=[
                 ParsedResponse(perf_ns=110, data=TextResponseData(text="hello")),
                 ParsedResponse(
-                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                    perf_ns=120, data=ToolCallResponseData(tool_call_text="func_name{}")
                 ),
             ],
         )
@@ -226,7 +226,9 @@ class TestTimeToFirstOutputMetric:
         record = _create_record_with_responses(
             start_ns=100,
             responses=[
-                ParsedResponse(perf_ns=110, data=ToolCallResponseData(text="")),
+                ParsedResponse(
+                    perf_ns=110, data=ToolCallResponseData(tool_call_text="")
+                ),
                 ParsedResponse(perf_ns=120, data=TextResponseData(text="content")),
             ],
         )

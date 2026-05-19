@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Scenario Sweep: Workload Profiles
+# description: Hand-curated named scenarios testing distinct workload shapes.
+# category: Sweep & Multi-Run
+# tags: sweep, scenario, workload
+# difficulty: intermediate
+# features: scenario sweep, deep merge, named runs
+#
+# Scenario Sweep: Workload Profiles
+# ==================================
+# Uses scenario sweep to test the server under distinct workload shapes.
+# Each scenario is a complete workload profile with different distribution
+# types, request rates, and concurrency levels.
+#
+# Run: aiperf profile --config scenario_workload_profiles.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 30.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+
+sweep:
+  type: scenarios
+  runs:
+    # Chatbot: short Q&A, high rate, low variance
+    - name: chatbot
+      benchmark:
+        dataset:
+          prompts:
+            isl: {mean: 128, stddev: 20}
+            osl: {mean: 64, stddev: 10}
+        phases:
+          - name: profiling
+            rate: 50.0
+            concurrency: 128
+
+    # RAG: medium input with retrieval context, moderate rate
+    - name: rag_pipeline
+      benchmark:
+        dataset:
+          prompts:
+            isl: {mean: 1024, median: 904}
+            osl: {mean: 256, stddev: 50}
+        phases:
+          - name: profiling
+            rate: 20.0
+            concurrency: 64
+
+    # Summarization: long input, short output, low rate
+    - name: summarization
+      benchmark:
+        dataset:
+          prompts:
+            isl: {mean: 4096, median: 3421}
+            osl: {mean: 128, stddev: 30}
+        phases:
+          - name: profiling
+            rate: 5.0
+            concurrency: 16
+
+    # Bimodal production: mix of short and long requests
+    - name: production_mix
+      benchmark:
+        dataset:
+          prompts:
+            isl:
+              peaks:
+                - {mean: 128, stddev: 30, weight: 60}
+                - {mean: 2048, median: 1891, weight: 40}
+            osl:
+              peaks:
+                - {mean: 64, stddev: 15, weight: 60}
+                - {mean: 512, stddev: 100, weight: 40}
+        phases:
+          - name: profiling
+            rate: 30.0
+            concurrency: 64
+
+    # Power-law: Zipf-distributed ISL (realistic request popularity)
+    - name: power_law
+      benchmark:
+        dataset:
+          prompts:
+            isl: {mean: 512, median: 192}
+            osl: {mean: 144, stddev: 64}
+        phases:
+          - name: profiling
+            rate: 25.0
+            concurrency: 64
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: ${TIMEOUT:600.0}
+
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 512, stddev: 50}  # Base: overridden per scenario
+      osl: {mean: 128, stddev: 25}
+
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 8
+      excludeFromResults: true
+
+    - name: profiling
+      type: poisson
+      rate: 20.0
+      duration: 180
+      concurrency: 64
+      gracePeriod: 60
+
+  slos:
+    request_latency: 10000
+    time_to_first_token: 1000
+
+  artifacts:
+    dir: ./artifacts/workload_profiles
+    summary: [json]
+    records: [jsonl]

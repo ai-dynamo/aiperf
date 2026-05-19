@@ -48,7 +48,7 @@ class Synthesizer(AIPerfLoggerMixin):
         trace_file = Path(trace_file)
 
         traces = []
-        with open(trace_file) as f:
+        with open(trace_file, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     traces.append(orjson.loads(line))

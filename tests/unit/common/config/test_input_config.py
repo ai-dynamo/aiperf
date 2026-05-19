@@ -1,361 +1,133 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+"""Tests for the v1 InputConfig DTO.
+
+The v1 InputConfig is a CLI-only input DTO. The model/field validators that
+previously enforced cross-field rules (custom_dataset_type requires file,
+synthesis options require trace datasets, goodput tag-resolution against
+the metric registry, etc.) have moved to AIPerfConfig in v2; the v1 layer
+no longer raises on these inputs.
+
+The tests below are limited to behavior that still belongs on the DTO:
+field defaults, structural typing, and the BeforeValidator coercers that
+parse CLI input shapes (extra/headers tuples, goodput dict-from-string).
+"""
+
 import tempfile
 from pathlib import PosixPath
 
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import (
-    AudioConfig,
-    ConversationConfig,
-    ImageConfig,
-    InputConfig,
-    InputDefaults,
-    PromptConfig,
-    SynthesisConfig,
-)
-from aiperf.common.enums import MetricFlags, MetricTimeUnit, MetricType
-from aiperf.common.exceptions import MetricTypeError
-from aiperf.metrics.base_derived_metric import BaseDerivedMetric
-from aiperf.metrics.metric_registry import MetricRegistry
-from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.config.dataset.defaults import InputDefaults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType
 
 
 def test_input_config_defaults():
-    """
-    Test the default values of the InputConfig class.
-
-    This test verifies that an instance of InputConfig is initialized with the
-    expected default values as defined in the InputDefaults class. Additionally,
-    it checks that the `audio` attribute is an instance of the AudioConfig class.
-    """
-
-    config = InputConfig()
-    assert config.extra == InputDefaults.EXTRA
+    """Default values match InputDefaults / hoisted modality flat fields."""
+    config = CLIConfig()
+    assert config.extra_inputs == InputDefaults.EXTRA
     assert config.headers == InputDefaults.HEADERS
-    assert config.file == InputDefaults.FILE
+    assert config.input_file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
     assert config.goodput == InputDefaults.GOODPUT
-    assert isinstance(config.audio, AudioConfig)
-    assert isinstance(config.image, ImageConfig)
-    assert isinstance(config.prompt, PromptConfig)
-    assert isinstance(config.conversation, ConversationConfig)
+    # Modality fields are flat post-Task-13; smoke-check a representative
+    # field per modality to confirm they exist and carry their defaults.
+    assert config.audio_batch_size == 1
+    assert config.image_batch_size == 1
+    assert config.prompt_batch_size == 1
+    assert config.conversation_num is None
 
 
 def test_input_config_custom_values():
-    """
-    Test the InputConfig class with custom values.
-
-    This test verifies that the InputConfig class correctly initializes its attributes
-    when provided with a dictionary of custom values.
-    """
+    """Custom values flow through the DTO with the expected coercions."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(
-            extra={"key": "value"},
+        config = CLIConfig(
+            extra_inputs={"key": "value"},
             headers={"Authorization": "Bearer token"},
             random_seed=42,
             custom_dataset_type=CustomDatasetType.MULTI_TURN,
-            file=temp_file.name,
+            input_file=temp_file.name,
         )
 
-        assert config.extra == [("key", "value")]
+        assert config.extra_inputs == [("key", "value")]
         assert config.headers == [("Authorization", "Bearer token")]
-        assert config.file == PosixPath(temp_file.name)
+        assert config.input_file == PosixPath(temp_file.name)
         assert config.random_seed == 42
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
 
 
 def test_input_config_file_validation():
-    """
-    Test InputConfig file field with valid and invalid values.
-    """
+    """File field accepts a path string but rejects non-string scalars."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(file=temp_file.name)
-        assert config.file == PosixPath(temp_file.name)
+        config = CLIConfig(input_file=temp_file.name)
+        assert config.input_file == PosixPath(temp_file.name)
 
     with pytest.raises(ValidationError):
-        InputConfig(file=12345)  # Invalid file (non-string value)
+        CLIConfig(input_file=12345)
 
 
 def test_input_config_goodput_success():
-    cfg = InputConfig(goodput="request_latency:250 inter_token_latency:10")
+    cfg = CLIConfig(goodput="request_latency:250 inter_token_latency:10")
     assert cfg.goodput == {"request_latency": 250.0, "inter_token_latency": 10.0}
 
 
 def test_input_config_goodput_validation_raises_error():
     with pytest.raises(ValidationError):
-        InputConfig(goodput=123)  # not a string
-
-
-@pytest.mark.parametrize(
-    "goodput_str, unknown_tag",
-    [
-        ("foo:1", "foo"),
-        ("request_latency:250 bar:10", "bar"),
-    ],
-)
-def test_goodput_unknown_raises(monkeypatch, goodput_str, unknown_tag):
-    def get_class(tag):
-        if tag == "request_latency":
-            return type(
-                "MockRequestLatencyMetric",
-                (),
-                {
-                    "tag": RequestLatencyMetric.tag,
-                    "unit": MetricTimeUnit.MILLISECONDS,
-                    "display_unit": None,
-                    "flags": MetricFlags.NONE,
-                    "type": MetricType.RECORD,
-                },
-            )
-        raise MetricTypeError(f"Metric class with tag '{tag}' not found")
-
-    monkeypatch.setattr(MetricRegistry, "get_class", get_class)
-
-    with pytest.raises(ValidationError) as exc:
-        InputConfig(goodput=goodput_str)
-
-    assert f"Unknown metric tag in --goodput: {unknown_tag}" in str(exc.value)
-
-
-def test_goodput_derived_metric_raises_error(monkeypatch):
-    monkeypatch.setattr(
-        MetricRegistry, "get_class", {"mock_derived": BaseDerivedMetric}.__getitem__
-    )
-
-    with pytest.raises(ValidationError) as exc:
-        InputConfig(goodput="mock_derived:1")
-
-    assert (
-        "Metric 'mock_derived' is a Derived metric and cannot be used for --goodput."
-        in str(exc.value)
-    )
-
-
-def test_custom_dataset_type_without_file_raises_error():
-    """
-    Test that setting custom_dataset_type without a file raises ValidationError.
-
-    This validates the validate_custom_dataset_file model validator.
-    """
-    with pytest.raises(ValidationError) as exc:
-        InputConfig(custom_dataset_type=CustomDatasetType.SINGLE_TURN, file=None)
-
-    assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
+        CLIConfig(goodput=123)
 
 
 def test_custom_dataset_type_with_file_succeeds():
-    """
-    Test that setting custom_dataset_type with a file succeeds.
-    """
+    """custom_dataset_type + file passes through unchanged at the DTO layer."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(
-            custom_dataset_type=CustomDatasetType.MULTI_TURN, file=temp_file.name
+        config = CLIConfig(
+            custom_dataset_type=CustomDatasetType.MULTI_TURN, input_file=temp_file.name
         )
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
-        assert config.file == PosixPath(temp_file.name)
+        assert config.input_file == PosixPath(temp_file.name)
 
 
 def test_file_without_custom_dataset_type_succeeds():
-    """
-    Test that providing a file without custom_dataset_type succeeds (allows auto-inference).
-    """
+    """File without custom_dataset_type is allowed (auto-inference at runtime)."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(file=temp_file.name, custom_dataset_type=None)
-        assert config.file == PosixPath(temp_file.name)
+        config = CLIConfig(input_file=temp_file.name, custom_dataset_type=None)
+        assert config.input_file == PosixPath(temp_file.name)
         assert config.custom_dataset_type is None
 
 
-@pytest.mark.parametrize(
-    "dataset_type",
-    [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
-        CustomDatasetType.MOONCAKE_TRACE,
-    ],
-)
-def test_all_custom_dataset_types_require_file(dataset_type):
-    """
-    Test that all custom dataset types require a file.
-    """
-    with pytest.raises(ValidationError) as exc:
-        InputConfig(custom_dataset_type=dataset_type, file=None)
-
-    assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
-
-
-# ============================================================================
-# Synthesis Validation Tests
-# ============================================================================
-
-
-@pytest.mark.parametrize(
-    "dataset_type",
-    [
-        CustomDatasetType.MOONCAKE_TRACE,
-        CustomDatasetType.BAILIAN_TRACE,
-    ],
-)  # fmt: skip
-def test_synthesis_with_trace_dataset_succeeds(dataset_type):
-    """Test that synthesis options with trace dataset types succeed."""
+def test_synthesis_with_trace_dataset_succeeds():
+    """Synthesis fields flow flat onto CLIConfig regardless of dataset type at
+    the DTO layer (cross-field validation moved to AIPerfConfig)."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(
-            custom_dataset_type=dataset_type,
-            file=temp_file.name,
-            synthesis=SynthesisConfig(speedup_ratio=2.0),
-        )
-        assert config.synthesis.speedup_ratio == 2.0
-        assert config.custom_dataset_type == dataset_type
-
-
-@pytest.mark.parametrize(
-    "dataset_type",
-    [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
-    ],
-)  # fmt: skip
-def test_synthesis_with_non_trace_dataset_raises_error(dataset_type):
-    """Test that synthesis options with non-trace dataset type raises error."""
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        with pytest.raises(ValidationError) as exc:
-            InputConfig(
-                custom_dataset_type=dataset_type,
-                file=temp_file.name,
-                synthesis=SynthesisConfig(speedup_ratio=2.0),
-            )
-
-        assert "require a trace dataset type" in str(exc.value)
-
-
-def test_synthesis_with_auto_detect_dataset_type_succeeds():
-    """Test that synthesis options with auto-detect (None) dataset type succeeds.
-
-    When custom_dataset_type is None, the type will be auto-detected at runtime.
-    Synthesis validation is deferred until the actual type is known.
-    """
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(
-            custom_dataset_type=None,
-            file=temp_file.name,
-            synthesis=SynthesisConfig(prefix_len_multiplier=2.0),
-        )
-        assert config.synthesis.prefix_len_multiplier == 2.0
-        assert config.custom_dataset_type is None
-
-
-@pytest.mark.parametrize(
-    "synthesis_config",
-    [
-        SynthesisConfig(speedup_ratio=2.0),
-        SynthesisConfig(prefix_len_multiplier=2.0),
-        SynthesisConfig(prefix_root_multiplier=2),
-        SynthesisConfig(prompt_len_multiplier=2.0),
-        SynthesisConfig(speedup_ratio=0.5, prefix_len_multiplier=1.5),
-    ],
-)  # fmt: skip
-def test_synthesis_various_options_require_trace_dataset(synthesis_config):
-    """Test that various synthesis option combinations require a trace dataset."""
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        with pytest.raises(ValidationError) as exc:
-            InputConfig(
-                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
-                file=temp_file.name,
-                synthesis=synthesis_config,
-            )
-
-        assert "require a trace dataset type" in str(exc.value)
-
-
-def test_synthesis_defaults_with_any_dataset_type_succeeds():
-    """Test that default synthesis options (no synthesis) work with any dataset type."""
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        # Default synthesis config (should_synthesize() returns False)
-        config = InputConfig(
-            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
-            file=temp_file.name,
-            synthesis=SynthesisConfig(),  # All defaults
-        )
-        assert not config.synthesis.should_synthesize()
-        assert config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
-
-
-def test_synthesis_max_isl_alone_does_not_trigger_synthesis():
-    """Test that max_isl alone doesn't trigger should_synthesize().
-
-    max_isl is a filter, not a synthesis transformation, so it shouldn't
-    trigger should_synthesize() even though it requires mooncake_trace.
-    """
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(
+        config = CLIConfig(
             custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-            file=temp_file.name,
-            synthesis=SynthesisConfig(max_isl=4096),
+            input_file=temp_file.name,
+            synthesis_speedup_ratio=2.0,
         )
-        # max_isl alone doesn't trigger should_synthesize()
-        assert not config.synthesis.should_synthesize()
-        assert config.synthesis.max_isl == 4096
+        assert config.synthesis_speedup_ratio == 2.0
+        assert config.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
 
 
-def test_synthesis_max_osl_alone_does_not_trigger_synthesis():
-    """Test that max_osl alone doesn't trigger should_synthesize().
-
-    max_osl is a cap, not a synthesis transformation, so it shouldn't
-    trigger should_synthesize() even though it requires mooncake_trace.
-    """
+def test_synthesis_max_isl_with_trace_dataset_succeeds():
+    """Synthesis max_isl flows through unchanged at the DTO layer."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(
+        config = CLIConfig(
             custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-            file=temp_file.name,
-            synthesis=SynthesisConfig(max_osl=2048),
+            input_file=temp_file.name,
+            synthesis_max_isl=4096,
         )
-        # max_osl alone doesn't trigger should_synthesize()
-        assert not config.synthesis.should_synthesize()
-        assert config.synthesis.max_osl == 2048
+        assert config.synthesis_max_isl == 4096
 
 
-@pytest.mark.parametrize(
-    "dataset_type",
-    [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
-    ],
-)  # fmt: skip
-def test_synthesis_max_isl_requires_trace_dataset(dataset_type):
-    """Test that max_isl requires a trace dataset type."""
+def test_synthesis_max_osl_with_trace_dataset_succeeds():
+    """Synthesis max_osl flows through unchanged at the DTO layer."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        with pytest.raises(ValidationError) as exc:
-            InputConfig(
-                custom_dataset_type=dataset_type,
-                file=temp_file.name,
-                synthesis=SynthesisConfig(max_isl=4096),
-            )
-
-        assert "require a trace dataset type" in str(exc.value)
-
-
-@pytest.mark.parametrize(
-    "dataset_type",
-    [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
-    ],
-)  # fmt: skip
-def test_synthesis_max_osl_requires_trace_dataset(dataset_type):
-    """Test that max_osl requires a trace dataset type."""
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        with pytest.raises(ValidationError) as exc:
-            InputConfig(
-                custom_dataset_type=dataset_type,
-                file=temp_file.name,
-                synthesis=SynthesisConfig(max_osl=2048),
-            )
-
-        assert "require a trace dataset type" in str(exc.value)
+        config = CLIConfig(
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            input_file=temp_file.name,
+            synthesis_max_osl=2048,
+        )
+        assert config.synthesis_max_osl == 2048

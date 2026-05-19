@@ -163,7 +163,7 @@ class TestChatEndpoint:
         endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        messages = endpoint._create_messages(turns, None, None)
+        messages = endpoint.build_messages(turns)
         assert messages[0]["role"] == (turn.role or "user")
         assert "name" not in messages[0]
         assert messages[0]["content"] == turn.texts[0].contents[0]
@@ -175,7 +175,7 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
         turns = [turn]
-        messages = endpoint._create_messages(turns, None, None)
+        messages = endpoint.build_messages(turns)
         assert messages[0]["role"] == (turn.role or "user")
         assert "name" not in messages[0]
         assert messages[0]["content"] == ""
@@ -188,7 +188,7 @@ class TestChatEndpoint:
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
         turns = [turn]
         with pytest.raises(ValueError):
-            endpoint._create_messages(turns, None, None)
+            endpoint.build_messages(turns)
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",
@@ -232,7 +232,7 @@ class TestChatEndpoint:
         else:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
-            endpoint._create_messages(turns, None, None)
+            endpoint.build_messages(turns)
 
     def test_create_messages_with_system_message(
         self, model_endpoint, sample_conversations
@@ -241,7 +241,11 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
-        messages = endpoint._create_messages(turns, system_message, None)
+        request_info = create_request_info(
+            turns=turns, model_endpoint=model_endpoint, system_message=system_message
+        )
+        payload = endpoint.format_payload(request_info)
+        messages = payload["messages"]
 
         # First message should be the system message
         assert messages[0]["role"] == "system"
@@ -257,7 +261,13 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, None, user_context)
+        request_info = create_request_info(
+            turns=turns,
+            model_endpoint=model_endpoint,
+            user_context_message=user_context,
+        )
+        payload = endpoint.format_payload(request_info)
+        messages = payload["messages"]
 
         # First message should be the user context
         assert messages[0]["role"] == "user"
@@ -274,7 +284,14 @@ class TestChatEndpoint:
         turns = [turn]
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, system_message, user_context)
+        request_info = create_request_info(
+            turns=turns,
+            model_endpoint=model_endpoint,
+            system_message=system_message,
+            user_context_message=user_context,
+        )
+        payload = endpoint.format_payload(request_info)
+        messages = payload["messages"]
 
         # First message should be system
         assert messages[0]["role"] == "system"
@@ -293,7 +310,14 @@ class TestChatEndpoint:
         turns = sample_conversations["session_1"].turns
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, system_message, user_context)
+        request_info = create_request_info(
+            turns=turns,
+            model_endpoint=model_endpoint,
+            system_message=system_message,
+            user_context_message=user_context,
+        )
+        payload = endpoint.format_payload(request_info)
+        messages = payload["messages"]
 
         # Should have system + user context + 2 turns = 4 messages
         assert len(messages) == 4

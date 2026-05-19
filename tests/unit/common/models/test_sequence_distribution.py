@@ -516,6 +516,35 @@ class TestDistributionParser:
         with pytest.raises(ValueError, match=error_match):
             DistributionParser.parse(dist_str)
 
+    def test_parse_does_not_require_rng_init(self):
+        """Regression: DistributionParser.parse must not touch the global RNG.
+
+        The v1->v2 converter calls DistributionParser.parse before bootstrap
+        runs rng.init(). Construction must therefore be RNG-pure: rng.derive()
+        only happens lazily on the first sample().
+        """
+        rng.reset()
+        assert rng._manager is None
+
+        # Parsing through every format must succeed without rng.init().
+        semi = DistributionParser.parse("128,64:50;256,128:50")
+        bracket = DistributionParser.parse("[(128,64):50,(256,128):50]")
+        json_dist = DistributionParser.parse(
+            '{"pairs": [{"isl": 128, "osl": 64, "prob": 50},'
+            ' {"isl": 256, "osl": 128, "prob": 50}]}'
+        )
+        assert rng._manager is None  # parsing left the RNG untouched
+
+        for dist in (semi, bracket, json_dist):
+            assert len(dist.pairs) == 2
+            isls = {p.input_seq_len for p in dist.pairs}
+            assert isls == {128, 256}
+
+        # First sample() lazily derives the RNG, so it does need init by then.
+        rng.init(42)
+        isl, osl = semi.sample()
+        assert (isl, osl) in {(128, 64), (256, 128)}
+
 
 class TestUtilityFunctions:
     """Test utility functions."""
@@ -618,59 +647,14 @@ class TestIntegration:
 
 
 class TestPromptConfigIntegration:
-    """Test integration with PromptConfig."""
+    """Test integration with PromptConfig (now flat fields on CLIConfig).
 
-    def test_get_sequence_distribution_with_explicit_dist(self):
-        """Test getting distribution when sequence_distribution is set."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = "256,128:60;512,256:40"
-
-        dist = config.get_sequence_distribution()
-
-        assert len(dist.pairs) == 2
-        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
-        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0)
-
-    def test_get_sequence_distribution_with_stddev(self):
-        """Test getting distribution with standard deviations."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = "256|20,128|10:60;512|30,256|15:40"
-
-        dist = config.get_sequence_distribution()
-
-        assert len(dist.pairs) == 2
-        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 20.0, 10.0)
-        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 30.0, 15.0)
-
-    def test_get_sequence_distribution_fallback_to_isl_osl(self):
-        """Test that None is returned when no distribution is set."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = None
-        config.input_tokens.mean = 512
-        config.output_tokens.mean = 256
-
-        dist = config.get_sequence_distribution()
-
-        assert dist is None
-
-    def test_get_sequence_distribution_default_osl(self):
-        """Test that None is returned when no distribution is specified."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = None
-        config.input_tokens.mean = 512
-        config.output_tokens.mean = None  # Not specified
-
-        dist = config.get_sequence_distribution()
-
-        assert dist is None
+    The legacy v1 ``PromptConfig.get_sequence_distribution()`` method was removed
+    when the modality sub-configs were de-nested. The DistributionParser path is
+    exercised end-to-end via the converter; see
+    ``tests/unit/config/test_resolve_dataset_entries.py`` and
+    ``src/aiperf/config/v1/_converter_dataset.py::_apply_sequence_distribution``.
+    """
 
 
 class TestSequenceCaching:

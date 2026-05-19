@@ -40,6 +40,9 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             "parameters": parameters,
         }
 
+        if turn.extra_body:
+            payload.update(turn.extra_body)
+
         self.trace(lambda: f"Formatted TGI payload: {payload}")
         return payload
 

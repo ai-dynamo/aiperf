@@ -481,7 +481,7 @@ aiperf profile \
 
 **Via SynthesisConfig:**
 ```python
-from aiperf.common.config import SynthesisConfig
+from aiperf.config.flags._input import SynthesisConfig
 
 config = SynthesisConfig(
     speedup_ratio=2.0,

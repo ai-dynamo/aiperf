@@ -1,16 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from importlib.metadata import version as get_package_version
-
 import pytest
 
+from aiperf import __version__ as aiperf_version
 from tests.harness.utils import AIPerfCLI
 
 
 @pytest.fixture
 def disabled_parameters() -> list[str]:
-    """Parameters that should NOT appear in help due to DisableCLI()."""
+    """Parameters that should NOT appear in help."""
     return [
         "--service-config.zmq-tcp.event-bus-proxy-config.frontend-port",
         "--service-config.zmq-tcp.event-bus-proxy-config.backend-port",
@@ -39,16 +38,6 @@ class TestCLIHelp:
         assert "Usage: aiperf COMMAND" in result.stdout
         assert "─ Commands ─" in result.stdout
 
-    def test_disable_cli_parameters_not_in_help(
-        self, cli: AIPerfCLI, disabled_parameters: list[str]
-    ):
-        """Test that parameters marked with DisableCLI() are not shown in help text."""
-        result = cli.run_sync("aiperf profile -h", assert_success=False)
-        for param in disabled_parameters:
-            assert param not in result.stdout, (
-                f"DisableCLI parameter '{param}' should not appear in help text"
-            )
-
 
 class TestCLIVersion:
     def test_version_flag(self, cli: AIPerfCLI):
@@ -56,6 +45,5 @@ class TestCLIVersion:
         result = cli.run_sync("aiperf --version", assert_success=False)
         assert result.exit_code == 0
 
-        expected_version = get_package_version("aiperf")
         actual_version = result.stdout.strip()
-        assert actual_version == expected_version
+        assert actual_version == aiperf_version

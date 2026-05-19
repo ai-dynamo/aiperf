@@ -11,7 +11,6 @@ else:
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
@@ -41,13 +40,9 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
         service_id: str,
         **kwargs,
     ) -> None:
-        self.service_config = service_config
-        self.user_config = user_config
         self.service_id = service_id
 
         # Keep track of command IDs that have been processed.
@@ -65,8 +60,6 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         ] = {}
 
         super().__init__(
-            service_config=self.service_config,
-            user_config=self.user_config,
             **kwargs,
         )
 

@@ -1,16 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pathlib import Path
-from typing import Any, ClassVar
+from __future__ import annotations
 
-from aiperf.common.config.user_config import UserConfig
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
+
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, RequestRecord
 from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.transports.aiohttp_client import AioHttpClient
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
 
@@ -45,8 +49,8 @@ class BasePublicDatasetLoader(BaseLoader):
     url: ClassVar[str]
     filename: ClassVar[str] = "dataset.json"
 
-    def __init__(self, user_config: UserConfig, **kwargs):
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun | None = None, **kwargs):
+        super().__init__(run=run, **kwargs)
         self.http_client = AioHttpClient(
             timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT
         )
@@ -127,7 +131,7 @@ class BasePublicDatasetLoader(BaseLoader):
         self.info(f"Saving {self.tag} dataset to local cache {self.cache_filepath}")
         try:
             self.cache_filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_filepath, "w") as f:
+            with open(self.cache_filepath, "w", encoding="utf-8") as f:
                 f.write(dataset)
         except Exception as e:
             raise DatasetLoaderError(f"Error saving dataset to local cache: {e}") from e
@@ -141,7 +145,7 @@ class BasePublicDatasetLoader(BaseLoader):
         """
         self.info(f"Loading {self.tag} dataset from local cache {self.cache_filepath}")
         try:
-            with open(self.cache_filepath) as f:
+            with open(self.cache_filepath, encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             raise DatasetLoaderError(
@@ -186,7 +190,7 @@ class BasePublicDatasetLoader(BaseLoader):
         )
 
     @classmethod
-    def get_preferred_sampling_strategy(cls) -> "DatasetSamplingStrategy":
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
         """Get the preferred sampling strategy for this dataset.
 
         Subclasses should override this method to return their preferred strategy.

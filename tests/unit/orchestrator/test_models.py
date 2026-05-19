@@ -4,31 +4,8 @@
 
 from pathlib import Path
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models.export_models import JsonMetricResult
-from aiperf.orchestrator.models import RunConfig, RunResult
-
-
-class TestRunConfig:
-    """Tests for RunConfig data model."""
-
-    def test_create_run_config_valid_inputs_sets_fields(self):
-        """Test creating a RunConfig with valid inputs sets all fields correctly."""
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        run_config = RunConfig(
-            config=config, label="run_0001", metadata={"run_index": 0, "seed": 42}
-        )
-
-        assert run_config.config == config
-        assert run_config.label == "run_0001"
-        assert run_config.metadata == {"run_index": 0, "seed": 42}
-
-    def test_create_run_config_empty_metadata_returns_empty_dict(self):
-        """Test creating a RunConfig with empty metadata returns empty dict."""
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        run_config = RunConfig(config=config, label="run_0001", metadata={})
-
-        assert run_config.metadata == {}
+from aiperf.orchestrator.models import RunResult
 
 
 class TestRunResult:
@@ -67,7 +44,7 @@ class TestRunResult:
         assert result.label == "run_0002"
         assert result.success is False
         assert result.error == "Connection timeout"
-        assert result.summary_metrics == {}  # Defaults to empty dict
+        assert result.summary_metrics == {}
         assert result.artifacts_path == Path("/tmp/run_0002")
 
     def test_run_result_with_none_metrics(self):
@@ -75,8 +52,36 @@ class TestRunResult:
         result = RunResult(
             label="run_0003",
             success=True,
-            summary_metrics={},  # Use empty dict instead of None
+            summary_metrics={},
             artifacts_path=Path("/tmp/run_0003"),
         )
 
         assert result.summary_metrics == {}
+
+    def test_run_result_default_variation_fields_are_safe(self):
+        """RunResult built without variation fields exposes empty/zero defaults."""
+        result = RunResult(label="run_default", success=True)
+
+        assert result.variation_label == ""
+        assert result.variation_values == {}
+        assert result.trial_index == 0
+
+    def test_run_result_round_trips_variation_fields(self):
+        """Variation fields populated at construction round-trip via model_dump."""
+        result = RunResult(
+            label="run_v0_t1",
+            success=True,
+            variation_label="concurrency=10",
+            variation_values={"concurrency": 10},
+            trial_index=1,
+        )
+
+        dumped = result.model_dump()
+        assert dumped["variation_label"] == "concurrency=10"
+        assert dumped["variation_values"] == {"concurrency": 10}
+        assert dumped["trial_index"] == 1
+
+        round_tripped = RunResult.model_validate(dumped)
+        assert round_tripped.variation_label == "concurrency=10"
+        assert round_tripped.variation_values == {"concurrency": 10}
+        assert round_tripped.trial_index == 1

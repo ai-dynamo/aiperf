@@ -12,8 +12,19 @@ import contextlib
 import threading
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import pynvml
+if TYPE_CHECKING:
+    import pynvml
+else:
+    # ``pynvml`` may be absent on machines without NVIDIA bindings, or its
+    # native ``libnvidia-ml`` may fail to load. Defer either failure to
+    # ``validate_environment`` so module discovery (plugin enumeration,
+    # tests/unit/test_imports.py) does not fail.
+    try:
+        import pynvml
+    except (ImportError, OSError):
+        pynvml = None  # type: ignore[assignment]
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_init, on_stop
@@ -85,6 +96,14 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
     Raises:
         RuntimeError: If pynvml package is not installed
     """
+
+    @classmethod
+    def validate_environment(cls) -> None:
+        """Verify that pynvml bindings are importable before config succeeds."""
+        if pynvml is None:
+            raise RuntimeError(
+                "pynvml package not installed. Install with: pip install nvidia-ml-py"
+            )
 
     def __init__(
         self,
@@ -318,6 +337,15 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
         Runs continuously during collector's RUNNING state, triggering a metrics
         collection every collection_interval seconds.
+        """
+        await self._collect_and_process_metrics()
+
+    async def collect_and_process_metrics(self) -> None:
+        """Public alias for one-shot scrape.
+
+        ``GPUTelemetryManager`` calls this name during baseline and final-state
+        capture (``manager.py`` :func:`_capture_collector_baseline` and
+        :func:`_handle_profile_complete_command`).
         """
         await self._collect_and_process_metrics()
 
