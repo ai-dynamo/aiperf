@@ -244,7 +244,11 @@ def _redirect_stdio_to_devnull() -> None:
         f"{tempfile.gettempdir()}{os.sep}"
         f"aiperf_child_{os.getpid()}_{uuid.uuid4().hex[:8]}_stderr.log"
     )
-    err_fd = os.open(err_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    # 0o600 mode: owner-only read/write. The crash log can contain Python
+    # tracebacks with snippets of the user's config (model names, endpoint
+    # URLs, request data) and lives in a shared %TEMP%/`/tmp` directory.
+    # Restrictive permissions prevent other local users from harvesting it.
+    err_fd = os.open(err_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.dup2(err_fd, 2)
     os.close(err_fd)
     atexit.register(_remove_if_empty, err_path)
