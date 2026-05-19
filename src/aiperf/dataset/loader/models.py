@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Literal, TypeVar
+from typing import Any, ClassVar, Literal, TypeVar
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -124,6 +124,45 @@ class MultiTurn(AIPerfBaseModel):
         """Ensure at least one turn is provided"""
         if not self.turns:
             raise ValueError("At least one turn must be provided")
+        return self
+
+
+class SpeedBenchRow(AIPerfBaseModel):
+    """Defines the schema for Speed-Bench row data.
+
+    Each entry represents a single line in the Speed-Bench JSONL file, which contains the following fields:
+    - question_id: Unique identifier for the question
+    - category: Category of the question
+    - messages: List of messages in the conversation
+    """
+
+    TURNS_PLACEHOLDER: ClassVar[str] = (
+        "FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE SOURCE USING SPECDEC_BENCH"
+    )
+
+    question_id: str = Field(
+        description="Unique identifier for the question", min_length=32, max_length=32
+    )
+    category: str = Field(description="Category of the question", min_length=1)
+    messages: list[dict[str, Any]] = Field(
+        description="List of messages in the conversation", min_length=1
+    )
+
+    @model_validator(mode="after")
+    def validate_messages_structure(self) -> "SpeedBenchRow":
+        """Validate the messages field structure."""
+        if not all(
+            isinstance(message, dict)
+            and isinstance(message.get("role"), str)
+            and bool(message["role"].strip())
+            and isinstance(message.get("content"), str)
+            and bool(message["content"].strip())
+            and message["content"] != self.TURNS_PLACEHOLDER
+            for message in self.messages
+        ):
+            raise ValueError(
+                "messages must be a non-empty list of dictionaries with role and content fields, and the content must not be the placeholder string"
+            )
         return self
 
 

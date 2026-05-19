@@ -5,9 +5,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.utils import load_json_str
-from aiperf.dataset.loader.models import MultiTurn, SingleTurn
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn, SpeedBenchRow
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
 
@@ -36,23 +37,17 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
 
         speed_bench_qualitative:
           class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
-          metadata:
-            hf_dataset_name: nvidia/SPEED-Bench
-            hf_split: test
-            hf_subset: qualitative
 
         speed_bench_coding:
           class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
           metadata:
-            hf_dataset_name: nvidia/SPEED-Bench
-            hf_split: test
-            hf_subset: qualitative
             category: coding
-    """
 
-    TURNS_PLACEHOLDER = (
-        "FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE SOURCE USING SPECDEC_BENCH"
-    )
+        speed_bench_throughput_1k_mixed:
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+          metadata:
+            category: mixed
+    """
 
     def __init__(
         self,
@@ -72,26 +67,11 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         if data is None or not isinstance(data, dict):
             return False
 
-        question_id = data.get("question_id")
-        category = data.get("category")
-        messages = data.get("messages")
-
-        if not isinstance(question_id, str) or not question_id.strip():
+        try:
+            SpeedBenchRow.model_validate(data)
+            return True
+        except ValidationError:
             return False
-        if not isinstance(category, str) or not category.strip():
-            return False
-        if not isinstance(messages, list) or not messages:
-            return False
-
-        return all(
-            isinstance(message, dict)
-            and isinstance(message.get("role"), str)
-            and bool(message["role"].strip())
-            and isinstance(message.get("content"), str)
-            and bool(message["content"].strip())
-            and message["content"] != cls.TURNS_PLACEHOLDER
-            for message in messages
-        )
 
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load SPEED-Bench multi-turn data from a JSONL file.
@@ -117,16 +97,16 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines
 
-                loaded_line = load_json_str(line)
+                loaded_line = SpeedBenchRow.model_validate_json(line)
 
-                if self.category and loaded_line.get("category") != self.category:
+                if self.category and loaded_line.category != self.category:
                     continue
 
                 multi_turn_data = MultiTurn(
-                    session_id=loaded_line["question_id"],
+                    session_id=loaded_line.question_id,
                     turns=[
                         SingleTurn(text=message["content"], role=message["role"])
-                        for message in loaded_line["messages"]
+                        for message in loaded_line.messages
                     ],
                 )
 

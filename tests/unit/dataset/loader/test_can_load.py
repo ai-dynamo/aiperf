@@ -7,6 +7,7 @@ import pytest
 from pytest import param
 
 from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
+from aiperf.dataset.loader.models import SpeedBenchRow
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
@@ -78,7 +79,7 @@ class TestSpeedBenchCanLoad:
         [
             param(
                 {
-                    "question_id": "speed-coding-1",
+                    "question_id": "speed-coding-1".ljust(32, "0"),
                     "category": "coding",
                     "messages": [
                         {"role": "user", "content": "Implement binary search."}
@@ -89,7 +90,7 @@ class TestSpeedBenchCanLoad:
             ),
             param(
                 {
-                    "question_id": "speed-chat-1",
+                    "question_id": "speed-chat-1".ljust(32, "0"),
                     "category": "qa",
                     "messages": [
                         {"role": "system", "content": "Answer tersely."},
@@ -105,30 +106,50 @@ class TestSpeedBenchCanLoad:
                 id="generic_multi_turn",
             ),
             param(
-                {"question_id": "q1", "category": "coding", "turns": ["old"]},
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "category": "coding",
+                    "turns": ["old"],
+                },
                 False,
                 id="old_turns_shape",
             ),
             param(
-                {"question_id": "q1", "messages": [{"role": "user", "content": "Hi"}]},
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
                 False,
                 id="missing_category",
             ),
             param(
-                {"question_id": "q1", "category": "coding", "messages": []},
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "category": "coding",
+                    "messages": [],
+                },
                 False,
                 id="empty_messages",
             ),
             param(
                 {
-                    "question_id": "q1",
+                    "question_id": "q1".ljust(32, "0"),
                     "category": "coding",
                     "messages": [
-                        {"role": "user", "content": SpeedBenchLoader.TURNS_PLACEHOLDER}
+                        {"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}
                     ],
                 },
                 False,
                 id="turns_placeholder",
+            ),
+            param(
+                {
+                    "question_id": "too-short",
+                    "category": "coding",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                False,
+                id="question_id_too_short",
             ),
             param(None, False, id="none_data"),
         ],
