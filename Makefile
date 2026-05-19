@@ -240,20 +240,10 @@ test-all: #? run all tests (unit, component integration, and integration).
 	make test-component-integration --no-print-directory
 	make test-integration --no-print-directory
 
-test-ci: #? run the tests using pytest-xdist for CI.
-	@printf "$(bold)$(blue)Running unit and component integration tests (CI mode)...$(reset)\n"
-	@# Run unit tests first with coverage
-	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
-	@$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report= -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
-	# Run component integration tests with coverage append regardless of unit test result \
-	printf "$(bold)$(blue)Running component integration tests...$(reset)\n"; \
-	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration -n auto --cov=src/aiperf --cov-branch --cov-append --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
-	if [[ $$exit_code -eq 0 ]]; then \
-		printf "$(bold)$(green)AIPerf unit and component integration tests (CI mode) passed!$(reset)\n"; \
-	else \
-		printf "$(bold)$(red)AIPerf tests failed with exit code $$exit_code$(reset)\n"; \
-		exit $$exit_code; \
-	fi
+test-ci: #? run unit tests using pytest-xdist for CI with coverage.
+	@printf "$(bold)$(blue)Running unit tests (CI mode)...$(reset)\n"
+	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' --tb=short $(args)
+	@printf "$(bold)$(green)AIPerf unit tests (CI mode) passed!$(reset)\n"
 
 stress-tests test-stress: #? run stress tests.
 	@printf "$(bold)$(blue)Running unit stress tests...$(reset)\n"

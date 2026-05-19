@@ -271,8 +271,29 @@ jobs:
       - name: Install dependencies
         run: make first-time-setup PYTHON_VERSION=3.12
 
-      - name: Run unit and component integration tests
+      - name: Run unit tests
         run: make test-ci PYTHON_VERSION=3.12
+
+  component-integration-tests:
+    name: Component Integration Tests
+    needs: [prepare-nightly]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run component integration tests
+        run: make component-integration-tests-ci PYTHON_VERSION=3.12
 
   integration-tests:
     name: Integration Tests
@@ -311,11 +332,11 @@ jobs:
 
   # `needs:` orders build after tests so their results appear in the summary,
   # but the `if:` condition only hard-gates on prepare-nightly + pre-commit.
-  # Unit/integration test failures are visible but non-blocking — the rest of
-  # the pipeline continues to build, stage, and scan.
+  # Unit/component/integration test failures are visible but non-blocking — the
+  # rest of the pipeline continues to build, stage, and scan.
   build-container:
     name: Build Container (${{ matrix.arch }})
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end]
+    needs: [prepare-nightly, pre-commit, unit-tests, component-integration-tests, integration-tests, test-docs-end-to-end]
     if: >-
       ${{ always()
           && needs.prepare-nightly.result == 'success'
