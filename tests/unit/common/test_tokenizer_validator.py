@@ -131,6 +131,26 @@ class TestPreloadTokenizers:
         mock_load.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_skips_when_tokenizer_preload_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, mock_logger: MagicMock
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.TOKENIZER, "SKIP_PRELOAD", True, raising=False)
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(Tokenizer, "from_pretrained") as mock_load,
+        ):
+            await preload_tokenizers(
+                {"model": "meta-llama/Llama-2-7b-hf"}, logger=mock_logger
+            )
+
+        mock_load.assert_not_called()
+        mock_logger.info.assert_called_once_with(
+            "Tokenizer preload disabled by AIPERF_TOKENIZER_SKIP_PRELOAD"
+        )
+
+    @pytest.mark.asyncio
     async def test_prewarms_builtin_tiktoken(self) -> None:
         # Pre-warming ensures macOS child processes (spawned fresh) find the
         # tiktoken encoding file on disk and make zero network calls.

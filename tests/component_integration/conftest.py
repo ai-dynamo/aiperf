@@ -33,6 +33,7 @@ from unittest.mock import patch
 # Makefile (`MALLOC_ARENA_MAX=2 pytest ...`); the setdefault here only helps
 # if pytest was invoked some other way (e.g., from an IDE).
 os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+os.environ.setdefault("AIPERF_TOKENIZER_SKIP_PRELOAD", "1")
 
 import pytest
 
@@ -113,14 +114,20 @@ class ComponentIntegrationTestDefaults:
     ui: str = "simple"
 
 
-def _raise_system_exit(code: int) -> None:
-    raise SystemExit(code)
+_REAL_OS_EXIT = os._exit
+_OS_EXIT_PATCH_OWNER_PID = os.getpid()
+
+
+def _component_test_os_exit(code: int) -> SystemExit | None:
+    if os.getpid() == _OS_EXIT_PATCH_OWNER_PID:
+        return SystemExit(code)
+    _REAL_OS_EXIT(code)
 
 
 @pytest.fixture(autouse=True, scope="package")
 def mock_os_exit():
-    """Patch os._exit to raise SystemExit instead of exiting the process."""
-    with patch("os._exit", side_effect=_raise_system_exit):
+    """Patch os._exit to no-op in pytest without leaking into forked children."""
+    with patch("os._exit", side_effect=_component_test_os_exit):
         yield
 
 

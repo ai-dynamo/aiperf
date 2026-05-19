@@ -572,6 +572,11 @@ async def preload_tokenizers(
             logger.debug("Tokenizer preload skipped: validation was not run")
         return
 
+    if Environment.TOKENIZER.SKIP_PRELOAD:
+        if logger:
+            logger.info("Tokenizer preload disabled by AIPERF_TOKENIZER_SKIP_PRELOAD")
+        return
+
     tiktoken_names, hf_names, hf_already_cached = _partition_preload_names(
         resolved_names, revision, logger
     )
