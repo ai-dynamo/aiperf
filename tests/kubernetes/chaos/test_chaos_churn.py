@@ -235,17 +235,6 @@ async def test_c11_parallel_jobs_delete_subset(
             await _force_delete(kubectl, operator_job_namespace, n)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "C12 is exploratory: the CRD OpenAPI schema is permissive so a "
-        "bogus endpoint URL is accepted by the apiserver and only "
-        "surfaces at operator-side spec validation. If the operator "
-        "stamps phase=Failed within 60 s the test passes; if it retries "
-        "forever or logs the error without updating status the test "
-        "xfails and the behavior is documented for a follow-up fix."
-    ),
-)
 async def test_c12_invalid_spec_surfaces_conditions(
     operator_ready: OperatorDeployer,  # noqa: ARG001  (operator must be running to handle the CR)
     chaos_injector: ChaosInjector,
@@ -274,11 +263,23 @@ async def test_c12_invalid_spec_surfaces_conditions(
                 "benchmark": {
                     "models": {"items": [{"name": "mock-model"}]},
                     "endpoint": {"urls": ["notaschema://nope/v1/chat/completions"]},
-                    "phases": {
-                        "type": "concurrency",
-                        "concurrency": 1,
-                        "requests": 1,
-                    },
+                    "datasets": [
+                        {
+                            "name": "main",
+                            "type": "synthetic",
+                            "entries": 1,
+                            "prompts": {"isl": {"mean": 550}},
+                        }
+                    ],
+                    "phases": [
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
+                            "dataset": "main",
+                            "concurrency": 1,
+                            "requests": 1,
+                        }
+                    ],
                     "tokenizer": {"name": "gpt2"},
                     "runtime": {"ui": "none"},
                 }

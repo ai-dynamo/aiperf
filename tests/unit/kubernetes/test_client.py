@@ -234,7 +234,7 @@ class TestK8sClient:
                 async with k8s_client():
                     pass
             cfg = k8s_async_client.Configuration.get_default_copy()
-            assert cfg.assert_hostname == "kubernetes.default.svc"
+            assert cfg.tls_server_name == "kubernetes.default.svc"
         finally:
             k8s_async_client.Configuration.set_default(original_config)
 

@@ -108,7 +108,7 @@ def _apply_apiserver_tls_server_name_override() -> None:
     if not server_name:
         return
     cfg = client.Configuration.get_default_copy()
-    cfg.assert_hostname = server_name
+    cfg.tls_server_name = server_name
     client.Configuration.set_default(cfg)
 
 
