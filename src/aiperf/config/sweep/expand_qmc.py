@@ -87,14 +87,16 @@ def expand_qmc_sweep(
         )
 
     engine = _qmc_engine(sweep_type, d=len(dimensions), seed=seed, opts=options)
-    if sweep_type == "sobol":
-        # Owen 2020, "On Dropping the First Sobol' Point" (arXiv:2008.08051):
-        # the first point of a Sobol' sequence has provably worse mean-squared
-        # error contribution than the points that follow, regardless of
-        # scrambling. Burning index 0 (so the user's N samples come from
-        # engine indices [1, N+1)) is a strict improvement on convergence
-        # rate at the cost of one extra cheap engine call.
-        samples_unit_cube = engine.random(n=samples + 1)[1:]
+    if sweep_type == "sobol" and samples & (samples - 1) == 0:
+        samples_unit_cube = engine.random_base2(m=samples.bit_length() - 1)
+    elif sweep_type == "sobol":
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The balance properties of Sobol' points require n to be a power of 2.",
+                category=UserWarning,
+            )
+            samples_unit_cube = engine.random(n=samples)
     else:
         samples_unit_cube = engine.random(n=samples)
 

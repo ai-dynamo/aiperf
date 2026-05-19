@@ -296,8 +296,13 @@ def validate_tokenizer_early(
     console = Console()
     resolved = _resolve_aliases(names, logger, console)
 
-    # Skip if already in offline mode -- the cache is assumed warm.
-    if os.environ.get("HF_HUB_OFFLINE") and os.environ.get("TRANSFORMERS_OFFLINE"):
+    # Skip if already in offline mode -- the cache is assumed warm. Either
+    # env var being set is enough: both signal "I have a warm cache, do not
+    # touch the network." Requiring both was overly conservative and silently
+    # ran the prefetch subprocess when only one was set (e.g., the
+    # component_integration test harness, which set HF_HUB_OFFLINE only and
+    # then hit EPERM in restricted CI containers).
+    if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
         logger.info("HF offline mode already set, skipping cache warming")
     else:
         _prefetch_tokenizers(
@@ -570,6 +575,11 @@ async def preload_tokenizers(
     if not resolved_names:
         if logger:
             logger.debug("Tokenizer preload skipped: validation was not run")
+        return
+
+    if Environment.TOKENIZER.SKIP_PRELOAD:
+        if logger:
+            logger.info("Tokenizer preload disabled by AIPERF_TOKENIZER_SKIP_PRELOAD")
         return
 
     tiktoken_names, hf_names, hf_already_cached = _partition_preload_names(
