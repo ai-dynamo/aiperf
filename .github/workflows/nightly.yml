@@ -99,7 +99,7 @@ jobs:
       # user-supplied SHA. fetch-depth: 0 so the next step can run
       # merge-base against origin/harrison/fix-nightly.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || 'harrison/fix-nightly' }}
           fetch-depth: 0
@@ -116,9 +116,14 @@ jobs:
           fi
           echo "Verified ${BUILD_SHA} is on harrison/fix-nightly."
 
+      # Only relevant on re-attempts — first-attempt runs have no prior
+      # artifact to restore and the missing-artifact warning would otherwise
+      # show up on every fresh nightly. continue-on-error: true is still
+      # belt-and-suspenders for the case where a prior artifact expired.
       - name: Restore version artifact from prior attempt
         id: restore
-        uses: actions/download-artifact@v4
+        if: ${{ github.run_attempt > 1 }}
+        uses: actions/download-artifact@v5
         with:
           name: nightly-version
           path: .nightly-version/
@@ -194,7 +199,7 @@ jobs:
           } > .nightly-version/version-info.env
 
       - name: Save version artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nightly-version
           path: .nightly-version/version-info.env
@@ -238,12 +243,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -264,12 +269,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -285,12 +290,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -340,12 +345,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Patch version in pyproject.toml
         uses: ./.github/actions/update-pyproject-version
@@ -716,7 +721,7 @@ jobs:
 
       - name: Upload license artifacts
         if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: license-artifacts-${{ needs.prepare-nightly.outputs.wheel_version }}
           path: |
@@ -733,7 +738,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 

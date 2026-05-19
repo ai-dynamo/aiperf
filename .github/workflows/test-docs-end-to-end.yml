@@ -36,12 +36,12 @@ jobs:
     outputs:
       run_test: ${{ steps.compare.outputs.run_test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ inputs.source_ref || github.sha }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -135,7 +135,7 @@ jobs:
             server: vllm-embeddings-openai
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
