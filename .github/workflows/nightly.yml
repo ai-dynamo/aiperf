@@ -43,6 +43,10 @@ on:
         description: 'Skip GitLab security scan. Emergency use only.'
         type: boolean
         default: false
+      manual_artifacts:
+        description: 'Tag/store this run under the manual-dispatch scheme (+manual.<run_id> wheel-version suffix, nightly-manual/<date>/<run_id>/ Artifactory + S3 paths, nightly-manual-<...>-<run_id> container tag). Uncheck only to deliberately overwrite the scheduled artifact locations from a manual run.'
+        type: boolean
+        default: true
 
 # Allow concurrent nightly runs. Shared destinations (ECR/NGC `aiperf:<container_tag>`,
 # S3 wheel path, Artifactory wheel) are last-writer-wins on same-day/same-commit
@@ -132,6 +136,11 @@ jobs:
 
       - name: Compute or restore version strings
         id: version
+        env:
+          # Forward the dispatch-only input into the shell. For schedule
+          # events the inputs context is empty, so this resolves to '' and
+          # the branch below treats it as falsy.
+          MANUAL_ARTIFACTS: ${{ inputs.manual_artifacts }}
         run: |
           set -euo pipefail
 
@@ -162,21 +171,24 @@ jobs:
             NIGHTLY_TAG="AIPerf Nightlies"
 
             # Scheduled vs manual disambiguation:
-            #   - Scheduled (cron):
+            #   - Scheduled (cron) — always uses bare nightly naming:
             #       WHEEL_VERSION = <base>.dev<YYYYMMDD>
             #       STAGE_SUBPATH = nightly/<YYYYMMDD>
             #       CONTAINER_TAG = nightly-<YYYYMMDD>-<sha7>
-            #   - Manual (workflow_dispatch):
+            #   - Manual (workflow_dispatch) with manual_artifacts=true (default):
             #       WHEEL_VERSION = <base>.dev<YYYYMMDD>+manual.<run_id>
             #         (PEP 440 local-version suffix so each manual build is
             #          independently addressable; non-local scheduled wheel
             #          stays the default for `pip install aiperf-nightly`)
             #       STAGE_SUBPATH = nightly-manual/<YYYYMMDD>/<run_id>
             #       CONTAINER_TAG = nightly-manual-<YYYYMMDD>-<sha7>-<run_id>
+            #   - Manual with manual_artifacts=false — fall back to the bare
+            #     nightly naming so the run deliberately overwrites scheduled
+            #     artifact locations (for emergency re-publishes etc.).
             # github.run_id is stable across re-attempts of the same run, so
             # an attempt-2 rerun produces the same identifiers (combined with
             # the version-info.env restore above).
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${MANUAL_ARTIFACTS:-true}" = "true" ]; then
               WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+manual.${GITHUB_RUN_ID}"
               STAGE_SUBPATH="nightly-manual/${TIMESTAMP}/${GITHUB_RUN_ID}"
               CONTAINER_TAG="nightly-manual-${TIMESTAMP}-${SHORT_SHA}-${GITHUB_RUN_ID}"
