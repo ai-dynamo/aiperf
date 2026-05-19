@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 
 import pytest
 from aiperf_mock_server.request_recorder import (
+    RequestRecorder,
     _build_summary,
     _histogram,
     _print_summary,
@@ -257,3 +258,99 @@ class TestPrintSummary:
         out = capsys.readouterr().out
         assert "ISL histogram" in out
         assert "OSL histogram" not in out
+
+
+class _FakeTokenizer:
+    """Minimal stub for unit tests that drive `RequestRecorder.record()`."""
+
+    def __init__(self, vocab_size: int, encodings: dict[str, list[int]]) -> None:
+        self._vocab_size = vocab_size
+        self._encodings = encodings
+
+    def __len__(self) -> int:
+        return self._vocab_size
+
+    def encode(self, text: str) -> list[int]:
+        return list(self._encodings.get(text, []))
+
+    def decode(self, ids: list[int]) -> str:
+        return " ".join(str(i) for i in ids)
+
+
+def _make_recorder(tmp_path, tokenizer: _FakeTokenizer) -> RequestRecorder:
+    path = tmp_path / "rec.jsonl"
+    r = RequestRecorder(
+        path=str(path),
+        tokenizer_name="fake",
+        tokenizer_revision="main",
+        trust_remote_code=False,
+    )
+    # Bypass open() so we don't need to wire `Tokenizer.from_pretrained`.
+    r._tokenizer = tokenizer
+    r._vocab_size = len(tokenizer)
+    r._vocab_size_source = "tokenizer"
+    r._file = open(path, "wb")  # noqa: SIM115 — lifetime managed by test (explicit close)
+    return r
+
+
+class TestRecorderTokenIdTracking:
+    def test_record_updates_vocab_counter(self, tmp_path) -> None:
+        tok = _FakeTokenizer(vocab_size=100, encodings={"hello": [1, 2, 1, 3]})
+        r = _make_recorder(tmp_path, tok)
+        r.record(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="x",
+            model="m",
+            text="hello",
+            stream=False,
+            osl_fingerprint={},
+        )
+        assert r._vocab_counts["/v1/chat/completions"] == Counter({1: 2, 2: 1, 3: 1})
+        r._file.close()
+
+    def test_record_accumulates_across_calls(self, tmp_path) -> None:
+        tok = _FakeTokenizer(vocab_size=100, encodings={"a": [1, 1], "b": [2, 3]})
+        r = _make_recorder(tmp_path, tok)
+        for text in ("a", "b", "a"):
+            r.record(
+                ts=0.0,
+                endpoint="/v1/chat/completions",
+                request_id="x",
+                model="m",
+                text=text,
+                stream=False,
+                osl_fingerprint={},
+            )
+        assert r._vocab_counts["/v1/chat/completions"] == Counter({1: 4, 2: 1, 3: 1})
+        r._file.close()
+
+    def test_record_segregates_counts_by_endpoint(self, tmp_path) -> None:
+        tok = _FakeTokenizer(vocab_size=100, encodings={"x": [5, 6]})
+        r = _make_recorder(tmp_path, tok)
+        r.record(0.0, "/v1/chat/completions", "x", "m", "x", False, {})
+        r.record(0.0, "/v1/embeddings", "x", "m", "x", False, {})
+        assert r._vocab_counts["/v1/chat/completions"] == Counter({5: 1, 6: 1})
+        assert r._vocab_counts["/v1/embeddings"] == Counter({5: 1, 6: 1})
+        assert list(r._vocab_counts.keys()) == [
+            "/v1/chat/completions",
+            "/v1/embeddings",
+        ]
+        r._file.close()
+
+    def test_open_sets_vocab_size_from_tokenizer(self, tmp_path) -> None:
+        # Same path as production: from_pretrained -> len(tokenizer).
+        # Verifies the `open()` integration captures vocab_size + source.
+        r = RequestRecorder(
+            path=str(tmp_path / "rec.jsonl"),
+            tokenizer_name="builtin",
+            tokenizer_revision="main",
+            trust_remote_code=False,
+        )
+        r.open()
+        try:
+            assert isinstance(r._vocab_size, int)
+            assert r._vocab_size > 0
+            assert r._vocab_size_source == "tokenizer"
+        finally:
+            r.close()

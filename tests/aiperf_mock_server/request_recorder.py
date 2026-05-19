@@ -59,6 +59,9 @@ class RequestRecorder:
         self._tokenizer: Any = None
         self._file: IO[bytes] | None = None
         self._isls: dict[str, list[int]] = defaultdict(list)
+        self._vocab_counts: dict[str, Counter[int]] = defaultdict(Counter)
+        self._vocab_size: int | None = None
+        self._vocab_size_source: str = "tokenizer"
         self._osls: dict[str, list[int]] = defaultdict(list)
         self._min_tokens: dict[str, list[int]] = defaultdict(list)
         self._streamed: dict[str, int] = defaultdict(int)
@@ -74,6 +77,25 @@ class RequestRecorder:
             revision=self.tokenizer_revision,
             trust_remote_code=self.trust_remote_code,
         )
+        try:
+            # aiperf.common.tokenizer.Tokenizer wraps the underlying tokenizer
+            # in a _tokenizer attribute; tiktoken exposes n_vocab, HF exposes
+            # vocab_size. Fall through to observed derivation at summary time
+            # if neither is available.
+            inner = getattr(self._tokenizer, "_tokenizer", self._tokenizer)
+            vocab_size = getattr(inner, "vocab_size", None)
+            if vocab_size is None:
+                enc = getattr(inner, "_encoding", None)
+                vocab_size = getattr(enc, "n_vocab", None)
+            if vocab_size is None:
+                vocab_size = len(self._tokenizer)
+            self._vocab_size = int(vocab_size)
+            self._vocab_size_source = "tokenizer"
+        except (TypeError, AttributeError):
+            # Tokenizer doesn't expose vocab size; we'll derive from observed ids
+            # at summary time.
+            self._vocab_size = None
+            self._vocab_size_source = "observed"
         self._file = open(self.path, "wb")  # noqa: SIM115 — lifetime is the recorder's open/close pair
         logger.info(
             "Request recorder writing to %s (tokenizer=%s)",
@@ -94,12 +116,14 @@ class RequestRecorder:
         if self._tokenizer is None or self._file is None:
             return
         try:
-            isl = len(self._tokenizer.encode(text))
+            ids = self._tokenizer.encode(text)
         except Exception:
             logger.exception(
                 "recorder: tokenization failed for %s %s", endpoint, request_id
             )
             return
+        isl = len(ids)
+        self._vocab_counts[endpoint].update(ids)
         max_tokens = osl_fingerprint.get("max_tokens")
         max_completion_tokens = osl_fingerprint.get("max_completion_tokens")
         min_tokens = osl_fingerprint.get("min_tokens")
