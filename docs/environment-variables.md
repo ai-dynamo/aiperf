@@ -199,7 +199,7 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_CREDIT_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 1, ≤ 100000.0 | Interval in seconds between credit progress report messages |
 | `AIPERF_SERVICE_DISABLE_UVLOOP` | `False` | — | Disable uvloop and use default asyncio event loop instead |
 | `AIPERF_SERVICE_HEARTBEAT_INTERVAL` | `5.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between heartbeat messages for component services |
-| `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
+| `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `600.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
 | `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile start command |
 | `AIPERF_SERVICE_PROFILE_CANCEL_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile cancel command |
 | `AIPERF_SERVICE_REGISTRATION_INTERVAL` | `1.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between registration attempts for component services |
@@ -231,6 +231,7 @@ Tokenizer pre-warm and loading configuration. Controls how the CLI parent pre-wa
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_TOKENIZER_PRELOAD_TIMEOUT` | `120.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for the parent's tokenizer pre-warm phase. Bounds the total wall-clock time for all parallel subprocess pre-warms. On timeout, subprocesses are killed and AIPerf continues; child services may then download tokenizers themselves on first use. |
+| `AIPERF_TOKENIZER_SKIP_PRELOAD` | `False` | — | Skip parent-process tokenizer cache pre-warming. Intended for test harnesses that replace tokenizer loading and must avoid forked prefetch subprocesses. Production defaults to preloading. |
 
 ## UI
 

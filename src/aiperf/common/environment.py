@@ -787,7 +787,7 @@ class _ServiceSettings(BaseSettings):
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
-        default=300.0,
+        default=600.0,
         description="Timeout in seconds for profile configure command",
     )
     PROFILE_START_TIMEOUT: float = Field(
@@ -919,6 +919,14 @@ class _TokenizerSettings(BaseSettings):
             "pre-warms. On timeout, subprocesses are killed and AIPerf "
             "continues; child services may then download tokenizers "
             "themselves on first use."
+        ),
+    )
+    SKIP_PRELOAD: bool = Field(
+        default=False,
+        description=(
+            "Skip parent-process tokenizer cache pre-warming. Intended for "
+            "test harnesses that replace tokenizer loading and must avoid "
+            "forked prefetch subprocesses. Production defaults to preloading."
         ),
     )
 
