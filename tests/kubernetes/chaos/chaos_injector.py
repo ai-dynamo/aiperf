@@ -539,11 +539,23 @@ class ChaosInjector:
                         "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
                     ]
                 },
-                "phases": {
-                    "type": "concurrency",
-                    "concurrency": 1,
-                    "requests": 1,
-                },
+                "datasets": [
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "prompts": {"isl": {"mean": 550}},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "dataset": "main",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
                 "tokenizer": {"name": "gpt2"},
                 "runtime": {"ui": "none"},
             },
