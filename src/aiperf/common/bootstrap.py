@@ -149,6 +149,7 @@ def bootstrap_and_run_service(
         _exit_if_service_failed(service)
 
     _configure_event_loop_policy_for_platform()
+    _request_high_resolution_timer_on_windows()
 
     with contextlib.suppress(asyncio.CancelledError):
         if not Environment.SERVICE.DISABLE_UVLOOP:
@@ -174,6 +175,34 @@ def _configure_event_loop_policy_for_platform() -> None:
     """
     if IS_WINDOWS:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def _request_high_resolution_timer_on_windows() -> None:
+    """Bump Windows system timer resolution from 15.6ms to 1ms.
+
+    asyncio.sleep on Windows is floored by the OS scheduling timer
+    interrupt rate, which defaults to 15.625ms. The aiperf scheduler
+    issues credits at sub-15ms intervals for >60 QPS, so without this
+    bump credit issuance clumps to the 15.6ms boundary and constant-rate
+    / Poisson pacing breaks (CV blows past test thresholds).
+
+    ``winmm.timeBeginPeriod(1)`` requests 1ms timer resolution. On
+    Windows 10+ this is scoped per-process — no impact on other apps'
+    battery life. We never call ``timeEndPeriod`` because the timer
+    bump should hold for the whole aiperf run; Windows restores the
+    default automatically when the process exits.
+
+    No-op on every non-Windows platform.
+    """
+    if not IS_WINDOWS:
+        return
+    import ctypes
+
+    # winmm is part of Windows and always present, but guard defensively:
+    # if it ever fails, aiperf still runs — high-QPS tests may just
+    # produce noisier intervals.
+    with contextlib.suppress(OSError, AttributeError):
+        ctypes.WinDLL("winmm").timeBeginPeriod(1)
 
 
 def _exit_if_service_failed(service) -> None:
