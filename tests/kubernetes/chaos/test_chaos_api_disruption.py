@@ -21,8 +21,8 @@ HTTP API (C16).
 
 * **SystemController HTTP (C16):** landed. The operator honors
   ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` (chaos-only env var)
-  which swaps the per-CR JobSet pod DNS for a fixed URL in every
-  :class:`ProgressClient` call. The shared package-scoped fixture
+  which swaps the per-CR JobSet pod DNS for a fixed URL in controller
+  API-port :class:`ProgressClient` calls. The shared package-scoped fixture
   ``operator_ready_toxiproxy_routed`` (see
   ``tests/kubernetes/chaos/conftest.py``) redeploys the operator once
   with the override pointed at toxiproxy and restores a plain operator
@@ -40,6 +40,7 @@ import asyncio
 import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
+from tests.kubernetes.chaos.conftest import CONTROLLER_HTTP_UPSTREAM_PORT
 from tests.kubernetes.chaos.toxiproxy import (
     TOXIPROXY_APISERVER_PORT,
     TOXIPROXY_CONTROLLER_HTTP_PORT,
@@ -197,7 +198,7 @@ async def test_c16_block_operator_controller_http_falls_back(
        operator's initial progress calls will simply fail-and-retry
        against the unroutable placeholder until step 4 fixes it.
     3. Create the CR; once the controller pod has an IP, swap the proxy's
-       upstream to the real ``<pod-ip>:19090`` so the operator can
+       upstream to the real controller HTTP port so the operator can
        observe progress and drive the CR to Running/profiling.
     4. Add a ``timeout`` toxic. Operator HTTP now blackholes; salvage
        path must carry the CR to Completed.
@@ -287,7 +288,7 @@ async def test_c16_block_operator_controller_http_falls_back(
         await toxiproxy_injector.add_proxy(
             name=_CONTROLLER_PROXY_NAME,
             listen=f"0.0.0.0:{TOXIPROXY_CONTROLLER_HTTP_PORT}",
-            upstream=f"{pod_ip}:19090",
+            upstream=f"{pod_ip}:{CONTROLLER_HTTP_UPSTREAM_PORT}",
         )
 
         # The operator can now observe controller progress. Wait until

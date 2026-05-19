@@ -73,6 +73,18 @@ class HelmValues:
     resources_limits_memory: str = "512Mi"
     """Memory limit for the operator pod."""
 
+    controller_http_url_override: str = ""
+    """Chaos-only controller HTTP base URL override."""
+
+    apiserver_service_host_override: str = ""
+    """Chaos-only KUBERNETES_SERVICE_HOST override for apiserver proxying."""
+
+    apiserver_service_port_override: str = ""
+    """Chaos-only KUBERNETES_SERVICE_PORT override for apiserver proxying."""
+
+    apiserver_tls_server_name_override: str = ""
+    """TLS server name used when apiserver traffic is routed through a proxy."""
+
     def to_set_args(self) -> list[str]:
         """Convert to helm --set arguments."""
         args = [
@@ -91,6 +103,25 @@ class HelmValues:
             f"operator.resources.limits.cpu={self.resources_limits_cpu}",
             f"operator.resources.limits.memory={self.resources_limits_memory}",
         ]
+        if self.controller_http_url_override:
+            args.append(
+                f"chaos.controllerHttpUrlOverride={self.controller_http_url_override}"
+            )
+        if self.apiserver_service_host_override:
+            args.append(
+                "chaos.apiserverServiceHostOverride="
+                f"{self.apiserver_service_host_override}"
+            )
+        if self.apiserver_service_port_override:
+            args.append(
+                "chaos.apiserverServicePortOverride="
+                f"{self.apiserver_service_port_override}"
+            )
+        if self.apiserver_tls_server_name_override:
+            args.append(
+                "chaos.apiserverTlsServerNameOverride="
+                f"{self.apiserver_tls_server_name_override}"
+            )
         return args
 
 

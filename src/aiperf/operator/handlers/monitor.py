@@ -341,7 +341,13 @@ async def _fail_on_fatal_pod_waiting_reason(
             namespace=namespace,
             label_selector=f"{JobSetLabels.JOBSET_NAME}={jobset_name}",
         )
-    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (
+        ApiException,
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        OSError,
+        TypeError,
+    ) as e:
         logger.warning(
             "Failed to inspect pods for fatal startup states on %s/%s: %s",
             namespace,
@@ -1239,6 +1245,66 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     return exit_code, reason
 
 
+def _apply_live_status_partial_results(
+    status: dict[str, Any],
+    sb: StatusBuilder,
+) -> bool:
+    """Copy CR live metrics into terminal partial result fields."""
+    recovered = False
+    live_metrics = status.get("liveMetrics")
+    if (
+        isinstance(live_metrics, dict)
+        and isinstance(live_metrics.get("metrics"), dict)
+        and live_metrics["metrics"]
+    ):
+        sb.set_results(live_metrics)
+        recovered = True
+
+    live_summary = status.get("liveSummary")
+    if isinstance(live_summary, dict) and live_summary:
+        sb.set_summary(live_summary)
+        recovered = True
+    elif recovered and isinstance(live_metrics, dict):
+        summary = MetricsSummary.from_metrics(live_metrics)
+        summary_dict = summary.to_status_dict()
+        if summary_dict:
+            sb.set_summary(summary_dict)
+    return recovered
+
+
+async def _recover_from_live_status(
+    *,
+    body: dict[str, Any],
+    status: dict[str, Any],
+    namespace: str,
+    jobset_name: str,
+    job_id: str,
+    reason: str,
+    sb: StatusBuilder,
+    custom: CustomObjectsApi,
+) -> bool:
+    """Salvage CR live metrics as partial results and mark the CR FAILED."""
+    if not _apply_live_status_partial_results(status, sb):
+        return False
+
+    await _delete_jobset_or_retry(
+        custom, namespace, jobset_name, context="partial live metrics recovery"
+    )
+    error = (
+        "Controller container terminated before final export; "
+        f"recovered partial live metrics from CR status: {reason}"
+    )
+    sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
+    sb.conditions.set_true(
+        ConditionType.RESULTS_AVAILABLE,
+        "PartialLiveMetricsRecovered",
+        "Recovered partial live metrics from CR status",
+    )
+    sb.finalize()
+    events.failed(body, job_id, error)
+    return True
+
+
 async def _recover_from_partial_checkpoints(
     *,
     body: dict[str, Any],
@@ -1248,6 +1314,7 @@ async def _recover_from_partial_checkpoints(
     job_id: str,
     sb: StatusBuilder,
     custom: CustomObjectsApi,
+    status: dict[str, Any] | None = None,
 ) -> None:
     """Salvage partial checkpoint files and mark the CR FAILED."""
     epoch = epoch_key_from_body(body)
@@ -1262,6 +1329,8 @@ async def _recover_from_partial_checkpoints(
         summary_dict = summary.to_status_dict()
         if summary_dict:
             sb.set_summary(summary_dict)
+    elif status is not None:
+        _apply_live_status_partial_results(status, sb)
 
     error = (
         f"Controller container terminated before final export; "
@@ -1405,7 +1474,20 @@ async def _maybe_recover_terminated_controller(
             job_id=job_id,
             sb=sb,
             custom=custom,
+            status=status,
         )
+        return True
+
+    if await _recover_from_live_status(
+        body=body,
+        status=status,
+        namespace=namespace,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        reason=reason,
+        sb=sb,
+        custom=custom,
+    ):
         return True
 
     await _fail_unrecoverable_controller(

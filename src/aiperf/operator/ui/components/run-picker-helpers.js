@@ -67,7 +67,7 @@ export function buildButtonLabel({ epochs, current, now }) {
 
   const { ascending, ordinalByEpoch } = _buildOrdinal(epochs);
 
-  const latest = ascending[ascending.length - 1];
+  const latest = ascending.find(e => e?.isLatest) ?? ascending[ascending.length - 1];
   const latestEpoch = latest ? String(latest.epoch) : null;
   const viewingLatest = current == null || current === latestEpoch;
   const inert = epochs.length === 1;

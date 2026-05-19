@@ -51,16 +51,23 @@ function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function finiteNumber(value) {
+  return typeof value === 'number' && isFinite(value) ? value : null;
+}
+
+function firstFiniteStat(stats) {
+  return finiteNumber(stats.avg) ?? finiteNumber(stats.rate) ?? finiteNumber(stats.value);
+}
+
 export function normalizeEndpointSummaries(summaries) {
   if (!isRecord(summaries)) return [];
   return Object.entries(summaries).flatMap(([endpoint, body]) => {
     if (!isRecord(body) || !isRecord(body.metrics)) return [];
     const metrics = Object.entries(body.metrics).flatMap(([name, m]) => {
       if (!isRecord(m) || !Array.isArray(m.series)) return [];
-      const stats = m.series[0]?.stats;
-      if (!isRecord(stats)) return [];
-      const value = stats.avg ?? stats.rate ?? stats.value ?? null;
-      return [{ name, value, unit: m.unit ?? null }];
+      const series = m.series.find((sample) => isRecord(sample?.stats));
+      if (!series) return [];
+      return [{ name, value: firstFiniteStat(series.stats), unit: m.unit ?? null }];
     });
     return metrics.length ? [{ endpoint, metrics }] : [];
   });
@@ -213,8 +220,9 @@ export function handleWsMessage(msg) {
         // per batch so a failing run can tell if metrics even arrive.
         if (msg.metrics.length > 0) {
           const first = msg.metrics[0];
+          const firstValue = finiteNumber(first?.current) ?? finiteNumber(first?.avg);
           log({ severity: 'info', category: 'metrics',
-                message: `realtime: ${msg.metrics.length} metrics (${first?.tag ?? '?'} ${first?.current ?? first?.avg ?? '?'})` });
+                message: `realtime: ${msg.metrics.length} metrics (${first?.tag ?? '?'} ${firstValue ?? '?'})` });
         }
       }
       return;

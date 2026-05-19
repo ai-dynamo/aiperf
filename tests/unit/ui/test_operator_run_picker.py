@@ -152,6 +152,28 @@ def test_build_button_label_for_each_state() -> None:
     assert out[2]["isLatest"] is True
 
 
+def test_build_button_label_uses_api_latest_when_newer_orphan_exists() -> None:
+    epochs = _epochs_fixture()
+    epochs[1]["isLatest"] = True
+    epochs[2]["isLatest"] = False
+    epochs[2]["status"] = "unknown"
+    fixture = json.dumps(epochs)
+    script = f"""
+        import {{ buildPickerRows, buildButtonLabel }} from {RUN_PICKER_PATH.as_uri()!r};
+        const epochs = {fixture};
+        const rows = buildPickerRows({{
+          namespace: 'bench', name: 'j1', epochs, current: undefined,
+        }});
+        const label = buildButtonLabel({{ epochs, current: undefined, now: 5602 }});
+        console.log(JSON.stringify({{ rows, label }}));
+    """
+    out = json.loads(_run_node(script))
+    assert [r["selected"] for r in out["rows"]] == [False, True, False]
+    assert out["label"]["text"].startswith("Run 2")
+    assert out["label"]["status"] == "failed"
+    assert out["label"]["isLatest"] is True
+
+
 def test_build_button_label_single_epoch_renders_inert() -> None:
     fixture = json.dumps([_epochs_fixture()[2]])
     script = f"""

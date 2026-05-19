@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from aiperf.kubernetes.environment import K8sEnvironment
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.chaos.mock_server_injector import MockServerInjector
 from tests.kubernetes.chaos.toxiproxy import (
@@ -87,11 +88,46 @@ CONTROLLER_HTTP_OVERRIDE_URL = (
     f"http://{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local:"
     f"{TOXIPROXY_CONTROLLER_HTTP_PORT}"
 )
+CONTROLLER_HTTP_UPSTREAM_PORT = K8sEnvironment.PORTS.API_SERVICE
 APISERVER_SERVICE_HOST_OVERRIDE = (
     f"{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local"
 )
 APISERVER_SERVICE_PORT_OVERRIDE = str(TOXIPROXY_APISERVER_PORT)
 APISERVER_TLS_SERVER_NAME_OVERRIDE = "kubernetes.default.svc"
+
+
+def _missing_operator_env_vars(
+    env_stdout: str,
+    expected: dict[str, str],
+) -> list[str]:
+    """Return expected env names absent from ``kubectl set env --list`` output."""
+    observed: dict[str, str] = {}
+    for line in env_stdout.splitlines():
+        name, separator, value = line.partition("=")
+        if separator:
+            observed[name.strip()] = value.strip()
+    return [name for name, value in expected.items() if observed.get(name) != value]
+
+
+async def _assert_live_operator_env(
+    kubectl: KubectlClient,
+    expected: dict[str, str],
+) -> None:
+    """Fail fast when an override fixture deployed an operator without its env."""
+    env_check = await kubectl.run(
+        "set",
+        "env",
+        "deployment/aiperf-operator",
+        "--list",
+        "-n",
+        OperatorDeployer.OPERATOR_NAMESPACE,
+        check=True,
+    )
+    missing = _missing_operator_env_vars(env_check.stdout, expected)
+    assert not missing, (
+        "operator chaos-route precondition failed: live deployment is missing "
+        f"expected env vars {missing!r}; check the override fixture wiring"
+    )
 
 
 @pytest_asyncio.fixture
@@ -116,6 +152,10 @@ async def operator_ready_toxiproxy_routed(
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
     await deployer.deploy_operator()
+    await _assert_live_operator_env(
+        kubectl,
+        {"AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE": CONTROLLER_HTTP_OVERRIDE_URL},
+    )
     try:
         yield deployer
     finally:
@@ -184,6 +224,14 @@ async def operator_ready_apiserver_toxiproxy_routed(
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
     await deployer.deploy_operator()
+    await _assert_live_operator_env(
+        kubectl,
+        {
+            "KUBERNETES_SERVICE_HOST": APISERVER_SERVICE_HOST_OVERRIDE,
+            "KUBERNETES_SERVICE_PORT": APISERVER_SERVICE_PORT_OVERRIDE,
+            "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE": APISERVER_TLS_SERVER_NAME_OVERRIDE,
+        },
+    )
     try:
         yield deployer
     finally:

@@ -107,9 +107,10 @@ def test_non_finite_metrics_render_fallback_without_nan_or_infinity_leaks(
     raw_payload = (
         orjson.dumps(payload)
         .decode()
+        .replace('"current":100.0', '"current":1e999')
         .replace(
-            '"tag": "time_to_first_token"',
-            '"tag": "time_to_first_token", "current": 1e999, "avg": -1e999, "p99": 1e999',
+            '"tag":"time_to_first_token"',
+            '"tag":"time_to_first_token","current":1e999,"avg":-1e999,"p99":1e999',
         )
     )
     scenario = DashboardScenario(

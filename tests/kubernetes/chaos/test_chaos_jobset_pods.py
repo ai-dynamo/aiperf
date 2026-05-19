@@ -277,14 +277,6 @@ async def _get_worker_pod_uids(
     return out
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "C6 documents a known controller-kill salvage gap: killing the "
-        "control-plane process mid-profiling can leave the CR Running/profiling "
-        "because final artifacts are not recoverable from the sidecar yet."
-    ),
-)
 @pytest.mark.timeout(600)
 async def test_c6_kill_controller_container_salvages(
     operator_ready_shared_pid: OperatorDeployer,
@@ -357,15 +349,7 @@ async def test_c6_kill_controller_container_salvages(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "C7 documents a known worker-replacement hang: JobSet recreates the "
-        "pod, but the controller can remain Running/profiling because the "
-        "replacement worker does not recover the in-flight benchmark state."
-    ),
-)
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 async def test_c7_kill_worker_pod_mid_benchmark(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,

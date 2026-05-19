@@ -33,6 +33,7 @@ from aiperf.operator.handlers.monitor import (
     _get_fatal_pod_waiting_reason,
     _get_terminated_controller_info,
     _handle_kueue_suspension,
+    _recover_from_live_status,
     _recover_from_partial_checkpoints,
     _should_poll_progress,
     _update_worker_counts,
@@ -285,6 +286,31 @@ class TestFailOnFatalPodWaitingReason:
         assert failed_condition["status"] == "True"
         custom.delete_namespaced_custom_object.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_pod_inspection_type_error_degrades_to_no_fatal_reason(self) -> None:
+        """A malformed pod-list client must not abort the monitor tick."""
+        sb, patch_status = _make_status_builder()
+        core = MagicMock()
+        core.list_namespaced_pod = MagicMock(return_value=MagicMock())
+
+        with patch(
+            "aiperf.operator.handlers.monitor.client.CoreV1Api",
+            return_value=core,
+        ):
+            handled = await _fail_on_fatal_pod_waiting_reason(
+                MagicMock(),
+                body={"kind": "AIPerfJob", "metadata": {"name": "aiperf-bench"}},
+                namespace="ns",
+                name="aiperf-bench",
+                jobset_name="aiperf-bench-js",
+                job_id="aiperf-bench",
+                key="ns/aiperf-bench",
+                sb=sb,
+            )
+
+        assert handled is False
+        assert patch_status.status == {}
+
 
 class TestContainerStatusByName:
     """Tests for ``_container_status_by_name``."""
@@ -534,6 +560,47 @@ class TestCleanupDeleteFailures:
             )
 
         assert patch.status.get("phase") != str(Phase.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_live_status_recovery_preserves_partial_metrics(self) -> None:
+        """Controller-death salvage promotes CR live metrics to partial results."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+        status = {
+            "liveMetrics": {
+                "metrics": {
+                    "request_throughput": {"avg": 12.5},
+                    "request_count": {"total": 42},
+                }
+            },
+            "liveSummary": {"throughputRps": 12.5, "requestCount": 42},
+        }
+
+        recovered = await _recover_from_live_status(
+            body={"kind": "AIPerfJob"},
+            status=status,
+            namespace="ns",
+            jobset_name="js",
+            job_id="job",
+            reason="Error",
+            sb=sb,
+            custom=custom,
+        )
+
+        assert recovered is True
+        assert patch.status["phase"] == str(Phase.FAILED)
+        assert patch.status["results"] == status["liveMetrics"]
+        assert patch.status["summary"] == status["liveSummary"]
+        assert "partial live metrics" in patch.status["error"]
+        results_condition = next(
+            condition
+            for condition in patch.status["conditions"]
+            if condition["type"] == "ResultsAvailable"
+        )
+        assert results_condition["status"] == "True"
+        assert results_condition["reason"] == "PartialLiveMetricsRecovered"
+        custom.delete_namespaced_custom_object.assert_awaited_once()
 
 
 class TestApplyControllerProgressStatus:
