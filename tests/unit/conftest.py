@@ -10,6 +10,7 @@ and made available to test functions in the same directory and subdirectories.
 import asyncio
 import uuid
 from collections.abc import Callable, Generator
+from contextlib import ExitStack
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -714,7 +715,9 @@ def mock_platform_system():
         yield mock
 
 
-def _patch_platform_constants(*, is_windows: bool, is_macos: bool, is_linux: bool):
+def _patch_platform_constants(
+    *, is_windows: bool, is_macos: bool, is_linux: bool
+) -> ExitStack:
     """Patch IS_WINDOWS/IS_MACOS/IS_LINUX in the source module and every consumer.
 
     Modules using `from aiperf.common.constants import IS_*` bind the value at
@@ -722,8 +725,6 @@ def _patch_platform_constants(*, is_windows: bool, is_macos: bool, is_linux: boo
     must be patched at its local name. Functions that re-import inside the body
     (e.g. cli_runner) are covered by patching the source.
     """
-    from contextlib import ExitStack
-
     targets = [
         ("aiperf.common.constants", ("IS_WINDOWS", "IS_MACOS", "IS_LINUX")),
         ("aiperf.common.bootstrap", ("IS_WINDOWS", "IS_MACOS")),
