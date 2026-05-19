@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.config.config import BenchmarkConfig
 
 # =============================================================================
 # JSON Metric Result
@@ -59,6 +59,14 @@ class JsonMetricResult(AIPerfBaseModel):
             "metrics whose value is itself the computed total or rate."
         ),
     )
+
+    @staticmethod
+    def project_summary_dict(payload: dict[str, Any]) -> dict[str, "JsonMetricResult"]:
+        return {
+            key: JsonMetricResult.model_validate(value)
+            for key, value in payload.items()
+            if isinstance(value, dict) and "unit" in value
+        }
 
 
 # =============================================================================
@@ -128,7 +136,86 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
     """
 
     timeslices: list[TimesliceData]
-    input_config: UserConfig | None = None
+    input_config: BenchmarkConfig | None = None
+
+
+# =============================================================================
+# Run Metadata
+# =============================================================================
+
+
+class RunInfo(AIPerfBaseModel):
+    """Per-run reproducibility metadata.
+
+    Captures the variation/trial coordinates and the actual seed the run used,
+    so a downstream reader of ``profile_export_aiperf.json`` alone can locate
+    the run's place in a sweep and reproduce its workload deterministically
+    without needing the internal ``run_config.json`` handoff file.
+    """
+
+    benchmark_id: str | None = Field(
+        default=None,
+        description=(
+            "Unique identifier for this benchmark run "
+            "(BenchmarkRun.benchmark_id). Duplicates the top-level "
+            "`benchmark_id` for readers that consume `run_info` as a "
+            "self-contained reproducibility block."
+        ),
+    )
+    sweep_id: str | None = Field(
+        default=None,
+        description=(
+            "UUID of the outer sweep this run belongs to "
+            "(BenchmarkPlan.sweep_id). Stable across every variation and "
+            "trial of one plan; lets readers join all per-run JSON exports "
+            "from the same sweep without consulting the parent multi-run "
+            "artifact directory. None for runs constructed outside the "
+            "multi-run orchestrator."
+        ),
+    )
+    random_seed: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Resolved per-run random seed (envelope `random_seed` for "
+            "single-run; SHA-derived for adaptive iterations beyond the "
+            "plan-time list). None when the user opted out of consistent "
+            "seeding and no `--random-seed` was set."
+        ),
+    )
+    trial: int | None = Field(
+        default=None,
+        ge=0,
+        description="Zero-based trial index within this variation.",
+    )
+    run_label: str | None = Field(
+        default=None,
+        description=("Human-readable run label (e.g. `concurrency_10`, `run_0001`)."),
+    )
+    variation_label: str | None = Field(
+        default=None,
+        description="Sweep variation label, or `base` for non-sweep runs.",
+    )
+    variation_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Sweep variation index (0 for non-sweep / first cell).",
+    )
+    variation_values: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Sweep parameter point as `{path: value}`. Empty dict for "
+            "non-sweep runs; populated for grid/zip/scenario/adaptive cells."
+        ),
+    )
+    cli_command: str | None = Field(
+        default=None,
+        description=(
+            "Redacted CLI command that launched this run "
+            "(`BenchmarkRun.cli_command`), captured from sys.argv. None when "
+            "the run was constructed without a CLI context."
+        ),
+    )
 
 
 # =============================================================================
@@ -151,7 +238,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.1"
+    SCHEMA_VERSION: ClassVar[str] = "1.3"
 
     schema_version: str | None = Field(
         default=None,
@@ -191,7 +278,8 @@ class JsonExportData(AIPerfBaseModel):
     error_isl: JsonMetricResult | None = None
     total_error_isl: JsonMetricResult | None = None
     telemetry_data: TelemetryExportData | None = None
-    input_config: UserConfig | None = None
+    input_config: BenchmarkConfig | None = None
+    run_info: RunInfo | None = None
     was_cancelled: bool | None = None
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None

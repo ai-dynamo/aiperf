@@ -228,7 +228,7 @@ class TestTemplateEndpointFormatPayload:
     def test_missing_template_raises_error(self):
         """Test initialization fails without template."""
         model_endpoint = create_model_endpoint(EndpointType.TEMPLATE)
-        with pytest.raises(InvalidStateError, match="requires 'payload_template'"):
+        with pytest.raises(InvalidStateError, match="endpoint.template.body"):
             create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
 
     def test_access_full_turn_object(self):

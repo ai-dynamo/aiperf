@@ -1,28 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Multi-run orchestrator for AIPerf benchmarks."""
+"""Multi-run orchestrator for AIPerf benchmarks.
 
+Iterates variations x trials from a BenchmarkPlan via a pluggable RunExecutor.
+Strategy decisions (when to stop a cell, what config to run next) are made
+per-variation with a fresh strategy instance, so AdaptiveStrategy convergence
+state does not leak across cells.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import logging
-import subprocess
-import sys
-import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import orjson
-
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.strategies import (
-    ExecutionStrategy,
-    FixedTrialsStrategy,
-    ParameterSweepStrategy,
-    SweepConfidenceStrategy,
-    SweepMode,
-)
 
 if TYPE_CHECKING:
-    from aiperf.common.models.export_models import JsonMetricResult
+    from collections.abc import Callable
+
+    from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
+    from aiperf.config.sweep import SweepVariation
+    from aiperf.orchestrator.executor import RunExecutor
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,438 +32,687 @@ __all__ = [
 ]
 
 
+def _resolve_artifact_dir(
+    base_dir: Path,
+    plan: BenchmarkPlan,
+    variation: Any,
+    trial_index: int,
+    *,
+    iteration_order: Any | None = None,
+) -> Path:
+    """Compute the artifact dir for one (variation, trial) run.
+
+    Five cases for grid runs, branching on (is_sweep, trials > 1,
+    iteration order); one extra case for adaptive (BO) runs:
+
+    | sweep | trials | order       | layout                                          |
+    |-------|--------|-------------|-------------------------------------------------|
+    | no    | 1      | -           | ``<base>/``                                     |
+    | no    | >1     | -           | ``<base>/profile_runs/run_NNNN/``               |
+    | yes   | 1      | -           | ``<base>/<dir_name>/``                          |
+    | yes   | >1     | REPEATED    | ``<base>/profile_runs/trial_NNNN/<dir_name>/``  |
+    | yes   | >1     | INDEPENDENT | ``<base>/<dir_name>/profile_runs/trial_NNNN/``  |
+    | adaptive | any | -           | ``<base>/search_iter_NNNN/profile_runs/run_NNNN/`` |
+
+    The adaptive (BO) row uses ``variation.label`` (which the search
+    planners populate as ``search_iter_NNNN``) instead of
+    ``variation.dir_name`` so each BO iteration writes into its own
+    iteration-numbered tree - ``variation.dir_name`` would name the dir
+    after the proposed coordinates and collide when the planner
+    re-proposes a nearby point.
+
+    Note the asymmetric inner-dir naming for grid runs: ``run_NNNN`` for
+    the no-sweep multi-run case, ``trial_NNNN`` for the sweep +
+    INDEPENDENT multi-run case. Downstream consumers (plotters,
+    dashboards) depend on this asymmetry.
+
+    ``trial_index`` is zero-based; emitted dir names are 1-based and
+    zero-padded to 4 digits.
+    """
+    from aiperf.common.enums import SweepMode
+
+    if plan.is_adaptive_search:
+        return (
+            base_dir / variation.label / "profile_runs" / f"run_{trial_index + 1:04d}"
+        )
+
+    is_sweep = plan.is_sweep
+    multi_run = plan.trials > 1
+    if iteration_order is None:
+        from aiperf.cli_runner._sweep_aggregate import _plan_iteration_order
+
+        iteration_order = _plan_iteration_order(plan)
+
+    if not is_sweep and not multi_run:
+        return base_dir
+    if not is_sweep and multi_run:
+        return base_dir / "profile_runs" / f"run_{trial_index + 1:04d}"
+    if is_sweep and not multi_run:
+        return base_dir / variation.dir_name
+    if iteration_order == SweepMode.REPEATED:
+        return (
+            base_dir
+            / "profile_runs"
+            / f"trial_{trial_index + 1:04d}"
+            / variation.dir_name
+        )
+    return (
+        base_dir / variation.dir_name / "profile_runs" / f"trial_{trial_index + 1:04d}"
+    )
+
+
+def _plan_cooldown_seconds(plan: BenchmarkPlan) -> float:
+    """Inter-variation cooldown lives on plan.sweep; 0.0 outside a sweep."""
+    return plan.sweep.cooldown_seconds if plan.sweep is not None else 0.0
+
+
+def resolve_run_seed(
+    plan: BenchmarkPlan, variation: SweepVariation, trial: int = 0
+) -> int | None:
+    # Why: grid/zip/scenario sweeps pre-compute the full per-variation seed
+    # list at plan-build (`base + idx`). Adaptive sweeps
+    # discover variations at runtime, so `variation.index` can exceed the
+    # plan-time list length — fall back to SHA-256 derivation over
+    # `(envelope_seed, variation.label)` so iter > 0 doesn't silently drop the
+    # seed and the same proposal label always yields the same workload.
+    # When `multi_run.vary_seed_per_trial` is set, derive a distinct per-trial
+    # seed instead — single SHA over `(envelope_seed, variation.label, trial)`
+    # so the same (variation, trial) coordinate always reproduces.
+    from aiperf.common.random_generator import derive_variation_seed
+
+    if plan.multi_run.vary_seed_per_trial and plan.random_seed is not None:
+        return derive_variation_seed(
+            plan.random_seed, f"{variation.label}:trial:{trial}"
+        )
+    if variation.index < len(plan.variation_seeds):
+        return plan.variation_seeds[variation.index]
+    return derive_variation_seed(plan.random_seed, variation.label)
+
+
+def _build_strategy(plan: BenchmarkPlan) -> Any:
+    """Construct a per-variation execution strategy from a BenchmarkPlan."""
+    from aiperf.cli_runner._strategy import build_strategy
+
+    return build_strategy(plan, logger)
+
+
 class MultiRunOrchestrator:
-    """Orchestrates execution of multiple benchmark runs using a strategy.
+    """Orchestrates execution of multiple benchmark runs across variations x trials.
 
-    The orchestrator is a thin coordinator. Strategy objects own:
-    - Execution iteration (via execute() for custom loops, or should_continue/get_next_config for generic)
-    - Aggregation logic (aggregate())
-    - Export logic (export_aggregates())
-    - Result tagging (tag_result())
-    - Failure collection (collect_failed_values())
-
-    The orchestrator provides:
-    - Strategy resolution from config (_resolve_strategy)
-    - A generic execution loop for simple strategies (_execute_loop)
-    - Single-run subprocess execution (_execute_single_run)
-    - Metrics extraction from artifacts (_extract_summary_metrics)
+    Each (variation, trial) pair is executed via the injected RunExecutor.
+    Strategy state is per-cell: a fresh ExecutionStrategy is built for each
+    variation so adaptive convergence operates on cell-local results only.
     """
 
     def __init__(
         self,
         base_dir: Path,
-        service_config: ServiceConfig,
-    ):
+        *,
+        cell_callback: Callable[[tuple, dict], None] | None = None,
+    ) -> None:
         """Initialize MultiRunOrchestrator.
 
         Args:
-            base_dir: Base directory for all artifacts
-            service_config: Service configuration for SystemController
+            base_dir: Base directory for all artifacts.
+            cell_callback: Optional per-cell observer fired after each variation
+                finishes its trials. Receives ``(variation_key, cell)`` where
+                ``variation_key`` is ``(label, tuple(sorted(values.items())))``
+                and ``cell`` is the dict produced by
+                :func:`aiperf.cli_runner._pareto._aggregate_one_cell`.
+                Useful for live observers (e.g. a streaming Pareto tracker).
+                Exceptions raised by the callback are caught and logged at
+                WARNING so a buggy observer cannot break the sweep.
         """
         self.base_dir = Path(base_dir)
-        self.service_config = service_config
+        self._cell_callback = cell_callback
 
-    def execute_and_export(
-        self, base_config: UserConfig, strategy: ExecutionStrategy | None = None
-    ) -> list[RunResult]:
-        """Execute benchmark, aggregate results, and export aggregates.
+    def _fire_cell_callback(
+        self,
+        plan: BenchmarkPlan,
+        variation: Any,
+        cell_results: list[RunResult],
+    ) -> None:
+        """Invoke the per-cell observer callback if one is registered.
 
-        This is the main entry point that handles the complete workflow:
-        1. Resolve strategy (if not provided)
-        2. Execute runs (strategy may own its loop or use generic loop)
-        3. Aggregate results via strategy
-        4. Export aggregates via strategy
-
-        Args:
-            base_config: Base benchmark configuration
-            strategy: Optional execution strategy. If None, auto-detected from config.
-
-        Returns:
-            List of RunResult, one per run executed
+        Catches all exceptions from the callback so a buggy observer can
+        never break the sweep. Logs at WARNING. No-op when ``cell_callback``
+        was not supplied. When the recipe declares no ``pareto_axes``
+        (``_aggregate_one_cell`` returns ``None``), a minimal cell dict
+        with ``params`` populated and ``x``/``y`` set to ``None`` is
+        synthesized so sweep-mode-agnostic consumers (e.g.
+        ``SweepTableLogger``) still receive every variation.
         """
-        if strategy is None:
-            strategy = self._resolve_strategy(base_config)
+        if self._cell_callback is None:
+            return
+        try:
+            from aiperf.cli_runner._pareto import _aggregate_one_cell
 
-        results = self._execute(base_config, strategy)
+            cell = _aggregate_one_cell(cell_results, plan, variation)
+            if cell is None:
+                # Recipe declares no pareto_axes: build a minimal cell so
+                # consumers (e.g. SweepTableLogger) still receive params
+                # and the trial-result list. Pareto x/y stay None — only
+                # consumers that opt into them must check.
+                cell = {
+                    "params": dict(variation.values),
+                    "x": None,
+                    "y": None,
+                    "pareto_optimal": False,
+                }
+            cell["_cell_results"] = cell_results  # opaque pass-through for consumers
+            variation_key = (
+                getattr(variation, "label", None) or "",
+                tuple(sorted(variation.values.items())),
+            )
+            self._cell_callback(variation_key, cell)
+        except Exception:  # noqa: BLE001
+            logger.warning("cell_callback raised; suppressing", exc_info=True)
 
-        aggregate = strategy.aggregate(results, base_config)
-        if aggregate is not None:
-            strategy.export_aggregates(aggregate, self.base_dir)
+    def _maybe_write_sampling_design(self, plan: BenchmarkPlan) -> None:
+        """Write `sweep_aggregate/sampling_design.json` for QMC sweeps.
 
-        return results
+        Records the actually-executed sample values, sourced from
+        ``plan.variations`` (populated upstream by ``expand_qmc_sweep``).
+        Re-instantiating a fresh QMC engine here would draw a *second*,
+        unrelated sample set whenever ``sweep.seed`` is None (the default),
+        producing an audit trail that does not match the variants the
+        orchestrator runs.
 
-    def execute(
-        self, base_config: UserConfig, strategy: ExecutionStrategy | None = None
-    ) -> list[RunResult]:
-        """Execute benchmark runs without aggregation/export.
-
-        Useful for testing or when callers want to handle aggregation themselves.
-
-        Args:
-            base_config: Base benchmark configuration
-            strategy: Optional execution strategy. If None, auto-detected from config.
-
-        Returns:
-            List of RunResult, one per run executed
+        No-op for non-QMC sweeps. Called before any cells so that a
+        crashed sweep still leaves a faithful design record on disk.
         """
-        if strategy is None:
-            strategy = self._resolve_strategy(base_config)
+        from aiperf.config.sweep import LatinHypercubeSweep, SobolSweep
 
-        return self._execute(base_config, strategy)
+        sweep = getattr(plan, "sweep", None)
+        if not isinstance(sweep, (SobolSweep, LatinHypercubeSweep)):
+            return
 
-    def _resolve_strategy(self, config: UserConfig) -> ExecutionStrategy:
-        """Detect mode from config and return the appropriate strategy.
+        import math
 
-        Only called from multi-run paths (sweep, confidence, or both).
-        Single-run benchmarks go through _run_single_benchmark() in cli_runner
-        and never reach the orchestrator.
+        import orjson
 
-        Args:
-            config: User configuration
+        agg_dir = self.base_dir / "sweep_aggregate"
+        agg_dir.mkdir(parents=True, exist_ok=True)
 
-        Returns:
-            Appropriate ExecutionStrategy
+        # Pull mapped values directly from the already-expanded variations
+        # so the audit file matches the variants that actually ran.
+        dim_paths = [d.path for d in sweep.dimensions]
+        samples_mapped: list[list[Any]] = []
+        for variation in plan.variations:
+            row: list[Any] = []
+            for path in dim_paths:
+                value = variation.values[path]
+                # orjson 3.x silently coerces nan/inf to null. SamplingDimension
+                # validators should reject non-finite lo/hi, but be defensive
+                # so we never write a misleading null into the audit.
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError(
+                        f"non-finite value {value!r} in variation "
+                        f"{variation.label!r} at dim {path!r}; refusing to "
+                        f"write a misleading sampling_design.json"
+                    )
+                row.append(value)
+            samples_mapped.append(row)
 
-        Raises:
-            ValueError: If no multi-run mode is detected
-        """
-        has_sweep = config.loadgen.get_sweep_parameter() is not None
-        has_confidence = config.loadgen.num_profile_runs > 1
-
-        if has_sweep and has_confidence:
-            logger.info(
-                f"Executing parameter sweep with confidence trials "
-                f"(mode: {config.loadgen.parameter_sweep_mode})"
-            )
-            return SweepConfidenceStrategy(
-                sweep=self._create_sweep_strategy(config),
-                confidence=self._create_confidence_strategy(config),
-                mode=SweepMode(config.loadgen.parameter_sweep_mode),
-            )
-        if has_sweep:
-            logger.info("Executing parameter sweep (no confidence trials)")
-            return self._create_sweep_strategy(config)
-        if has_confidence:
-            logger.info(
-                f"Executing confidence trials (n={config.loadgen.num_profile_runs})"
-            )
-            return self._create_confidence_strategy(config)
-
-        raise ValueError(
-            "MultiRunOrchestrator requires sweep or confidence mode. "
-            "Single-run benchmarks should use _run_single_benchmark() directly."
+        design = {
+            "type": sweep.type,
+            "samples": sweep.samples,
+            "seed": sweep.seed,
+            "scramble": getattr(sweep, "scramble", None),
+            "optimization": getattr(sweep, "optimization", None),
+            "dimensions": [
+                {
+                    "path": d.path,
+                    "lo": d.lo,
+                    "hi": d.hi,
+                    "scale": d.scale,
+                    "kind": d.kind,
+                    "choices": d.choices,
+                }
+                for d in sweep.dimensions
+            ],
+            "samples_mapped": samples_mapped,
+        }
+        (agg_dir / "sampling_design.json").write_bytes(
+            orjson.dumps(design, option=orjson.OPT_INDENT_2, default=str)
         )
 
-    def _execute(
-        self, config: UserConfig, strategy: ExecutionStrategy
+    async def execute(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+        search_planner: Any = None,
     ) -> list[RunResult]:
-        """Execute runs using the strategy.
+        """Execute all (variation, trial) runs in the plan.
 
-        First checks if the strategy wants to own its loop (execute() returns
-        a list). If not, falls back to the generic loop.
+        Iteration order:
+
+        - When ``plan.is_adaptive_search`` is True, dispatches to
+          :meth:`execute_adaptive_search` (BO / adaptive). ``search_planner``
+          must be supplied in this case.
+        - Otherwise honors the grid sweep's iteration_order:
+
+          - INDEPENDENT: variations outer, trials inner.
+          - REPEATED (default): trials outer, variations inner; one run
+            per (variation, trial) cell.
+
+        Artifact tree branches on (is_sweep, trials > 1, iteration order)
+        - see :func:`_resolve_artifact_dir` for the full table.
 
         Args:
-            config: Base benchmark configuration
-            strategy: Execution strategy
+            plan: BenchmarkPlan with configs[], variations[], trials, convergence config.
+            executor: Concrete RunExecutor (LocalSubprocessExecutor or K8sChildJobExecutor).
+            cancel_check: Optional callable polled before each variation and each
+                trial inside a variation. When it returns True, the orchestrator
+                returns the partial results gathered so far without starting any
+                further runs.
+            search_planner: Outer-loop planner instance (e.g.
+                ``BayesianSearchPlanner``). Required when ``plan.is_adaptive_search``;
+                ignored otherwise.
 
         Returns:
-            List of run results
+            Flat list of RunResult, ordered by the active iteration order.
         """
-        custom_results = strategy.execute(
-            config, self._execute_single_run, self.base_dir
+        self._maybe_write_sampling_design(plan)
+
+        from aiperf.cli_runner._sweep_aggregate import _plan_iteration_order
+        from aiperf.common.enums import SweepMode
+
+        if plan.is_adaptive_search:
+            if search_planner is None:
+                raise ValueError(
+                    "plan.sweep is an AdaptiveSearchSweep but no search_planner was passed to execute(). "
+                    "The CLI runner is expected to instantiate one and forward it."
+                )
+            return await self.execute_adaptive_search(
+                plan, executor, search_planner, cancel_check=cancel_check
+            )
+
+        if _plan_iteration_order(plan) == SweepMode.REPEATED:
+            return await self._execute_repeated(
+                plan, executor, cancel_check=cancel_check
+            )
+        return await self._execute_independent(
+            plan, executor, cancel_check=cancel_check
         )
-        if custom_results is not None:
-            return custom_results
 
-        return self._execute_loop(config, strategy)
-
-    def _execute_loop(
-        self, config: UserConfig, strategy: ExecutionStrategy
+    async def _execute_independent(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        cancel_check: Callable[[], bool] | None,
     ) -> list[RunResult]:
-        """Generic execution loop driven entirely by strategy.
+        """Variations-outer, trials-inner iteration.
 
-        Used by FixedTrialsStrategy and ParameterSweepStrategy which don't
-        need custom iteration.
-
-        Args:
-            config: Base benchmark configuration
-            strategy: Execution strategy
-
-        Returns:
-            List of run results
+        Each variation gets a fresh ExecutionStrategy; adaptive convergence
+        operates on cell-local results only. See
+        :func:`_resolve_artifact_dir` for the full layout table.
         """
-        results: list[RunResult] = []
-        run_index = 0
-
+        all_results: list[RunResult] = []
         logger.info(
-            f"Starting multi-run benchmark with strategy: {strategy.__class__.__name__}"
+            f"Starting multi-run benchmark (independent): {len(plan.configs)} variations x "
+            f"{plan.trials} trials per variation"
         )
 
-        strategy.validate_config(config)
+        for var_idx, (cfg, variation) in enumerate(
+            zip(plan.configs, plan.variations, strict=True)
+        ):
+            if cancel_check is not None and cancel_check():
+                logger.info(f"Sweep cancelled at variation {var_idx}; aborting")
+                return all_results
+            if var_idx > 0 and _plan_cooldown_seconds(plan) > 0:
+                cooldown = _plan_cooldown_seconds(plan)
+                logger.debug(f"Inter-variation cooldown: {cooldown}s before v{var_idx}")
+                await asyncio.sleep(cooldown)
+            strategy = _build_strategy(plan)  # fresh per-cell strategy
+            strategy.validate_config(cfg)
 
-        while strategy.should_continue(results):
-            run_config = strategy.get_next_config(config, results)
-            label = strategy.get_run_label(run_index)
-            artifact_path = strategy.get_run_path(self.base_dir, run_index)
+            cell_results, aborted = await self._run_independent_cell(
+                plan,
+                executor,
+                strategy=strategy,
+                cfg=cfg,
+                variation=variation,
+                var_idx=var_idx,
+                prior_all_results=all_results,
+                cancel_check=cancel_check,
+            )
+            all_results.extend(cell_results)
+            if aborted:
+                return all_results
 
-            logger.info(f"[{run_index + 1}] Executing {label}...")
+        successful = sum(1 for r in all_results if r.success)
+        if plan.is_sweep:
+            logger.info(
+                f"Independent mode complete: {successful}/{len(all_results)} runs successful"
+            )
+        else:
+            logger.info(
+                f"All runs complete: {successful}/{len(all_results)} successful"
+            )
+        return all_results
 
-            result = self._execute_single_run(run_config, label, artifact_path)
-            result = strategy.tag_result(result, run_index)
-            results.append(result)
+    async def _run_independent_cell(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        strategy: Any,
+        cfg: Any,
+        variation: Any,
+        var_idx: int,
+        prior_all_results: list[RunResult],
+        cancel_check: Callable[[], bool] | None,
+    ) -> tuple[list[RunResult], bool]:
+        """Run all trials for one variation cell in independent mode.
 
-            if result.success:
-                logger.info(f"[{run_index + 1}] {label} completed successfully")
-            else:
-                logger.error(f"[{run_index + 1}] {label} failed: {result.error}")
+        Returns ``(cell_results, aborted)`` where ``aborted`` signals the
+        caller to stop iterating further variations (cancel-check fired
+        mid-cell, or sweep failure threshold tripped).
+        """
+        from aiperf.config.resolution.plan import BenchmarkRun
 
-            run_index += 1
+        cell_results: list[RunResult] = []
+        trial = 0
+        while strategy.should_continue(cell_results):
+            if cancel_check is not None and cancel_check():
+                logger.info(
+                    f"Sweep cancelled mid-cell at v{var_idx} t{trial}; aborting"
+                )
+                return cell_results, True
+            next_cfg = strategy.get_next_config(cfg, cell_results)
+            label = strategy.get_run_label(trial)
+            artifact_dir = _resolve_artifact_dir(self.base_dir, plan, variation, trial)
 
-            if strategy.should_continue(results):
+            run = BenchmarkRun(
+                benchmark_id=executor.derive_id(plan, var_idx, trial),
+                sweep_id=plan.sweep_id,
+                cfg=next_cfg,
+                variation=variation,
+                trial=trial,
+                label=label,
+                artifact_dir=artifact_dir,
+                random_seed=resolve_run_seed(plan, variation, trial),
+                variables=dict(plan.variables),
+            )
+            logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
+            result = await executor.execute(run)
+            self._stamp_variation_metadata(result, run, trial)
+            cell_results.append(result)
+            trial += 1
+
+            if self._sweep_failure_threshold_exceeded(
+                prior_all_results + cell_results, plan
+            ):
+                logger.warning("Failure threshold exceeded; aborting sweep")
+                return cell_results, True
+
+            if strategy.should_continue(cell_results):
                 cooldown = strategy.get_cooldown_seconds()
                 if cooldown > 0:
-                    logger.info(f"Applying cooldown: {cooldown}s")
-                    time.sleep(cooldown)
+                    logger.info(f"Cooldown: {cooldown}s")
+                    await asyncio.sleep(cooldown)
 
-        successful = sum(1 for r in results if r.success)
-        logger.info(f"All runs complete: {successful}/{len(results)} successful")
+        self._fire_cell_callback(plan, variation, cell_results)
+        return cell_results, False
 
-        failed_values = strategy.collect_failed_values(results)
-        if failed_values:
-            logger.warning(
-                f"Some sweep values failed: {[fv['value'] for fv in failed_values]}"
-            )
-            for fv in failed_values:
-                logger.warning(f"  {fv['parameter_name']}={fv['value']}: {fv['error']}")
+    async def execute_adaptive_search(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        planner: Any,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> list[RunResult]:
+        """Drive an adaptive outer loop (e.g. BO).
 
-        return results
-
-    def _create_sweep_strategy(self, config: UserConfig) -> ParameterSweepStrategy:
-        """Create parameter sweep strategy from config.
-
-        Args:
-            config: User configuration with sweep parameters
-
-        Returns:
-            ParameterSweepStrategy configured from config
-
-        Raises:
-            ValueError: If no sweep parameter is detected in config
+        Each iteration: ask planner for a (cfg, variation), run all trials
+        for it via :meth:`_run_independent_cell`, feed results back to the
+        planner, write search_history.json incrementally.
         """
-        sweep_info = config.loadgen.get_sweep_parameter()
-        if not sweep_info:
-            raise ValueError(
-                "No sweep parameter detected in configuration. "
-                "To enable parameter sweep, provide a parameter as a comma-separated list. "
-                "Example: --concurrency 10,20,30"
-            )
+        from aiperf.exporters.search_history import write_search_history
 
-        param_name, param_values = sweep_info
-
-        return ParameterSweepStrategy(
-            parameter_name=param_name,
-            parameter_values=param_values,
-            cooldown_seconds=config.loadgen.parameter_sweep_cooldown_seconds,
-            same_seed=config.loadgen.parameter_sweep_same_seed,
-            auto_set_seed=True,
+        all_results: list[RunResult] = []
+        sweep = plan.sweep
+        assert sweep is not None  # guaranteed by plan.is_adaptive_search
+        logger.info(
+            f"Starting adaptive outer-loop benchmark "
+            f"({sweep.planner}, max_iterations={sweep.max_iterations}, "
+            f"trials per point={plan.trials})"
         )
 
-    def _create_confidence_strategy(self, config: UserConfig) -> FixedTrialsStrategy:
-        """Create confidence/fixed trials strategy from config.
+        def _flush_history(reason: str | None) -> None:
+            write_search_history(
+                self.base_dir,
+                planner.history(),
+                sweep,
+                convergence_reason=reason,
+                planner=planner,
+            )
 
-        Args:
-            config: User configuration with confidence parameters
+        while True:
+            if cancel_check is not None and cancel_check():
+                logger.info(
+                    f"Adaptive outer loop cancelled after {planner.iter_count} iterations"
+                )
+                _flush_history("cancelled")
+                return all_results
 
-        Returns:
-            FixedTrialsStrategy configured from config
+            proposal = planner.ask()
+            if proposal is None:
+                reason = planner.convergence_reason() or "unknown"
+                logger.info(
+                    "Adaptive outer loop terminated after %d iterations (reason=%s)",
+                    planner.iter_count,
+                    reason,
+                )
+                _flush_history(reason)
+                return all_results
+            cfg, variation = proposal
+            strategy = _build_strategy(plan)
+            strategy.validate_config(cfg)
+
+            logger.info(f"[search iter {variation.index}] proposing {variation.values}")
+            cell_results, aborted = await self._run_independent_cell(
+                plan,
+                executor,
+                strategy=strategy,
+                cfg=cfg,
+                variation=variation,
+                var_idx=variation.index,
+                prior_all_results=all_results,
+                cancel_check=cancel_check,
+            )
+            planner.tell(variation, cell_results)
+            all_results.extend(cell_results)
+            _flush_history(None)
+
+            if aborted:
+                logger.warning(
+                    f"Outer-loop cell at iter {variation.index} aborted; halting BO"
+                )
+                _flush_history("aborted")
+                return all_results
+
+    async def _execute_repeated(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        cancel_check: Callable[[], bool] | None,
+    ) -> list[RunResult]:
+        """Trials-outer, variations-inner iteration (repeated mode).
+
+        Each variation has one strategy reused across trials, called once
+        per trial with that variation's growing prior-results history.
+        One run per (variation, trial) cell. See
+        :func:`_resolve_artifact_dir` for the full layout table.
         """
-        return FixedTrialsStrategy(
-            num_trials=config.loadgen.num_profile_runs,
-            cooldown_seconds=config.loadgen.profile_run_cooldown_seconds,
-            auto_set_seed=config.loadgen.set_consistent_seed,
-            disable_warmup_after_first=config.loadgen.profile_run_disable_warmup_after_first,
+        all_results: list[RunResult] = []
+        logger.info(
+            f"Starting multi-run benchmark (repeated): {plan.trials} trials x "
+            f"{len(plan.configs)} variations"
         )
+        strategies, per_variation_history = self._build_repeated_state(plan)
 
-    def _execute_single_run(
-        self, config: UserConfig, label: str, artifact_path: Path
-    ) -> RunResult:
-        """Execute a single benchmark run in a subprocess.
+        for trial in range(plan.trials):
+            if cancel_check is not None and cancel_check():
+                logger.info(f"Sweep cancelled at trial {trial}; aborting")
+                return all_results
+            cancelled = await self._run_repeated_trial(
+                plan,
+                executor,
+                strategies=strategies,
+                trial=trial,
+                per_variation_history=per_variation_history,
+                all_results=all_results,
+                cancel_check=cancel_check,
+            )
+            if cancelled:
+                return all_results
+            if trial + 1 < plan.trials:
+                cooldown = strategies[0].get_cooldown_seconds()
+                if cooldown > 0:
+                    logger.info(f"Inter-trial cooldown: {cooldown}s")
+                    await asyncio.sleep(cooldown)
 
-        Each run is executed in a separate subprocess to ensure complete isolation.
-        This allows the SystemController to call os._exit() without affecting the orchestrator.
+        successful = sum(1 for r in all_results if r.success)
+        if plan.is_sweep:
+            logger.info(
+                f"Repeated mode complete: {successful}/{len(all_results)} runs successful"
+            )
+        else:
+            logger.info(
+                f"All runs complete: {successful}/{len(all_results)} successful"
+            )
+        return all_results
 
-        Args:
-            config: Benchmark configuration
-            label: Label for this run (e.g., "run_0001", "concurrency_10")
-            artifact_path: Path where artifacts should be stored
+    @staticmethod
+    def _build_repeated_state(
+        plan: BenchmarkPlan,
+    ) -> tuple[list[Any], list[list[RunResult]]]:
+        """Build per-variation strategies and prior-results history for repeated mode.
 
-        Returns:
-            RunResult with success status and metrics or error
+        Why we track per-variation history:
+        FixedTrialsStrategy.get_next_config keys disable_warmup_after_first
+        off `len(prior_results) > 0`. In repeated mode each (variation,
+        trial) cell fires exactly once, so the natural per-cell results
+        list is always [] and warmup would re-enable on every trial. The
+        invariant we want is: warmup runs only on trial 1 across all
+        variations. We thread per-variation history across the outer
+        trial loop so the strategy sees prior_results growing as it
+        would in independent mode. Strategy contract only inspects
+        len(prior); contents are not read - so we never have to keep
+        this list pruned or even successful-only. Do NOT replace with
+        `[]` per call: the silent re-enable is unobservable in production
+        logs but corrupts wall-clock comparisons across modes.
+        Regression-locked by tests/unit/orchestrator/test_multi_run_orchestrator.py
+        ::test_repeated_mode_passes_growing_prior_results_to_strategy.
         """
-        try:
-            # Ensure artifact directory exists
-            artifact_path = Path(artifact_path)
-            artifact_path.mkdir(parents=True, exist_ok=True)
+        strategies = [_build_strategy(plan) for _ in plan.configs]
+        for strategy, cfg in zip(strategies, plan.configs, strict=True):
+            strategy.validate_config(cfg)
+        per_variation_history: list[list[RunResult]] = [[] for _ in plan.configs]
+        return strategies, per_variation_history
 
-            config = config.model_copy(deep=True)
-            config.output.artifact_directory = artifact_path
+    async def _run_repeated_trial(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        strategies: list[Any],
+        trial: int,
+        per_variation_history: list[list[RunResult]],
+        all_results: list[RunResult],
+        cancel_check: Callable[[], bool] | None,
+    ) -> bool:
+        """Run all variations for one trial in repeated mode.
 
-            # Serialize configs to JSON
-            # Use exclude_defaults=True to avoid serializing fields that weren't explicitly set
-            # This prevents validation errors on deserialization for fields with conditional validators
-            config_data = {
-                "user_config": config.model_dump(
-                    mode="json",
-                    exclude_defaults=True,
-                    exclude_none=True,
-                    context={"include_secrets": True},
-                ),
-                "service_config": self.service_config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-            }
-
-            # Write config with secrets for subprocess to read.
-            # Overwritten with redacted version after the subprocess finishes.
-            config_file = artifact_path / "run_config.json"
-            with open(config_file, "wb") as f:
-                f.write(orjson.dumps(config_data, option=orjson.OPT_INDENT_2))
-
-            # Run the benchmark in a subprocess using the dedicated runner module
-            # stdin/stdout are passed through to terminal so Textual can detect TTY
-            # -u flag forces unbuffered output so live dashboard updates are visible immediately
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-u",  # Unbuffered output - critical for live dashboard rendering
-                    "-m",
-                    "aiperf.orchestrator.subprocess_runner",
-                    str(config_file),
-                ],
-                stdin=sys.stdin,
-                stdout=sys.stdout,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-
-            # Overwrite config file with redacted version so secrets don't persist in artifacts
-            redacted_config_data = {
-                "user_config": config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-                "service_config": self.service_config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-            }
-            with open(config_file, "wb") as f:
-                f.write(orjson.dumps(redacted_config_data, option=orjson.OPT_INDENT_2))
-
-            if result.returncode != 0:
-                error_msg = f"Benchmark failed with exit code {result.returncode}"
-                if result.stderr:
-                    error_msg += f"\nStderr: {result.stderr[-2000:]}"
-                logger.error(error_msg)
-                return RunResult(
-                    label=label,
-                    success=False,
-                    error=error_msg,
-                    artifacts_path=artifact_path,
-                )
-
-            # Extract summary metrics from the artifacts
-            summary_metrics = self._extract_summary_metrics(config)
-
-            if not summary_metrics:
-                error_msg = (
-                    "No metrics found in artifacts - run may have failed to complete"
-                )
-                logger.error(error_msg)
-                return RunResult(
-                    label=label,
-                    success=False,
-                    error=error_msg,
-                    artifacts_path=artifact_path,
-                )
-
-            # Check if any requests completed successfully
-            request_count_metric = summary_metrics.get("request_count")
-            error_request_count_metric = summary_metrics.get("error_request_count")
-
-            if not request_count_metric or request_count_metric.avg == 0:
-                if error_request_count_metric and error_request_count_metric.avg > 0:
-                    error_msg = (
-                        f"All {int(error_request_count_metric.avg)} requests failed"
-                    )
-                    logger.error(error_msg)
-                    return RunResult(
-                        label=label,
-                        success=False,
-                        error=error_msg,
-                        artifacts_path=artifact_path,
-                    )
-                error_msg = "No requests completed"
-                logger.error(error_msg)
-                return RunResult(
-                    label=label,
-                    success=False,
-                    error=error_msg,
-                    artifacts_path=artifact_path,
-                )
-
-            return RunResult(
-                label=label,
-                success=True,
-                summary_metrics=summary_metrics,
-                artifacts_path=artifact_path,
-            )
-        except Exception as e:
-            logger.exception(f"Error executing run {label}")
-            return RunResult(
-                label=label,
-                success=False,
-                error=str(e),
-                artifacts_path=artifact_path,
-            )
-
-    def _extract_summary_metrics(
-        self, config: UserConfig
-    ) -> dict[str, "JsonMetricResult"]:
-        """Extract run-level summary statistics from artifacts.
-
-        Reads the profile export JSON file resolved from run config
-        (`config.output.profile_export_json_file`) and extracts summary metrics,
-        preserving the full structure with units.
-
-        Args:
-            config: Benchmark configuration for this run (used to resolve the actual output path)
-
-        Returns:
-            Dict mapping metric name to JsonMetricResult
+        The per-trial body owns the inner variation loop, the cancel/threshold
+        checks, and the inter-variation cooldown. Mutates ``all_results`` and
+        ``per_variation_history`` in place. Returns True when the caller must
+        abort the outer trial loop (cancelled, or sweep failure threshold
+        tripped).
         """
-        from aiperf.common.models.export_models import JsonMetricResult
+        from aiperf.config.resolution.plan import BenchmarkRun
 
-        # Resolve the JSON file path from the config since --profile-export-prefix changes it.
-        json_file = config.output.profile_export_json_file
+        for var_idx, (cfg, variation) in enumerate(
+            zip(plan.configs, plan.variations, strict=True)
+        ):
+            if cancel_check is not None and cancel_check():
+                logger.info(
+                    f"Sweep cancelled mid-trial at [v{var_idx} t{trial}]; aborting"
+                )
+                return True
+            strategy = strategies[var_idx]
+            next_cfg = strategy.get_next_config(cfg, per_variation_history[var_idx])
+            label = strategy.get_run_label(trial)
+            artifact_dir = _resolve_artifact_dir(self.base_dir, plan, variation, trial)
 
-        if not json_file.exists():
-            logger.warning(f"Profile export file not found: {json_file}")
-            return {}
+            run = BenchmarkRun(
+                benchmark_id=executor.derive_id(plan, var_idx, trial),
+                sweep_id=plan.sweep_id,
+                cfg=next_cfg,
+                variation=variation,
+                trial=trial,
+                label=label,
+                artifact_dir=artifact_dir,
+                random_seed=resolve_run_seed(plan, variation, trial),
+                variables=dict(plan.variables),
+            )
+            logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
+            result = await executor.execute(run)
+            self._stamp_variation_metadata(result, run, trial)
+            all_results.append(result)
+            per_variation_history[var_idx].append(result)
+            # Fire the cell callback when this variation has gathered all its
+            # trials (under trials-outer/variations-inner this is detectable
+            # by ``len(per_variation_history[var_idx]) == plan.trials``).
+            # Firing earlier would emit a partial cell; firing only at the
+            # last trial keeps a single canonical event per variation.
+            if len(per_variation_history[var_idx]) >= plan.trials:
+                self._fire_cell_callback(
+                    plan, variation, list(per_variation_history[var_idx])
+                )
 
-        try:
-            with open(json_file, "rb") as f:
-                data = orjson.loads(f.read())
+            if self._sweep_failure_threshold_exceeded(all_results, plan):
+                logger.warning("Failure threshold exceeded; aborting sweep")
+                return True
 
-            metrics = {}
-            for field_name, field_value in data.items():
-                if isinstance(field_value, dict) and "unit" in field_value:
-                    try:
-                        metrics[field_name] = JsonMetricResult(**field_value)
-                    except Exception as e:
-                        logger.debug(f"Skipping field {field_name}: {e}")
-                        continue
+            if var_idx + 1 < len(plan.configs) and _plan_cooldown_seconds(plan) > 0:
+                cooldown = _plan_cooldown_seconds(plan)
+                logger.debug(
+                    f"Inter-variation cooldown (within trial {trial}): {cooldown}s"
+                )
+                await asyncio.sleep(cooldown)
 
-            return metrics
+        return False
 
-        except Exception:
-            logger.exception(f"Error extracting metrics from {json_file}")
-            return {}
+    @staticmethod
+    def _sweep_failure_threshold_exceeded(
+        results: list[RunResult], plan: BenchmarkPlan
+    ) -> bool:
+        """Return True if the sweep should abort due to failure-policy limits."""
+        failure_policy = getattr(plan, "failure_policy", None)
+        if failure_policy is None:
+            return False
+        if getattr(failure_policy, "on_child_failure", "continue") == "abort":
+            return any(not r.success for r in results)
+        max_fail = getattr(failure_policy, "max_failures", 0)
+        if max_fail > 0:
+            failed = sum(1 for r in results if not r.success)
+            return failed >= max_fail
+        return False
+
+    @staticmethod
+    def _stamp_variation_metadata(
+        result: RunResult, run: BenchmarkRun, trial_index: int
+    ) -> None:
+        """Populate sweep-aggregation fields on result from the originating run."""
+        if run.variation is not None:
+            result.variation_label = run.variation.label
+            result.variation_values = dict(run.variation.values)
+        result.trial_index = trial_index

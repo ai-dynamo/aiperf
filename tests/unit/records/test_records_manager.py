@@ -45,7 +45,7 @@ def create_mock_records_manager(
     instance = MagicMock()
     instance.expected_duration_sec = expected_duration_sec
     instance.start_time_ns = start_time_ns
-    instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
+    instance.cli_config.benchmark_grace_period = grace_period_sec
     instance.debug = MagicMock()
     return instance
 
@@ -829,12 +829,11 @@ class TestRecordsManagerProcessorDispatch:
 class TestRecordsManagerInitialization:
     def test_otel_post_processor_disabled_logs_info(
         self,
-        service_config,
-        user_config,
+        benchmark_run,
     ) -> None:
-        def _fake_pull_client_init(self, service_config, **kwargs) -> None:
-            self.service_config = service_config
-            self.user_config = kwargs["user_config"]
+        def _fake_pull_client_init(self, run, **kwargs) -> None:
+            self.run = run
+            self.cfg = run.cfg
             self.service_id = kwargs.get("service_id") or "records_manager"
             self.pub_client = MagicMock()
             self.attach_child_lifecycle = MagicMock()
@@ -858,10 +857,7 @@ class TestRecordsManagerInitialization:
                 DisabledProcessor,
             ),
         ):
-            manager = RecordsManager(
-                service_config=service_config,
-                user_config=user_config,
-            )
+            manager = RecordsManager(run=benchmark_run)
 
         info_messages = [args[0] for args, _ in manager.info.call_args_list]
         assert any(

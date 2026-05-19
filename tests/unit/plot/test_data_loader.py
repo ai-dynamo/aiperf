@@ -1208,3 +1208,275 @@ class TestRunDataGetMetric:
             metric = run.get_metric("time_to_first_token")
             assert metric is not None
             assert hasattr(metric, "avg") or "avg" in metric
+
+
+class TestDataLoaderAggregateOnly:
+    """Tests for ``DataLoader.load_run`` on per-cell confidence-aggregate dirs.
+
+    These dirs hold ``profile_export_aiperf_aggregate.json`` only (no
+    JSONL, because aggregates carry no per-request events). The loader
+    un-flattens flat ``{metric}_{stat}`` keys into the single-run
+    nested-by-stat shape so the rest of the plot pipeline stays
+    uniform.
+    """
+
+    def _write_aggregate_dir(
+        self, dir_path: Path, *, concurrency: int, throughput: float, p99: float
+    ) -> Path:
+        """Write a minimal per-cell aggregate JSON and return the dir."""
+        dir_path.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": "1.0",
+            "aiperf_version": "test",
+            "metadata": {
+                "aggregation_type": "confidence",
+                "num_profile_runs": 3,
+                "num_successful_runs": 3,
+                "variation_label": f"concurrency_{concurrency}",
+                "variation_values": {"phases.profiling.concurrency": concurrency},
+            },
+            "metrics": {
+                "output_token_throughput_avg": {
+                    "mean": throughput,
+                    "std": 0.5,
+                    "ci_low": throughput - 0.4,
+                    "ci_high": throughput + 0.4,
+                    "unit": "tokens/sec",
+                },
+                "request_latency_p99": {
+                    "mean": p99,
+                    "std": 1.0,
+                    "ci_low": p99 - 0.5,
+                    "ci_high": p99 + 0.5,
+                    "unit": "ms",
+                },
+                "request_latency_avg": {
+                    "mean": p99 * 0.4,
+                    "std": 0.2,
+                    "ci_low": 0.0,
+                    "ci_high": 0.0,
+                    "unit": "ms",
+                },
+            },
+        }
+        (dir_path / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(payload)
+        )
+        return dir_path
+
+    def test_loads_aggregate_only_dir_returning_run_data(self, tmp_path: Path) -> None:
+        """``load_run`` on an aggregate-only dir returns RunData."""
+        cell = self._write_aggregate_dir(
+            tmp_path / "concurrency_10", concurrency=10, throughput=42.0, p99=24.0
+        )
+
+        run = DataLoader().load_run(cell)
+
+        assert isinstance(run, RunData)
+        assert run.requests is None
+        assert run.timeslices is None
+        assert run.gpu_telemetry is None
+        assert run.server_metrics is None
+        assert isinstance(run.metadata, RunMetadata)
+
+    def test_unflattens_flat_metric_stat_keys_to_nested_shape(
+        self, tmp_path: Path
+    ) -> None:
+        """Flat ``request_latency_p99`` re-emerges as ``request_latency.p99``."""
+        cell = self._write_aggregate_dir(
+            tmp_path / "concurrency_10", concurrency=10, throughput=42.0, p99=24.0
+        )
+
+        run = DataLoader().load_run(cell)
+
+        latency = run.get_metric("request_latency")
+        assert latency is not None, (
+            "request_latency should be reconstructed from *_p99 / *_avg"
+        )
+        assert getattr(latency, "p99", None) == 24.0
+        assert getattr(latency, "avg", None) == 24.0 * 0.4
+        assert getattr(latency, "unit", None) == "ms"
+
+        throughput = run.get_metric("output_token_throughput")
+        assert throughput is not None
+        assert getattr(throughput, "avg", None) == 42.0
+        assert getattr(throughput, "unit", None) == "tokens/sec"
+
+    def test_extracts_concurrency_from_variation_values(self, tmp_path: Path) -> None:
+        """Aggregate metadata's ``variation_values`` populates concurrency.
+
+        The aggregate file does not carry an ``input_config`` block (the
+        single-run JSON does), so without this fallback the dashboard
+        would lose the variation identity. Documents the wiring from
+        ``variation_values["phases.profiling.concurrency"]`` →
+        ``RunMetadata.concurrency``.
+        """
+        cell = self._write_aggregate_dir(
+            tmp_path / "concurrency_42", concurrency=42, throughput=100.0, p99=10.0
+        )
+
+        run = DataLoader().load_run(cell)
+
+        assert run.metadata.concurrency == 42
+
+    def test_aggregate_only_does_not_require_jsonl(self, tmp_path: Path) -> None:
+        """No JSONL on disk → aggregate path is taken without raising."""
+        cell = self._write_aggregate_dir(
+            tmp_path / "concurrency_10", concurrency=10, throughput=42.0, p99=24.0
+        )
+        assert not (cell / "profile_export.jsonl").exists()
+
+        # Should not raise "Required JSONL file not found".
+        DataLoader().load_run(cell)
+
+    def test_unrecognized_stat_suffix_buckets_under_avg(self, tmp_path: Path) -> None:
+        """Keys whose tail is not a known stat fall back to ``avg``.
+
+        Documents the fallback contract in
+        ``DataLoader._unflatten_confidence_metrics``: keys whose right
+        side (after the last underscore) is not in
+        ``_KNOWN_STAT_SUFFIXES`` are treated as a metric name with no
+        stat suffix and bucketed under ``avg``. Keeps unknown shapes
+        visible rather than dropping them.
+        """
+        cell = tmp_path / "concurrency_10"
+        cell.mkdir()
+        (cell / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metadata": {"aggregation_type": "confidence"},
+                    "metrics": {
+                        "weird_metric_unknown": {"mean": 7.0, "unit": "x"},
+                    },
+                }
+            )
+        )
+
+        run = DataLoader().load_run(cell)
+
+        # The whole flat key is treated as the metric name; "avg" stat
+        # holds the mean.
+        weird = run.get_metric("weird_metric_unknown")
+        assert weird is not None
+        assert getattr(weird, "avg", None) == 7.0
+        assert getattr(weird, "unit", None) == "x"
+
+
+class TestDataLoaderVariationLabel:
+    """Tests for ``RunMetadata.variation_label`` propagation.
+
+    Distinct from ``run_name`` (always = ``run_path.name``).
+    ``variation_label`` is the cell identity: scenario name for
+    ``ScenarioSweep`` runs, or the legacy ``concurrency_10`` form for
+    grid sweeps. Recovery is layered: aggregate JSON metadata first,
+    parent-dir walk-up for the INDEPENDENT ``<cell>/aggregate/`` shell,
+    falling back to ``run_path.name``. The dashboard uses this to group
+    runs across scenarios; runs with different labels are independent
+    benchmarks and must not be pooled.
+    """
+
+    def test_scenario_trials_one_label_from_dir_name(
+        self, tmp_path: Path, sample_jsonl_data, sample_aggregated_data
+    ) -> None:
+        """ScenarioSweep, trials=1: ``variation_label`` = scenario name.
+
+        Layout: ``<base>/<scenario>/profile_export_aiperf.{jsonl,json}``.
+        Run dir name IS the scenario label.
+        """
+        scenario = tmp_path / "shape_512_128_c10"
+        scenario.mkdir()
+        with open(scenario / "profile_export.jsonl", "w") as f:
+            for record in sample_jsonl_data:
+                f.write(orjson.dumps(record).decode("utf-8") + "\n")
+        (scenario / "profile_export_aiperf.json").write_bytes(
+            orjson.dumps(sample_aggregated_data)
+        )
+
+        run = DataLoader().load_run(scenario)
+
+        assert run.metadata.run_name == "shape_512_128_c10"
+        assert run.metadata.variation_label == "shape_512_128_c10"
+
+    def test_aggregate_metadata_label_overrides_path(self, tmp_path: Path) -> None:
+        """Aggregate JSON metadata's ``variation_label`` is authoritative.
+
+        When the orchestrator stamped a label onto the cell aggregate
+        (which it always does — see
+        ``_export_one_variation_aggregate``), that's the source of
+        truth. The path-based fallback never runs.
+        """
+        cell = tmp_path / "concurrency_42"
+        cell.mkdir()
+        (cell / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(
+                {
+                    "metadata": {
+                        "aggregation_type": "confidence",
+                        "variation_label": "shape_512_128_c42",
+                    },
+                    "metrics": {},
+                }
+            )
+        )
+
+        run = DataLoader().load_run(cell)
+
+        assert run.metadata.variation_label == "shape_512_128_c42"
+
+    def test_independent_aggregate_shell_uses_parent_name(self, tmp_path: Path) -> None:
+        """INDEPENDENT trials>1 layout: ``<base>/<cell>/aggregate/``.
+
+        ``run_path.name == 'aggregate'`` is a generic shell. Without
+        the parent walk-up, the cell identity would be lost for any
+        aggregate JSON that didn't include ``variation_label`` in its
+        metadata block (e.g. tests, older fixture data, hand-built
+        aggregates).
+        """
+        cell_root = tmp_path / "shape_512_128_c10"
+        cell_root.mkdir()
+        agg = cell_root / "aggregate"
+        agg.mkdir()
+        # Aggregate JSON intentionally missing variation_label so the
+        # parent-name fallback is exercised.
+        (agg / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(
+                {"metadata": {"aggregation_type": "confidence"}, "metrics": {}}
+            )
+        )
+
+        run = DataLoader().load_run(agg)
+
+        assert run.metadata.run_name == "aggregate"
+        assert run.metadata.variation_label == "shape_512_128_c10"
+
+    def test_repeated_aggregate_dir_uses_run_name(self, tmp_path: Path) -> None:
+        """REPEATED trials>1 layout: ``<base>/aggregate/<cell>/``.
+
+        ``run_path.name`` IS the cell label here (the parent is the
+        generic ``aggregate`` shell, not the run dir itself). When the
+        aggregate JSON omits ``variation_label``, the path fallback
+        returns ``run_path.name``.
+        """
+        cell = tmp_path / "aggregate" / "shape_512_128_c20"
+        cell.mkdir(parents=True)
+        (cell / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(
+                {"metadata": {"aggregation_type": "confidence"}, "metrics": {}}
+            )
+        )
+
+        run = DataLoader().load_run(cell)
+
+        assert run.metadata.run_name == "shape_512_128_c20"
+        assert run.metadata.variation_label == "shape_512_128_c20"
+
+    def test_single_run_falls_back_to_dir_name(self, single_run_dir: Path) -> None:
+        """Non-sweep single run: ``variation_label`` = ``run_name``.
+
+        No metadata.variation_label and not an aggregate shell, so the
+        fallback returns the directory name verbatim. Documents that
+        the field is always populated, even outside sweep contexts.
+        """
+        run = DataLoader().load_run(single_run_dir)
+
+        assert run.metadata.variation_label == single_run_dir.name

@@ -1,11 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config.user_config import UserConfig
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class HFConversationDatasetLoader(BaseHFDatasetLoader):
@@ -43,7 +47,8 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun | None = None,
+        *,
         conversation_column: str,
         message_content_key: str = "content",
         image_column: str | None = None,
@@ -52,7 +57,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         self.conversation_column = conversation_column
         self.message_content_key = message_content_key
         self.image_column = image_column
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     def _extract_first_message(self, messages: list[Any]) -> str | None:
         """Extract the text of the first message, handling dataset-specific quirks.

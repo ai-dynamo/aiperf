@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from aiperf.common.config.config_validators import (
+from aiperf.config.loader.parsing import (
     coerce_value,
     normalize_http_url,
     normalize_http_urls,

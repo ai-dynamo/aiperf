@@ -3,9 +3,9 @@
 
 import asyncio
 import uuid
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
@@ -26,6 +26,9 @@ from aiperf.common.messages.command_messages import (
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.plugin.enums import ServiceType
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class BaseComponentService(BaseService):
     """Base class for all Component services.
@@ -39,14 +42,12 @@ class BaseComponentService(BaseService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: "BenchmarkRun",
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             **kwargs,
         )

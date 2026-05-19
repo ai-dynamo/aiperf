@@ -54,6 +54,8 @@ navigation:
     contents:
     - page: Custom Dataset Guide
       path: tutorials/custom-dataset.md
+    - page: Inline Datasets
+      path: tutorials/inline-datasets.md
     - page: Custom Prompt Benchmarking
       path: tutorials/custom-prompt-benchmarking.md
     - page: Profile with ShareGPT Dataset
@@ -124,8 +126,10 @@ navigation:
       path: tutorials/goodput.md
     - page: Multi-Run Confidence Reporting
       path: tutorials/multi-run-confidence.md
-    - page: Parameter Sweeping
-      path: tutorials/parameter-sweeping.md
+    - page: Parameter Sweeps
+      path: tutorials/sweeps.md
+    - page: Adaptive Search
+      path: tutorials/adaptive-search.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
     - page: HTTP Trace Metrics Guide
@@ -134,6 +138,8 @@ navigation:
       path: tutorials/working-with-profile-exports.md
     - page: Visualization and Plotting with AIPerf
       path: tutorials/plot.md
+    - page: Auto-Plot After `aiperf profile`
+      path: tutorials/auto-plot.md
     - page: User-Centric Timing for KV Cache Benchmarking
       path: tutorials/user-centric-timing.md
     - page: GPU Telemetry with AIPerf
@@ -143,12 +149,26 @@ navigation:
   - section: Configuration
     collapsed: true
     contents:
+    - page: YAML Configuration Files
+      path: tutorials/yaml-config.md
+    - page: Sampling Distributions in YAML Configs
+      path: tutorials/yaml-distributions.md
     - page: User Interface
       path: tutorials/ui-types.md
     - page: Using Local Tokenizers Without HuggingFace
       path: tutorials/local-tokenizer.md
     - page: "Random Number Generation & Reproducibility"
       path: reproducibility.md
+
+- section: Sweeping & Adaptive Search
+  collapsed: true
+  contents:
+  - page: Search Recipes
+    path: sweeping/search-recipes.md
+  - page: Bayesian Optimization
+    path: sweeping/bayesian-optimization.md
+  - page: Space-filling Sweeps (Sobol, Latin Hypercube)
+    path: sweeping/space-filling.md
 
 - section: Benchmark Modes
   collapsed: true
@@ -187,6 +207,8 @@ navigation:
     path: reference/vendor-usage-fields.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
+  - page: YAML Config Roadmap
+    path: reference/yaml-config-roadmap.md
 
 - section: Server Metrics
   collapsed: true
@@ -215,6 +237,8 @@ navigation:
     path: api/synthesis.md
   - page: Sweep Aggregates API Reference
     path: api/sweep-aggregates.md
+  - page: Search History API Reference
+    path: api/search-history.md
 
 - section: Architecture & Internals
   collapsed: true
@@ -227,9 +251,15 @@ navigation:
     path: diagrams/mixins.md
   - page: AIPerf Code Patterns
     path: dev/patterns.md
+  - page: Global Property-Test Invariants
+    path: dev/global-invariants.md
+  - page: Sweep Orchestrator (Dev Reference)
+    path: dev/sweep-orchestrator.md
+  - page: YAML Config Future Goals
+    path: dev/yaml-config-future-goals.md
 
 - section: Troubleshooting
   collapsed: true
   contents:
-  - page: Parameter Sweeping Errors
-    path: troubleshooting/parameter-sweeping-errors.md
+  - page: Sweep & Adaptive Search Errors
+    path: troubleshooting/sweeps.md

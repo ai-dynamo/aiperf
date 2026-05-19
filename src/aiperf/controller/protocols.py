@@ -12,9 +12,9 @@ from aiperf.common.protocols import AIPerfLifecycleProtocol
 if TYPE_CHECKING:
     import multiprocessing
 
-    from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.models import ServiceRunInfo
     from aiperf.common.types import ServiceTypeT
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 @runtime_checkable
@@ -27,8 +27,7 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         log_queue: multiprocessing.Queue | None = None,
     ): ...
 

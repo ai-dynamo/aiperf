@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.controller.proxy_manager import ProxyManager
 
 
@@ -16,7 +15,7 @@ class TestProxyManagerLifecycle:
     """Test ProxyManager lifecycle to ensure proper ZMQ context handling."""
 
     @pytest.mark.asyncio
-    async def test_context_term_not_called_during_stop(self, mock_zmq):
+    async def test_context_term_not_called_during_stop(self, mock_zmq, benchmark_run):
         """
         Test that context.term() is NOT called during proxy stop.
 
@@ -26,10 +25,8 @@ class TestProxyManagerLifecycle:
         3. This causes indefinite hangs
         4. The OS kernel reliably cleans up resources on process exit
         """
-        service_config = ServiceConfig()
-
         with patch("zmq.proxy_steerable"):
-            proxy_manager = ProxyManager(service_config=service_config)
+            proxy_manager = ProxyManager(run=benchmark_run)
 
             # Initialize, start, and stop the proxy manager
             await proxy_manager.initialize()

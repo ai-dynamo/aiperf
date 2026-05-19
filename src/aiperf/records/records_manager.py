@@ -6,10 +6,9 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     CommAddress,
@@ -55,6 +54,7 @@ from aiperf.common.models import (
     WorkerProcessingStats,
 )
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -79,6 +79,9 @@ from aiperf.server_metrics.protocols import (
     ServerMetricsAccumulatorProtocol,
     ServerMetricsProcessorProtocol,
 )
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 @dataclass
@@ -106,15 +109,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         # For dual-bind mode (Kubernetes), also bind to TCP for remote record processors.
         # Controller binds to IPC + TCP; workers connect via TCP.
         additional_bind_address: str | None = None
-        comm_config = service_config.comm_config
+        comm_config = run.cfg.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host
@@ -122,8 +124,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             additional_bind_address = comm_config.records_push_pull_tcp_bind_address
 
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,
@@ -169,8 +170,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 results_processor = ProcessorClass(
                     service_id=self.service_id,
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+                    run=self.run,
                     pub_client=self.pub_client,
                 )
                 self.attach_child_lifecycle(results_processor)
@@ -193,7 +193,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     self._metric_results_processors.append(results_processor)
                     if (
                         entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER
-                        and self.user_config.otel_stream_timing_enabled
+                        and self.run.cfg.otel.stream_timing_enabled
                     ):
                         self._timing_results_processors.append(results_processor)
 
@@ -556,7 +556,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             phase_stats = self._records_tracker.create_stats_for_phase(
                 message.stats.phase
             )
-            # TODO
             self.info(
                 lambda: (
                     f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
@@ -652,15 +651,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_inference_metrics_task(self) -> None:
-        """Report inference metrics at regular intervals (dashboard only)."""
-        if (
-            self.service_config.ui_type != UIType.DASHBOARD
-            and not Environment.UI.REALTIME_METRICS_ENABLED
-        ):
-            return
+        """Report inference metrics at regular intervals (dashboard only).
 
+        The dashboard/realtime gate is checked inside the loop so the framework's
+        ``interval=None`` semantics (run body once and break) don't permanently
+        kill the task when the gate is currently False — see
+        ``task_manager_mixin.py`` rule for ``interval=None``.
+        """
         while not self.stop_requested:
             await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
+
+            if (
+                self.run.cfg.runtime.ui != UIType.DASHBOARD
+                and not Environment.UI.REALTIME_METRICS_ENABLED
+            ):
+                continue
+
             phase_stats = self._records_tracker.create_stats_for_phase(
                 CreditPhase.PROFILING
             )
@@ -792,6 +798,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
                 was_cancelled=cancelled,
+                successful_request_count=phase_stats.success_records,
+                error_request_count=phase_stats.error_records,
                 branch_stats=self._latest_branch_stats
                 if phase == CreditPhase.PROFILING
                 else None,
@@ -808,7 +816,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         self.debug("ProcessRecordsResultMessage published")
 
-        if self.user_config.gpu_telemetry_disabled:
+        if self.run.cfg.gpu_telemetry_disabled:
             self.debug("GPU telemetry collection is disabled, skipping publish")
         else:
             try:
@@ -818,7 +826,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Failed to publish telemetry results: {e!r}")
 
-        if self.user_config.server_metrics_disabled:
+        if self.run.cfg.server_metrics_disabled:
             self.debug("Server metrics collection is disabled, skipping publish")
         else:
             try:

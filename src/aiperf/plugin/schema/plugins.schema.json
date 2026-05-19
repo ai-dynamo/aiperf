@@ -122,6 +122,22 @@
         "$ref": "#/$defs/ResultsProcessorPlugin"
       }
     },
+    "gpu_telemetry_processor": {
+      "title": "GPU Telemetry Processor Plugins",
+      "type": "object",
+      "description": "GPU telemetry processors aggregate and export GPU telemetry records locally\nwithin GPUTelemetryManager. Side-channel pipeline that keeps telemetry\nrecords in their origin process rather than routing through RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/GpuTelemetryProcessorPlugin"
+      }
+    },
+    "server_metrics_processor": {
+      "title": "Server Metrics Processor Plugins",
+      "type": "object",
+      "description": "Server metrics processors aggregate and export Prometheus server metrics\nrecords locally within ServerMetricsManager. Side-channel pipeline that\nkeeps server metrics records in their origin process rather than routing\nthrough RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServerMetricsProcessorPlugin"
+      }
+    },
     "accuracy_grader": {
       "title": "Accuracy Grader Plugins",
       "type": "object",
@@ -224,6 +240,38 @@
       "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and plugin-defined local collectors.\nOne-to-one mapping based on gpu_telemetry_collector configuration.",
       "additionalProperties": {
         "$ref": "#/$defs/GpuTelemetryCollectorPlugin"
+      }
+    },
+    "search_recipe": {
+      "title": "Search Recipe Plugins",
+      "type": "object",
+      "description": "Search recipes are named, plugin-registered presets that compile down to\nAdaptiveSearchSweep (Bayesian Optimization) or sweep.parameters (grid) in\nthe CLI converter (`aiperf.config.flags._converter_optionals.expand_search_recipe`,\nlifted onto the top-level sweep envelope by `aiperf.config.flags.converter\n._apply_recipe_sweep_parameters`). Selected via `--search-recipe <name>` on\nthe CLI. One-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SearchRecipePlugin"
+      }
+    },
+    "search_recipe_post_process": {
+      "title": "Search Recipe Post Process Plugins",
+      "type": "object",
+      "description": "Post-process handlers run after `SweepAnalyzer.compute()` in\n`aggregate_sweep_and_export` and emit derived artifacts (curves, knee\npoints) into `sweep_aggregate/`. Handlers are stateless and one instance\nis reused per recipe. Selected indirectly via a recipe's PostProcessSpec.\nOne-to-one mapping per recipe-emitted PostProcessSpec.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SearchRecipePostProcessPlugin"
+      }
+    },
+    "convergence_criterion": {
+      "title": "Convergence Criterion Plugins",
+      "type": "object",
+      "description": "Convergence criteria decide when benchmark metrics have stabilized across\nrepeated runs and the adaptive trial loop can stop. Each criterion declares\nits statistical assumptions (min samples, confidence-level usage, JSONL\nconsumption) via metadata so the CLI can validate `--convergence-*` flags\nbefore importing scipy/statsmodels. Selected via `--convergence-mode <name>`.\nOne-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ConvergenceCriterionPlugin"
+      }
+    },
+    "search_planner": {
+      "title": "Search Planner Plugins",
+      "type": "object",
+      "description": "Search planners drive the adaptive outer loop, proposing the next variation\nvia `ask()` and absorbing observed metrics via `tell()`. Each declares\ndimension-type and objective-direction support via metadata so the CLI can\nvalidate `--search-space` shape before importing the planner's heavy\nsoft-dep tree (optuna, botorch, scipy, etc.). Selected via `--search-planner <name>`.\nOne-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SearchPlannerPlugin"
       }
     }
   },
@@ -1066,6 +1114,88 @@
       "title": "Results Processor Plugin",
       "description": "Results processors aggregate results from record processors and compute derived metrics.\nFinal stage of metrics pipeline for aggregated statistics and summaries.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
     },
+    "GpuTelemetryProcessorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "GPU Telemetry Processor Plugin",
+      "description": "GPU telemetry processors aggregate and export GPU telemetry records locally\nwithin GPUTelemetryManager. Side-channel pipeline that keeps telemetry\nrecords in their origin process rather than routing through RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+    },
+    "ServerMetricsProcessorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Server Metrics Processor Plugin",
+      "description": "Server metrics processors aggregate and export Prometheus server metrics\nrecords locally within ServerMetricsManager. Side-channel pipeline that\nkeeps server metrics records in their origin process rather than routing\nthrough RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+    },
     "AccuracyGraderPlugin": {
       "type": "object",
       "properties": {
@@ -1605,7 +1735,7 @@
           "type": "integer"
         },
         "metadata": {
-          "description": "Config-time metadata for GPU telemetry collector plugins.\n\nLocal collectors set ``is_local`` so ``--gpu-telemetry <name>`` is treated\nas an in-process collector keyword instead of a DCGM URL. Native binding\nvalidation lives on the collector class itself via ``validate_environment``\nso each implementation owns its own dependency check.",
+          "description": "Config-time metadata for GPU telemetry collector plugins.\n\nLocal collectors set ``is_local`` so ``--gpu-telemetry <name>`` is treated\nas an in-process collector keyword instead of a DCGM URL. Native binding\nvalidation lives on the collector class itself via ``validate_environment``\nso each implementation owns its own dependency check.\n\nReferenced by: categories.yaml gpu_telemetry_collector.metadata_class\nUsed in: plugins.yaml gpu_telemetry_collector entries",
           "properties": {
             "is_local": {
               "default": false,
@@ -1623,6 +1753,235 @@
       ],
       "title": "GPU Telemetry Collector Plugin",
       "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and plugin-defined local collectors.\nOne-to-one mapping based on gpu_telemetry_collector configuration."
+    },
+    "SearchRecipePlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Search Recipe Plugin",
+      "description": "Search recipes are named, plugin-registered presets that compile down to\nAdaptiveSearchSweep (Bayesian Optimization) or sweep.parameters (grid) in\nthe CLI converter (`aiperf.config.flags._converter_optionals.expand_search_recipe`,\nlifted onto the top-level sweep envelope by `aiperf.config.flags.converter\n._apply_recipe_sweep_parameters`). Selected via `--search-recipe <name>` on\nthe CLI. One-to-one mapping per benchmark run."
+    },
+    "SearchRecipePostProcessPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Search Recipe Post Process Plugin",
+      "description": "Post-process handlers run after `SweepAnalyzer.compute()` in\n`aggregate_sweep_and_export` and emit derived artifacts (curves, knee\npoints) into `sweep_aggregate/`. Handlers are stateless and one instance\nis reused per recipe. Selected indirectly via a recipe's PostProcessSpec.\nOne-to-one mapping per recipe-emitted PostProcessSpec."
+    },
+    "ConvergenceCriterionPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for convergence criterion plugins.\n\nDeclares statistical-method capabilities so the CLI/config layer can\nvalidate `--convergence-metric` / `--convergence-stat` against the chosen\ncriterion before the plugin is imported.\n\nReferenced by: categories.yaml convergence_criterion.metadata_class\nUsed in: plugins.yaml convergence_criterion entries",
+          "properties": {
+            "min_samples": {
+              "description": "Minimum number of successful runs required before convergence can trigger.",
+              "minimum": 1,
+              "title": "Min Samples",
+              "type": "integer"
+            },
+            "requires_confidence_level": {
+              "default": false,
+              "description": "Whether the criterion consumes plan.confidence_level (e.g. CI-width does, CV doesn't).",
+              "title": "Requires Confidence Level",
+              "type": "boolean"
+            },
+            "requires_jsonl_export": {
+              "default": false,
+              "description": "Whether the criterion reads per-request metrics from JSONL exports (e.g. distribution does).",
+              "title": "Requires Jsonl Export",
+              "type": "boolean"
+            },
+            "metric_kinds": {
+              "description": "Kinds of metrics this criterion handles. One or more of 'continuous', 'counts', 'categorical'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Metric Kinds",
+              "type": "array"
+            }
+          },
+          "required": [
+            "min_samples"
+          ],
+          "title": "ConvergenceCriterionMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Convergence Criterion Plugin",
+      "description": "Convergence criteria decide when benchmark metrics have stabilized across\nrepeated runs and the adaptive trial loop can stop. Each criterion declares\nits statistical assumptions (min samples, confidence-level usage, JSONL\nconsumption) via metadata so the CLI can validate `--convergence-*` flags\nbefore importing scipy/statsmodels. Selected via `--convergence-mode <name>`.\nOne-to-one mapping per benchmark run."
+    },
+    "SearchPlannerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for search planner plugins.\n\nDeclares dimension-type and objective-direction support so the CLI/config\nlayer can validate `--search-space` shape against the chosen planner\nbefore the planner (and its heavy soft-dep imports) is loaded.\n\nReferenced by: categories.yaml search_planner.metadata_class\nUsed in: plugins.yaml search_planner entries",
+          "properties": {
+            "supports_continuous": {
+              "description": "Whether the planner accepts Real-valued search-space dimensions.",
+              "title": "Supports Continuous",
+              "type": "boolean"
+            },
+            "supports_discrete": {
+              "description": "Whether the planner accepts Integer-valued search-space dimensions.",
+              "title": "Supports Discrete",
+              "type": "boolean"
+            },
+            "supports_categorical": {
+              "default": false,
+              "description": "Whether the planner accepts Categorical search-space dimensions.",
+              "title": "Supports Categorical",
+              "type": "boolean"
+            },
+            "requires_initial_samples": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Minimum number of initial random/Sobol samples required before the planner's model is fit. None when the planner has no warm-up phase.",
+              "title": "Requires Initial Samples"
+            },
+            "compatible_objective_directions": {
+              "description": "Objective directions the planner can optimize. Lower-case strings.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Compatible Objective Directions",
+              "type": "array"
+            },
+            "requires_extras": {
+              "description": "Names of pyproject.toml extras (e.g. ['optuna']) required to install this planner's heavy dependencies. Informational; the planner class itself owns the ImportError surface.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Requires Extras",
+              "type": "array"
+            }
+          },
+          "required": [
+            "supports_continuous",
+            "supports_discrete"
+          ],
+          "title": "SearchPlannerMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Search Planner Plugin",
+      "description": "Search planners drive the adaptive outer loop, proposing the next variation\nvia `ask()` and absorbing observed metrics via `tell()`. Each declares\ndimension-type and objective-direction support via metadata so the CLI can\nvalidate `--search-space` shape before importing the planner's heavy\nsoft-dep tree (optuna, botorch, scipy, etc.). Selected via `--search-planner <name>`.\nOne-to-one mapping per benchmark run."
     }
   }
 }

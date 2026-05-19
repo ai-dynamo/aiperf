@@ -1,26 +1,9 @@
 {
-  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations — prefer fixing the underlying code over extending the list.",
-  "rules": [
-    "PLR0915",
-    "PLR0912",
-    "C901",
-    "TID251",
-    "BLE001",
-    "S110",
-    "S112",
-    "ANN201",
-    "D103"
-  ],
   "violations": [
     [
       "ANN201",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
-    ],
-    [
-      "ANN201",
-      "src/aiperf/common/config/prompt_config.py",
-      "PromptConfig.get_sequence_distribution"
     ],
     [
       "ANN201",
@@ -239,8 +222,18 @@
     ],
     [
       "BLE001",
+      "src/aiperf/cli_runner/_pareto.py",
+      "_resolve_pareto_axes"
+    ],
+    [
+      "BLE001",
       "src/aiperf/common/base_component_service.py",
       "BaseComponentService._on_shutdown_command"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/common/base_service.py",
+      "BaseService._kill"
     ],
     [
       "BLE001",
@@ -664,6 +657,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/timing/manager.py",
+      "TimingManager._publish_service_error_safely"
+    ],
+    [
+      "BLE001",
       "src/aiperf/timing/phase/runner.py",
       "PhaseRunner._progress_report_loop"
     ],
@@ -804,7 +802,7 @@
     ],
     [
       "C901",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       "_run_multi_benchmark"
     ],
     [
@@ -814,43 +812,23 @@
     ],
     [
       "C901",
-      "src/aiperf/common/config/config_validators.py",
-      "parse_str_as_numeric_dict"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/config/config_validators.py",
-      "parse_str_or_dict_as_tuple_list"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/config/loadgen_config.py",
-      "LoadGeneratorConfig.parse_concurrency_list"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/config/loadgen_config.py",
-      "LoadGeneratorConfig.validate_multi_run_params"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig._parse_gpu_telemetry_config"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig._validate_mlflow_config"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.validate_timing_mode"
-    ],
-    [
-      "C901",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "C901",
+      "src/aiperf/config/distributions.py",
+      "_distribution_discriminator"
+    ],
+    [
+      "C901",
+      "src/aiperf/config/flags/variant_parser.py",
+      "parse_variant"
+    ],
+    [
+      "C901",
+      "src/aiperf/config/sweep/expand.py",
+      "_normalize_scenario_dataset_form"
     ],
     [
       "C901",
@@ -1114,6 +1092,11 @@
     ],
     [
       "C901",
+      "src/aiperf/search_recipes/_itl_surface_fit.py",
+      "_extract_2d_points"
+    ],
+    [
+      "C901",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1171,11 +1154,6 @@
       "C901",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
       "ProgressDashboard.create_stats_table"
-    ],
-    [
-      "D103",
-      "src/aiperf/common/config/config_validators.py",
-      "print_str_or_list"
     ],
     [
       "D103",
@@ -1244,28 +1222,8 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       "_run_multi_benchmark"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/common/config/config_validators.py",
-      "parse_str_or_dict_as_tuple_list"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/common/config/loadgen_config.py",
-      "LoadGeneratorConfig.parse_concurrency_list"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig._parse_gpu_telemetry_config"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.validate_timing_mode"
     ],
     [
       "PLR0912",
@@ -1444,7 +1402,7 @@
     ],
     [
       "PLR0915",
-      "src/aiperf/cli_runner.py",
+      "src/aiperf/cli_runner/__init__.py",
       "_run_multi_benchmark"
     ],
     [

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+
 """AIME benchmark loader, aligned with the trt-llm benchmark recipe.
 
 Loads ``Maxwell-Jia/AIME_2024`` and renders prompts character-for-
@@ -16,13 +17,15 @@ Reference: trt-llm-benchmark-recipe/src/accuracy/aime/{aime,template}.py
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasets import Dataset, load_dataset
 
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
-from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 DATASET_NAME = "Maxwell-Jia/AIME_2024"
 TASK_NAME = "aime"
@@ -87,9 +90,9 @@ class AIMEBenchmark(AIPerfLoggerMixin):
       metadata in ``plugins.yaml`` so users see it documented)
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.user_config = user_config
+        self.run = run
 
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool

@@ -5,7 +5,6 @@ import time
 from pydantic import ConfigDict, Field
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config import ServiceConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
@@ -136,8 +135,8 @@ class ProgressTracker:
 class ProgressTrackerMixin(MessageBusClientMixin):
     """A progress tracker that tracks the progress of the entire benchmark suite."""
 
-    def __init__(self, service_config: ServiceConfig, **kwargs):
-        super().__init__(service_config=service_config, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._progress_tracker = ProgressTracker()
 
     @on_message(MessageType.CREDIT_PHASE_START)

@@ -33,13 +33,22 @@ class TemplateEndpoint(BaseEndpoint):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        extra = self.model_endpoint.endpoint.extra
-        extra_dict = dict(extra) if extra else {}
+        ep = self.model_endpoint.endpoint
+        template_config = ep.template
 
-        template_source = extra_dict.get("payload_template")
+        if template_config and template_config.body:
+            template_source = template_config.body
+            response_field = template_config.response_field
+        else:
+            extra = ep.extra
+            extra_dict = dict(extra) if extra else {}
+            template_source = extra_dict.get("payload_template")
+            response_field = extra_dict.get("response_field")
+
         if not template_source:
             raise InvalidStateError(
-                "Template endpoint requires 'payload_template' in endpoint.extra configuration"
+                "Template endpoint requires 'endpoint.template.body' configuration "
+                "(or 'payload_template' in endpoint.extra)"
             )
 
         if template_source in NAMED_TEMPLATES:
@@ -59,9 +68,8 @@ class TemplateEndpoint(BaseEndpoint):
         )
         self.info(f"Compiled template ({len(template_source)} chars)")
 
-        response_field = extra_dict.get("response_field")
         self._compiled_jmespath = None
-        if response_field:
+        if response_field and response_field != "text":
             try:
                 self._compiled_jmespath = jmespath.compile(response_field)
                 self.info(f"Compiled JMESPath query: '{response_field}'")
@@ -70,11 +78,14 @@ class TemplateEndpoint(BaseEndpoint):
                     f"Failed to compile JMESPath query: '{response_field}' - {e!r}"
                 )
 
-        self._extra_fields = {
-            k: v
-            for k, v in extra_dict.items()
-            if k not in ("payload_template", "response_field")
-        }
+        if template_config and template_config.body:
+            self._extra_fields = dict(ep.extra) if ep.extra else {}
+        else:
+            self._extra_fields = {
+                k: v
+                for k, v in (dict(ep.extra) if ep.extra else {}).items()
+                if k not in ("payload_template", "response_field")
+            }
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format custom template request payload from RequestInfo.
@@ -168,9 +179,15 @@ class TemplateEndpoint(BaseEndpoint):
                 if value := self._compiled_jmespath.search(json_obj):
                     response_data = self.convert_to_response_data(value)
             except (jmespath.exceptions.JMESPathError, TypeError) as e:
-                self.warning(f"JMESPath search failed: {e!r}. Trying auto-detection.")
-
-        if not response_data:
+                self.warning(f"JMESPath search failed: {e!r}.")
+            # When the user provided an explicit response_field, treat a
+            # non-matching path as a hard parse failure rather than silently
+            # falling back to auto-detection — otherwise a typo in
+            # response_field is invisible and the run reports zero-length
+            # successful responses.
+            if response_data is None:
+                return None
+        else:
             response_data = self.auto_detect_and_extract(json_obj)
 
         return (

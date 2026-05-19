@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 
 import orjson
+import pytest
 
 from aiperf.dataset.agentic_code_gen.config import load_config
 from aiperf.dataset.agentic_code_gen.distributions import lognormal_from_mean_median
@@ -76,6 +77,8 @@ class TestRoundtrip:
             run2 / "dataset.jsonl"
         ).read_bytes()
 
+    @pytest.mark.slow
+    @pytest.mark.stress
     def test_stress_1k_sessions_no_errors(self, tmp_path: Path) -> None:
         config = SessionDistributionConfig()
         synth = SessionSynthesizer(config, seed=42)

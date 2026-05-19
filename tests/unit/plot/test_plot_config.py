@@ -24,7 +24,7 @@ from aiperf.plot.core.plot_specs import (
 class TestPlotConfigLoading:
     """Tests for PlotConfig loading and priority."""
 
-    def test_auto_create_user_config(self, tmp_path, monkeypatch):
+    def test_auto_create_user_yaml(self, tmp_path, monkeypatch):
         """Test that user config is auto-created on first access if it doesn't exist."""
         # Create fake home directory
         fake_home = tmp_path / "home"
@@ -32,15 +32,15 @@ class TestPlotConfigLoading:
         monkeypatch.setattr(Path, "home", lambda: fake_home)
 
         # User config should not exist yet
-        user_config = fake_home / ".aiperf" / "plot_config.yaml"
-        assert not user_config.exists()
+        cli_config = fake_home / ".aiperf" / "plot_config.yaml"
+        assert not cli_config.exists()
 
         # Instantiate PlotConfig - should auto-create user config
         config = PlotConfig()
 
         # Verify user config was created
-        assert user_config.exists()
-        assert config.resolved_path == user_config
+        assert cli_config.exists()
+        assert config.resolved_path == cli_config
         assert config.config is not None
         assert "visualization" in config.config
 
@@ -69,7 +69,7 @@ visualization:
         assert config.resolved_path == custom_config
         assert config.config["visualization"]["multi_run"][0]["name"] == "test_plot"
 
-    def test_load_user_config(self, tmp_path, monkeypatch):
+    def test_load_user_yaml(self, tmp_path, monkeypatch):
         """Test loading from user home config (~/.aiperf/plot_config.yaml)."""
         # Create fake home directory
         fake_home = tmp_path / "home"
@@ -77,10 +77,10 @@ visualization:
         monkeypatch.setenv("HOME", str(fake_home))
 
         # Create user config
-        user_config_dir = fake_home / ".aiperf"
-        user_config_dir.mkdir()
-        user_config = user_config_dir / "plot_config.yaml"
-        user_config.write_text(
+        user_yaml_dir = fake_home / ".aiperf"
+        user_yaml_dir.mkdir()
+        cli_config = user_yaml_dir / "plot_config.yaml"
+        cli_config.write_text(
             """
 visualization:
   multi_run:
@@ -102,7 +102,7 @@ visualization:
 
         config = PlotConfig()
 
-        assert config.resolved_path == user_config
+        assert config.resolved_path == cli_config
         assert config.config["visualization"]["multi_run"][0]["name"] == "user_plot"
 
     def test_config_priority(self, tmp_path, monkeypatch):
@@ -112,10 +112,10 @@ visualization:
         fake_home.mkdir()
 
         # Create user config
-        user_config_dir = fake_home / ".aiperf"
-        user_config_dir.mkdir()
-        user_config = user_config_dir / "plot_config.yaml"
-        user_config.write_text(
+        user_yaml_dir = fake_home / ".aiperf"
+        user_yaml_dir.mkdir()
+        cli_config = user_yaml_dir / "plot_config.yaml"
+        cli_config.write_text(
             """
 visualization:
   multi_run:

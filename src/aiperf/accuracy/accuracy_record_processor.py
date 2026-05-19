@@ -6,7 +6,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
@@ -17,6 +16,7 @@ from aiperf.plugin.enums import PluginType
 if TYPE_CHECKING:
     from aiperf.accuracy.graders.base import BaseGrader
     from aiperf.common.models.dataset_models import DatasetMetadata
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class AccuracyRecordProcessor(AIPerfLifecycleMixin):
@@ -31,19 +31,19 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
     def __init__(
         self,
-        service_id: str | None,
-        user_config: UserConfig,
+        run: BenchmarkRun,
+        service_id: str | None = None,
         **kwargs: Any,
     ) -> None:
-        if not user_config.accuracy.enabled:
+        acc_cfg = run.cfg.accuracy
+        if acc_cfg is None or not acc_cfg.enabled:
             raise PostProcessorDisabled(
                 "Accuracy record processor is disabled: accuracy mode is not enabled"
             )
 
-        super().__init__(service_id=service_id, user_config=user_config, **kwargs)
-        self.user_config = user_config
+        super().__init__(service_id=service_id, **kwargs)
+        self.run = run
 
-        acc_cfg = user_config.accuracy
         benchmark_name = acc_cfg.benchmark
         grader_name = acc_cfg.grader
 
@@ -52,7 +52,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             grader_name = meta.get("default_grader", "multiple_choice")
 
         grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
-        self.grader: BaseGrader = grader_cls(user_config=user_config)
+        self.grader: BaseGrader = grader_cls(run=run)
 
         self._ground_truths: list[str] | None = None
 

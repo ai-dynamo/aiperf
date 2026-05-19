@@ -1,14 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from aiperf.common.config.config_defaults import InputTokensDefaults
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -16,7 +17,28 @@ from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 TraceT = TypeVar("TraceT")
+
+
+def _has_meaningful_synthesis(synthesis: Any) -> bool:
+    """Return True when SynthesisConfig has any non-default transform set.
+
+    Trace loaders only invoke the Synthesizer when the user actually asked
+    for a transformation. Defaults: speedup_ratio=1.0,
+    prefix_len_multiplier=1.0, prefix_root_multiplier=1,
+    prompt_len_multiplier=1.0.
+    """
+    if synthesis is None:
+        return False
+    return (
+        getattr(synthesis, "speedup_ratio", 1.0) != 1.0
+        or getattr(synthesis, "prefix_len_multiplier", 1.0) != 1.0
+        or getattr(synthesis, "prefix_root_multiplier", 1) != 1
+        or getattr(synthesis, "prompt_len_multiplier", 1.0) != 1.0
+    )
 
 
 class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
@@ -37,34 +59,60 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     def __init__(
         self,
         *,
-        filename: str | Path,
+        filename: str | Path | None = None,
         prompt_generator: PromptGenerator,
-        user_config: UserConfig,
+        run: BenchmarkRun | None = None,
         default_block_size: int | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        super().__init__(filename=filename, run=run, **kwargs)
         self.prompt_generator = prompt_generator
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
-        self._start_offset = user_config.input.fixed_schedule_start_offset
-        self._end_offset = user_config.input.fixed_schedule_end_offset
-        self._max_isl = user_config.input.synthesis.max_isl
-        self._max_osl = user_config.input.synthesis.max_osl
+
+        # Fixed-schedule timestamp window lives on FixedSchedulePhase entries.
+        # Read from the first profiling phase that exposes it (if any).
+        start_offset: int | None = None
+        end_offset: int | None = None
+        for phase in self.run.cfg.phases:
+            phase_start = getattr(phase, "start_offset", None)
+            phase_end = getattr(phase, "end_offset", None)
+            if phase_start is not None or phase_end is not None:
+                start_offset = phase_start
+                end_offset = phase_end
+                break
+        self._start_offset = start_offset
+        self._end_offset = end_offset
+
+        # Synthesis lives on FileDataset.synthesis; max_isl/max_osl cap traces.
+        dataset = self.run.cfg.get_default_dataset()
+        synthesis = getattr(dataset, "synthesis", None)
+        self._synthesis = synthesis
+        self._max_isl = getattr(synthesis, "max_isl", None) if synthesis else None
+        self._max_osl = getattr(synthesis, "max_osl", None) if synthesis else None
 
         # Use the resolved tokenizer name so worker processes can load from cache
         # without needing alias resolution or network access.
+        tokenizer_cfg = self.run.cfg.tokenizer
+        model_names = self.run.cfg.get_model_names()
         self._tokenizer_name = (
-            prompt_generator.tokenizer.resolved_name
-            or user_config.tokenizer.name
-            or user_config.endpoint.model_names[0]
+            getattr(prompt_generator.tokenizer, "resolved_name", None)
+            or (tokenizer_cfg.name if tokenizer_cfg is not None else None)
+            or (model_names[0] if model_names else "")
         )
-        self._trust_remote_code = user_config.tokenizer.trust_remote_code
-        self._tokenizer_revision = user_config.tokenizer.revision
+        self._trust_remote_code = (
+            tokenizer_cfg.trust_remote_code if tokenizer_cfg is not None else False
+        )
+        self._tokenizer_revision = (
+            tokenizer_cfg.revision if tokenizer_cfg is not None else "main"
+        )
 
-        # Precedence: user CLI --isl-block-size > plugin metadata default > hardcoded fallback
-        user_block_size = user_config.input.prompt.input_tokens.block_size
+        # Precedence: per-dataset block_size > plugin metadata default > hardcoded fallback.
+        # Only synthetic-style datasets carry prompts.block_size; FileDataset has no
+        # equivalent field, so fall through to the plugin/default chain.
+        prompts = getattr(dataset, "prompts", None)
+        user_block_size = getattr(prompts, "block_size", None) if prompts else None
         if user_block_size is not None:
             self._block_size = user_block_size
         elif default_block_size is not None:
@@ -86,8 +134,8 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def _parse_trace(self, line: str) -> TraceT:
-        """Parse a single JSONL line into a typed trace object."""
+    def _parse_trace(self, record: dict) -> TraceT:
+        """Parse a single record dict into the trace's typed model."""
         ...
 
     def _preprocess_trace(self, trace: TraceT) -> None:
@@ -177,18 +225,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._capped_max_osl = 0
         items: list[TraceT] = []
 
-        with open(self.filename, encoding="utf-8") as f:
-            for line in f:
-                if (line := line.strip()) == "":
-                    continue
-
-                trace = self._parse_trace(line)
-                self._preprocess_trace(trace)
-
-                if not self._filter_and_cap_trace(trace):
-                    continue
-
-                items.append(trace)
+        for record_dict in self._iter_record_dicts():
+            trace = self._parse_trace(record_dict)
+            self._preprocess_trace(trace)
+            if not self._filter_and_cap_trace(trace):
+                continue
+            items.append(trace)
 
         self._log_filtering_summary()
 
@@ -196,11 +238,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self.debug(
             lambda: (
                 f"Loaded {sum(len(v) for v in data.values()):,} traces "
-                f"across {len(data):,} sessions from {self.filename}"
+                f"across {len(data):,} sessions "
+                f"from {self.filename if self.filename else '<inline records>'}"
             )
         )
 
-        if self.user_config.input.synthesis.should_synthesize():
+        if _has_meaningful_synthesis(self._synthesis):
             data = self._apply_synthesis(data)
 
         return data
@@ -359,7 +402,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     ) -> dict[str, list[TraceT]]:
         """Apply synthesis transformations to traces in-memory."""
         params = SynthesisParams.from_synthesis_config(
-            self.user_config.input.synthesis, block_size=self._block_size
+            self._synthesis, block_size=self._block_size
         )
 
         exclude = self._synthesis_exclude_fields()

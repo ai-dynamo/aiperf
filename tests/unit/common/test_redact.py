@@ -8,9 +8,6 @@ import aiohttp
 import pytest
 from pytest import param
 
-from aiperf.common.config import EndpointConfig
-from aiperf.common.config.input_config import InputConfig
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import AioHttpTraceData
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import EndpointInfo
@@ -22,6 +19,8 @@ from aiperf.common.redact import (
     redact_string,
     redact_url,
 )
+from aiperf.config.endpoint import EndpointConfig
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 
 # =============================================================================
@@ -1223,34 +1222,36 @@ class TestRedactCliCommandUrlFlags:
 
 
 class TestEndpointConfigApiKeyProtected:
-    """Verify api_key is hidden from repr and redacted in serialization."""
+    """Verify api_key is redacted on the v2 EndpointConfig JSON dump.
 
-    def test_api_key_not_in_repr(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert "sk-secret" not in repr(config)
+    v2 only redacts in JSON mode (``model_dump_json``); dict-mode dumps return
+    the raw key so the runtime can still build authenticated requests.
+    """
 
-    def test_api_key_still_accessible_as_attribute(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert config.api_key == "sk-secret"
+    def _make(self, **kwargs):
+        from aiperf.config.endpoint import EndpointConfig as V2EndpointConfig
 
-    def test_api_key_redacted_in_model_dump(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert config.model_dump()["api_key"] == REDACTED_VALUE
+        return V2EndpointConfig(urls=["http://localhost:8000"], **kwargs)
 
     def test_api_key_redacted_in_json(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
+        config = self._make(api_key="sk-secret")
         json_str = config.model_dump_json()
         assert "sk-secret" not in json_str
         assert REDACTED_VALUE in json_str
 
-    def test_api_key_preserved_with_include_secrets_context(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        dumped = config.model_dump(context={"include_secrets": True})
-        assert dumped["api_key"] == "sk-secret"
+    def test_api_key_none_not_redacted_in_json(self):
+        config = self._make()
+        json_str = config.model_dump_json()
+        assert REDACTED_VALUE not in json_str
 
-    def test_api_key_none_not_redacted(self):
-        config = EndpointConfig(model_names=["gpt2"])
-        assert config.model_dump()["api_key"] is None
+    def test_api_key_still_accessible_as_attribute(self):
+        config = self._make(api_key="sk-secret")
+        assert config.api_key == "sk-secret"
+
+    def test_api_key_present_in_dict_dump(self):
+        """Dict-mode dump preserves raw api_key for runtime use; JSON is the redacted artifact path."""
+        config = self._make(api_key="sk-secret")
+        assert config.model_dump()["api_key"] == "sk-secret"
 
 
 # =============================================================================
@@ -1268,9 +1269,7 @@ class TestEndpointConfigUrlsProtected:
     """
 
     def test_userinfo_stripped_in_model_dump(self):
-        config = EndpointConfig(
-            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000/v1/chat"]
-        )
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000/v1/chat"])
         dumped_urls = config.model_dump()["urls"]
         assert "s3cret" not in dumped_urls[0]
         assert "alice" not in dumped_urls[0]
@@ -1279,16 +1278,13 @@ class TestEndpointConfigUrlsProtected:
         assert REDACTED_VALUE in dumped_urls[0]
 
     def test_userinfo_stripped_in_json(self):
-        config = EndpointConfig(
-            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000"]
-        )
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000"])
         json_str = config.model_dump_json()
         assert "s3cret" not in json_str
         assert "alice:s3cret" not in json_str
 
     def test_multiple_urls_each_redacted(self):
         config = EndpointConfig(
-            model_names=["gpt2"],
             urls=[
                 "http://a:x@h1",
                 "http://b:y@h2",
@@ -1302,22 +1298,18 @@ class TestEndpointConfigUrlsProtected:
         assert dumped_urls[2] == "http://h3-no-userinfo"
 
     def test_urls_without_userinfo_unchanged(self):
-        config = EndpointConfig(model_names=["gpt2"], urls=["http://host:8000/v1"])
+        config = EndpointConfig(urls=["http://host:8000/v1"])
         assert config.model_dump()["urls"] == ["http://host:8000/v1"]
 
     def test_urls_preserved_with_include_secrets_context(self):
         """Runtime callers that need the real URL can opt out of redaction."""
-        config = EndpointConfig(
-            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000"]
-        )
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000"])
         dumped = config.model_dump(context={"include_secrets": True})
         assert "alice:s3cret" in dumped["urls"][0]
 
     def test_urls_still_accessible_on_instance(self):
         """Runtime code reads ``config.urls`` directly; redaction is only on serialization."""
-        config = EndpointConfig(
-            model_names=["gpt2"], urls=["http://alice:s3cret@host:8000"]
-        )
+        config = EndpointConfig(urls=["http://alice:s3cret@host:8000"])
         assert "alice:s3cret@host:8000" in config.urls[0]
 
 
@@ -1352,27 +1344,15 @@ class TestEndpointInfoApiKeyExcluded:
 
 
 class TestInputConfigHeadersRedaction:
-    """Verify sensitive headers passed via --header are redacted in serialization."""
+    """Headers stored on InputConfig are passed through dict-mode dumps as-is.
+
+    Header redaction lives in the JSON artifact path and the
+    ``redact_headers`` utility — not on Pydantic dict-mode serialization.
+    """
 
     @pytest.mark.parametrize(
         "headers, expected",
         [
-            param(
-                [
-                    ("Authorization", "Bearer sk-secret-123"),
-                    ("Content-Type", "application/json"),
-                ],
-                [
-                    ("Authorization", REDACTED_VALUE),
-                    ("Content-Type", "application/json"),
-                ],
-                id="authorization-redacted-content-type-kept",
-            ),
-            param(
-                [("X-API-Key", "nvapi-my-secret")],
-                [("X-API-Key", REDACTED_VALUE)],
-                id="x-api-key-redacted",
-            ),
             param(
                 [("X-Custom-Header", "my-value"), ("Accept", "text/event-stream")],
                 [("X-Custom-Header", "my-value"), ("Accept", "text/event-stream")],
@@ -1380,31 +1360,36 @@ class TestInputConfigHeadersRedaction:
             ),
         ],
     )
-    def test_headers_redacted_in_dump(self, headers, expected):
-        config = InputConfig(headers=headers)
+    def test_headers_unchanged_in_dump(self, headers, expected):
+        config = CLIConfig(headers=headers)
         assert config.model_dump()["headers"] == expected
 
-    def test_headers_preserved_with_include_secrets_context(self):
-        config = InputConfig(headers=[("Authorization", "Bearer sk-secret")])
-        dumped = config.model_dump(context={"include_secrets": True})
-        assert dumped["headers"] == [("Authorization", "Bearer sk-secret")]
-
     def test_headers_still_accessible_as_attribute(self):
-        config = InputConfig(headers=[("Authorization", "Bearer sk-secret")])
+        config = CLIConfig(headers=[("Authorization", "Bearer sk-secret")])
         assert config.headers == [("Authorization", "Bearer sk-secret")]
 
 
 # =============================================================================
-# CLI command redaction (via UserConfig)
+# CLI command redaction (via CLIConfig)
 # =============================================================================
 
 
 class TestCliCommandRedaction:
-    """Verify --api-key and sensitive --header values are redacted in cli_command."""
+    """Verify --api-key and sensitive --header values are redacted in cli_command.
+
+    The synthesized command is stored on ``BenchmarkRun.cli_command``
+    (auto-populated via ``build_cli_command`` from sys.argv) and surfaced into
+    ``RunInfo.cli_command`` in ``profile_export_aiperf.json``.
+    """
+
+    def _build_cli_command(self, argv: list[str]) -> str:
+        from aiperf.common.redact import build_cli_command
+
+        with patch("sys.argv", argv):
+            return build_cli_command()
 
     def test_api_key_redacted_in_cli_command(self):
-        with patch(
-            "sys.argv",
+        cmd = self._build_cli_command(
             [
                 "aiperf",
                 "profile",
@@ -1414,11 +1399,10 @@ class TestCliCommandRedaction:
                 "sk-12345",
                 "--url",
                 "http://localhost:8000",
-            ],
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert "sk-12345" not in config.cli_command
-            assert f"--api-key '{REDACTED_VALUE}'" in config.cli_command
+            ]
+        )
+        assert "sk-12345" not in cmd
+        assert REDACTED_VALUE in cmd
 
     @pytest.mark.parametrize(
         "flag, header_value, secret",
@@ -1439,20 +1423,37 @@ class TestCliCommandRedaction:
         ],
     )
     def test_sensitive_header_redacted_in_cli_command(self, flag, header_value, secret):
-        with patch(
-            "sys.argv", ["aiperf", "profile", "--model", "gpt2", flag, header_value]
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert secret not in config.cli_command
+        # _build_cli_command must produce an already-redacted canonical command
+        # string — callers (e.g. JSON exporter) should not need to re-apply
+        # redact_cli_command on top.
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", flag, header_value]
+        )
+        assert secret not in cmd
+        assert REDACTED_VALUE in cmd
+
+    def test_authorization_bearer_argv_redacted_in_cli_command(self):
+        """Regression: argv with `--header Authorization:Bearer X` must be
+        redacted by _build_cli_command alone, no second pass required."""
+        cmd = self._build_cli_command(
+            [
+                "aiperf",
+                "profile",
+                "--model",
+                "gpt2",
+                "--header",
+                "Authorization:Bearer token123",
+            ]
+        )
+        assert "token123" not in cmd
+        assert REDACTED_VALUE in cmd
 
     def test_non_sensitive_args_preserved_in_cli_command(self):
-        with patch(
-            "sys.argv",
-            ["aiperf", "profile", "--model", "gpt2", "--url", "http://localhost:8000"],
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert "http://localhost:8000" in config.cli_command
-            assert "gpt2" in config.cli_command
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", "--url", "http://localhost:8000"]
+        )
+        assert "http://localhost:8000" in cmd
+        assert "gpt2" in cmd
 
 
 # =============================================================================

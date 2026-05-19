@@ -3,9 +3,8 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.common.environment import Environment
@@ -31,6 +30,9 @@ from aiperf.gpu_telemetry.constants import (
 from aiperf.plugin.enums import UIType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
     """Accumulate GPU telemetry records and compute metrics in a hierarchical structure.
@@ -46,8 +48,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         - Background task for periodic metric updates
 
     Args:
-        user_config: User configuration including GPU telemetry settings
-        service_config: Service configuration for communication and UI settings
+        run: BenchmarkRun providing config and benchmark plan
         pub_client: Publish client for sending realtime metric updates
         **kwargs: Additional arguments passed to base class
 
@@ -57,20 +58,16 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        run: "BenchmarkRun",
         pub_client: PubClientProtocol,
         **kwargs: Any,
     ):
-        if user_config.gpu_telemetry_disabled:
+        if run.cfg.gpu_telemetry_disabled:
             raise PostProcessorDisabled(
                 "GPU telemetry accumulator is disabled via --no-gpu-telemetry"
             )
         self.pub_client = pub_client
-        self.service_config = service_config
-        super().__init__(
-            user_config=user_config, service_config=service_config, **kwargs
-        )
+        super().__init__(run=run, **kwargs)
 
         self._hierarchy = TelemetryHierarchy()
         self._realtime_enable_event = asyncio.Event()
@@ -94,23 +91,29 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         self.info("Received START_REALTIME_TELEMETRY command")
 
-        self.user_config.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+        self.run.cfg.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
 
         # Wake up the sleeping telemetry task
         self._realtime_enable_event.set()
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_telemetry_metrics_task(self) -> None:
-        """Report GPU telemetry metrics - sleeps when disabled, resumes on command."""
-        if self.service_config.ui_type != UIType.DASHBOARD:
-            return
+        """Report GPU telemetry metrics - sleeps when disabled, resumes on command.
 
+        The dashboard/realtime gate is checked inside the loop so the framework's
+        ``interval=None`` semantics (run body once and break) don't permanently
+        kill the task when started under a non-dashboard UI. The user can later
+        wake the task via ``START_REALTIME_TELEMETRY`` (sent by the dashboard
+        when the telemetry pane is toggled on).
+        """
         while not self.stop_requested:
             if (
-                self.user_config.gpu_telemetry_mode
+                self.run.cfg.ui_type != UIType.DASHBOARD
+                or self.run.cfg.gpu_telemetry_mode
                 != GPUTelemetryMode.REALTIME_DASHBOARD
             ):
-                # Disabled - sleep until command wakes us
+                # Either non-dashboard UI or telemetry not yet in realtime mode -
+                # sleep until the dashboard sends START_REALTIME_TELEMETRY.
                 await self._realtime_enable_event.wait()
                 self._realtime_enable_event.clear()
                 continue

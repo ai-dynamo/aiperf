@@ -7,8 +7,8 @@ from typing import cast
 
 import orjson
 
-from aiperf.common.config import MLflowDefaults
 from aiperf.common.redact import REDACTED_VALUE
+from aiperf.config.mlflow import MLflowDefaults
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
 from aiperf.plot.constants import PLOT_LOG_FILE, PlotMode, PlotTheme

@@ -7,9 +7,10 @@ import os
 import platform
 import signal
 import socket
+import subprocess
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from multiprocessing.context import SpawnProcess
 from pathlib import Path
@@ -22,6 +23,7 @@ from aiperf_mock_server import MockServerConfig
 from aiperf_mock_server import serve as aiperf_mock_server_serve
 
 from aiperf.common.logging import AIPerfLogger
+from tests.harness.subprocess import _new_process_group_kwargs
 from tests.harness.utils import (
     AIPerfCLI,
     AIPerfMockServer,
@@ -151,6 +153,19 @@ def get_venv_python() -> str:
             return str(python_path)
     # Fall back to sys.executable if not in a venv
     return sys.executable
+
+
+def _killpg(process: asyncio.subprocess.Process, sig: int) -> None:
+    """Send `sig` to the entire process group of `process`.
+
+    aiperf spawns its system_controller + managers + workers as multiprocessing
+    children. Signalling only the leader (process.kill/terminate) on SIGKILL
+    skips multiprocessing's atexit cleanup and orphans the whole tree, which
+    then lingers indefinitely holding swap. The subprocess must be started in a
+    new process group for this to reach the descendants.
+    """
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, sig)
 
 
 @asynccontextmanager
@@ -315,15 +330,12 @@ async def aiperf_runner(
             "PYTHONUNBUFFERED": "1",
         }
 
-        # Capture stdout/stderr for validation error tests
-        # Use PIPE to capture output while still allowing it to be displayed
-        import subprocess
-
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            **_new_process_group_kwargs(),
         )
 
         try:
@@ -343,9 +355,9 @@ async def aiperf_runner(
                 stderr = stderr_bytes.decode("utf-8", errors="replace")
             except asyncio.TimeoutError:
                 _logger.warning(
-                    "Process did not exit after SIGINT(), forcing termination"
+                    "Process did not exit after SIGINT, sending SIGTERM to process group"
                 )
-                process.terminate()
+                _killpg(process, signal.SIGTERM)
                 try:
                     stdout_bytes, stderr_bytes = await asyncio.wait_for(
                         process.communicate(), timeout=5
@@ -354,9 +366,9 @@ async def aiperf_runner(
                     stderr = stderr_bytes.decode("utf-8", errors="replace")
                 except asyncio.TimeoutError:
                     _logger.warning(
-                        "Process did not exit after kill(), forcing termination"
+                        "Process did not exit after SIGTERM, sending SIGKILL to process group"
                     )
-                    process.kill()
+                    _killpg(process, signal.SIGKILL)
                     stdout = ""
                     stderr = ""
             raise RuntimeError(f"AIPerf timed out after {timeout}s") from e
@@ -435,6 +447,7 @@ class AIPerfSignalCLI:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            **_new_process_group_kwargs(),
         )
 
         try:
@@ -485,12 +498,14 @@ class AIPerfSignalCLI:
                 try:
                     await asyncio.wait_for(process.wait(), timeout=30.0)
                 except asyncio.TimeoutError:
-                    _logger.warning("Process did not exit after SIGINT, forcing kill")
-                    process.kill()
+                    _logger.warning(
+                        "Process did not exit after SIGINT, sending SIGKILL to process group"
+                    )
+                    _killpg(process, signal.SIGKILL)
                     await process.wait()
 
         except asyncio.CancelledError:
-            process.kill()
+            _killpg(process, signal.SIGKILL)
             await process.wait()
             raise
 

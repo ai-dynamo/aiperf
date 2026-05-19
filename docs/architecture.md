@@ -6,7 +6,7 @@ sidebar-title: Architecture of AIPerf
 
 # Architecture of AIPerf
 
-AIPerf is a distributed benchmarking tool for measuring AI inference performance. It generates load against inference endpoints, collects detailed performance metrics, and provides comprehensive analysis of throughput, latency, and resource utilization.
+AIPerf is a modular benchmarking tool for measuring AI inference performance. It generates load against inference endpoints, collects detailed performance metrics, and provides comprehensive analysis of throughput, latency, and resource utilization.
 
 ## Architecture Overview
 
@@ -197,7 +197,7 @@ AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration
 - **Low-overhead messaging**: Credits are routed directly to workers
 - **Asynchronous by design**: No blocking calls between services, ensuring workers spend maximum time on I/O and timing
 - **Efficient transport**: ZMQ is designed for low-overhead inter-process communication
-- **Scalability**: Supports distributed workers across multiple nodes without code changes
+- **Scalability**: Supports many local worker processes; Kubernetes is referenced by future-facing code paths, but no Kubernetes service-manager plugin or `ServiceRunType` is registered in this checkout, and distributed Kubernetes execution is not supported
 
 ### Communication Patterns
 
@@ -225,10 +225,17 @@ AIPerf is built on three core principles:
 
 ## Deployment Modes
 
-AIPerf supports distributed execution with two deployment models:
+AIPerf currently supports one local deployment model:
 
 - **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
-- **Kubernetes Mode**: Services and workers run as separate pods in a Kubernetes cluster (for multi-node deployments) *(not yet implemented)*
+
+Kubernetes is referenced by future-facing code paths, but no Kubernetes service-manager plugin or `ServiceRunType` is registered in this checkout; do not treat Kubernetes distributed execution as supported.
+
+## Configuration Envelope
+
+The top-level `AIPerfConfig` YAML accepts several optional sibling keys alongside the core `benchmark:` block — `sweep:`, `multi_run:`, `variables:`, `random_seed:`, and `plot:`. Each owns a single concern and is loaded by its own Pydantic model.
+
+The `plot:` envelope describes which plots are rendered after the run. It accepts two forms: a bare-string path reference (e.g. `plot: ./plots/baseline.yaml`, resolved relative to the AIPerf YAML's directory) or an inline mapping mirroring `src/aiperf/plot/default_plot_config.yaml` 1:1. When `plot:` is set it replaces the `~/.aiperf/plot_config.yaml` fallback (the envelope is the spec) and presence implies `artifacts.auto_plot=True` unless the user explicitly sets it to `false`. The auto-plot callback materializes the resolved envelope to `<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>` later reproduces the same plots without the original YAML. See `src/aiperf/config/plot.py` for the Pydantic models.
 
 ## External Dependencies
 

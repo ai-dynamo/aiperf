@@ -117,27 +117,16 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         return DatasetSamplingStrategy.SEQUENTIAL
 
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
-        """Load multi-turn data from a JSONL file.
+        """Load multi-turn data from a file or inline records.
 
-        Each line represents a complete multi-turn conversation with its own
+        Each record represents a complete multi-turn conversation with its own
         session_id and multiple turns.
-
-        Returns:
-            A dictionary mapping session_id to list of MultiTurn objects.
         """
         data: dict[str, list[MultiTurn]] = defaultdict(list)
-
-        with open(self.filename, encoding="utf-8") as f:
-            for line in f:
-                if (line := line.strip()) == "":
-                    continue  # Skip empty lines
-
-                multi_turn_data = MultiTurn.model_validate_json(line)
-                session_id = (
-                    multi_turn_data.session_id or self.session_id_generator.next()
-                )
-                data[session_id].append(multi_turn_data)
-
+        for record_dict in self._iter_record_dicts():
+            multi_turn_data = MultiTurn.model_validate(record_dict)
+            session_id = multi_turn_data.session_id or self.session_id_generator.next()
+            data[session_id].append(multi_turn_data)
         return data
 
     def convert_to_conversations(

@@ -4,22 +4,27 @@
 
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.composer.synthetic_rankings import SyntheticRankingsDatasetComposer
+from tests.unit.dataset.composer.conftest import make_run
 
 
 def test_initialization_basic(synthetic_config, mock_tokenizer):
     """Ensure SyntheticRankingsDatasetComposer initializes correctly."""
-    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    composer = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
     assert composer.session_id_generator is not None
 
 
 def test_create_dataset_structure(synthetic_config, mock_tokenizer):
     """Test structure and content of generated synthetic ranking dataset."""
-    synthetic_config.input.rankings.passages.mean = 5
-    synthetic_config.input.rankings.passages.stddev = 1
-    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    synthetic_config.rankings_passages_mean = 5
+    synthetic_config.rankings_passages_stddev = 1
+    composer = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
 
     dataset = composer.create_dataset()
-    assert len(dataset) == synthetic_config.input.conversation.num_dataset_entries
+    assert len(dataset) == synthetic_config.conversation_num_dataset_entries
 
     for conv in dataset:
         assert isinstance(conv, Conversation)
@@ -38,9 +43,11 @@ def test_create_dataset_structure(synthetic_config, mock_tokenizer):
 
 def test_passage_count_distribution(synthetic_config, mock_tokenizer):
     """Test passages are generated following mean/stddev distribution."""
-    synthetic_config.input.rankings.passages.mean = 5
-    synthetic_config.input.rankings.passages.stddev = 2
-    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    synthetic_config.rankings_passages_mean = 5
+    synthetic_config.rankings_passages_stddev = 2
+    composer = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
 
     dataset = composer.create_dataset()
     passage_counts = [len(conv.turns[0].texts[1].contents) for conv in dataset]
@@ -51,14 +58,18 @@ def test_passage_count_distribution(synthetic_config, mock_tokenizer):
 
 def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
     """Dataset generation should be deterministic given a fixed random seed."""
-    synthetic_config.input.rankings.passages.mean = 4
-    synthetic_config.input.rankings.passages.stddev = 1
-    synthetic_config.input.random_seed = 42
+    synthetic_config.rankings_passages_mean = 4
+    synthetic_config.rankings_passages_stddev = 1
+    synthetic_config.random_seed = 42
 
-    composer1 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    composer1 = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
     data1 = composer1.create_dataset()
 
-    composer2 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    composer2 = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
     data2 = composer2.create_dataset()
 
     # Session IDs differ (fresh), but text contents should match
@@ -70,14 +81,16 @@ def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
 
 def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):
     """Test that rankings-specific token options are used for query and passages."""
-    synthetic_config.input.rankings.passages.mean = 3
-    synthetic_config.input.rankings.passages.prompt_token_mean = 100
-    synthetic_config.input.rankings.passages.prompt_token_stddev = 10
-    synthetic_config.input.rankings.query.prompt_token_mean = 50
-    synthetic_config.input.rankings.query.prompt_token_stddev = 5
-    synthetic_config.input.random_seed = 42
+    synthetic_config.rankings_passages_mean = 3
+    synthetic_config.rankings_passages_prompt_token_mean = 100
+    synthetic_config.rankings_passages_prompt_token_stddev = 10
+    synthetic_config.rankings_query_prompt_token_mean = 50
+    synthetic_config.rankings_query_prompt_token_stddev = 5
+    synthetic_config.random_seed = 42
 
-    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    composer = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
     dataset = composer.create_dataset()
 
     # Verify that data was generated

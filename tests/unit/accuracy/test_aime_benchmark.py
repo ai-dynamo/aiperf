@@ -27,19 +27,16 @@ from aiperf.accuracy.benchmarks.aime import (
     AIMEBenchmark,
 )
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_benchmark_run
 
 
-def _make_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        ),
-        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.AIME),
+def _make_run():
+    return make_benchmark_run(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.COMPLETIONS,
+        streaming=False,
+        accuracy={"benchmark": AccuracyBenchmarkType.AIME},
     )
 
 
@@ -61,7 +58,7 @@ def _make_fake_dataset(rows: list[dict[str, Any]]) -> MagicMock:
 
 @pytest.fixture
 def bench() -> AIMEBenchmark:
-    return AIMEBenchmark(user_config=_make_user_config())
+    return AIMEBenchmark(run=_make_run())
 
 
 class TestDefaults:
@@ -218,7 +215,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -232,7 +229,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -246,7 +243,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -259,7 +256,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -272,7 +269,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -284,7 +281,7 @@ class TestLoadProblems:
     async def test_max_n_shots_enforced(self) -> None:
         """The recipe asserts ``n_shots <= 8``; we raise ``ValueError``
         rather than silently accepting more."""
-        bench = AIMEBenchmark(user_config=_make_user_config())
+        bench = AIMEBenchmark(run=_make_run())
         with pytest.raises(ValueError, match="at most 8"):
             await bench.load_problems(tasks=None, n_shots=9, enable_cot=False)
 
@@ -295,7 +292,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             none_problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -311,7 +308,7 @@ class TestLoadProblems:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(tasks=None, n_shots=0, enable_cot=True)
         # Every prompt ends with the CoT suffix.
         assert all(p.prompt.endswith(COT_SUFFIX) for p in problems)
@@ -324,7 +321,7 @@ class TestPathologicalDatasetRows:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset([]),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -337,7 +334,7 @@ class TestPathologicalDatasetRows:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -351,7 +348,7 @@ class TestPathologicalDatasetRows:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )
@@ -367,7 +364,7 @@ class TestPathologicalDatasetRows:
             "aiperf.accuracy.benchmarks.aime.load_dataset",
             return_value=_make_fake_dataset(rows),
         ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
+            bench = AIMEBenchmark(run=_make_run())
             problems = await bench.load_problems(
                 tasks=None, n_shots=0, enable_cot=False
             )

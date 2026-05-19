@@ -4,14 +4,17 @@
 
 from pydantic import Field, ValidationInfo, field_validator
 
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 
 
 class BenchmarkPoint(AIPerfBaseModel):
     """Single benchmark operating-point measurement with uncertainty."""
 
-    x_mean: float = Field(description="Mean value on the x-axis (e.g., latency)")
-    y_mean: float = Field(description="Mean value on the y-axis (e.g., throughput)")
+    x_mean: FiniteFloat = Field(description="Mean value on the x-axis (e.g., latency)")
+    y_mean: FiniteFloat = Field(
+        description="Mean value on the y-axis (e.g., throughput)"
+    )
     x_ci_low: float = Field(description="Lower bound of x-axis confidence interval")
     x_ci_high: float = Field(description="Upper bound of x-axis confidence interval")
     y_ci_low: float = Field(description="Lower bound of y-axis confidence interval")

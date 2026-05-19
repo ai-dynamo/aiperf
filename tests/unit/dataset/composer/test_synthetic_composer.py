@@ -6,19 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import (
-    ConversationConfig,
-    EndpointConfig,
-    InputConfig,
-    InputTokensConfig,
-    PrefixPromptConfig,
-    PromptConfig,
-    TurnConfig,
-    TurnDelayConfig,
-    UserConfig,
-)
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
+from tests.unit.dataset.composer.conftest import make_run
 
 
 class TestSyntheticDatasetComposer:
@@ -28,58 +19,66 @@ class TestSyntheticDatasetComposer:
 
     def test_initialization_basic_config(self, synthetic_config, mock_tokenizer):
         """Test that SyntheticDatasetComposer can be instantiated with basic config."""
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
 
-        assert composer.config == synthetic_config
-        assert composer.config.input.conversation.num_dataset_entries == 5
+        assert composer.run.cfg.get_default_dataset().entries == 5
         assert composer.prompt_generator is not None
         assert composer.include_image is False
         assert composer.include_audio is False
 
     def test_initialization_with_images(self, image_config, mock_tokenizer):
         """Test initialization with image generation enabled."""
-        composer = SyntheticDatasetComposer(image_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(image_config), tokenizer=mock_tokenizer
+        )
 
-        assert composer.config.input.image.width.mean == 10
-        assert composer.config.input.image.height.mean == 10
+        images = composer._synthetic_images
+        assert images is not None
+        assert images.width.expected_value == 10
+        assert images.height.expected_value == 10
         assert composer.include_image is True
         assert composer.include_audio is False
 
     def test_initialization_with_audio(self, audio_config, mock_tokenizer):
         """Test initialization with audio generation enabled."""
-        composer = SyntheticDatasetComposer(audio_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(audio_config), tokenizer=mock_tokenizer
+        )
 
-        assert composer.config.input.audio.length.mean == 2
+        assert composer._synthetic_audio is not None
+        assert composer._synthetic_audio.length.expected_value == 2
         assert composer.include_image is False
         assert composer.include_audio is True
 
     def test_initialization_with_multimodal(self, multimodal_config, mock_tokenizer):
         """Test initialization with both image and audio enabled."""
-        composer = SyntheticDatasetComposer(multimodal_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(multimodal_config), tokenizer=mock_tokenizer
+        )
 
         assert composer.include_image is True
         assert composer.include_audio is True
-        input_config = composer.config.input
-        assert input_config.image.batch_size == 2
-        assert input_config.audio.batch_size == 2
-        assert input_config.image.width.mean == 10
-        assert input_config.image.height.mean == 10
-        assert input_config.audio.length.mean == 2
+        assert composer._synthetic_images.batch_size == 2
+        assert composer._synthetic_audio.batch_size == 2
+        assert composer._synthetic_images.width.expected_value == 10
+        assert composer._synthetic_images.height.expected_value == 10
+        assert composer._synthetic_audio.length.expected_value == 2
 
     def test_initialization_with_all_zero_mean(self, mock_tokenizer):
         """Test initialization with no generators enabled."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test_model"],
-            ),
-            input=InputConfig(
-                conversation=ConversationConfig(num_dataset_entries=5),
-                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
-            ),
+        config = CLIConfig(
+            model_names=["test_model"],
+            conversation_num_dataset_entries=5,
+            prompt_input_tokens_mean=0,
+            image_width_mean=0,
+            image_height_mean=0,
+            audio_length_mean=0,
         )
 
         with pytest.raises(ValueError):
-            SyntheticDatasetComposer(config, mock_tokenizer)
+            SyntheticDatasetComposer(run=make_run(config), tokenizer=mock_tokenizer)
 
     # ============================================================================
     # Create Dataset Method Tests
@@ -87,7 +86,9 @@ class TestSyntheticDatasetComposer:
 
     def test_create_dataset_basic(self, synthetic_config, mock_tokenizer):
         """Test basic dataset creation with text-only conversations."""
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Test create_dataset returns correct number of conversations
@@ -109,7 +110,9 @@ class TestSyntheticDatasetComposer:
 
     def test_create_dataset_with_images(self, image_config, mock_tokenizer):
         """Test dataset creation with image generation enabled."""
-        composer = SyntheticDatasetComposer(image_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(image_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Test conversations include image payloads
@@ -130,7 +133,9 @@ class TestSyntheticDatasetComposer:
 
     def test_create_dataset_with_audio(self, audio_config, mock_tokenizer):
         """Test dataset creation with audio generation enabled."""
-        composer = SyntheticDatasetComposer(audio_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(audio_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Test conversations include audio payloads
@@ -150,14 +155,13 @@ class TestSyntheticDatasetComposer:
 
     def test_create_dataset_multimodal(self, multimodal_config, mock_tokenizer):
         """Test dataset creation with both image and audio enabled."""
-        composer = SyntheticDatasetComposer(multimodal_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(multimodal_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Test conversations include both image and audio payloads
-        assert (
-            len(conversations)
-            == multimodal_config.input.conversation.num_dataset_entries
-        )
+        assert len(conversations) == multimodal_config.conversation_num_dataset_entries
         for conversation in conversations:
             assert len(conversation.turns) >= 1
             for turn in conversation.turns:
@@ -173,7 +177,9 @@ class TestSyntheticDatasetComposer:
         self, prefix_prompt_config, mock_tokenizer
     ):
         """Test dataset creation with prefix prompts enabled."""
-        composer = SyntheticDatasetComposer(prefix_prompt_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(prefix_prompt_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         assert len(conversations) == 5
@@ -188,7 +194,9 @@ class TestSyntheticDatasetComposer:
 
     def test_create_dataset_multiple_turns(self, multiturn_config, mock_tokenizer):
         """Test dataset creation with multiple turns and delays."""
-        composer = SyntheticDatasetComposer(multiturn_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(multiturn_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Test conversations have multiple turns
@@ -205,10 +213,12 @@ class TestSyntheticDatasetComposer:
 
     def test_create_first_turn(self, synthetic_config, mock_tokenizer):
         """Test _create_turn method for first turn in conversation."""
-        synthetic_config.input.conversation.turn.delay.mean = 1500
-        synthetic_config.input.conversation.turn.delay.stddev = 0
+        synthetic_config.conversation_turn_delay_mean = 1500
+        synthetic_config.conversation_turn_delay_stddev = 0
 
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
 
         # Test first turn creation
         turn = composer._create_turn(is_first=True)
@@ -221,7 +231,9 @@ class TestSyntheticDatasetComposer:
 
     def test_create_turn_subsequent_turn(self, multiturn_config, mock_tokenizer):
         """Test _create_turn method for subsequent turns in conversation."""
-        composer = SyntheticDatasetComposer(multiturn_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(multiturn_config), tokenizer=mock_tokenizer
+        )
 
         # Test subsequent turn creation
         turn = composer._create_turn(is_first=False)
@@ -233,10 +245,12 @@ class TestSyntheticDatasetComposer:
 
     def test_create_turn_with_all_modalities(self, multimodal_config, mock_tokenizer):
         """Test _create_turn method with text, image, and audio."""
-        multimodal_config.input.conversation.turn.delay.mean = 1500
-        multimodal_config.input.conversation.turn.delay.stddev = 0
+        multimodal_config.conversation_turn_delay_mean = 1500
+        multimodal_config.conversation_turn_delay_stddev = 0
 
-        composer = SyntheticDatasetComposer(multimodal_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(multimodal_config), tokenizer=mock_tokenizer
+        )
 
         turn = composer._create_turn(is_first=True)
 
@@ -257,11 +271,13 @@ class TestSyntheticDatasetComposer:
 
     def test_create_turn_with_delay_ratio(self, multiturn_config, mock_tokenizer):
         """Test _create_turn method applies delay ratio correctly."""
-        multiturn_config.input.conversation.turn.delay.mean = 2000
-        multiturn_config.input.conversation.turn.delay.stddev = 0
-        multiturn_config.input.conversation.turn.delay.ratio = 0.5
+        multiturn_config.conversation_turn_delay_mean = 2000
+        multiturn_config.conversation_turn_delay_stddev = 0
+        multiturn_config.conversation_turn_delay_ratio = 0.5
 
-        composer = SyntheticDatasetComposer(multiturn_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(multiturn_config), tokenizer=mock_tokenizer
+        )
 
         # Test subsequent turn creation
         turn = composer._create_turn(is_first=False)
@@ -273,27 +289,21 @@ class TestSyntheticDatasetComposer:
     def test_turn_delays_from_config_options(self, mock_tokenizer):
         """Test that delays configured via CLI options properly show up in Turn.delay."""
         # Configure delays using the same options available via CLI
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test_model"]),
-            input=InputConfig(
-                conversation=ConversationConfig(
-                    num_dataset_entries=5,
-                    turn=TurnConfig(
-                        mean=3,
-                        stddev=0,
-                        delay=TurnDelayConfig(
-                            mean=2500,  # --conversation-turn-delay-mean 2500
-                            stddev=500,  # --conversation-turn-delay-stddev 500
-                            ratio=1.0,  # --conversation-turn-delay-ratio 1.0
-                        ),
-                    ),
-                ),
-                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
-            ),
+        config = CLIConfig(
+            model_names=["test_model"],
+            conversation_num_dataset_entries=5,
+            conversation_turn_mean=3,
+            conversation_turn_stddev=0,
+            conversation_turn_delay_mean=2500,  # --conversation-turn-delay-mean 2500
+            conversation_turn_delay_stddev=500,  # --conversation-turn-delay-stddev 500
+            conversation_turn_delay_ratio=1.0,
+            prompt_input_tokens_mean=100,
         )
         rng.reset()
         rng.init(42)  # Set seed for reproducibility
-        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Verify conversations were created
@@ -316,10 +326,12 @@ class TestSyntheticDatasetComposer:
                 assert 1000 <= turn.delay <= 4000
 
         # Test with ratio scaling
-        config.input.conversation.turn.delay.ratio = 0.5
+        config.conversation_turn_delay_ratio = 0.5
         rng.reset()
         rng.init(42)  # Reset seed
-        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         for conversation in conversations:
@@ -335,27 +347,21 @@ class TestSyntheticDatasetComposer:
 
     def test_turn_delays_with_zero_mean(self, mock_tokenizer):
         """Test that zero mean delay results in no delays on turns."""
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test_model"]),
-            input=InputConfig(
-                conversation=ConversationConfig(
-                    num_dataset_entries=3,
-                    turn=TurnConfig(
-                        mean=2,
-                        stddev=0,
-                        delay=TurnDelayConfig(
-                            mean=0,  # No delay
-                            stddev=0,
-                            ratio=1.0,
-                        ),
-                    ),
-                ),
-                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
-            ),
+        config = CLIConfig(
+            model_names=["test_model"],
+            conversation_num_dataset_entries=3,
+            conversation_turn_mean=2,
+            conversation_turn_stddev=0,
+            conversation_turn_delay_mean=0,  # No delay
+            conversation_turn_delay_stddev=0,
+            conversation_turn_delay_ratio=1.0,
+            prompt_input_tokens_mean=100,
         )
         rng.reset()
         rng.init(42)
-        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         for conversation in conversations:
@@ -374,7 +380,9 @@ class TestSyntheticDatasetComposer:
         """Test _generate_text_payloads method with basic configuration."""
         mock_generate.return_value = "Generated text content"
 
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
 
         # Test text payload generation
         turn = Turn()
@@ -399,7 +407,9 @@ class TestSyntheticDatasetComposer:
         mock_generate.return_value = "User message"
         mock_prefix.return_value = "Prefix prompt:"
 
-        composer = SyntheticDatasetComposer(prefix_prompt_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(prefix_prompt_config), tokenizer=mock_tokenizer
+        )
 
         # Test prefix prompt is added to first turn
         turn = Turn()
@@ -417,7 +427,9 @@ class TestSyntheticDatasetComposer:
         """Test _generate_text_payloads for subsequent turns without prefix prompts."""
         mock_generate.return_value = "User message"
 
-        composer = SyntheticDatasetComposer(prefix_prompt_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(prefix_prompt_config), tokenizer=mock_tokenizer
+        )
 
         # Test no prefix prompt is added to subsequent turns
         turn = Turn()
@@ -433,9 +445,11 @@ class TestSyntheticDatasetComposer:
     ):
         """Test _generate_text_payloads with batch_size > 1."""
         mock_generate.return_value = "Generated text"
-        synthetic_config.input.prompt.batch_size = 3
+        synthetic_config.prompt_batch_size = 3
 
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
 
         # Test multiple text payloads are generated per turn
         turn = Turn()
@@ -458,7 +472,9 @@ class TestSyntheticDatasetComposer:
         """Test _generate_image_payloads method."""
         mock_generate.return_value = "fake_image_data"
 
-        composer = SyntheticDatasetComposer(image_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(image_config), tokenizer=mock_tokenizer
+        )
 
         # Test image payload generation
         turn = Turn()
@@ -479,7 +495,9 @@ class TestSyntheticDatasetComposer:
         """Test _generate_audio_payloads method."""
         mock_generate.return_value = "fake_audio_data"
 
-        composer = SyntheticDatasetComposer(audio_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(audio_config), tokenizer=mock_tokenizer
+        )
 
         # Test audio payload generation
         turn = Turn()
@@ -499,34 +517,30 @@ class TestSyntheticDatasetComposer:
 
     def test_zero_conversations(self, synthetic_config, mock_tokenizer):
         """Test behavior with zero conversations requested."""
-        synthetic_config.input.conversation.num_dataset_entries = 0
+        # v2 forbids entries=0 at validation; mutate the resolved dataset
+        # post-construction to verify the create_dataset() loop handles 0.
+        run = make_run(synthetic_config)
+        run.cfg.datasets[0].entries = 0
 
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
         conversations = composer.create_dataset()
 
         assert len(conversations) == 0
 
     def test_edge_case_statistical_parameters(self, mock_tokenizer):
         """Test behavior with edge case statistical parameters."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-            ),
-            input=InputConfig(
-                conversation=ConversationConfig(num_dataset_entries=2),
-                prompt=PromptConfig(
-                    mean=1,  # Very small mean
-                    stddev=0,  # Zero stddev
-                    prefix_prompt=PrefixPromptConfig(pool_size=0),
-                ),
-                turn=TurnConfig(
-                    mean=100,  # Large mean
-                    stddev=50,  # Large stddev
-                ),
-            ),
+        # v1 PrefixPromptConfig allowed pool_size=0 (disabled); v2 forbids it
+        # (ge=1). Drop the prefix config — the v1 default is no prefix anyway.
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=2,
+            prompt_input_tokens_mean=1,  # Very small mean
+            prompt_input_tokens_stddev=0,  # Zero stddev
         )
 
-        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Test with very small/large mean and stddev values
@@ -536,16 +550,15 @@ class TestSyntheticDatasetComposer:
 
     def test_multi_turn_does_not_control_dataset_entries(self, mock_tokenizer):
         """Test that multi-turn settings do not affect num_dataset_entries."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-            ),
-            input=InputConfig(
-                conversation=ConversationConfig(num_dataset_entries=10, num=2),
-            ),
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=10,
+            conversation_num=2,
         )
 
-        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Verify that num_dataset_entries controls the number of conversations generated
@@ -556,9 +569,11 @@ class TestSyntheticDatasetComposer:
         self, synthetic_config, num_conversations, mock_tokenizer
     ):
         """Test dataset creation with different conversation counts."""
-        synthetic_config.input.conversation.num_dataset_entries = num_conversations
+        synthetic_config.conversation_num_dataset_entries = num_conversations
 
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Parametrized test for different num_conversations values
@@ -567,9 +582,11 @@ class TestSyntheticDatasetComposer:
     @pytest.mark.parametrize("batch_size", [1, 2, 5, 10])
     def test_different_batch_sizes(self, synthetic_config, batch_size, mock_tokenizer):
         """Test dataset creation with different batch sizes."""
-        synthetic_config.input.prompt.batch_size = batch_size
+        synthetic_config.prompt_batch_size = batch_size
 
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Parametrized test for different batch_size values
@@ -587,7 +604,9 @@ class TestSyntheticDatasetComposer:
 
     def test_missing_required_generators(self, synthetic_config, mock_tokenizer):
         """Test behavior when required generators are missing."""
-        composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
 
         # Test error handling when generators are not properly initialized
         # Simulate missing tokenizer in generator
@@ -600,22 +619,27 @@ class TestSyntheticDatasetComposer:
 
     def test_reproducibility_with_fixed_seed(self, multimodal_config, mock_tokenizer):
         """Test that dataset generation is reproducible with fixed random seed."""
-        multimodal_config.input.prompt.input_tokens.stddev = 2
-        multimodal_config.input.image.width.stddev = 2
-        multimodal_config.input.image.height.stddev = 2
-        multimodal_config.input.audio.length.stddev = 2
-        multimodal_config.input.conversation.turn = TurnConfig(
-            mean=2, stddev=2, delay=TurnDelayConfig(mean=1500, stddev=2)
-        )
+        multimodal_config.prompt_input_tokens_stddev = 2
+        multimodal_config.image_width_stddev = 2
+        multimodal_config.image_height_stddev = 2
+        multimodal_config.audio_length_stddev = 2
+        multimodal_config.conversation_turn_mean = 2
+        multimodal_config.conversation_turn_stddev = 2
+        multimodal_config.conversation_turn_delay_mean = 1500
+        multimodal_config.conversation_turn_delay_stddev = 2
 
         rng.reset()
         rng.init(42)
-        composer1 = SyntheticDatasetComposer(multimodal_config, mock_tokenizer)
+        composer1 = SyntheticDatasetComposer(
+            run=make_run(multimodal_config), tokenizer=mock_tokenizer
+        )
         conversations1 = composer1.create_dataset()
 
         rng.reset()
         rng.init(42)
-        composer2 = SyntheticDatasetComposer(multimodal_config, mock_tokenizer)
+        composer2 = SyntheticDatasetComposer(
+            run=make_run(multimodal_config), tokenizer=mock_tokenizer
+        )
         conversations2 = composer2.create_dataset()
 
         # Basic structure should be the same
@@ -638,11 +662,13 @@ class TestSyntheticDatasetComposer:
     # Model Selection Strategy Tests
     # ============================================================================
 
-    def test_model_selection_random(self, custom_config, mock_tokenizer):
+    def test_model_selection_random(self, synthetic_config, mock_tokenizer):
         """Test random model selection strategy."""
-        custom_config.endpoint.model_selection_strategy = "random"
-        custom_config.endpoint.model_names = ["test-model-1", "test-model-2"]
-        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        synthetic_config.model_selection_strategy = "random"
+        synthetic_config.model_names = ["test-model-1", "test-model-2"]
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
 
         conversations = composer.create_dataset()
 
@@ -651,11 +677,13 @@ class TestSyntheticDatasetComposer:
             for turn in conversation.turns:
                 assert turn.model in ["test-model-1", "test-model-2"]
 
-    def test_model_selection_round_robin(self, custom_config, mock_tokenizer):
-        custom_config.endpoint.model_selection_strategy = "round_robin"
-        custom_config.endpoint.model_names = ["test-model-1", "test-model-2"]
+    def test_model_selection_round_robin(self, synthetic_config, mock_tokenizer):
+        synthetic_config.model_selection_strategy = "round_robin"
+        synthetic_config.model_names = ["test-model-1", "test-model-2"]
 
-        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # Check that models are selected in round-robin fashion
@@ -668,11 +696,13 @@ class TestSyntheticDatasetComposer:
     # Max Token Tests
     # ============================================================================
 
-    def test_max_tokens_integration_with_mean(self, custom_config, mock_tokenizer):
-        custom_config.input.prompt.output_tokens.mean = 100
-        custom_config.input.prompt.output_tokens.stddev = 5.0
+    def test_max_tokens_integration_with_mean(self, synthetic_config, mock_tokenizer):
+        synthetic_config.prompt_output_tokens_mean = 100
+        synthetic_config.prompt_output_tokens_stddev = 5.0
 
-        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         # With global RNG, verify max_tokens is set to a positive integer
@@ -685,11 +715,13 @@ class TestSyntheticDatasetComposer:
                 # Should be roughly around the mean of 100 (within 3 stddev)
                 assert 85 <= turn.max_tokens <= 115
 
-    def test_max_tokens_not_set_when_mean_none(self, custom_config, mock_tokenizer):
-        custom_config.input.prompt.output_tokens.mean = None
-        custom_config.input.prompt.output_tokens.stddev = None
+    def test_max_tokens_not_set_when_mean_none(self, synthetic_config, mock_tokenizer):
+        synthetic_config.prompt_output_tokens_mean = None
+        synthetic_config.prompt_output_tokens_stddev = None
 
-        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
         conversations = composer.create_dataset()
 
         for conversation in conversations:

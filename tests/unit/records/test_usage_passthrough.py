@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.models import (
     ParsedResponse,
     RequestRecord,
@@ -19,6 +18,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.records.inference_result_parser import InferenceResultParser
 from tests.unit.records.conftest import create_test_request_info
 
@@ -34,13 +34,15 @@ def mock_tokenizer():
 @pytest.fixture
 def parser():
     """Create a parser with mocked endpoint."""
+    from tests.unit.conftest import make_run_from_cli
+
     mock_endpoint = MagicMock()
 
-    def mock_communication_init(self, service_config, **kwargs):
+    def mock_communication_init(self, run, **kwargs):
         from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
-        AIPerfLifecycleMixin.__init__(self, service_config=service_config, **kwargs)
-        self.service_config = service_config
+        AIPerfLifecycleMixin.__init__(self, **kwargs)
+        self.run = run
         for method in [
             "trace_or_debug",
             "debug",
@@ -51,12 +53,13 @@ def parser():
         ]:
             setattr(self, method, MagicMock())
 
+    cli_config = CLIConfig(
+        model_names=["test-model"],
+    )
+
     with (
         patch(
             "aiperf.common.mixins.CommunicationMixin.__init__", mock_communication_init
-        ),
-        patch(
-            "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
         ),
         patch(
             "aiperf.plugin.plugins.get_class",
@@ -64,13 +67,7 @@ def parser():
         ),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
-        parser = InferenceResultParser(
-            service_config=ServiceConfig(),
-            user_config=UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(),
-            ),
-        )
+        parser = InferenceResultParser(run=make_run_from_cli(cli_config))
         parser.endpoint = mock_endpoint
         return parser
 

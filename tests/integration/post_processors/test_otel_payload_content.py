@@ -26,12 +26,14 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
-from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
-    ExportMetricsServiceRequest,
-)
 
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
+
+metrics_service_pb2 = pytest.importorskip(
+    "opentelemetry.proto.collector.metrics.v1.metrics_service_pb2"
+)
+ExportMetricsServiceRequest = metrics_service_pb2.ExportMetricsServiceRequest
 
 
 class _DecodingOTLPSinkHandler(BaseHTTPRequestHandler):
@@ -123,7 +125,8 @@ def _histograms_with_data_points(
     return counts
 
 
-@pytest.mark.component_integration
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.asyncio
 class TestOTelPayloadContent:
     """Decode real OTLP payloads and assert the shape a Collector would see."""

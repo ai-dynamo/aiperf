@@ -14,7 +14,6 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import GPUTelemetryMode, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import StartRealtimeTelemetryCommand
@@ -29,6 +28,7 @@ from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
 
 if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.controller.system_controller import SystemController
 
 
@@ -90,9 +90,7 @@ class AIPerfTextualApp(App):
         Binding("c", "copy_logs", "Copy Logs"),
     ]
 
-    def __init__(
-        self, service_config: ServiceConfig, controller: SystemController
-    ) -> None:
+    def __init__(self, run: BenchmarkRun, controller: SystemController) -> None:
         super().__init__()
 
         self.title = "NVIDIA AIPerf"
@@ -106,7 +104,7 @@ class AIPerfTextualApp(App):
         self.realtime_metrics_dashboard: RealtimeMetricsDashboard | None = None
         self.realtime_telemetry_dashboard: RealtimeTelemetryDashboard | None = None
         self.profile_results: list[RenderableType] = []
-        self.service_config = service_config
+        self.run = run
         self.controller: SystemController = controller
         self._warmup_stats: CombinedPhaseStats | None = None
         self._profiling_stats: CombinedPhaseStats | None = None
@@ -144,7 +142,7 @@ class AIPerfTextualApp(App):
 
                     with Container(id="metrics-section"):
                         self.realtime_metrics_dashboard = RealtimeMetricsDashboard(
-                            service_config=self.service_config, id="metrics"
+                            run=self.run, id="metrics"
                         )
                         yield self.realtime_metrics_dashboard
 
@@ -154,7 +152,7 @@ class AIPerfTextualApp(App):
 
             with Container(id="telemetry-section", classes="hidden"):
                 self.realtime_telemetry_dashboard = RealtimeTelemetryDashboard(
-                    service_config=self.service_config, id="telemetry"
+                    run=self.run, id="telemetry"
                 )
                 yield self.realtime_telemetry_dashboard
 
@@ -204,10 +202,10 @@ class AIPerfTextualApp(App):
     async def action_toggle_maximize_telemetry(self) -> None:
         """Toggle the maximize state of the telemetry panel and enable realtime GPU telemetry if needed."""
         if (
-            self.controller.user_config.gpu_telemetry_mode
+            self.controller.run.cfg.gpu_telemetry_mode
             != GPUTelemetryMode.REALTIME_DASHBOARD
         ):
-            self.controller.user_config.gpu_telemetry_mode = (
+            self.controller.run.cfg.gpu_telemetry_mode = (
                 GPUTelemetryMode.REALTIME_DASHBOARD
             )
             if self.realtime_telemetry_dashboard:

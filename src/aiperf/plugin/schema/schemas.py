@@ -458,9 +458,31 @@ class GPUTelemetryCollectorMetadata(BaseModel):
     as an in-process collector keyword instead of a DCGM URL. Native binding
     validation lives on the collector class itself via ``validate_environment``
     so each implementation owns its own dependency check.
+
+    Referenced by: categories.yaml gpu_telemetry_collector.metadata_class
+    Used in: plugins.yaml gpu_telemetry_collector entries
     """
 
     is_local: bool = Field(
         default=False,
         description="Whether this collector runs in-process against the local host.",
     )
+
+
+# =============================================================================
+# Re-exports
+# =============================================================================
+# Orchestrator metadata classes live in `_orchestrator_schemas.py`; re-exported
+# here so plugins.yaml references like
+# ``metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata``
+# keep resolving.
+from aiperf.plugin.schema._orchestrator_schemas import (  # noqa: E402
+    ConvergenceCriterionMetadata,
+    SearchPlannerMetadata,
+)
+
+__all__ = [
+    "ConvergenceCriterionMetadata",
+    "GPUTelemetryCollectorMetadata",
+    "SearchPlannerMetadata",
+]
