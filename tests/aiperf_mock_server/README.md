@@ -574,18 +574,50 @@ flowchart LR
 **Summary** — `<PATH>.summary.json` and stdout, per endpoint:
 
 ```
-Request distribution summary (5000 requests):
-----------------------------------------------------------------------------------------
-  /v1/chat/completions              n=  4000  ISL mean= 1024.3 p50=  1019 p99=  1228  OSL mean=  256.1 p50=   256 p99=   307
+Request distribution (5000 requests)
+──────────────────────────────────────────────────────────────────────────────────────────
+  /v1/chat/completions              n=  4000
+    ISL    mean  1024.3   p50  1019   p99  1228
+    OSL    mean   256.1   p50   256   p99   307
+    ISL histogram (17 bins, n=4000, 52 unique)
+       207-  302   7 ████░░░░░░░░░░░░░░░░
+       302-  397   6 ███░░░░░░░░░░░░░░░░░
+       ... (17 rows total)
+      1726- 1821   1 ░░░░░░░░░░░░░░░░░░░░
+    OSL histogram (10 bins, n=4000, 11 unique)
+        25-   46   3 ██░░░░░░░░░░░░░░░░░░
+        ... (10 rows total)
+       210-  230   6 ████░░░░░░░░░░░░░░░░
       min_tokens mean=    32.0 p50=    32
       ignore_eos=true: 41
       reasoning_effort: {'low': 100, 'medium': 250, 'high': 50}
-  /v1/embeddings                    n=  1000  ISL mean=  512.7 p50=   510 p99=   683  OSL n/a
+  /v1/embeddings                    n=  1000
+    ISL    mean   512.7   p50   510   p99   683
+    OSL    n/a
 ```
 
 For each endpoint the JSON file contains:
 - `count`, `streamed_count`, `ignore_eos_count`, `reasoning_effort_counts` (categorical tallies).
-- Quantile blocks (`min`, `max`, `mean`, `stdev`, `p50/p90/p95/p99`) for `isl`, `requested_osl`, and `min_tokens`. A block is `null` when no request set that field.
+- Quantile blocks for `isl`, `requested_osl`, and `min_tokens`. A block is `null` when no request set that field. Each block contains:
+  - `min`, `max`, `mean`, `stdev`, `p50`, `p90`, `p95`, `p99`
+  - `unique_values` — count of distinct values observed for this metric.
+  - `histogram` — equal-width histogram with parallel `bin_edges` (length N+1) and `counts` (length N). `null` when no values were observed (e.g. `requested_osl` on embeddings). Bucket count: `num_bins = max(10, ceil((max - min) / 100))`.
+
+Example quantile block:
+
+```json
+"isl": {
+  "min": 207.0, "max": 1821.0, "mean": 1010.48, "stdev": 480.80,
+  "p50": 997.5, "p90": 1684.8, "p95": 1745.55, "p99": 1819.02,
+  "unique_values": 19,
+  "histogram": {
+    "bin_edges": [207.0, 301.94, 396.88, 491.82, 586.76, 681.71, 776.65,
+                  871.59, 966.53, 1061.47, 1156.41, 1251.35, 1346.29,
+                  1441.24, 1536.18, 1631.12, 1726.06, 1821.0],
+    "counts":    [7, 6, 5, 4, 6, 8, 7, 10, 11, 9, 8, 6, 5, 4, 3, 1, 0]
+  }
+}
+```
 
 Stats come from stdlib `statistics` — no numpy/pandas dependency.
 
