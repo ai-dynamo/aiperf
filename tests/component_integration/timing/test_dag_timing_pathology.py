@@ -572,6 +572,8 @@ async def test_orchestrator_very_wide_fan_out_1000_children() -> None:
     issuer.dispatch_join_turn.assert_awaited_once()
 
 
+@pytest.mark.slow
+@pytest.mark.stress
 @pytest.mark.asyncio
 async def test_orchestrator_high_k_10000_intermediate_turns_no_suspension() -> None:
     """K=10000: parent has 10000 turns between spawn (0) and gate. Children

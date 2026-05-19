@@ -202,6 +202,7 @@ class TestDatasetSamplingStrategies:
                 f"Session {session_id} appeared {count} times, expected 3"
             )
 
+    @pytest.mark.slow
     def test_sampling_with_multi_turn(self, cli: AIPerfCLI):
         """Test sampling strategies with multi-turn conversations."""
         result = cli.run_sync(

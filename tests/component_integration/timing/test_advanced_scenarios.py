@@ -128,6 +128,7 @@ class TestRequestCancellationRate:
     """
 
     @pytest.mark.slow
+    @pytest.mark.stress
     def test_cancellation_rate_multi_turn_basic(self, cli: AIPerfCLI):
         """Test that request timeout rate applies per-turn in multi-turn sessions.
 

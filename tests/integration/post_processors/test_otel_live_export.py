@@ -60,7 +60,8 @@ def otlp_sink() -> tuple[_OTLPSinkServer, int]:
     thread.join(timeout=5)
 
 
-@pytest.mark.component_integration
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.asyncio
 class TestOTelLiveExport:
     """Verify that OTel metrics are exported during a live run, not only at shutdown."""

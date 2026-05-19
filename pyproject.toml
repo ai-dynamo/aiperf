@@ -85,7 +85,7 @@ otel = [
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
 dev = [
-  "aiperf[botorch,mlflow,otel]",
+  "aiperf[mlflow,otel]",
   "black>=25.1.0",
   "httpx>=0.27.0",
   "hypothesis>=6.0.0",
@@ -195,6 +195,7 @@ markers = [
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
+    "network: marks tests that require network access",
 ]
 # Better console output
 console_output_style = "progress"
@@ -206,10 +207,22 @@ verbosity_assertions = 2
 addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
+    "ignore:.*torch.jit.script.*:DeprecationWarning",
     "ignore::RuntimeWarning:looptime",
     "ignore:There is no current event loop:DeprecationWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
     "ignore:unclosed file:ResourceWarning",
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:BoTorchSampler is experimental.*:optuna.exceptions.ExperimentalWarning",
+    "ignore:GPSampler is experimental.*:optuna.exceptions.ExperimentalWarning",
+    "ignore:Argument ``constraints_func`` is an experimental feature.*:optuna.exceptions.ExperimentalWarning",
+    "ignore:ORJSONResponse is deprecated.*:fastapi.exceptions.FastAPIDeprecationWarning",
+    "ignore:CUDA initialization.*The NVIDIA driver on your system is too old.*:UserWarning",
+    "ignore:The model inputs are of type torch.float32.*:botorch.exceptions.warnings.InputDataWarning",
+    "ignore:Optimization failed in `gen_candidates_scipy`.*:RuntimeWarning",
+    "ignore:Optimization failed on the second try.*:RuntimeWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
 ]
 
 [tool.codespell]
