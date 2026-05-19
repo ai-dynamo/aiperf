@@ -8,6 +8,7 @@ TCP connector for use with aiohttp.ClientSession.
 
 import socket
 import ssl
+import sys
 from unittest.mock import Mock, patch
 
 import aiohttp
@@ -113,9 +114,15 @@ class TestCreateTcpConnector:
             expected_calls = [
                 (socket.SOL_TCP, socket.TCP_NODELAY, 1),
                 (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-                (socket.SOL_SOCKET, socket.SO_RCVBUF, Environment.HTTP.SO_RCVBUF),
-                (socket.SOL_SOCKET, socket.SO_SNDBUF, Environment.HTTP.SO_SNDBUF),
             ]
+            # SO_SNDBUF/SO_RCVBUF are deliberately not set on Windows because
+            # setting them disables TCP Auto-Tuning (which on Windows causes
+            # 9+ minute stalls). See http_defaults.py for the production gate.
+            if sys.platform != "win32":
+                expected_calls += [
+                    (socket.SOL_SOCKET, socket.SO_RCVBUF, Environment.HTTP.SO_RCVBUF),
+                    (socket.SOL_SOCKET, socket.SO_SNDBUF, Environment.HTTP.SO_SNDBUF),
+                ]
 
             for option_level, option_name, option_value in expected_calls:
                 mock_socket.setsockopt.assert_any_call(

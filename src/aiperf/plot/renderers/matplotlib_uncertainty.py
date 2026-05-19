@@ -4,10 +4,21 @@
 
 import math
 
-import matplotlib.figure
-import matplotlib.patches
-import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib
+
+# Force the non-interactive Agg backend before pyplot import. Renderers
+# return figures that callers save to disk; we never need a GUI window.
+# On Windows, the default TkAgg backend requires a working Tcl install,
+# and uv-managed CPython on Windows ships a Tcl tree that the system
+# can't always locate, producing a misleading TclError that masquerades
+# as a rendering bug. Forcing Agg makes the renderer headless-safe on
+# every platform.
+matplotlib.use("Agg")
+
+import matplotlib.figure  # noqa: E402
+import matplotlib.patches  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 
 from aiperf.plot.constants import (
     DARK_THEME_COLORS,

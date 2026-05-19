@@ -49,9 +49,6 @@ def main() -> None:
     Usage:
         python -m aiperf.orchestrator.subprocess_runner /path/to/run_config.json
     """
-    if IS_WINDOWS:
-        _release_inherited_pipes_on_windows()
-
     if len(sys.argv) != 2:
         print(
             "Usage: python -m aiperf.orchestrator.subprocess_runner <run_config.json>",
@@ -96,4 +93,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Release inherited pipe handles only when actually run as a subprocess
+    # (`python -m aiperf.orchestrator.subprocess_runner ...`). Calling
+    # ``main()`` from unit tests must NOT redirect stderr — pytest's capsys
+    # needs to see the error prints, and there are no inherited pipes to
+    # release in an in-process call.
+    if IS_WINDOWS:
+        _release_inherited_pipes_on_windows()
     main()

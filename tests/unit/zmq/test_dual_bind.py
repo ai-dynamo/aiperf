@@ -261,6 +261,9 @@ class TestZMQDualBindConfig:
         # Raw inference proxy is intentionally always local (within-pod IPC).
         # Workers and record processors are co-located in the same pod, so the
         # remote_host is ignored for those endpoints.
+        # On Windows, ZMQ does not support ipc://, so even "local-only"
+        # endpoints fall back to tcp://127.0.0.1:<hashed-port>. Accept either
+        # ipc:// (POSIX) or 127.0.0.1 TCP loopback (Windows) for local addrs.
         local_only_addresses = {
             CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
             CommAddress.RAW_INFERENCE_PROXY_BACKEND,
@@ -269,8 +272,10 @@ class TestZMQDualBindConfig:
         for addr_type in CommAddress:
             addr = remote_config.get_address(addr_type)
             if addr_type in local_only_addresses:
-                assert addr.startswith("ipc://"), (
-                    f"{addr_type} should remain IPC even in remote mode"
+                assert addr.startswith("ipc://") or addr.startswith(
+                    "tcp://127.0.0.1:"
+                ), (
+                    f"{addr_type} should remain local (ipc:// or tcp://127.0.0.1) even in remote mode, got {addr}"
                 )
             else:
                 assert addr.startswith("tcp://"), (
