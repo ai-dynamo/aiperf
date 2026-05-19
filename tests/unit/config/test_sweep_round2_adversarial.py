@@ -34,6 +34,8 @@ from aiperf.config.sweep import (
 )
 from aiperf.config.sweep.adaptive import SearchSpaceDimension
 
+pytestmark = pytest.mark.stress
+
 # -- H9: QMC body-rooting ---------------------------------------------------
 
 

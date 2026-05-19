@@ -22,6 +22,8 @@ from pydantic import ValidationError
 from aiperf.config.loader.core import load_config_from_string
 from aiperf.config.loader.errors import ConfigurationError
 
+pytestmark = pytest.mark.stress
+
 _VALID_BENCHMARK = textwrap.dedent("""\
 benchmark:
   models: [llama]

@@ -54,6 +54,8 @@ from aiperf.metrics.types.usage_metrics import (
     UsageTotalTokensMetric,
 )
 
+pytestmark = pytest.mark.stress
+
 # Verbatim usage payloads from each supported vendor's API documentation,
 # trimmed to the `usage` field of a real response. These exercise the full
 # normalization + property pipeline against shapes the model encounters in

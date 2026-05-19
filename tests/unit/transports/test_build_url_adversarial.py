@@ -21,6 +21,8 @@ from aiperf.transports.aiohttp_transport import AioHttpTransport
 from tests.unit.transports.conftest import create_model_endpoint_info
 from tests.unit.transports.test_aiohttp_transport import create_request_info
 
+pytestmark = pytest.mark.stress
+
 
 def _get_url(base_url: str, custom_endpoint: str | None) -> str:
     """Build a transport, call get_url, and return the result."""

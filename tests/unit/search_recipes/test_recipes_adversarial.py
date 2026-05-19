@@ -28,6 +28,8 @@ from aiperf.search_recipes.post_process import (
     TTFTCurveFit,
 )
 
+pytestmark = pytest.mark.stress
+
 
 def _pareto_params() -> dict[str, Any]:
     return {

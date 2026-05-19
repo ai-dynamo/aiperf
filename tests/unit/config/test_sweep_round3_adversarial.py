@@ -35,6 +35,8 @@ from aiperf.config.sweep.adaptive import SearchSpaceDimension
 from aiperf.config.sweep.expand import _set_nested_value
 from aiperf.plugin.enums import SearchPlannerType
 
+pytestmark = pytest.mark.stress
+
 # -- H15: _set_nested_value clear-error fix --------------------------------
 
 
