@@ -76,9 +76,11 @@ class TestCoreFunctionality:
         self, custom_config, mock_tokenizer
     ):
         dataset_type = CustomDatasetType("speed_bench_coding")
-        custom_config.input.custom_dataset_type = dataset_type
+        custom_config.custom_dataset_type = dataset_type
 
-        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
         composer._create_loader_instance(dataset_type)
 
         assert isinstance(composer.loader, SpeedBenchLoader)
