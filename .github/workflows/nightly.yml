@@ -524,17 +524,12 @@ jobs:
           # Fresh venv — separate from .venv-check-{orig,nightly} above so
           # the install/uninstall state of one cannot bleed into the other.
           uv venv .venv-wheel-tests
-          uv pip install --python .venv-wheel-tests/bin/python "${NIGHTLY}"
-          # Test deps the wheel does not carry (not in Requires-Dist).
-          # looptime is required by the auto-fixture in tests/conftest.py that
-          # makes asyncio.sleep run instantly. trustme is used by transport
-          # tests for TLS certificate fixtures. httpx is pulled in by
-          # tests/unit/api and tests/unit/server, which use Starlette/FastAPI
-          # TestClient and httpx.AsyncClient directly (collection-time import).
-          uv pip install --python .venv-wheel-tests/bin/python \
-            'pytest>=7.0.0' pytest-asyncio 'pytest-xdist>=3.8.0' \
-            'hypothesis>=6.0.0' 'looptime>=0.5' 'trustme>=1.0.0' \
-            'httpx>=0.27.0'
+          # Install the wheel together with its [test] extra. The extra
+          # bundles every test-runtime dep (pytest, pytest-asyncio,
+          # pytest-xdist, pytest-cov, hypothesis, looptime, trustme, httpx,
+          # jsonschema), so test deps stay in lockstep with pyproject.toml
+          # instead of drifting from a hand-curated list here.
+          uv pip install --python .venv-wheel-tests/bin/python "${NIGHTLY}[test]"
           # tests/unit/conftest.py loads tests.harness, which in turn imports
           # the `aiperf_mock_server` package. The package is dev-only and
           # not in the wheel; install it editable from the in-tree source.

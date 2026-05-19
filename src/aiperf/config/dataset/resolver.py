@@ -290,6 +290,11 @@ class DatasetResolver:
 
         if dataset_type == CustomDatasetType.SAGEMAKER_DATA_CAPTURE:
             return True
+        if dataset_type == CustomDatasetType.BURST_GPT_TRACE:
+            # BurstGPT is CSV; the loader enforces a ``Timestamp`` column at
+            # load time (see ``BurstGPTTraceDatasetLoader._REQUIRED_COLUMNS``),
+            # so the dataset cannot load without timing.
+            return True
 
         record = first_record
         if record is None:

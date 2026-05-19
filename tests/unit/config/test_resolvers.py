@@ -496,6 +496,47 @@ class TestDatasetResolver:
         assert run.resolved.dataset_is_forking == {"profiling": False}
         assert run.resolved.dataset_root_count is None
 
+    def test_burst_gpt_csv_reports_timing_data(self, tmp_path):
+        """BurstGPT CSVs always carry a ``Timestamp`` column; the resolver
+        must report ``has_timing=True`` so ``--fixed-schedule`` is accepted.
+
+        Regression: the JSONL-only first-record probe in ``_check_timing_data``
+        could not parse a CSV header and silently returned False, blocking
+        the BurstGPT tutorial's ``aiperf profile … --fixed-schedule`` run.
+        """
+        dataset_file = tmp_path / "burst_gpt.csv"
+        dataset_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "0.123,gpt-4,512,128,640,chat\n"
+            "0.456,gpt-4,300,80,380,chat\n"
+        )
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "file",
+                    "path": str(dataset_file),
+                    "format": "burst_gpt_trace",
+                }
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "fixed_schedule",
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+        # Pair with TimingResolver to confirm fixed_schedule validation passes.
+        TimingResolver().resolve(run)
+
 
 # ---------------------------------------------------------------------------
 # TimingResolver
