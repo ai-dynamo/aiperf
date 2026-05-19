@@ -22,6 +22,7 @@ import logging
 import math
 import statistics
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any
 
@@ -274,6 +275,55 @@ def _compute_shape_80(counts: Counter[int], vocab_size: int) -> list[int]:
             idx = 79  # float-drift guard, mirrors `_histogram`
         shape[idx] += count
     return shape
+
+
+def _vocab_distribution(
+    counts: Counter[int],
+    vocab_size: int,
+    source: str,
+    decode_fn: Callable[[int], str],
+) -> dict[str, Any] | None:
+    """Build the vocab_distribution JSON block, or None if there are no observations.
+
+    `decode_fn` maps a token id to its text representation. If `decode_fn`
+    raises for a given id, that entry in `top_tokens` falls back to
+    ``"<id=N>"``.
+    """
+    total = sum(counts.values())
+    if total == 0:
+        return None
+
+    sorted_items = counts.most_common(10)
+    top_tokens: list[dict[str, Any]] = []
+    for token_id, count in sorted_items:
+        try:
+            text = decode_fn(token_id)
+        except Exception:
+            text = f"<id={token_id}>"
+        top_tokens.append({"id": int(token_id), "text": text, "count": int(count)})
+
+    top_10_count = sum(count for _, count in sorted_items)
+    top_10_concentration_pct = round(top_10_count / total * 100, 4)
+
+    entropy_bits = 0.0
+    for count in counts.values():
+        p = count / total
+        entropy_bits -= p * math.log2(p)
+    max_entropy_bits = math.log2(vocab_size) if vocab_size > 1 else 0.0
+
+    return {
+        "vocab_size": int(vocab_size),
+        "vocab_size_source": source,
+        "unique_ids": len(counts),
+        "coverage_pct": round(len(counts) / vocab_size * 100, 4) if vocab_size else 0.0,
+        "total_tokens": int(total),
+        "top_10_concentration_pct": top_10_concentration_pct,
+        "entropy_bits": round(entropy_bits, 4),
+        "max_entropy_bits": max_entropy_bits,
+        "top_tokens": top_tokens,
+        "shape_80": _compute_shape_80(counts, vocab_size),
+        "frequencies": {str(tid): int(c) for tid, c in counts.items()},
+    }
 
 
 def _quantiles(values: list[int]) -> dict[str, float] | None:

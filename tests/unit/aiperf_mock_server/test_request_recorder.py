@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the request-recorder helpers."""
 
+import math
 from collections import Counter, defaultdict
 
 import pytest
@@ -12,6 +13,7 @@ from aiperf_mock_server.request_recorder import (
     _histogram,
     _print_summary,
     _render_histogram,
+    _vocab_distribution,
 )
 from pytest import param
 
@@ -396,3 +398,98 @@ class TestComputeShape80:
         shape = _compute_shape_80(Counter({100: 5, 99: 3}), 100)
         assert shape[-1] == 3  # id=99 (last valid)
         assert sum(shape) == 3  # id=100 dropped
+
+
+def _id_to_text(i: int) -> str:
+    return f"<tok-{i}>"
+
+
+class TestVocabDistribution:
+    def test_returns_none_for_empty_counter(self) -> None:
+        assert _vocab_distribution(Counter(), 100, "tokenizer", _id_to_text) is None
+
+    def test_unique_ids_and_coverage_pct(self) -> None:
+        vd = _vocab_distribution(
+            Counter({1: 5, 2: 5, 3: 5}), 1000, "tokenizer", _id_to_text
+        )
+        assert vd is not None
+        assert vd["vocab_size"] == 1000
+        assert vd["vocab_size_source"] == "tokenizer"
+        assert vd["unique_ids"] == 3
+        assert vd["coverage_pct"] == 0.3
+        assert vd["total_tokens"] == 15
+
+    def test_top_tokens_length_caps_at_10(self) -> None:
+        counts = Counter({i: 100 - i for i in range(20)})
+        vd = _vocab_distribution(counts, 100, "tokenizer", _id_to_text)
+        assert vd is not None
+        assert len(vd["top_tokens"]) == 10
+        # Sorted descending by count
+        assert vd["top_tokens"][0]["count"] >= vd["top_tokens"][-1]["count"]
+        assert vd["top_tokens"][0] == {"id": 0, "text": "<tok-0>", "count": 100}
+
+    def test_top_tokens_length_matches_unique_when_below_ten(self) -> None:
+        vd = _vocab_distribution(Counter({1: 3, 2: 2}), 100, "tokenizer", _id_to_text)
+        assert vd is not None
+        assert len(vd["top_tokens"]) == 2
+
+    def test_top_tokens_falls_back_to_id_marker_when_decode_raises(self) -> None:
+        def raising_decode(i: int) -> str:
+            if i == 7:
+                raise RuntimeError("boom")
+            return f"<tok-{i}>"
+
+        vd = _vocab_distribution(
+            Counter({7: 100, 8: 50}), 100, "tokenizer", raising_decode
+        )
+        assert vd is not None
+        # id 7 was the most frequent, so it appears first in top_tokens.
+        assert vd["top_tokens"][0] == {"id": 7, "text": "<id=7>", "count": 100}
+        assert vd["top_tokens"][1] == {"id": 8, "text": "<tok-8>", "count": 50}
+
+    def test_top_10_concentration_pct(self) -> None:
+        # Top 10 of these 11 ids account for 1000 of 1010 total = 99.0099%
+        counts = Counter({i: 100 for i in range(10)})
+        counts[99] = 10
+        vd = _vocab_distribution(counts, 100, "tokenizer", _id_to_text)
+        assert vd is not None
+        assert abs(vd["top_10_concentration_pct"] - 99.0099) < 0.01
+
+    def test_entropy_zero_for_single_token(self) -> None:
+        vd = _vocab_distribution(Counter({42: 100}), 1000, "tokenizer", _id_to_text)
+        assert vd is not None
+        assert vd["entropy_bits"] == 0.0
+        assert vd["max_entropy_bits"] == pytest.approx(math.log2(1000))
+
+    def test_entropy_at_max_for_uniform_sampling(self) -> None:
+        # Perfectly uniform sampling over the full vocab -> entropy_bits == log2(V).
+        counts = Counter({i: 5 for i in range(64)})
+        vd = _vocab_distribution(counts, 64, "tokenizer", _id_to_text)
+        assert vd is not None
+        assert vd["entropy_bits"] == pytest.approx(math.log2(64))
+        assert vd["max_entropy_bits"] == pytest.approx(math.log2(64))
+
+    def test_shape_80_length(self) -> None:
+        counts = Counter({i: 1 for i in range(80)})
+        vd = _vocab_distribution(counts, 80, "tokenizer", _id_to_text)
+        assert vd is not None
+        assert len(vd["shape_80"]) == 80
+        assert sum(vd["shape_80"]) == 80
+
+    def test_frequencies_full_table_with_string_keys(self) -> None:
+        counts = Counter({1: 5, 2: 3, 99: 1})
+        vd = _vocab_distribution(counts, 100, "tokenizer", _id_to_text)
+        assert vd is not None
+        # JSON dict keys must be strings.
+        assert vd["frequencies"] == {"1": 5, "2": 3, "99": 1}
+
+    def test_vocab_size_source_observed_path_uses_max_id_plus_one(self) -> None:
+        # When source == "observed" we don't trust the passed vocab_size if
+        # max(observed) >= it. The helper should report the source verbatim
+        # and use vocab_size as given for coverage math. Observed-fallback
+        # responsibility lives in the caller (open()/record() machinery), so
+        # this test just asserts the field is passed through.
+        vd = _vocab_distribution(Counter({1: 1, 5: 1}), 10, "observed", _id_to_text)
+        assert vd is not None
+        assert vd["vocab_size_source"] == "observed"
+        assert vd["vocab_size"] == 10
