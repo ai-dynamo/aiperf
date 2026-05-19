@@ -984,6 +984,34 @@ jobs:
           echo "GitLab security scan triggered: pipeline ID ${PIPELINE_ID}"
 
   # ============================================================================
+  # PHASE 5b: WEIGHT-DRIFT SUGGESTION (informational, never blocks)
+  # tools/suggest_test_docs_weights.py walks the test-docs matrix logs and
+  # writes a markdown table of `weight=` recommendations to the job summary.
+  # ============================================================================
+
+  suggest-shard-weights:
+    name: Suggest Shard Weights (drift report)
+    needs: [prepare-nightly, test-docs-end-to-end]
+    if: ${{ always() && needs.test-docs-end-to-end.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    # Informational only: a failure here must never block the rest of the pipeline.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Generate weight-suggestion report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/suggest_test_docs_weights.py \
+            --run-id "${GITHUB_RUN_ID}" \
+            --output "${GITHUB_STEP_SUMMARY}"
+
+  # ============================================================================
   # PHASE 6: SUMMARY
   # ============================================================================
 

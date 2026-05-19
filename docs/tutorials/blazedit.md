@@ -51,7 +51,7 @@ entire modified file, producing thousands of output tokens per request.
 
 **5k character variant:**
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=150 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -104,7 +104,7 @@ aiperf profile \
 
 **10k character variant:**
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=900 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
