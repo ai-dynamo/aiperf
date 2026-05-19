@@ -83,6 +83,7 @@ jobs:
       base_version:           ${{ steps.version.outputs.base_version }}
       run_timestamp:          ${{ steps.version.outputs.run_timestamp }}
       resolved_sha:           ${{ steps.version.outputs.resolved_sha }}
+      stage_subpath:          ${{ steps.version.outputs.stage_subpath }}
       release:                ${{ steps.release.outputs.release }}
     steps:
       # TEMPORARY: branch gates point at harrison/fix-nightly so the
@@ -159,14 +160,31 @@ jobs:
             # summary, Slack notification, and forwarded to the GitLab scan. It
             # is NOT a git tag — nothing in this workflow pushes a git tag.
             NIGHTLY_TAG="AIPerf Nightlies"
-            # Example: nightly-20260423-33d7011
-            CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
-            # PEP 440 dev version, date-stamped. Example:
-            # 0.8.0.dev20260423 → aiperf-0.8.0.dev20260423-py3-none-any.whl
-            # The commit SHA is tracked separately in the wheel METADATA
-            # (Project-URL: Repository) and inside the wheel as
-            # `aiperf/_build_info.py` — see the build-container job below.
-            WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+
+            # Scheduled vs manual disambiguation:
+            #   - Scheduled (cron):
+            #       WHEEL_VERSION = <base>.dev<YYYYMMDD>
+            #       STAGE_SUBPATH = nightly/<YYYYMMDD>
+            #       CONTAINER_TAG = nightly-<YYYYMMDD>-<sha7>
+            #   - Manual (workflow_dispatch):
+            #       WHEEL_VERSION = <base>.dev<YYYYMMDD>+manual.<run_id>
+            #         (PEP 440 local-version suffix so each manual build is
+            #          independently addressable; non-local scheduled wheel
+            #          stays the default for `pip install aiperf-nightly`)
+            #       STAGE_SUBPATH = nightly-manual/<YYYYMMDD>/<run_id>
+            #       CONTAINER_TAG = nightly-manual-<YYYYMMDD>-<sha7>-<run_id>
+            # github.run_id is stable across re-attempts of the same run, so
+            # an attempt-2 rerun produces the same identifiers (combined with
+            # the version-info.env restore above).
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+              WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+manual.${GITHUB_RUN_ID}"
+              STAGE_SUBPATH="nightly-manual/${TIMESTAMP}/${GITHUB_RUN_ID}"
+              CONTAINER_TAG="nightly-manual-${TIMESTAMP}-${SHORT_SHA}-${GITHUB_RUN_ID}"
+            else
+              WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+              STAGE_SUBPATH="nightly/${TIMESTAMP}"
+              CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
+            fi
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
             # PEP 491: the dist name "aiperf-nightly" escapes to "aiperf_nightly"
@@ -183,6 +201,7 @@ jobs:
           echo "base_version=${BASE_VERSION}"                     >> "$GITHUB_OUTPUT"
           echo "run_timestamp=${TIMESTAMP:-reused}"               >> "$GITHUB_OUTPUT"
           echo "resolved_sha=${FULL_SHA}"                         >> "$GITHUB_OUTPUT"
+          echo "stage_subpath=${STAGE_SUBPATH}"                   >> "$GITHUB_OUTPUT"
 
           mkdir -p .nightly-version
           # Values are single-quoted because NIGHTLY_TAG contains whitespace
@@ -196,6 +215,7 @@ jobs:
             echo "BASE_VERSION='${BASE_VERSION}'"
             echo "TIMESTAMP='${TIMESTAMP:-reused}'"
             echo "FULL_SHA='${FULL_SHA}'"
+            echo "STAGE_SUBPATH='${STAGE_SUBPATH}'"
           } > .nightly-version/version-info.env
 
       - name: Save version artifact
@@ -813,18 +833,21 @@ jobs:
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
+          # NGC destination repo is `aiperf-nightly` to mirror the PyPI
+          # naming (`aiperf` canonical dist / `aiperf-nightly` nightly dist).
+          # ECR source side stays `aiperf` — only the staging target renames.
           for ARCH in amd64 arm64; do
             crane copy \
               "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-${ARCH}"
+              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-${ARCH}"
           done
 
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}" 2>/dev/null || true
+          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}" 2>/dev/null || true
           crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-arm64" \
+            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
+          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
@@ -845,6 +868,7 @@ jobs:
           WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
+          STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
@@ -863,11 +887,10 @@ jobs:
             # (/api/pypi/) does not accept sub-path deploys — it expects the
             # repo root URL. ARTIFACTORY_URL must be the generic repo base:
             # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
-            # Wheels land under nightly/<YYYYMMDD>/ so the date in the wheel
-            # filename (e.g. aiperf-0.8.0.dev20260518-...whl) matches the
-            # folder name by construction — both come from TIMESTAMP, which
-            # prepare-nightly computes once and pins for the whole run.
-            TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${TIMESTAMP}/${FN}"
+            # STAGE_SUBPATH is set in prepare-nightly: scheduled nightlies
+            # land under "nightly/<YYYYMMDD>/", manual dispatches under
+            # "nightly-manual/<YYYYMMDD>/<run_id>/" so they don't collide.
+            TARGET_URL="${ARTIFACTORY_URL%/}/${STAGE_SUBPATH}/${FN}"
             BODY_FILE=$(mktemp)
             HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
               -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
@@ -881,27 +904,13 @@ jobs:
             echo "Wheel staged to Artifactory: ${TARGET_URL}"
           done
 
-          # Generic deploys bypass Artifactory's PyPI metadata extractor, so
-          # the simple index does not auto-update — `pip install aiperf-nightly`
-          # would not see the new wheel until the next manual recalc. Trigger
-          # a reindex explicitly. Derive the API URL from ARTIFACTORY_URL
-          # (which is the generic repo base, https://<host>/artifactory/<repo>):
-          # split off the trailing repo name and rejoin under /api/pypi/<repo>/.
-          ART_REPO="${ARTIFACTORY_URL##*/}"
-          ART_BASE="${ARTIFACTORY_URL%/*}"
-          REINDEX_URL="${ART_BASE}/api/pypi/${ART_REPO}/reindex"
-          BODY_FILE=$(mktemp)
-          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
-            -X POST \
-            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
-            "${REINDEX_URL}")
-          # Artifactory returns 200 (sync recalc) or 202 (queued); both OK.
-          if [ "${HTTP_CODE}" != "200" ] && [ "${HTTP_CODE}" != "202" ]; then
-            echo "::error::Artifactory PyPI reindex failed: HTTP ${HTTP_CODE} at ${REINDEX_URL}"
-            cat "${BODY_FILE}" || true
-            exit 1
-          fi
-          echo "PyPI simple index recalculated (HTTP ${HTTP_CODE}): ${REINDEX_URL}"
+          # Note: explicit POST /api/pypi/<repo>/reindex was tried here but
+          # returns HTTP 403 with the current ARTIFACTORY_USER (which has
+          # Deploy permission but not Manage Repository). Until the IAM is
+          # widened we rely on whatever auto-reindex mechanism the repo has
+          # configured, or out-of-band recalculation via the Artifactory UI.
+          # `pip install aiperf-nightly==<dev-version>` against the simple
+          # index is the canonical check.
 
   # ============================================================================
   # PHASE 5: TRIGGER GITLAB SECURITY SCAN
@@ -928,6 +937,7 @@ jobs:
           CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
           RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
           TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
+          STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -937,12 +947,13 @@ jobs:
             RELEASE_TYPE="nightly"
           fi
 
-          # Repo-relative paths to the staged wheels under
-          # nightly/<YYYYMMDD>/. Pass both bare TIMESTAMP and explicit paths
-          # so GitLab can either compose its own URLs or use the paths
-          # directly without having to know the layout convention.
-          ARTIFACTORY_WHEEL_PATH="nightly/${TIMESTAMP}/${WHEEL_FILENAME}"
-          ARTIFACTORY_NIGHTLY_WHEEL_PATH="nightly/${TIMESTAMP}/${NIGHTLY_WHEEL_FILENAME}"
+          # Repo-relative paths to the staged wheels. STAGE_SUBPATH is
+          # "nightly/<YYYYMMDD>" for scheduled runs and
+          # "nightly-manual/<YYYYMMDD>/<run_id>" for manual dispatches;
+          # forwarding the explicit paths means GitLab consumers don't need
+          # to know the layout convention or branch on event type.
+          ARTIFACTORY_WHEEL_PATH="${STAGE_SUBPATH}/${WHEEL_FILENAME}"
+          ARTIFACTORY_NIGHTLY_WHEEL_PATH="${STAGE_SUBPATH}/${NIGHTLY_WHEEL_FILENAME}"
 
           TOKEN_FILE=$(mktemp)
           echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
