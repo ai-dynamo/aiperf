@@ -81,19 +81,23 @@ class TestIntLogScaleClamping:
     """
 
     @pytest.mark.parametrize(
-        ("lo", "hi", "scale"),
+        ("lo", "hi", "scale", "warns_narrow"),
         [
-            param(0.5, 1.0, "log", id="log_sub_one_lo"),
-            param(0.5, 2.0, "log", id="log_lo_below_one_wider"),
-            param(0.5, 1.5, "linear", id="linear_sub_one_lo"),
-            param(1.0, 3.0, "log", id="log_one_to_three"),
-            param(2.0, 5.0, "linear", id="linear_two_to_five"),
+            param(0.5, 1.0, "log", True, id="log_sub_one_lo"),
+            param(0.5, 2.0, "log", True, id="log_lo_below_one_wider"),
+            param(0.5, 1.5, "linear", True, id="linear_sub_one_lo"),
+            param(1.0, 3.0, "log", False, id="log_one_to_three"),
+            param(2.0, 5.0, "linear", False, id="linear_two_to_five"),
         ],
     )  # fmt: skip
     def test_int_mapping_never_below_lo_or_above_hi(
-        self, lo: float, hi: float, scale: str
+        self, lo: float, hi: float, scale: str, warns_narrow: bool
     ) -> None:
-        dim = SamplingDimension(path="x", lo=lo, hi=hi, kind="int", scale=scale)
+        if warns_narrow:
+            with pytest.warns(UserWarning, match="too narrow for sampling diversity"):
+                dim = SamplingDimension(path="x", lo=lo, hi=hi, kind="int", scale=scale)
+        else:
+            dim = SamplingDimension(path="x", lo=lo, hi=hi, kind="int", scale=scale)
         # Sweep the unit interval densely; all outputs must lie within
         # [ceil(lo), floor(hi)].
         lo_ceil = math.ceil(lo)
@@ -108,7 +112,8 @@ class TestIntLogScaleClamping:
     def test_int_log_lo_half_u_zero_clamps_to_one(self) -> None:
         """Direct repro of the round-2 finding: lo=0.5, log scale,
         u=0.0 used to map to 0; must now clamp to 1."""
-        dim = SamplingDimension(path="x", lo=0.5, hi=1.0, kind="int", scale="log")
+        with pytest.warns(UserWarning, match="too narrow for sampling diversity"):
+            dim = SamplingDimension(path="x", lo=0.5, hi=1.0, kind="int", scale="log")
         assert _map_dim(0.0, dim) == 1
 
 

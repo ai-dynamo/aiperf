@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """JSON exporter for confidence aggregate results."""
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import orjson
 
 from aiperf.common.finite import scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
+
+if TYPE_CHECKING:
+    from aiperf.common.models.export_models import JsonExportData
 
 
 class AggregateConfidenceJsonExporter(AggregateBaseExporter):
@@ -59,7 +62,7 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
             scrub_non_finite(payload), option=orjson.OPT_INDENT_2
         ).decode("utf-8")
 
-    def _aggregate_to_export_data(self):
+    def _aggregate_to_export_data(self) -> "JsonExportData":
         """Convert AggregateResult to JsonExportData format.
 
         This is the adapter that bridges aggregate domain to export format.
@@ -68,18 +71,10 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         Returns:
             JsonExportData with aggregate metrics and metadata
         """
-        from importlib.metadata import version as get_version
-
+        from aiperf import __version__ as aiperf_version
         from aiperf.common.models.export_models import JsonExportData
 
-        # Get AIPerf version (same approach as MetricsJsonExporter)
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
-
-        # Create base export data with standard metadata. Note we use this
-        # exporter's own SCHEMA_VERSION, not JsonExportData.SCHEMA_VERSION,
+        # Use this exporter's own SCHEMA_VERSION, not JsonExportData.SCHEMA_VERSION,
         # because the aggregate file's per-metric shape evolves independently
         # from the regular profile export.
         export_data = JsonExportData(

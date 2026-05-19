@@ -73,7 +73,8 @@ def _find_run_dir(mlflow_store: Path) -> Path:
     return candidates[0]
 
 
-@pytest.mark.component_integration
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.asyncio
 class TestMLflowLiveStreamingCorrectness:
     """Assert live-streamed MLflow metrics are ordered and correlated."""

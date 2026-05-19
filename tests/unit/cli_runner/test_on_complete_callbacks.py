@@ -469,7 +469,7 @@ class TestCallbackFailureIsolation:
             raise RuntimeError("kaleido missing")
 
         with (
-            caplog.at_level(logging.ERROR, logger="aiperf.cli_runner"),
+            caplog.at_level(logging.ERROR, logger="aiperf.cli_runner._single_run"),
             pytest.raises(SystemExit),
         ):
             _run_single_benchmark(run, on_complete=[boom])

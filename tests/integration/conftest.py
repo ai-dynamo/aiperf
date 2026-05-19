@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import inspect
 import logging
 import multiprocessing
 import os
@@ -24,6 +23,7 @@ from aiperf_mock_server import MockServerConfig
 from aiperf_mock_server import serve as aiperf_mock_server_serve
 
 from aiperf.common.logging import AIPerfLogger
+from tests.harness.subprocess import _new_process_group_kwargs
 from tests.harness.utils import (
     AIPerfCLI,
     AIPerfMockServer,
@@ -153,18 +153,6 @@ def get_venv_python() -> str:
             return str(python_path)
     # Fall back to sys.executable if not in a venv
     return sys.executable
-
-
-def _new_process_group_kwargs(
-    *, supports_process_group: bool | None = None
-) -> dict[str, int | bool]:
-    if supports_process_group is None:
-        supports_process_group = (
-            "process_group" in inspect.signature(subprocess.Popen).parameters
-        )
-    if supports_process_group:
-        return {"process_group": 0}
-    return {"start_new_session": True}
 
 
 def _killpg(process: asyncio.subprocess.Process, sig: int) -> None:
