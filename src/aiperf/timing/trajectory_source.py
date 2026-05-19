@@ -60,14 +60,6 @@ def _seed_for_trace_lane(base_seed: int, trace_id: str, lane_index: int) -> int:
     return int.from_bytes(h[:8], "big")
 
 
-def _median(sorted_values: list[float] | list[int]) -> float:
-    """Median of an already-sorted list. Caller ensures non-empty."""
-    mid = len(sorted_values) // 2
-    if len(sorted_values) % 2 == 0:
-        return (sorted_values[mid - 1] + sorted_values[mid]) / 2
-    return sorted_values[mid]
-
-
 class TrajectorySource(ConversationSource):
     """ConversationSource that samples a fixed set of trajectories with a randomized
     per-trajectory start position drawn from [start_min_ratio, start_max_ratio] of
@@ -143,87 +135,58 @@ class TrajectorySource(ConversationSource):
         Format::
 
             TrajectorySource: built 14 trajectories from 949 traces
-              range cfg=[0.25, 0.75]
-                observed pct:    min=27% median=51% max=72%
-                observed tokens: min= 12,041 median= 58,431 max=187,294
-                lane=00  start_turn= 6/24 (25%)  start_tokens= 12,041  trace_id=abc123
-                lane=01  start_turn=15/22 (68%)  start_tokens=187,294  trace_id=def456
+              range cfg=[0.25, 0.75]  observed pct: min=27% median=51% max=72%
+                lane=00  start_turn= 6/24 (25%)  trace_id=abc123
+                lane=01  start_turn=15/22 (68%)  trace_id=def456
                 ...
 
-        Emitted once at construction. ``start_tokens`` is sourced from
-        ``TurnMetadata.input_length`` on the warmup-start turn (proxy
-        tokenizer for weka cc-traces; ``-`` when the loader did not
-        populate per-turn token counts).
-        """
-        rows, pcts, toks = self._build_trajectory_rows()
-        obs_line = self._format_observed_stats(pcts, toks)
-        _logger.info(
-            "TrajectorySource: built %d trajectories from %d traces\n%s\n%s",
-            len(self.trajectories),
-            self._pool_size,
-            obs_line,
-            "\n".join(rows),
-        )
-
-    def _build_trajectory_rows(
-        self,
-    ) -> tuple[list[str], list[float], list[int]]:
-        """Build one row per lane plus the parallel pct/token sample lists.
-
-        Lane order = self.trajectories insertion order = dispatch order.
+        Emitted once at construction. Lets you sanity-check the configured
+        start-range produced sensible per-trajectory positions before any
+        request fires, without needing to wait for warmup-completion lines
+        or correlate per-credit return logs.
         """
         rows: list[str] = []
         pcts: list[float] = []
-        toks: list[int] = []
+        # Sort by lane (insertion order = lane assignment in dispatch loops)
+        # so the table reads in the same order it'll be dispatched.
         for lane, trajectory in enumerate(self.trajectories):
             meta = self._metadata_lookup.get(trajectory.conversation_id)
             n_turns = len(meta.turns) if meta is not None else 0
             k_i = trajectory.start_turn_index
             pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
             pcts.append(pct)
-
-            start_tokens: int | None = None
-            if meta is not None and 0 <= k_i < n_turns:
-                start_tokens = meta.turns[k_i].input_length
-            if start_tokens is not None:
-                toks.append(start_tokens)
-                tok_str = f"{start_tokens:>7,}"
-            else:
-                tok_str = "      -"
-
             rows.append(
                 f"    lane={lane:02d}  start_turn={k_i:>3d}/{n_turns:<3d} "
-                f"({pct:>3.0f}%)  start_tokens={tok_str}  "
-                f"trace_id={trajectory.conversation_id}"
+                f"({pct:>3.0f}%)  trace_id={trajectory.conversation_id}"
             )
-        return rows, pcts, toks
 
-    def _format_observed_stats(self, pcts: list[float], toks: list[int]) -> str:
-        """Render the ``range cfg / observed pct / observed tokens`` header."""
-        header = (
-            f"  range cfg=[{self._start_min_ratio:.2f}, {self._start_max_ratio:.2f}]"
-        )
-        if not pcts:
-            return f"{header}  (no trajectories built)"
+        if pcts:
+            pcts_sorted = sorted(pcts)
+            mid = len(pcts_sorted) // 2
+            if len(pcts_sorted) % 2 == 0:
+                median = (pcts_sorted[mid - 1] + pcts_sorted[mid]) / 2
+            else:
+                median = pcts_sorted[mid]
+            obs_line = (
+                f"  range cfg=[{self._start_min_ratio:.2f}, "
+                f"{self._start_max_ratio:.2f}]  observed pct: "
+                f"min={min(pcts):>3.0f}% median={median:>3.0f}% "
+                f"max={max(pcts):>3.0f}%"
+            )
+        else:
+            obs_line = (
+                f"  range cfg=[{self._start_min_ratio:.2f}, "
+                f"{self._start_max_ratio:.2f}]  (no trajectories built)"
+            )
 
-        pcts_sorted = sorted(pcts)
-        median_pct = _median(pcts_sorted)
-        obs_pct = (
-            f"    observed pct:    "
-            f"min={min(pcts):>3.0f}% median={median_pct:>3.0f}% "
-            f"max={max(pcts):>3.0f}%"
+        body = "\n".join(rows)
+        _logger.info(
+            "TrajectorySource: built %d trajectories from %d traces\n%s\n%s",
+            len(self.trajectories),
+            self._pool_size,
+            obs_line,
+            body,
         )
-        if not toks:
-            return f"{header}\n{obs_pct}"
-
-        toks_sorted = sorted(toks)
-        median_tok = int(_median(toks_sorted))
-        obs_tok = (
-            f"    observed tokens: "
-            f"min={min(toks):>7,} median={median_tok:>7,} "
-            f"max={max(toks):>7,}"
-        )
-        return f"{header}\n{obs_pct}\n{obs_tok}"
 
     def _build_trajectories(self) -> list[Trajectory]:
         trajectories: list[Trajectory] = []
