@@ -148,7 +148,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --custom-dataset-type speed_bench_coding \
-    --input-file ${SPEEED_BENCH_DIR}/qualitative.jsonl \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --osl 4096 \
     --extra-inputs temperature:0 \
