@@ -1007,9 +1007,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          # Write to a file first so we can route the same content to the
+          # GHA log (visible per-job), the run-level step summary (visible
+          # above the job list on the run page), and an uploaded artifact
+          # (downloadable later via `gh run download`).
           python3 tools/suggest_test_docs_weights.py \
             --run-id "${GITHUB_RUN_ID}" \
-            --output "${GITHUB_STEP_SUMMARY}"
+            --output suggest-weights.md
+          echo "::group::Weight Suggestion Report"
+          cat suggest-weights.md
+          echo "::endgroup::"
+          cat suggest-weights.md >> "${GITHUB_STEP_SUMMARY}"
+      - name: Upload suggestion report as artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: suggest-shard-weights
+          path: suggest-weights.md
+          retention-days: 30
 
   # ============================================================================
   # PHASE 6: SUMMARY
