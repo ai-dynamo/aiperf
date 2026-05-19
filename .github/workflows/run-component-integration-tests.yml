@@ -15,13 +15,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [linux, macos]
+        os: [linux]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
           - os: linux
             runner: prod-aiperf-builder-amd-v1
-          - os: macos
-            runner: macos-latest
 
     steps:
     - uses: actions/checkout@v6
