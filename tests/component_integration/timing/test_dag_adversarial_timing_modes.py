@@ -40,7 +40,7 @@ from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 
-pytestmark = pytest.mark.component_integration
+pytestmark = [pytest.mark.component_integration, pytest.mark.stress]
 
 
 # =============================================================================
