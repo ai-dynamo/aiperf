@@ -8,6 +8,7 @@ import pytest
 from aiperf_mock_server.request_recorder import (
     RequestRecorder,
     _build_summary,
+    _compute_shape_80,
     _histogram,
     _print_summary,
     _render_histogram,
@@ -354,3 +355,44 @@ class TestRecorderTokenIdTracking:
             assert r._vocab_size_source == "tokenizer"
         finally:
             r.close()
+
+
+class TestComputeShape80:
+    def test_length_is_always_80(self) -> None:
+        assert len(_compute_shape_80(Counter({0: 1, 99999: 1}), 100000)) == 80
+
+    def test_sum_of_buckets_equals_total_observations(self) -> None:
+        counts = Counter({0: 10, 1: 20, 50: 30, 99: 40, 5000: 50})
+        shape = _compute_shape_80(counts, 10000)
+        assert sum(shape) == 10 + 20 + 30 + 40 + 50
+
+    def test_id_at_bucket_boundary_lands_in_lower_bucket(self) -> None:
+        # vocab_size=80, bucket width = 1, so id 5 must land in bucket 5.
+        shape = _compute_shape_80(Counter({5: 7}), 80)
+        assert shape[5] == 7
+        assert sum(shape) == 7
+
+    def test_max_id_lands_in_last_bucket(self) -> None:
+        # Highest id is vocab_size-1; spec says last bucket is closed on both
+        # ends so vocab_size-1 ends up in bucket 79, not lost.
+        shape = _compute_shape_80(Counter({999: 3}), 1000)
+        assert shape[-1] == 3
+        assert sum(shape) == 3
+
+    def test_empty_counter_returns_all_zero_buckets(self) -> None:
+        shape = _compute_shape_80(Counter(), 1000)
+        assert shape == [0] * 80
+
+    def test_buckets_partition_vocab_evenly(self) -> None:
+        # vocab_size=800, bucket width = 10. Place one observation in each
+        # bucket's lower bound to verify equal-width partitioning.
+        counts = Counter({i * 10: 1 for i in range(80)})
+        shape = _compute_shape_80(counts, 800)
+        assert shape == [1] * 80
+
+    def test_ids_above_vocab_size_are_dropped(self) -> None:
+        # Defensive: if the tokenizer ever returns an id >= vocab_size we drop
+        # it rather than silently miscount the last bucket.
+        shape = _compute_shape_80(Counter({100: 5, 99: 3}), 100)
+        assert shape[-1] == 3  # id=99 (last valid)
+        assert sum(shape) == 3  # id=100 dropped

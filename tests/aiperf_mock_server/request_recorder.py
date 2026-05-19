@@ -254,6 +254,28 @@ def _render_histogram(
     return lines
 
 
+def _compute_shape_80(counts: Counter[int], vocab_size: int) -> list[int]:
+    """Sum counts into 80 equal-width buckets over [0, vocab_size).
+
+    Each bucket spans `vocab_size / 80` token ids. The last bucket is closed
+    on its upper end so `vocab_size - 1` lands in bucket 79 (instead of just
+    past it). Ids >= `vocab_size` are dropped — defensive only; should not
+    occur with a well-behaved tokenizer.
+    """
+    shape = [0] * 80
+    if vocab_size <= 0:
+        return shape
+    width = vocab_size / 80
+    for token_id, count in counts.items():
+        if token_id < 0 or token_id >= vocab_size:
+            continue
+        idx = int(token_id / width)
+        if idx >= 80:
+            idx = 79  # float-drift guard, mirrors `_histogram`
+        shape[idx] += count
+    return shape
+
+
 def _quantiles(values: list[int]) -> dict[str, float] | None:
     if not values:
         return None
