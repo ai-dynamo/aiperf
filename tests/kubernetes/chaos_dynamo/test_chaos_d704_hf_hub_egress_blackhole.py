@@ -67,24 +67,18 @@ async def _run_d704_assertion(faults, kubectl) -> None:
         "kind": "DynamoGraphDeployment",
         "metadata": {"name": name, "namespace": ns},
         "spec": {
-            "components": [
-                {
-                    "name": "Frontend",
-                    "type": "frontend",
+            "services": {
+                "Frontend": {
+                    "componentType": "frontend",
                     "replicas": 1,
-                    "podTemplate": {
-                        "spec": {
-                            "containers": [
-                                {
-                                    "name": "main",
-                                    "image": f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{DYNAMO_VERSION}",
-                                    "args": ["--model", "Qwen/Qwen3-0.6B"],
-                                }
-                            ]
+                    "extraPodSpec": {
+                        "mainContainer": {
+                            "image": f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{DYNAMO_VERSION}",
+                            "args": ["--model", "Qwen/Qwen3-0.6B"],
                         }
                     },
                 }
-            ]
+            }
         },
     }
 

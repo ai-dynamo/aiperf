@@ -67,7 +67,7 @@ async def test_d701_imagepullbackoff_surfaces_failed_state(
     pytest.skip("scaffold landed; assertion-body pending real-cluster validation")
 
     manifest = {
-        "apiVersion": "nvidia.com/v1beta1",
+        "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
         "metadata": {"name": _DGD_NAME, "namespace": _DGD_NAMESPACE},
         "spec": {

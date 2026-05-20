@@ -66,12 +66,17 @@ async def test_d101_kill_operator_mid_dgd_apply(
            pass
 
     4. Wait for the operator deployment to be Available again (60s timeout).
+       Uses a label-selector wait so the assertion spans the v0.9.x release
+       name (``dynamo-operator``) and the v1.x release name
+       (``dynamo-platform-dynamo-operator-controller-manager``).
 
        await kubectl.run(
            "wait",
-           "deployment/dynamo-operator",
            "-n",
            "dynamo-system",
+           "-l",
+           "app.kubernetes.io/name=dynamo-operator",
+           "deployment",
            "--for=condition=Available",
            "--timeout=60s",
            check=True,
@@ -153,7 +158,7 @@ async def _run_d101_assertion(
     config = DynamoConfig(
         model_name="Qwen/Qwen3-0.6B",
         namespace=dynamo_deployment_namespace,
-        api_version="v1beta1",
+        api_version="v1alpha1",
     )
     deployer = DynamoDeployer(kubectl, config)
     manifest = deployer.generate_manifest()
@@ -178,9 +183,11 @@ async def _run_d101_assertion(
 
         await kubectl.run(
             "wait",
-            "deployment/dynamo-operator",
             "-n",
             "dynamo-system",
+            "-l",
+            "app.kubernetes.io/name=dynamo-operator",
+            "deployment",
             "--for=condition=Available",
             "--timeout=60s",
             check=True,

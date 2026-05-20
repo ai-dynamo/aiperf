@@ -55,23 +55,17 @@ async def _run_d104_assertion(
         "kind": "DynamoGraphDeployment",
         "metadata": {"name": name, "namespace": ns},
         "spec": {
-            "components": [
-                {
-                    "name": "Frontend",
-                    "type": "frontend",
+            "services": {
+                "Frontend": {
+                    "componentType": "frontend",
                     "replicas": -1,  # INVALID
-                    "podTemplate": {
-                        "spec": {
-                            "containers": [
-                                {
-                                    "name": "main",
-                                    "image": f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{DYNAMO_VERSION}",
-                                }
-                            ]
+                    "extraPodSpec": {
+                        "mainContainer": {
+                            "image": f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{DYNAMO_VERSION}",
                         }
                     },
                 }
-            ]
+            }
         },
     }
 
