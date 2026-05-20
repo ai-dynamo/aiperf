@@ -67,6 +67,8 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 |----------------------|---------|-------------|-------------|
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for dataset configuration operations |
 | `AIPERF_DATASET_MMAP_BASE_PATH` | `None` | — | Base path for memory-mapped dataset files. If None, uses system temp directory. Set to a shared filesystem path for Kubernetes mounted volumes. Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/ |
+| `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `True` | — | If True, AIPerf reuses memory-mapped dataset files across runs whose input bytes, tokenizer identity, and prompt/input settings are byte-identical. Set to False to force every run to re-tokenize and re-write its mmap files. Cache misses still produce byte-identical mmap files to a non-cached run. |
+| `AIPERF_DATASET_MMAP_CACHE_DIR` | `None` | — | Directory holding the content-addressed mmap cache. If None, defaults to ~/.cache/aiperf/dataset_mmap. Each cache entry lives under <dir>/<key>/ and contains dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. No automatic eviction is implemented yet -- delete the directory to reclaim disk. |
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |

@@ -168,6 +168,20 @@ class _DatasetSettings(BaseSettings):
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
     )
+    MMAP_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
+        "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
+        "Set to False to force every run to re-tokenize and re-write its mmap files. "
+        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+    )
+    MMAP_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory holding the content-addressed mmap cache. If None, defaults to "
+        "~/.cache/aiperf/dataset_mmap. Each cache entry lives under <dir>/<key>/ and contains "
+        "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+    )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,

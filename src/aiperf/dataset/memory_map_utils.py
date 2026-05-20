@@ -275,6 +275,35 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             compressed_size_bytes=self._compressed_size if self._compress_only else 0,
         )  # fmt: skip
 
+    def adopt_existing_files(
+        self,
+        *,
+        session_ids: list[str],
+        total_size_bytes: int,
+        compressed_size_bytes: int = 0,
+    ) -> None:
+        """Mark this store as finalized over already-on-disk files.
+
+        Used by the dataset cache HIT path: dataset.dat / index.dat are already
+        on disk in the run mmap dir (copied from the cache), so we never call
+        ``initialize()`` (which would open a writer) or ``finalize()`` (which
+        would re-write the index). The on-stop cleanup hook still runs and
+        unlinks the run dir as if the writer had produced the files itself.
+        """
+        if self._finalized:
+            raise RuntimeError(
+                "adopt_existing_files called on an already-finalized store."
+            )
+        if not self._data_path.exists() or not self._index_path.exists():
+            raise FileNotFoundError(
+                f"adopt_existing_files requires both files on disk: "
+                f"{self._data_path}, {self._index_path}"
+            )
+        self._session_ids = list(session_ids)
+        self._current_offset = total_size_bytes
+        self._compressed_size = compressed_size_bytes if self._compress_only else 0
+        self._finalized = True
+
     @on_stop
     async def _cleanup(self) -> None:
         """Close file handles and delete temp files."""
