@@ -1181,21 +1181,12 @@ async def test_d207_streaming_error_frame_after_decode_kill(
         4. Drain the stream and assert the terminal sequence is the Dynamo
            structured error frame followed immediately by ``[DONE]``.
     """
-    request_body: dict[str, object] = {
-        "model": "default",
-        "messages": [
-            {
-                "role": "user",
-                "content": (
-                    "Write a detailed, 800-word incident report about a "
-                    "database failover and include numbered remediation steps."
-                ),
-            }
-        ],
-        "max_tokens": 512,
-        "stream": True,
-        "temperature": 0.0,
-    }
+    request_body = chat_payload(
+        "Write a detailed, 800-word incident report about a "
+        "database failover and include numbered remediation steps.",
+        stream=True,
+        max_tokens=512,
+    )
     frames: list[str] = []
     first_frame_seen = asyncio.Event()
     timeout = aiohttp.ClientTimeout(total=_CLIENT_ERROR_BUDGET_S + 30.0)
@@ -1204,7 +1195,7 @@ async def test_d207_streaming_error_frame_after_decode_kill(
         stream_task = asyncio.create_task(
             _read_sse_frames(
                 session,
-                f"{dynamo_endpoint_url}/chat/completions",
+                chat_completion_url(dynamo_endpoint_url),
                 request_body,
                 frames,
                 first_frame_seen,
@@ -1676,7 +1667,7 @@ async def _collect_stream_payloads(endpoint_url: str) -> list[str]:
     buffer = ""
     async with (
         aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0)) as session,
-        session.post(f"{endpoint_url}/chat/completions", json=request_body) as resp,
+        session.post(chat_completion_url(endpoint_url), json=request_body) as resp,
     ):
         body = await resp.text() if resp.status != 200 else ""
         assert resp.status == 200, f"D214: expected HTTP 200, got {resp.status}: {body}"
@@ -1748,7 +1739,7 @@ async def test_d215_include_usage_false_has_no_usage_only_sse_chunk(
     buffer = ""
     async with (
         aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0)) as session,
-        session.post(f"{dynamo_endpoint_url}/chat/completions", json=payload) as resp,
+        session.post(chat_completion_url(dynamo_endpoint_url), json=payload) as resp,
     ):
         body = await resp.text() if resp.status != 200 else ""
         assert resp.status == 200, f"D215: expected HTTP 200, got {resp.status}: {body}"
