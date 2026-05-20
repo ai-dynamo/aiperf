@@ -48,6 +48,8 @@ def build_tokenizer(cli: CLIConfig) -> dict[str, Any] | None:
         out["revision"] = cli.tokenizer_revision
     if "trust_remote_code" in tok_set:
         out["trust_remote_code"] = cli.trust_remote_code
+    if "apply_chat_template" in tok_set:
+        out["apply_chat_template"] = cli.apply_chat_template
     return out or None
 
 

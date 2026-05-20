@@ -585,6 +585,7 @@ _NON_TEXT_TOKENIZER_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("tokenizer_name", "--tokenizer"),
     ("trust_remote_code", "--tokenizer-trust-remote-code"),
     ("tokenizer_revision", "--tokenizer-revision"),
+    ("apply_chat_template", "--apply-chat-template"),
 )
 
 

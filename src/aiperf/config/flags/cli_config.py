@@ -439,6 +439,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = False
 
+    apply_chat_template: Annotated[
+        bool,
+        Field(
+            description="Apply the HuggingFace tokenizer's chat template when counting input tokens. "
+            "When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, "
+            "EOT, generation-prompt suffix) and the record processor reports ISL using "
+            "`apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. "
+            "When disabled (default), both paths use bare-text encoding, so reported ISL matches the "
+            "prompt content the user asked for and ignores template overhead. Requires an HF tokenizer "
+            "with a chat template configured; no-ops on tiktoken / un-templated models.",
+        ),
+        CLIParameter(
+            name=("--apply-chat-template",),
+            group=Groups.TOKENIZER,
+        ),
+    ] = False
+
     ##############################################################################
     # Input
     ##############################################################################

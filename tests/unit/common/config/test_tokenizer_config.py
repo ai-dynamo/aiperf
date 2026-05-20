@@ -17,6 +17,7 @@ def test_tokenizer_config_defaults():
     assert config.tokenizer_name == TokenizerDefaults.NAME
     assert config.tokenizer_revision == TokenizerDefaults.REVISION
     assert config.trust_remote_code == TokenizerDefaults.TRUST_REMOTE_CODE
+    assert config.apply_chat_template == TokenizerDefaults.APPLY_CHAT_TEMPLATE
 
 
 def test_output_config_custom_values():
@@ -30,6 +31,7 @@ def test_output_config_custom_values():
         "tokenizer_name": "custom_tokenizer",
         "tokenizer_revision": "v1.0.0",
         "trust_remote_code": True,
+        "apply_chat_template": True,
     }
     config = CLIConfig(**custom_values)
 
