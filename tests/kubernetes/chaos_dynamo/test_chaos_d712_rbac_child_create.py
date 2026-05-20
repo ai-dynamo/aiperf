@@ -8,19 +8,11 @@ import pytest
 
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
-    _d112_apply_fresh_dgd as _apply_fresh_dgd,
-)
-from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
-    _d112_delete_dgd as _delete_dgd,
-)
-from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
-    _d112_find_unique_operator_rbac_owner as _find_unique_operator_rbac_owner,
-)
-from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
-    _d112_observe_not_successful as _observe_not_successful,
-)
-from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
-    _d112_rbac_target as _rbac_target,
+    _d112_apply_fresh_dgd,
+    _d112_delete_dgd,
+    _d112_find_unique_operator_rbac_owner,
+    _d112_observe_not_successful,
+    _d112_rbac_target,
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
@@ -33,7 +25,7 @@ async def test_d712_rbac_child_rolebinding_create_denial_blocks_then_recovers(
     dynamo_deployment_namespace: str,
 ) -> None:
     """Revoke child RoleBinding create RBAC before apply, then restore and recover."""
-    owner = await _find_unique_operator_rbac_owner(
+    owner = await _d112_find_unique_operator_rbac_owner(
         kubectl,
         api_group="rbac.authorization.k8s.io",
         resource="rolebindings",
@@ -46,13 +38,13 @@ async def test_d712_rbac_child_rolebinding_create_denial_blocks_then_recovers(
     try:
         async with faults.inject(
             "cluster.rbac.revoke",
-            target=_rbac_target(owner),
+            target=_d112_rbac_target(owner),
             api_group="rbac.authorization.k8s.io",
             resource="rolebindings",
             verb="create",
         ):
-            name, namespace = await _apply_fresh_dgd(kubectl, namespace)
-            await _observe_not_successful(kubectl, name, namespace, case_id="D712")
+            name, namespace = await _d112_apply_fresh_dgd(kubectl, namespace)
+            await _d112_observe_not_successful(kubectl, name, namespace, case_id="D712")
             authz = await kubectl.run(
                 "auth",
                 "can-i",
@@ -70,4 +62,4 @@ async def test_d712_rbac_child_rolebinding_create_denial_blocks_then_recovers(
         await wait_for_dgd_state(kubectl, name, namespace, "successful", timeout=300.0)
     finally:
         if name:
-            await _delete_dgd(kubectl, name, namespace)
+            await _d112_delete_dgd(kubectl, name, namespace)
