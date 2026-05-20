@@ -18,11 +18,11 @@ import yaml
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 from tests.kubernetes.chaos_dynamo.d7_status_helpers import (
-    dgd_state_from_status_text,
+    dgd_state_diagnostic_from_status_text,
     mentions_any,
     minimal_v1alpha1_frontend_dgd_manifest,
     read_dgd_status_text,
-    wait_for_events_or_status,
+    wait_for_namespace_event_terms,
 )
 from tests.kubernetes.chaos_dynamo.rbac_helpers import (
     find_unique_operator_rbac_owner,
@@ -271,10 +271,9 @@ async def test_d702_impossible_node_selector_surfaces_failed_status(
     await kubectl.create_namespace(_D702_DGD_NAMESPACE)
     try:
         await kubectl.apply(_D702_manifest(), namespace=_D702_DGD_NAMESPACE)
-        scheduling_event = await wait_for_events_or_status(
+        scheduling_event = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D702_DGD_NAMESPACE,
-            name=_D702_DGD_NAME,
             needles=_D702_STATUS_TERMS,
             timeout_s=_D702_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,
@@ -448,8 +447,11 @@ async def _wait_for_failed_dgd_status(
 
 
 def _state_from_status_text(status_text: str) -> str:
-    """Extract ``status.state`` from a JSON status payload."""
-    return dgd_state_from_status_text(status_text)
+    """Extract ``status.state`` with D703 timeout diagnostics preserved."""
+    state = dgd_state_diagnostic_from_status_text(status_text)
+    if state == "<unparsable>":
+        logger.debug(lambda: f"D703 status parse failed: {status_text!r}")
+    return state
 
 
 async def _D703_read_dgd_status_text(
@@ -707,10 +709,9 @@ async def test_d705_limitrange_conflict_surfaces_failed_status(
         await kubectl.apply(_limitrange_manifest(), namespace=_D705_DGD_NAMESPACE)
         await kubectl.apply(_D705_dgd_manifest(), namespace=_D705_DGD_NAMESPACE)
 
-        event_text = await wait_for_events_or_status(
+        event_text = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D705_DGD_NAMESPACE,
-            name=_D705_DGD_NAME,
             needles=_D705_STATUS_TERMS,
             timeout_s=_D705_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,
@@ -793,10 +794,9 @@ async def test_d706_podsecurity_rejection_surfaces_failed_status(
     try:
         await kubectl.apply(_D706_dgd_manifest(), namespace=_D706_DGD_NAMESPACE)
 
-        event_text = await wait_for_events_or_status(
+        event_text = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D706_DGD_NAMESPACE,
-            name=_D706_DGD_NAME,
             needles=_D706_STATUS_TERMS,
             timeout_s=_D706_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,
@@ -884,10 +884,9 @@ async def test_d707_missing_image_pull_secret_surfaces_failed_status(
     await kubectl.create_namespace(_D707_DGD_NAMESPACE)
     try:
         await kubectl.apply(_D707_manifest(), namespace=_D707_DGD_NAMESPACE)
-        event_text = await wait_for_events_or_status(
+        event_text = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D707_DGD_NAMESPACE,
-            name=_D707_DGD_NAME,
             needles=_D707_STATUS_TERMS,
             timeout_s=_D707_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,
@@ -964,10 +963,9 @@ async def test_d708_missing_hf_secret_surfaces_failed_status(
     await kubectl.create_namespace(_D708_DGD_NAMESPACE)
     try:
         await kubectl.apply(deployer.generate_manifest(), namespace=_D708_DGD_NAMESPACE)
-        event_text = await wait_for_events_or_status(
+        event_text = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D708_DGD_NAMESPACE,
-            name=dgd_name,
             needles=_D708_STATUS_TERMS,
             timeout_s=_D708_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,
@@ -1150,10 +1148,9 @@ async def test_d710_missing_runtimeclass_surfaces_failed_status(
     await kubectl.create_namespace(_D710_DGD_NAMESPACE)
     try:
         await kubectl.apply(_D710_manifest(), namespace=_D710_DGD_NAMESPACE)
-        event_text = await wait_for_events_or_status(
+        event_text = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D710_DGD_NAMESPACE,
-            name=_D710_DGD_NAME,
             needles=_D710_STATUS_TERMS,
             timeout_s=_D710_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,
@@ -1227,10 +1224,9 @@ async def test_d711_worker_node_selector_surfaces_failed_status(
     await kubectl.create_namespace(_D711_DGD_NAMESPACE)
     try:
         await kubectl.apply(deployer.generate_manifest(), namespace=_D711_DGD_NAMESPACE)
-        event_text = await wait_for_events_or_status(
+        event_text = await wait_for_namespace_event_terms(
             kubectl,
             namespace=_D711_DGD_NAMESPACE,
-            name=dgd_name,
             needles=_D711_STATUS_TERMS,
             timeout_s=_D711_EVENT_TIMEOUT_S,
             poll_interval_s=1.0,

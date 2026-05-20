@@ -24,6 +24,18 @@ def dgd_state_from_status_text(status_text: str) -> str:
     return state if isinstance(state, str) else ""
 
 
+def dgd_state_diagnostic_from_status_text(status_text: str) -> str:
+    """Extract DGD state while preserving empty/invalid-JSON diagnostics."""
+    if not status_text:
+        return "<empty>"
+    try:
+        status = orjson.loads(status_text)
+    except orjson.JSONDecodeError:
+        return "<unparsable>"
+    state = status.get("state")
+    return state if isinstance(state, str) else ""
+
+
 def mentions_any(text: str, needles: tuple[str, ...]) -> bool:
     """Return whether ``text`` contains any needle, case-insensitively."""
     lower = text.lower()
@@ -120,6 +132,25 @@ async def wait_for_dgd_failed_status(
         if observed_state == "failed" or asyncio.get_event_loop().time() >= deadline:
             return observed_state, observed_status
         await asyncio.sleep(poll_interval_s)
+
+
+async def wait_for_namespace_event_terms(
+    kubectl: KubectlClient,
+    *,
+    namespace: str,
+    needles: tuple[str, ...],
+    timeout_s: float,
+    poll_interval_s: float = 2.0,
+) -> str:
+    """Poll namespace events until any needle is visible, returning event text only."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    events = ""
+    while asyncio.get_event_loop().time() < deadline:
+        events = await read_namespace_events_text(kubectl, namespace=namespace)
+        if mentions_any(events, needles):
+            return events
+        await asyncio.sleep(poll_interval_s)
+    return events
 
 
 async def wait_for_events_or_status(

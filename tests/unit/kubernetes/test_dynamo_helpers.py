@@ -17,9 +17,11 @@ import yaml
 from pytest import param
 
 from tests.kubernetes.chaos_dynamo.d7_status_helpers import (
+    dgd_state_diagnostic_from_status_text,
     dgd_state_from_status_text,
     mentions_any,
     minimal_v1alpha1_frontend_dgd_manifest,
+    wait_for_namespace_event_terms,
 )
 from tests.kubernetes.chaos_dynamo.frontend_request_helpers import (
     append_sse_data_lines,
@@ -161,11 +163,55 @@ class TestDynamoD7StatusHelpers:
     ) -> None:
         assert dgd_state_from_status_text(status_text) == expected
 
+    @pytest.mark.parametrize(
+        "status_text,expected",
+        [
+            param('{"state":"failed","message":"boom"}', "failed", id="state"),
+            param('{"message":"boom"}', "", id="missing-state"),
+            param("not-json", "<unparsable>", id="unparsable"),
+            param("", "<empty>", id="empty"),
+        ],
+    )  # fmt: skip
+    def test_dgd_state_diagnostic_from_status_text_names_empty_and_unparsable(
+        self, status_text: str, expected: str
+    ) -> None:
+        assert dgd_state_diagnostic_from_status_text(status_text) == expected
+
     def test_mentions_any_matches_case_insensitively(self) -> None:
         assert mentions_any(
             "FailedScheduling: Node Selector mismatch", ("node selector",)
         )
         assert not mentions_any("FailedScheduling: Node Selector mismatch", ("quota",))
+
+    @pytest.mark.asyncio
+    async def test_wait_for_namespace_event_terms_returns_only_matching_events(
+        self,
+    ) -> None:
+        class FakeKubectl:
+            async def run(self, *args: str, check: bool) -> object:
+                assert args == ("get", "events", "-n", "d7-ns", "-o", "json")
+                assert check is False
+                return type(
+                    "Result",
+                    (),
+                    {
+                        "returncode": 0,
+                        "stdout": (
+                            '{"items":[{"reason":"FailedScheduling",'
+                            '"message":"node selector mismatch"}]}'
+                        ),
+                    },
+                )()
+
+        events = await wait_for_namespace_event_terms(
+            FakeKubectl(),
+            namespace="d7-ns",
+            needles=("node selector",),
+            timeout_s=1.0,
+            poll_interval_s=0.01,
+        )
+
+        assert events == "FailedScheduling: node selector mismatch"
 
     def test_minimal_v1alpha1_frontend_dgd_manifest_preserves_extra_pod_spec(
         self,
