@@ -46,6 +46,21 @@ class AudioFormat(CaseInsensitiveStrEnum):
     """MP3 format. Compressed audio, smaller file sizes, good quality."""
 
 
+class CacheBustTarget(CaseInsensitiveStrEnum):
+    """Where (and how) to inject a per-conversation cache-bust marker.
+
+    Prefix variants diverge at token 0 of the prompt (most aggressive — defeats
+    KV-cache prefix matching for the entire prompt). Suffix variants append
+    after existing content (preserves leading-prefix caching).
+    """
+
+    NONE = "none"
+    SYSTEM_PREFIX = "system_prefix"
+    SYSTEM_SUFFIX = "system_suffix"
+    FIRST_TURN_PREFIX = "first_turn_prefix"
+    FIRST_TURN_SUFFIX = "first_turn_suffix"
+
+
 class CommAddress(CaseInsensitiveStrEnum):
     """Enum for specifying the address type for communication clients.
     This is used to lookup the address in the communication config."""

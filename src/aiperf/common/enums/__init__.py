@@ -9,6 +9,7 @@ from aiperf.common.enums.base_enums import (
 from aiperf.common.enums.enums import (
     AIPerfLogLevel,
     AudioFormat,
+    CacheBustTarget,
     CommAddress,
     CommandResponseStatus,
     CommandType,
@@ -82,6 +83,7 @@ from aiperf.plugin.enums import DatasetFormat
 __all__ = [
     "AIPerfLogLevel",
     "AudioFormat",
+    "CacheBustTarget",
     "BaseMetricUnit",
     "BaseMetricUnitInfo",
     "BasePydanticBackedStrEnum",
