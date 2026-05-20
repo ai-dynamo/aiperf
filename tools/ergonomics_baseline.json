@@ -18,6 +18,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/analysis/sweepline.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/cli_runner/_sweep_aggregate.py",
       ""
     ],
@@ -335,6 +340,21 @@
       "function-size",
       "src/aiperf/accuracy/graders/_math_strip.py",
       "strip_string"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
     ],
     [
       "function-size",
@@ -1005,6 +1025,21 @@
       "function-size",
       "src/aiperf/workers/worker.py",
       "Worker._process_credit"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_stats.py",
+      "compute_active_weighted_stats"
     ],
     [
       "keyword-only-args",

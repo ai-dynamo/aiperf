@@ -666,6 +666,12 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     REASONING = "reasoning"
     """Reasoning token metrics."""
 
+    EFFECTIVE = "effective"
+    """Full-window time-weighted analyzer metrics (effective_*, tokens_in_flight)."""
+
+    ACTIVE = "active"
+    """Phase-active-only weighted analyzer metrics (active_*_throughput variants)."""
+
 
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.
