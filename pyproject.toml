@@ -64,14 +64,6 @@ dependencies = [
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
   "uvicorn[standard]>=0.34,<1",
   "uvloop>=0.22.1; platform_system != 'Windows'",
-  # Transitive (via aiohttp), but pinned directly here because partial
-  # upstream releases break our cold builds. Specifically: on 2026-05-19
-  # yarl 1.24.0 was uploaded to PyPI with only cp310 wheels — no cp313
-  # and no sdist — so `uv sync` against python:3.13 picked the new
-  # "latest" and crashed for hours until upstream finished uploading.
-  # `<2.0` keeps us on the current major; raise the lower bound or
-  # remove the cap once upstream's release pipeline is reliable.
-  "yarl>=1.23,<2.0",
   "zstandard>=0.25.0",
   "crick~=0.0.8",
 ]
@@ -132,6 +124,20 @@ accuracy = [
 dev = [
     "hypothesis>=6.152.4",
     "pre-commit>=4.6.0",
+]
+
+# uv resolver constraints. ``required-environments`` makes uv refuse
+# to resolve to any package version that lacks a wheel or sdist for
+# every platform listed, which auto-backtracks past partial-upload
+# PyPI releases (e.g. yarl 1.24.0 + greenlet 3.5.1 on 2026-05-{19,20}
+# both shipped without cp313/linux wheels and broke cold builds).
+# Sdist counts as installable — crick ships only sdist on Linux
+# aarch64 and is unaffected (env-builder compiles it from source).
+[tool.uv]
+required-environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [tool.ruff]

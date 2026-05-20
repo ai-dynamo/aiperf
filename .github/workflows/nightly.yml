@@ -352,6 +352,29 @@ jobs:
       source_ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
     secrets: inherit
 
+  # Fail fast on partial-upload PyPI releases (e.g. yarl 1.24.0 with only
+  # cp310 wheels) before we burn ~10 min in build-container's env-builder
+  # docker stage. The same check happens implicitly inside that stage's
+  # `uv sync`, but surfacing it as a dedicated job here gives an explicit
+  # diagnostic + cuts the failure-to-feedback time down to ~1 min.
+  resolve-check:
+    name: Resolve Check (uv sync)
+    needs: [prepare-nightly]
+    # prod-aiperf-default-v1 is the same default Velonix worker class
+    # used by stage-nightly-container — amd64 Linux, faithful preview
+    # of what env-builder will resolve against later in the pipeline.
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Validate dependency resolution against required-environments
+        run: uv sync --active --no-install-project
+
   # ============================================================================
   # PHASE 3: BUILD
   # No environment: declaration — builder runners carry AWS credentials via IAM
@@ -359,16 +382,17 @@ jobs:
   # ============================================================================
 
   # `needs:` orders build after tests so their results appear in the summary,
-  # but the `if:` condition only hard-gates on prepare-nightly + pre-commit.
-  # Unit/integration test failures are visible but non-blocking — the rest of
-  # the pipeline continues to build, stage, and scan.
+  # but the `if:` condition only hard-gates on prepare-nightly + pre-commit +
+  # resolve-check. Unit/integration test failures are visible but non-blocking
+  # — the rest of the pipeline continues to build, stage, and scan.
   build-container:
     name: Build Container (${{ matrix.arch }})
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end]
+    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end, resolve-check]
     if: >-
       ${{ always()
           && needs.prepare-nightly.result == 'success'
-          && needs.pre-commit.result == 'success' }}
+          && needs.pre-commit.result == 'success'
+          && needs.resolve-check.result == 'success' }}
     # 90 min covers cold registry cache on both archs plus license extraction.
     timeout-minutes: 90
     strategy:
