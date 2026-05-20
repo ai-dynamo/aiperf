@@ -10,7 +10,7 @@ skips nvidia.com/gpu resource requests and uses NVIDIA_VISIBLE_DEVICES=all
 so both prefill and decode pods share the same physical GPU.
 
 Requires the Dynamo operator to be installed in the cluster.
-See: https://github.com/ai-dynamo/dynamo/releases/tag/v0.9.0
+See: https://github.com/ai-dynamo/dynamo/releases/tag/v1.1.0
 """
 
 from __future__ import annotations
@@ -202,11 +202,13 @@ class DynamoConfig:
     connectors: list[str] = field(default_factory=list)
     """KV cache transfer connectors for prefill workers (e.g. kvbm, nixl)."""
 
-    api_version: Literal["v1alpha1", "v1beta1"] = "v1beta1"
-    """DynamoGraphDeployment CRD apiVersion. v1beta1 is the new default and emits
-    `spec.components` as a list with native `corev1.PodTemplateSpec` per component
-    (main container is named ``"main"``). v1alpha1 retains the legacy
-    `spec.services` map + `extraPodSpec.mainContainer` shape."""
+    api_version: Literal["v1alpha1", "v1beta1"] = "v1alpha1"
+    """DynamoGraphDeployment CRD apiVersion. v1alpha1 is the default because
+    the shipped helm chart (v0.9.x and v1.x) serves v1alpha1 for the CRD; the
+    legacy ``spec.services`` map + ``extraPodSpec.mainContainer`` shape lives
+    on the v1alpha1 path. v1beta1 is opt-in for forward-compat: it emits the
+    new ``spec.components`` list with native ``corev1.PodTemplateSpec`` per
+    component (main container is named ``"main"``)."""
 
     @property
     def effective_image(self) -> str:
@@ -258,10 +260,10 @@ class DynamoDeployer:
 
     Uses the DynamoGraphDeployment CRD to deploy inference graphs via the
     Dynamo operator. Supports both vLLM and TRT-LLM backends. Manifest shape
-    depends on ``config.api_version``: ``v1beta1`` (default) emits the
-    list-based ``spec.components`` shape with native ``corev1.PodTemplateSpec``;
-    ``v1alpha1`` emits the legacy ``spec.services`` map with
-    ``extraPodSpec.mainContainer``.
+    depends on ``config.api_version``: ``v1alpha1`` (default, matches the
+    shipped helm chart) emits the legacy ``spec.services`` map with
+    ``extraPodSpec.mainContainer``; ``v1beta1`` emits the forward-compat
+    list-based ``spec.components`` shape with native ``corev1.PodTemplateSpec``.
     """
 
     def __init__(self, kubectl: KubectlClient, config: DynamoConfig) -> None:

@@ -51,7 +51,7 @@ async def _run_d104_assertion(
     name = "d104-test"
     ns = "dynamo-server"
     manifest = {
-        "apiVersion": "nvidia.com/v1beta1",
+        "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
         "metadata": {"name": name, "namespace": ns},
         "spec": {

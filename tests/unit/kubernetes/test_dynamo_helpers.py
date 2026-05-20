@@ -4,7 +4,10 @@
 
 Covers the new ``spec.components`` list + native ``corev1.PodTemplateSpec``
 shape and verifies that the v1alpha1 path still works when explicitly
-selected (regression guard for tests/operators pinned to alpha).
+selected. The default ``api_version`` is now ``v1alpha1`` (matches the
+shipped helm chart), so each test here either pins ``api_version="v1beta1"``
+via the local ``DynamoConfig`` shim or constructs the real config directly
+with an explicit kwarg.
 """
 
 from __future__ import annotations
@@ -13,14 +16,34 @@ import pytest
 import yaml
 from pytest import param
 
+from tests.kubernetes.gpu.dynamo import helpers as _dynamo_helpers
 from tests.kubernetes.gpu.dynamo.helpers import (
     MAIN_CONTAINER_NAME,
     DynamoBackend,
-    DynamoConfig,
     DynamoDeployer,
     DynamoMode,
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
+
+
+def DynamoConfig(**kwargs: object) -> _dynamo_helpers.DynamoConfig:
+    """Shim: construct a ``DynamoConfig`` pinned to ``api_version="v1beta1"``.
+
+    These tests assert the v1beta1 manifest shape; the dataclass default
+    is ``v1alpha1`` (matches the shipped helm chart) so we override unless
+    an individual test passes its own value.
+    """
+    kwargs.setdefault("api_version", "v1beta1")
+    return _dynamo_helpers.DynamoConfig(**kwargs)  # type: ignore[arg-type]
+
+
+def _single_gpu_disagg_beta(**overrides: object) -> _dynamo_helpers.DynamoConfig:
+    """``DynamoConfig.single_gpu_disagg`` with the v1beta1 manifest shape."""
+    overrides.setdefault("api_version", "v1beta1")
+    return _dynamo_helpers.DynamoConfig.single_gpu_disagg(**overrides)
+
+
+DynamoConfig.single_gpu_disagg = _single_gpu_disagg_beta  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -51,14 +74,18 @@ def _find_component(crd: dict, name: str) -> dict:
 
 
 class TestDynamoConfigDefaults:
-    """The v1beta1 default flip itself."""
+    """The default api_version + opt-in v1beta1."""
 
-    def test_default_api_version_is_v1beta1(self) -> None:
-        config = DynamoConfig()
+    def test_default_api_version_is_v1alpha1(self) -> None:
+        config = _dynamo_helpers.DynamoConfig()
+        assert config.api_version == "v1alpha1"
+
+    def test_explicit_v1beta1_preserved(self) -> None:
+        config = _dynamo_helpers.DynamoConfig(api_version="v1beta1")
         assert config.api_version == "v1beta1"
 
     def test_explicit_v1alpha1_preserved(self) -> None:
-        config = DynamoConfig(api_version="v1alpha1")
+        config = _dynamo_helpers.DynamoConfig(api_version="v1alpha1")
         assert config.api_version == "v1alpha1"
 
 
@@ -295,8 +322,9 @@ class TestV1Beta1Modes:
     ) -> None:
         """``DynamoConfig.single_gpu_disagg()`` is the chaos suite's primary fixture.
 
-        It defaults to v1beta1 (Phase 0a flip), ``gpu_count=0`` (so K8s does not
-        block scheduling on single-GPU dev boxes), and ``runtimeClassName=nvidia``
+        Under the v1beta1 shim used in this file, it emits the new list-based
+        ``spec.components`` shape with ``gpu_count=0`` (so K8s does not block
+        scheduling on single-GPU dev boxes) and ``runtimeClassName=nvidia``
         (so the NVIDIA runtime still mounts the GPU driver). Both prefill and
         decode workers must emit cleanly under those constraints.
         """

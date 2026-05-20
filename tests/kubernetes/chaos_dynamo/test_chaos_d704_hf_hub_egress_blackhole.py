@@ -63,7 +63,7 @@ async def _run_d704_assertion(faults, kubectl) -> None:
     # the worker must reach out to HF Hub during fetch_model and that egress
     # is the leg the NetworkPolicy severs.
     dgd_manifest = {
-        "apiVersion": "nvidia.com/v1beta1",
+        "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
         "metadata": {"name": name, "namespace": ns},
         "spec": {
