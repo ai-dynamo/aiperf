@@ -574,26 +574,30 @@ flowchart LR
 **Summary** — `<PATH>.summary.json` and stdout, per endpoint:
 
 ```
-Request distribution (5000 requests)
+Request distribution (100 requests)
 ──────────────────────────────────────────────
-  /v1/chat/completions              n=4000
-    ISL    mean  1024.3   p50  1019   p99  1228
-    OSL    mean   256.1   p50   256   p99   307
-    ISL histogram (17 bins, n=4000, 52 unique)
+  /v1/chat/completions  n=100
+    ISL    mean  1010.5   p50   998   p99  1819
+    OSL    mean   127.5   p50   129   p99   229
+
+    ISL histogram (17 bins, n=100, 19 unique)
        207-  302   7 ████░░░░░░░░░░░░░░░░
-       302-  397   6 ███░░░░░░░░░░░░░░░░░
        ... (17 rows total)
       1726- 1821   1 ░░░░░░░░░░░░░░░░░░░░
-    OSL histogram (10 bins, n=4000, 11 unique)
+
+    OSL histogram (10 bins, n=100, 11 unique)
         25-   46   3 ██░░░░░░░░░░░░░░░░░░
-        ... (10 rows total)
+       ... (10 rows total)
        210-  230   6 ████░░░░░░░░░░░░░░░░
+
+    Vocab  used 5234/151936 (3.4%)  top-10 cover 47%  entropy 8.2/17.2 bits
+      top: " the" 3201, " a" 2890, " of" 2455, " to" 2103, " and" 1987
+
+    vocab shape  (80 buckets over id 0..151935, log-y)
+    ▇▇▇▅▅▄▄▃▃▃▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ▁ ▁ ▁  ▁  ▁  ▁         ▁       ▁    ▁       ▁
+    0                            38K                          76K                       114K                152K
+
     min_tokens  mean    32.0   p50    32
-    ignore_eos=true: 41
-    reasoning_effort: {'low': 100, 'medium': 250, 'high': 50}
-  /v1/embeddings                    n=1000
-    ISL    mean   512.7   p50   510   p99   683
-    OSL    n/a
 ```
 
 For each endpoint the JSON file contains:
@@ -616,6 +620,27 @@ Example quantile block:
                   1441.24, 1536.18, 1631.12, 1726.06, 1821.0],
     "counts":    [7, 6, 5, 4, 6, 8, 7, 10, 11, 9, 8, 6, 5, 4, 3, 1, 0]
   }
+}
+```
+
+The optional `vocab_distribution` block (per endpoint) characterises sampling across the tokenizer's vocabulary: coverage of distinct ids, top-N concentration, Shannon entropy with the uniform-sampling ceiling for comparison, an 80-bucket sparkline across the full id space, and the full `token_id -> count` frequency table for offline analysis. The block is `null` when no requests reached the endpoint.
+
+```json
+"vocab_distribution": {
+  "vocab_size": 151936,
+  "vocab_size_source": "tokenizer",
+  "unique_ids": 5234,
+  "coverage_pct": 3.44,
+  "total_tokens": 102000,
+  "top_10_concentration_pct": 47.21,
+  "entropy_bits": 8.23,
+  "max_entropy_bits": 17.21,
+  "top_tokens": [
+    {"id": 264, "text": " the", "count": 3201},
+    {"id": 318, "text": " a",   "count": 2890}
+  ],
+  "shape_80": [3201, 412, 311, 0, 47, "..."],
+  "frequencies": {"264": 3201, "318": 2890, "...": 0}
 }
 ```
 
