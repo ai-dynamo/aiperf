@@ -166,7 +166,8 @@ uv run pytest tests/kubernetes/chaos_dynamo/ -v -m k8s_slow \
 A single scenario, no marker filter:
 
 ```bash
-uv run pytest tests/kubernetes/chaos_dynamo/test_chaos_d101_operator_kill.py -v
+uv run pytest tests/kubernetes/chaos_dynamo/test_chaos_d1xx_operator_admission.py \
+    -k test_chaos_d101_operator_kill -v
 ```
 
 ### D704 specifically (Cilium-enforcing CNI required)
@@ -178,7 +179,8 @@ which expands to `xfail(strict=True)` unless `KIND_HAS_CILIUM=1` is set.
 
 ```bash
 KIND_HAS_CILIUM=1 uv run pytest \
-    tests/kubernetes/chaos_dynamo/test_chaos_d704_*.py -v
+    tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra_control_plane.py \
+    -k test_chaos_d704_hf_hub_egress_blackhole -v
 ```
 
 See the "Cilium-on-kind for D704" section above for the bring-up recipe.

@@ -62,7 +62,8 @@ Reuse existing cluster + skip image build:
 
 A single scenario:
 
-    uv run pytest tests/kubernetes/chaos_dynamo/test_chaos_d101_operator_kill.py -v
+    uv run pytest tests/kubernetes/chaos_dynamo/test_chaos_d1xx_operator_admission.py \
+      -k test_chaos_d101_operator_kill -v
 
 The D704 test is `xfail(strict=True)` unless `KIND_HAS_CILIUM=1` is set in the
 environment; see `tests/kubernetes/chaos_common/README.md` for the
@@ -70,7 +71,7 @@ Cilium-on-kind bring-up.
 
 ## Per-file marker pattern
 
-Every D-series test file must declare both markers at module level:
+Every D-series test file must apply the slow marker, and async scenarios must also apply `pytest.mark.asyncio`:
 
 ```python
 import pytest
@@ -78,6 +79,4 @@ import pytest
 pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
 ```
 
-`k8s_slow` opts the test into the slow-only run gate (these tests spin up a
-real Dynamo deployment); `asyncio` is required because every helper here is
-async and the conftest fixtures are `pytest_asyncio.fixture`-based.
+Use a module-level `asyncio` mark when every test in the file is async. If a consolidated file mixes async and synchronous scenarios, keep `pytest.mark.k8s_slow` at module level and apply `@pytest.mark.asyncio` only to async tests.
