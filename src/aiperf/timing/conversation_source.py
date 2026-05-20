@@ -18,7 +18,7 @@ Terminology:
 import uuid
 from dataclasses import dataclass
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
@@ -46,6 +46,15 @@ class SampledSession:
             parent's accumulated message history and pins to the same worker;
             SPAWN starts with a fresh context. Ignored when
             parent_correlation_id is None.
+        cache_bust_marker: Pre-rendered per-session cache-bust marker text
+            (already includes whitespace boundaries). Minted by the caller
+            (e.g. BranchOrchestrator) for SPAWN children so each subagent
+            context gets its own unique server-side prefix and can't share
+            cached prefix with siblings or unrelated subagents. None when the
+            cache-bust feature is disabled.
+        cache_bust_target: Where to inject ``cache_bust_marker`` at
+            request-build time. Mirrors the CLI knob; ``CacheBustTarget.NONE``
+            when the feature is disabled.
     """
 
     conversation_id: str
@@ -54,6 +63,8 @@ class SampledSession:
     agent_depth: int = 0
     parent_correlation_id: str | None = None
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    cache_bust_marker: str | None = None
+    cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
 
     @property
     def routing_key(self) -> str:
@@ -82,6 +93,8 @@ class SampledSession:
             parent_correlation_id=self.parent_correlation_id,
             has_forks=first_meta.has_forks if first_meta is not None else False,
             branch_mode=self.branch_mode,
+            cache_bust_marker=self.cache_bust_marker,
+            cache_bust_target=self.cache_bust_target,
         )
 
 
@@ -133,6 +146,8 @@ class ConversationSource:
         agent_depth: int,
         *,
         branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
+        cache_bust_marker: str | None = None,
+        cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     ) -> SampledSession:
         """Build a SampledSession for a DAG child conversation.
 
@@ -143,6 +158,11 @@ class ConversationSource:
         SPAWN-mode children start with a fresh context, but the sticky pin to
         the parent's correlation_id is preserved at this layer — routing
         freedom is enforced upstream by the orchestrator/router.
+
+        ``cache_bust_marker`` / ``cache_bust_target`` are minted by the caller
+        (BranchOrchestrator) so each SPAWN child gets its own unique marker —
+        preventing two subagents in different traces from sharing a server
+        KV-cache prefix and inflating hit-rates artificially.
         """
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(
@@ -152,11 +172,15 @@ class ConversationSource:
             agent_depth=agent_depth,
             parent_correlation_id=parent_correlation_id,
             branch_mode=branch_mode,
+            cache_bust_marker=cache_bust_marker,
+            cache_bust_target=cache_bust_target,
         )
 
     def start_pre_session_child(
         self,
         child_conversation_id: str,
+        cache_bust_marker: str | None = None,
+        cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     ) -> SampledSession:
         """Build a SampledSession for a pre-session (turn-0) background SPAWN child.
 
@@ -170,6 +194,10 @@ class ConversationSource:
         Restricted to SPAWN mode with ``dispatch_timing="pre"`` at the validator
         level; FORK pre-dispatch would require inheriting a non-existent
         parent session and is rejected at load time.
+
+        ``cache_bust_marker`` / ``cache_bust_target`` are minted by the caller
+        so background SPAWN children get the same per-session unique-marker
+        treatment as parents.
         """
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(
@@ -179,6 +207,8 @@ class ConversationSource:
             agent_depth=1,
             parent_correlation_id=None,
             branch_mode=ConversationBranchMode.SPAWN,
+            cache_bust_marker=cache_bust_marker,
+            cache_bust_target=cache_bust_target,
         )
 
     def get_next_turn_metadata(self, credit: Credit) -> TurnMetadata:

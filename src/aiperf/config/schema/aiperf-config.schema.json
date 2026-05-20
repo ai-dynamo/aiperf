@@ -4900,6 +4900,31 @@
         }
       ]
     },
+    "CacheBustConfig": {
+      "additionalProperties": false,
+      "description": "Per-conversation cache-bust marker injected into the prompt.\n\nPrefix variants diverge at token 0 (defeats KV-cache prefix matching for\nthe entire prompt — recommended when a large shared system prompt would\notherwise produce inflated cache-hit rates). Suffix variants append after\nexisting content (lighter bust; preserves leading-prefix caching).\n\nThe marker is deterministic from (benchmark_id, recycle_pass,\ntrajectory_index, trace_id) and is identical across reruns. The same\nmarker is used for all turns within a conversation; a fresh marker is\nminted on each recycle of a trace_id.",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/CacheBustTarget",
+          "default": "none",
+          "description": "Where (and how) to inject a per-conversation cache-bust marker. Prefix variants prepend at token 0 (most aggressive); suffix variants append after existing content. 'none' disables the feature (default)."
+        }
+      },
+      "title": "CacheBustConfig",
+      "type": "object"
+    },
+    "CacheBustTarget": {
+      "description": "Where (and how) to inject a per-conversation cache-bust marker.\n\nPrefix variants diverge at token 0 of the prompt (most aggressive — defeats\nKV-cache prefix matching for the entire prompt). Suffix variants append\nafter existing content (preserves leading-prefix caching).",
+      "enum": [
+        "none",
+        "system_prefix",
+        "system_suffix",
+        "first_turn_prefix",
+        "first_turn_suffix"
+      ],
+      "title": "CacheBustTarget",
+      "type": "string"
+    },
     "CancellationConfig": {
       "additionalProperties": false,
       "description": "Configuration for request cancellation testing.\n\nEnables testing server behavior when clients cancel requests mid-flight.",
@@ -9324,6 +9349,10 @@
           "default": null,
           "description": "Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Each entry specifies {isl, osl, probability}. Probabilities are percentages (0-100) and must sum to 100. When specified, requests are sampled from this distribution instead of using isl/osl fields.",
           "title": "Sequencedistribution"
+        },
+        "cacheBust": {
+          "$ref": "#/$defs/CacheBustConfig",
+          "description": "Per-conversation cache-bust marker configuration. Defaults to disabled (target='none'). See CacheBustConfig for the prefix vs suffix and system vs first-turn placement options."
         }
       },
       "title": "PromptConfig",

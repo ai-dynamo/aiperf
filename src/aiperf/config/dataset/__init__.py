@@ -14,6 +14,7 @@ from aiperf.config.dataset.config import (
 )
 from aiperf.config.dataset.content import (
     AudioConfig,
+    CacheBustConfig,
     ImageConfig,
     PrefixPromptConfig,
     PromptConfig,
@@ -30,6 +31,7 @@ from aiperf.config.dataset.video import (
 __all__ = [
     "VIDEO_AUDIO_CODEC_MAP",
     "AudioConfig",
+    "CacheBustConfig",
     "DatasetConfig",
     "DatasetResolver",
     "FileDataset",

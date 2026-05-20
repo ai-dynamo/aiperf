@@ -12,7 +12,7 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode
 from aiperf.common.environment import Environment
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.timing._branch_orchestrator_drain import BranchOrchestratorDrainMixin
@@ -84,11 +84,13 @@ class BranchOrchestrator(
         sticky_router: StickyCreditRouter | None = None,
         *,
         benchmark_id: str = "unknown",
+        cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     ) -> None:
         self._cs = conversation_source
         self._issuer = credit_issuer
         self._sticky_router = sticky_router
         self._benchmark_id = benchmark_id
+        self._cache_bust_target = cache_bust_target
         self._child_modes: dict[str, ConversationBranchMode] = {}
         # Two-level pending-join state: a "future" join is registered at
         # spawn time and promoted to "active" once the parent reaches the
@@ -124,6 +126,27 @@ class BranchOrchestrator(
         if credit.turn_index >= len(meta.turns):
             return []
         return list(meta.turns[credit.turn_index].branch_ids)
+
+    def _mint_child_marker(self, child_conversation_id: str) -> str | None:
+        """Mint a unique cache-bust marker for a SPAWN child session.
+
+        Children get their own marker (distinct from the parent's) so two
+        subagents in different traces never share a server-side KV-cache
+        prefix. Digest input ``trace_id=child_conversation_id`` already
+        encodes ``parent_trace::sa:agent_id`` so collision-free per child.
+        Returns None when cache-bust is disabled (target=NONE).
+        """
+        from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
+
+        if self._cache_bust_target == CacheBustTarget.NONE:
+            return None
+        return build_cache_bust_marker(
+            self._benchmark_id,
+            0,
+            0,
+            child_conversation_id,
+            target=self._cache_bust_target,
+        )
 
     async def dispatch_pre_session_branches(self) -> None:
         """Pre-dispatch background SPAWN children marked dispatch_timing='pre'.

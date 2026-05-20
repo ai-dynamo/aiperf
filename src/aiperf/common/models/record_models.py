@@ -22,7 +22,12 @@ from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
+from aiperf.common.enums import (
+    CacheBustTarget,
+    CreditPhase,
+    MetricValueTypeT,
+    SSEFieldType,
+)
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
@@ -592,6 +597,23 @@ class RecordContext(AIPerfBaseModel):
         description="``audio_duration_seconds`` from the originating turn. Populated at "
         "record-enrichment time so the record processor reads it directly off the record without "
         "the full ``turns`` list on the wire. None for non-ASR requests.",
+    )
+
+    # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
+
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Pre-rendered cache-bust marker text for this request, "
+        "sourced from ``Credit.cache_bust_marker``. Already includes whitespace "
+        "boundaries. None when the cache-bust feature is disabled or no marker "
+        "applied to this request. Exported in the raw JSONL so a replay tool "
+        "can correlate the inserted bytes with the originating session.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected for this request, sourced "
+        "from ``Credit.cache_bust_target``. None when cache-bust is disabled. "
+        "Pairs with ``cache_bust_marker`` for raw-JSONL provenance.",
     )
 
     # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
@@ -1203,6 +1225,20 @@ class MetricRecordInfo(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Cache-bust marker text injected into the wire payload for "
+        "this request, copied from the originating ``Credit``. None when the "
+        "cache-bust feature is disabled. Surfaced here so raw-JSONL consumers "
+        "can correlate inserted bytes with the originating session without "
+        "re-parsing ``payload``.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected (``system_prefix``, "
+        "``system_suffix``, ``first_turn_prefix``, or ``first_turn_suffix``). "
+        "None when cache-bust is disabled.",
     )
 
 

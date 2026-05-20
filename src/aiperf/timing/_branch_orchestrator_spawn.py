@@ -181,6 +181,7 @@ class BranchOrchestratorSpawnMixin:
                 child_conversation_id=child_conv_id,
                 agent_depth=parent_depth + 1,
                 branch_mode=branch.mode,
+                cache_bust_marker=self._mint_child_marker(child_conv_id),
             )
         except Exception:
             logger.exception("start_branch_child failed for %s", child_conv_id)

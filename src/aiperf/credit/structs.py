@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from msgspec import Struct
 from typing_extensions import Self
 
-from aiperf.common.enums import ConversationBranchMode, CreditPhase
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
 
 if TYPE_CHECKING:
     from aiperf.common.models.dataset_models import TurnMetadata
@@ -70,6 +70,13 @@ class Credit(
     (i.e. for root sessions). FORK = inherit parent turn_list; SPAWN =
     fresh context. Default FORK keeps wire footprint small via msgspec omit_defaults."""
 
+    cache_bust_marker: str | None = None
+    """Pre-rendered cache-bust marker text (already includes whitespace boundaries).
+    None when the cache-bust feature is disabled."""
+
+    cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
+    """Where (and how) to inject `cache_bust_marker` at request-build time."""
+
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
@@ -127,6 +134,13 @@ class TurnToSend(Struct, frozen=True):
     has_forks: bool = False
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
+    cache_bust_marker: str | None = None
+    """Pre-rendered cache-bust marker text (already includes whitespace boundaries).
+    None when the cache-bust feature is disabled."""
+
+    cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
+    """Where (and how) to inject `cache_bust_marker` at request-build time."""
+
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
@@ -152,4 +166,6 @@ class TurnToSend(Struct, frozen=True):
             parent_correlation_id=credit.parent_correlation_id,
             has_forks=next_meta.has_forks if next_meta is not None else False,
             branch_mode=credit.branch_mode,
+            cache_bust_marker=credit.cache_bust_marker,
+            cache_bust_target=credit.cache_bust_target,
         )

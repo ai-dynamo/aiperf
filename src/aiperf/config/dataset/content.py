@@ -25,6 +25,7 @@ from typing_extensions import Self
 
 from aiperf.common.enums import (
     AudioFormat,
+    CacheBustTarget,
     ImageFormat,
     ImageSource,
 )
@@ -54,6 +55,36 @@ def _parse_image_source(value: object) -> object:
         except ValueError:
             return Path(value).expanduser()
     return value
+
+
+class CacheBustConfig(BaseConfig):
+    """Per-conversation cache-bust marker injected into the prompt.
+
+    Prefix variants diverge at token 0 (defeats KV-cache prefix matching for
+    the entire prompt — recommended when a large shared system prompt would
+    otherwise produce inflated cache-hit rates). Suffix variants append after
+    existing content (lighter bust; preserves leading-prefix caching).
+
+    The marker is deterministic from (benchmark_id, recycle_pass,
+    trajectory_index, trace_id) and is identical across reruns. The same
+    marker is used for all turns within a conversation; a fresh marker is
+    minted on each recycle of a trace_id.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Annotated[
+        CacheBustTarget,
+        Field(
+            default=CacheBustTarget.NONE,
+            description=(
+                "Where (and how) to inject a per-conversation cache-bust marker. "
+                "Prefix variants prepend at token 0 (most aggressive); "
+                "suffix variants append after existing content. "
+                "'none' disables the feature (default)."
+            ),
+        ),
+    ]
 
 
 class PromptConfig(BaseConfig):
@@ -122,6 +153,18 @@ class PromptConfig(BaseConfig):
             "Each entry specifies {isl, osl, probability}. "
             "Probabilities are percentages (0-100) and must sum to 100. "
             "When specified, requests are sampled from this distribution instead of using isl/osl fields.",
+        ),
+    ]
+
+    cache_bust: Annotated[
+        CacheBustConfig,
+        Field(
+            default_factory=CacheBustConfig,
+            description=(
+                "Per-conversation cache-bust marker configuration. "
+                "Defaults to disabled (target='none'). See CacheBustConfig for "
+                "the prefix vs suffix and system vs first-turn placement options."
+            ),
         ),
     ]
 
