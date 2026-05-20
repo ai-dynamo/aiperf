@@ -368,6 +368,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          # No later step needs authenticated git operations, so don't
+          # leave the GITHUB_TOKEN in .git/config after checkout.
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v7
       - uses: actions/setup-python@v6
         with:
