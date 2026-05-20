@@ -373,11 +373,26 @@ def _build_summary(
     streamed: dict[str, int],
     ignore_eos: dict[str, int],
     reasoning_efforts: dict[str, Counter[str]],
+    vocab_counts: dict[str, Counter[int]] | None = None,
+    vocab_size: int | None = None,
+    vocab_size_source: str = "tokenizer",
+    decode_fn: Callable[[int], str] | None = None,
 ) -> dict[str, Any]:
     per_endpoint: dict[str, Any] = {}
+    vocab_counts = vocab_counts or {}
     for ep in sorted(isls.keys()):
         isl_vals = isls[ep]
         osl_vals = osls.get(ep, [])
+        ep_vocab_counter = vocab_counts.get(ep, Counter())
+        if vocab_size is not None and decode_fn is not None:
+            vd = _vocab_distribution(
+                ep_vocab_counter,
+                _resolve_vocab_size(vocab_size, vocab_size_source, ep_vocab_counter),
+                vocab_size_source,
+                decode_fn,
+            )
+        else:
+            vd = None
         per_endpoint[ep] = {
             "count": len(isl_vals),
             "streamed_count": streamed.get(ep, 0),
@@ -387,8 +402,25 @@ def _build_summary(
             "isl": _stat_block(isl_vals),
             "requested_osl": _stat_block(osl_vals),
             "min_tokens": _quantiles(min_tokens.get(ep, [])),
+            "vocab_distribution": vd,
         }
     return {"total_requests": total, "per_endpoint": per_endpoint}
+
+
+def _resolve_vocab_size(declared: int | None, source: str, counts: Counter[int]) -> int:
+    """Return vocab size for the per-endpoint distribution.
+
+    For the `"tokenizer"` source we trust the declared value. For the
+    `"observed"` source we use `max_observed_id + 1` (or the declared value,
+    whichever is greater) so coverage_pct stays sane when the tokenizer
+    doesn't expose len().
+    """
+    if not counts:
+        return declared or 0
+    observed_max = max(counts.keys())
+    if source == "observed":
+        return max(declared or 0, observed_max + 1)
+    return declared or (observed_max + 1)
 
 
 def _print_summary(summary: dict[str, Any]) -> None:

@@ -629,3 +629,41 @@ class TestRenderVocabShape:
         assert "38K" in ticks
         assert "76K" in ticks
         assert "114K" in ticks
+
+
+class TestBuildSummaryVocab:
+    def test_endpoint_block_contains_vocab_distribution(self) -> None:
+        summary = _build_summary(
+            total=2,
+            isls=defaultdict(list, {"/v1/chat/completions": [10, 20]}),
+            osls=defaultdict(list, {"/v1/chat/completions": [5, 5]}),
+            min_tokens=defaultdict(list),
+            streamed=defaultdict(int),
+            ignore_eos=defaultdict(int),
+            reasoning_efforts=defaultdict(Counter),
+            vocab_counts={"/v1/chat/completions": Counter({1: 3, 2: 2})},
+            vocab_size=100,
+            vocab_size_source="tokenizer",
+            decode_fn=_id_to_text,
+        )
+        ep = summary["per_endpoint"]["/v1/chat/completions"]
+        assert ep["vocab_distribution"] is not None
+        assert ep["vocab_distribution"]["unique_ids"] == 2
+        assert ep["vocab_distribution"]["total_tokens"] == 5
+
+    def test_vocab_distribution_is_none_for_endpoint_with_no_observations(self) -> None:
+        summary = _build_summary(
+            total=2,
+            isls=defaultdict(list, {"/v1/embeddings": [10, 20]}),
+            osls=defaultdict(list),
+            min_tokens=defaultdict(list),
+            streamed=defaultdict(int),
+            ignore_eos=defaultdict(int),
+            reasoning_efforts=defaultdict(Counter),
+            vocab_counts={"/v1/embeddings": Counter()},
+            vocab_size=100,
+            vocab_size_source="tokenizer",
+            decode_fn=_id_to_text,
+        )
+        ep = summary["per_endpoint"]["/v1/embeddings"]
+        assert ep["vocab_distribution"] is None
