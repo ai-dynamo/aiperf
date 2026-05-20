@@ -378,15 +378,27 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     # mirrors the serial loader and preserves tiered joins for mixed-duration
     # sibling subagents.
     #
-    # Example, all three subagents appear after parent turn 0 in JSON:
+    # Examples:
     #   parent[0] t=0
-    #   subagent A ends t=6, subagent B ends t=12.5, subagent C ends t=24
+    #   subagent A ends t=6
+    #   subagent B ends t=12.5
+    #   subagent C ends t=24
     #   parent[1] t=6
     #   parent[2] t=20
-    # We emit three branches from parent[0]:
-    #   A -> SPAWN_JOIN on parent[1]
-    #   B -> SPAWN_JOIN on parent[2]
-    #   C -> background branch, because no later parent turn reaches t=24
+    #
+    #   A joins parent[1] because parent[1].t >= A.end.
+    #   B joins parent[2] because parent[1].t < B.end <= parent[2].t.
+    #   C is background because no later parent turn reaches C.end.
+    #
+    # More edge cases:
+    #   - If A and B both ended before parent[1], they share one
+    #     (parent[0], parent[1]) branch group so parent[1] waits for both.
+    #   - If B ends after parent[1] but before parent[2], parent[1] can
+    #     proceed while B is still running; parent[2] is the gated turn.
+    #   - If a subagent marker appears before any retained parent turn,
+    #     it is dropped because there is no spawning parent turn.
+    #   - Equality is a join: subagent.end == parent[k].t joins parent[k]
+    #     within _JOIN_EPSILON_SECONDS.
     groups: dict[tuple[int, int | None], list[_WekaSubagentMarkerPayload]] = (
         defaultdict(list)
     )
