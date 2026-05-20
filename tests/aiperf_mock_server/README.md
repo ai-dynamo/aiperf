@@ -575,10 +575,10 @@ flowchart LR
 **Summary** — `<PATH>.summary.json` and stdout, per endpoint:
 
 ```text
-Request distribution (100 requests)
+Request distribution (200 requests)
 ──────────────────────────────────────────────
   Definitions
-    ISL/OSL: input/output sequence length in tokens.
+    ISL/OSL: input/requested output sequence length in tokens; OSL is the request cap, not generated output.
     Vocab used: unique token IDs observed / tokenizer vocab size.
     top-10 cover: share of prompt tokens from the 10 most common token IDs.
     entropy: token-id diversity; higher means broader prompt vocabulary use.
@@ -586,32 +586,47 @@ Request distribution (100 requests)
     vocab shape: log-scaled 80-bucket view across token-id space.
     vocab shape stats: mean/percentiles of prompt-token counts per bucket, including empty buckets.
 
-  /v1/chat/completions  n=100
-    ISL    mean  1010.5   p50   998   p99  1819
-    OSL    mean   127.5   p50   129   p99   229
+  /v1/completions  n=200
+    ISL            mean  1050.6   min   416   max  1703   p50  1042   p99  1694
+    Requested OSL  mean   527.8   min   216   max   896   p50   522   p99   814
 
-    ISL histogram (17 bins, n=100, 19 unique)
-       207-  302   7 ████░░░░░░░░░░░░░░░░
-       ... (17 rows total)
-      1726- 1821   1 ░░░░░░░░░░░░░░░░░░░░
+    ISL histogram (13 bins, n=200, 181 unique)
+       416-  515    2 █░░░░░░░░░░░░░░░░░░░
+       515-  614    0 ░░░░░░░░░░░░░░░░░░░░
+       614-  713   14 ████████░░░░░░░░░░░░
+       713-  812   18 ██████████░░░░░░░░░░
+       812-  911   29 ████████████████░░░░
+       911- 1010   25 ██████████████░░░░░░
+      1010- 1109   36 ████████████████████
+      1109- 1208   21 ████████████░░░░░░░░
+      1208- 1307   23 █████████████░░░░░░░
+      1307- 1406   15 ████████░░░░░░░░░░░░
+      1406- 1505    8 ████░░░░░░░░░░░░░░░░
+      1505- 1604    6 ███░░░░░░░░░░░░░░░░░
+      1604- 1703    3 ██░░░░░░░░░░░░░░░░░░
 
-    OSL histogram (10 bins, n=100, 11 unique)
-        25-   46   3 ██░░░░░░░░░░░░░░░░░░
-       ... (10 rows total)
-       210-  230   6 ████░░░░░░░░░░░░░░░░
+    Requested OSL histogram (10 bins, n=200, 166 unique)
+      216- 284    2 █░░░░░░░░░░░░░░░░░░░
+      284- 352   12 █████░░░░░░░░░░░░░░░
+      352- 420   26 ███████████░░░░░░░░░
+      420- 488   34 ██████████████░░░░░░
+      488- 556   48 ████████████████████
+      556- 624   33 ██████████████░░░░░░
+      624- 692   29 ████████████░░░░░░░░
+      692- 760   10 ████░░░░░░░░░░░░░░░░
+      760- 828    4 ██░░░░░░░░░░░░░░░░░░
+      828- 896    2 █░░░░░░░░░░░░░░░░░░░
 
 
-    Vocab  used 5234/151936 (3.4%)  top-10 cover 47%  entropy 8.2/17.2 bits
-      top decoded tokens: " the" 3201, " a" 2890, " of" 2455, " to" 2103, " and" 1987
+    Vocab  used 11991/128000 (9.4%)  top-10 cover 14%  entropy 10.6/17.0 bits
+      top decoded tokens: " the" 4452, " I" 3969, " and" 3523, " of" 3119, " to" 3070
 
-    vocab shape  (80 buckets over id 0..151935, log-y)
+    vocab shape  (80 buckets over id 0..127999, log-y)
 
-      bucket tokens mean  1275.0   p50    14   p90  2455   p95  2890   p99  3201
+      bucket tokens mean  2623.9   p50   470   p90  2931   p95  6572   p99 40006
 
-    ▇▇▇▅▅▄▄▃▃▃▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ▁ ▁ ▁  ▁  ▁  ▁         ▁       ▁    ▁       ▁
-    0                            38K                          76K                       114K                152K
-
-    min_tokens  mean    32.0   p50    32
+    ██▇▇▇▆▆▆▆▆▆▆▆▆▆▆▆▆▅▅▅▆▅▅▅▆▅▅▅▅▅▅▅▅▅▅▅▅▄▅▅▅▅▅▄▅▅▅▄▄▄▅▅▅▅▅▅▄▅▄▄▅▄▁▂ ▁▁▁▁▁▂▁▁▁▃▁▂▁
+    0                   32K                 64K                 96K             128K
 ```
 
 For each endpoint the JSON file contains:

@@ -230,14 +230,37 @@ class TestPrintSummary:
                             "counts": [1, 0, 0, 0, 1, 0, 0, 0, 1, 1],
                         },
                     },
-                    "requested_osl": None,
+                    "requested_osl": {
+                        "min": 100.0,
+                        "max": 400.0,
+                        "mean": 250.0,
+                        "stdev": 129.1,
+                        "p50": 250.0,
+                        "p90": 380.0,
+                        "p95": 390.0,
+                        "p99": 398.0,
+                        "unique_values": 4,
+                        "histogram": {
+                            "bin_edges": [100.0, 250.0, 400.0],
+                            "counts": [2, 2],
+                        },
+                    },
                     "min_tokens": None,
                 },
             },
         }
         _print_summary(summary)
         out = capsys.readouterr().out
+        assert (
+            "ISL            mean    25.0   min    10   max    40   p50    25   p99    40"
+            in out
+        )
+        assert (
+            "Requested OSL  mean   250.0   min   100   max   400   p50   250   p99   398"
+            in out
+        )
         assert "ISL histogram (10 bins, n=4, 4 unique)" in out
+        assert "Requested OSL histogram (2 bins, n=4, 4 unique)" in out
 
     def test_osl_histogram_skipped_when_null(self, capsys) -> None:
         summary = {
@@ -268,7 +291,7 @@ class TestPrintSummary:
         _print_summary(summary)
         out = capsys.readouterr().out
         assert "ISL histogram" in out
-        assert "OSL histogram" not in out
+        assert "Requested OSL histogram" not in out
 
 
 class _FakeTokenizer:
@@ -1021,6 +1044,7 @@ class TestPrintSummaryVocab:
         _print_summary(self._summary(self._vd()))
         out = capsys.readouterr().out
         assert "Definitions" in out
+        assert "OSL is the request cap" in out
         assert "entropy: token-id diversity" in out
         assert "top decoded tokens: most frequent token IDs" in out
         assert "vocab shape stats: mean/percentiles" in out

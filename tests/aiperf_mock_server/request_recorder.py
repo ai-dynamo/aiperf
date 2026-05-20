@@ -738,16 +738,22 @@ def _print_summary(summary: dict[str, Any]) -> None:
         print("")
     for ep, stats in summary["per_endpoint"].items():
         print(f"  {ep}  n={stats['count']}")
-        for label, s in (("ISL", stats["isl"]), ("OSL", stats["requested_osl"])):
+        token_stats = (
+            ("ISL", stats["isl"]),
+            ("Requested OSL", stats["requested_osl"]),
+        )
+        label_width = max(len(label) for label, _ in token_stats)
+        for label, s in token_stats:
             if s is None:
-                print(f"    {label}    n/a")
+                print(f"    {label:<{label_width}}  n/a")
             else:
                 print(
-                    f"    {label}    mean {s['mean']:7.1f}"
+                    f"    {label:<{label_width}}  mean {s['mean']:7.1f}"
+                    f"   min {s['min']:5.0f}   max {s['max']:5.0f}"
                     f"   p50 {s['p50']:5.0f}   p99 {s['p99']:5.0f}"
                 )
         rendered_histogram = False
-        for label, s in (("ISL", stats["isl"]), ("OSL", stats["requested_osl"])):
+        for label, s in token_stats:
             if s is None or s.get("histogram") is None:
                 continue
             hist = s["histogram"]
@@ -785,7 +791,7 @@ def _render_description_box() -> list[str]:
     """Small stdout glossary for less obvious request-recorder metrics."""
     return [
         "  Definitions",
-        "    ISL/OSL: input/output sequence length in tokens.",
+        "    ISL/OSL: input/requested output sequence length in tokens; OSL is the request cap, not generated output.",
         "    Vocab used: unique token IDs observed / tokenizer vocab size.",
         "    top-10 cover: share of prompt tokens from the 10 most common token IDs.",
         "    entropy: token-id diversity; higher means broader prompt vocabulary use.",
