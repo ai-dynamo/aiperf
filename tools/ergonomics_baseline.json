@@ -198,6 +198,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/metrics/column_store.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/metrics/types/http_trace_metrics.py",
       ""
     ],

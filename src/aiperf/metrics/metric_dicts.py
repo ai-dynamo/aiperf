@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 
+from aiperf.common.accumulator_protocols import MetricSeriesProtocol
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     MetricDictValueTypeT,
@@ -23,20 +24,20 @@ if TYPE_CHECKING:
     from aiperf.metrics.metric_registry import MetricRegistry
 
 
-@runtime_checkable
-class MetricAggregator(Protocol):
-    """Run-level aggregator that produces a :class:`MetricResult`.
+__all__ = [
+    "BaseMetricDict",
+    "MetricAggregator",
+    "MetricArray",
+    "MetricDictValueTypeVarT",
+    "MetricRecordDict",
+    "MetricResultsDict",
+    "MetricSeriesProtocol",
+]
 
-    Implemented by :class:`MetricArray` (exact, ``np.ndarray``-backed) and
-    :class:`aiperf.metrics.list_metric_aggregation.TDigestListMetricAggregator`
-    (bounded-memory t-digest sketch). Both maintain an exact running ``sum``
-    so derived-sum metrics work uniformly across them.
-    """
-
-    @property
-    def sum(self) -> int | float: ...
-
-    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult: ...
+# Back-compat alias: ``MetricAggregator`` is the historical name for
+# :class:`MetricSeriesProtocol`. Both point at the same Protocol; the alias
+# keeps existing imports working.
+MetricAggregator = MetricSeriesProtocol
 
 
 MetricDictValueTypeVarT = TypeVar(
