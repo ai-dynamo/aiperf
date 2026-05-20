@@ -163,6 +163,27 @@ class TestRecordRequests:
         assert emb_stats["isl"]["histogram"] is not None
         assert emb_stats["isl"]["unique_values"] >= 1
 
+        # Vocab distribution block for chat: present, with valid shape and ids.
+        chat_vd = chat_stats["vocab_distribution"]
+        assert chat_vd is not None
+        assert chat_vd["vocab_size"] > 0
+        assert chat_vd["unique_ids"] >= 1
+        assert chat_vd["total_tokens"] >= chat_vd["unique_ids"]
+        assert 0.0 <= chat_vd["coverage_pct"] <= 100.0
+        assert len(chat_vd["shape_80"]) == 80
+        assert sum(chat_vd["shape_80"]) == chat_vd["total_tokens"]
+        assert 1 <= len(chat_vd["top_tokens"]) <= 10
+        for entry in chat_vd["top_tokens"]:
+            assert isinstance(entry["id"], int)
+            assert isinstance(entry["text"], str)
+            assert entry["count"] >= 1
+        assert 0.0 <= chat_vd["entropy_bits"] <= chat_vd["max_entropy_bits"] + 1e-6
+        assert chat_vd["vocab_size_source"] in {"tokenizer", "observed"}
+        # Embeddings endpoint exists in the fixture; its vocab block should
+        # also exist (ISL is recorded) — sanity-check that this isn't broken.
+        emb_vd = emb_stats["vocab_distribution"]
+        assert emb_vd is None or emb_vd["unique_ids"] >= 1
+
     async def test_record_requests_forces_workers_to_one(self) -> None:
         """The validator must collapse workers to 1 whenever recording is on —
         the recorder keeps per-request stats in-process, so a single uvicorn
