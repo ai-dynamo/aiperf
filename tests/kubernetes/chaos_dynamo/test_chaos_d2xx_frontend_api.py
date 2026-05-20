@@ -265,7 +265,6 @@ async def test_d201_force_kill_frontend_under_sse(
 
 # D202
 
-logger = AIPerfLogger(__name__)
 
 FRONTEND_COMPONENT_LABEL = "nvidia.com/dynamo-component-type"
 
@@ -551,7 +550,6 @@ async def _post_chat_completion(
 
 # D203
 
-logger = AIPerfLogger(__name__)
 
 TOXIPROXY_SERVICE_DNS = "toxiproxy.chaos-toxiproxy.svc"
 
@@ -1026,7 +1024,6 @@ async def test_d203_backend_stream_inactivity_timeout(
 
 # D207
 
-logger = AIPerfLogger(__name__)
 
 _CLIENT_ERROR_BUDGET_S: float = 35.0
 
@@ -2517,7 +2514,6 @@ async def test_d224_bad_authorization_compatibility(dynamo_endpoint_url: str) ->
 
 # D225-D233
 
-logger = AIPerfLogger(__name__)
 
 FRONTEND_SELECTOR = "nvidia.com/dynamo-component-type=frontend"
 DEFAULT_MODEL = os.environ.get("AIPERF_DYNAMO_CHAOS_MODEL", "default")

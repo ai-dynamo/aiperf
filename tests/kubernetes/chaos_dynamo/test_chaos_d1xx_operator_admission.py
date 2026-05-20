@@ -256,7 +256,6 @@ async def _run_d101_assertion(
 
 # D102
 
-logger = AIPerfLogger(__name__)
 
 _DGD_NAME = "dynamo-agg"
 _DGD_NAMESPACE = "d102-double-delete"
@@ -528,7 +527,6 @@ async def test_d104_invalid_dgd_replicas_negative(
 
 # D105
 
-logger = AIPerfLogger(__name__)
 
 _DGD_NAMESPACE = "d105-recreate-same-name"
 _ABSENT_TIMEOUT_S = 5.0
@@ -1039,7 +1037,6 @@ async def _get_json(
 
 # D107
 
-logger = AIPerfLogger(__name__)
 
 _OPERATOR_NAMESPACE = "dynamo-system"
 _OPERATOR_SELECTOR = "app.kubernetes.io/name=dynamo-operator"
@@ -1432,8 +1429,6 @@ async def _operator_deployment_env(kubectl: KubectlClient) -> _DeploymentEnv:
         "json",
         check=True,
     )
-    import orjson
-
     deployments = orjson.loads(result.stdout or b"{}").get("items", [])
     if len(deployments) != 1:
         names = [
