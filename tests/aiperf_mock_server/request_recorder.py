@@ -420,6 +420,95 @@ def _print_summary(summary: dict[str, Any]) -> None:
             print(f"    reasoning_effort: {stats['reasoning_effort_counts']}")
 
 
+_BLOCK_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def _format_top_tokens_line(top_tokens: list[dict[str, Any]]) -> str:
+    """Format the `top:` line of the vocab stdout block (first 5 entries)."""
+    pieces: list[str] = []
+    for entry in top_tokens[:5]:
+        text = entry["text"]
+        count = entry["count"]
+        if isinstance(text, str) and text.startswith("<id=") and text.endswith(">"):
+            pieces.append(f"{text} {count}")
+        else:
+            pieces.append(f'"{text}" {count}')
+    return "      top: " + ", ".join(pieces)
+
+
+def _format_tick(value: int) -> str:
+    """Right-side axis tick formatting: '0' / '38K' / '152K' (rounded, no decimals)."""
+    if value < 1000:
+        return str(value)
+    return f"{round(value / 1000)}K"
+
+
+def _render_vocab_lines(vd: dict[str, Any]) -> list[str]:
+    """Return the 6-line stdout block for one endpoint's vocab_distribution.
+
+    Layout (4-space indent on top-level rows, 6-space indent on `top:`):
+        ``    Vocab  used N/V (P%)  top-10 cover X%  entropy E/M bits``
+        ``      top: "tok1" c1, "tok2" c2, ...``
+        ``    ``
+        ``    vocab shape  (80 buckets over id 0..V-1, log-y)``
+        ``    [80-char sparkline]``
+        ``    0 ... K_q1 ... K_q2 ... K_q3 ... K_max``
+    """
+    headline = (
+        f"    Vocab  used {vd['unique_ids']}/{vd['vocab_size']}"
+        f" ({vd['coverage_pct']:.1f}%)"
+        f"  top-10 cover {vd['top_10_concentration_pct']:.0f}%"
+        f"  entropy {vd['entropy_bits']:.1f}/{vd['max_entropy_bits']:.1f} bits"
+    )
+    top_line = _format_top_tokens_line(vd["top_tokens"])
+    shape_header = (
+        f"    vocab shape  (80 buckets over id 0..{vd['vocab_size'] - 1}, log-y)"
+    )
+
+    shape = vd["shape_80"]
+    max_count = max(shape) if shape else 0
+    if max_count <= 0:
+        sparkline = " " * 80
+    else:
+        log_max = math.log1p(max_count)
+        sparkline_chars: list[str] = []
+        for count in shape:
+            if count <= 0:
+                sparkline_chars.append(" ")
+                continue
+            ratio = math.log1p(count) / log_max
+            # Map (0, 1] -> index [0, 7]; ratio==1.0 must give index 7 (full block).
+            idx = min(7, max(0, math.ceil(ratio * 8) - 1))
+            sparkline_chars.append(_BLOCK_CHARS[idx])
+        sparkline = "".join(sparkline_chars)
+
+    vocab_size = vd["vocab_size"]
+    tick_positions = (
+        0,
+        vocab_size // 4,
+        vocab_size // 2,
+        (3 * vocab_size) // 4,
+        vocab_size,
+    )
+    tick_labels = [_format_tick(p) for p in tick_positions]
+    # Each tick sits at the column index where its bucket starts (80-char line).
+    columns = (0, 20, 40, 60, 79)
+    tick_line = list(" " * 80)
+    for col, label in zip(columns, tick_labels, strict=True):
+        start = min(col, 80 - len(label))
+        for i, ch in enumerate(label):
+            tick_line[start + i] = ch
+
+    return [
+        headline,
+        top_line,
+        "",
+        shape_header,
+        "    " + sparkline,
+        "    " + "".join(tick_line).rstrip(),
+    ]
+
+
 _GLOBAL_RECORDER: RequestRecorder | None = None
 
 

@@ -13,6 +13,7 @@ from aiperf_mock_server.request_recorder import (
     _histogram,
     _print_summary,
     _render_histogram,
+    _render_vocab_lines,
     _vocab_distribution,
 )
 from pytest import param
@@ -493,3 +494,138 @@ class TestVocabDistribution:
         assert vd is not None
         assert vd["vocab_size_source"] == "observed"
         assert vd["vocab_size"] == 10
+
+
+class TestRenderVocabShape:
+    def _make_vd(
+        self,
+        unique_ids: int = 5,
+        vocab_size: int = 1000,
+        coverage_pct: float = 0.5,
+        top_10_concentration_pct: float = 50.0,
+        entropy_bits: float = 4.0,
+        max_entropy_bits: float = 10.0,
+        top_tokens: list | None = None,
+        shape_80: list | None = None,
+    ) -> dict:
+        if top_tokens is None:
+            top_tokens = [
+                {"id": i, "text": f"<t{i}>", "count": 100 - i * 10} for i in range(5)
+            ]
+        if shape_80 is None:
+            shape_80 = [10, 5, 2] + [0] * 77
+        return {
+            "vocab_size": vocab_size,
+            "vocab_size_source": "tokenizer",
+            "unique_ids": unique_ids,
+            "coverage_pct": coverage_pct,
+            "total_tokens": sum(shape_80),
+            "top_10_concentration_pct": top_10_concentration_pct,
+            "entropy_bits": entropy_bits,
+            "max_entropy_bits": max_entropy_bits,
+            "top_tokens": top_tokens,
+            "shape_80": shape_80,
+            "frequencies": {},
+        }
+
+    def test_headline_line_format(self) -> None:
+        lines = _render_vocab_lines(
+            self._make_vd(
+                unique_ids=5234,
+                vocab_size=151936,
+                coverage_pct=3.4438,
+                top_10_concentration_pct=47.2,
+                entropy_bits=8.23,
+                max_entropy_bits=17.21,
+            )
+        )
+        assert lines[0] == (
+            "    Vocab  used 5234/151936 (3.4%)  top-10 cover 47%"
+            "  entropy 8.2/17.2 bits"
+        )
+
+    def test_top_line_format(self) -> None:
+        vd = self._make_vd(
+            top_tokens=[
+                {"id": 1, "text": " the", "count": 3201},
+                {"id": 2, "text": " a", "count": 2890},
+            ]
+        )
+        lines = _render_vocab_lines(vd)
+        assert lines[1] == '      top: " the" 3201, " a" 2890'
+
+    def test_top_line_caps_at_5(self) -> None:
+        vd = self._make_vd(
+            top_tokens=[
+                {"id": i, "text": f"<t{i}>", "count": 100 - i} for i in range(10)
+            ]
+        )
+        lines = _render_vocab_lines(vd)
+        # Only first 5 entries appear in the stdout line.
+        assert lines[1].count(",") == 4
+
+    def test_top_line_falls_back_to_unquoted_id_marker(self) -> None:
+        vd = self._make_vd(
+            top_tokens=[
+                {"id": 7, "text": "<id=7>", "count": 100},
+                {"id": 8, "text": " ok", "count": 50},
+            ]
+        )
+        lines = _render_vocab_lines(vd)
+        assert "<id=7> 100" in lines[1]
+        assert '" ok" 50' in lines[1]
+
+    def test_blank_line_before_shape(self) -> None:
+        lines = _render_vocab_lines(self._make_vd())
+        # lines[0] = Vocab headline, lines[1] = top, lines[2] = blank
+        assert lines[2] == ""
+
+    def test_shape_header_line(self) -> None:
+        lines = _render_vocab_lines(self._make_vd(vocab_size=151936))
+        assert lines[3] == "    vocab shape  (80 buckets over id 0..151935, log-y)"
+
+    def test_sparkline_is_80_chars(self) -> None:
+        lines = _render_vocab_lines(
+            self._make_vd(
+                shape_80=[10, 5, 2, 1] + [0] * 76,
+            )
+        )
+        # lines[4] is the sparkline, indented 4 spaces.
+        sparkline = lines[4][4:]
+        assert len(sparkline) == 80
+
+    def test_zero_bucket_renders_as_space(self) -> None:
+        shape = [10] + [0] * 79
+        lines = _render_vocab_lines(self._make_vd(shape_80=shape))
+        sparkline = lines[4][4:]
+        # First bucket is the tallest (█); the rest are zero (space).
+        assert sparkline[0] == "█"
+        assert sparkline[1:] == " " * 79
+
+    def test_log_y_makes_small_bars_visible(self) -> None:
+        # One huge bucket and several small ones — linear scaling would render
+        # all the small bars at ▁ or below. Log-y must lift them into visible
+        # block characters.
+        shape = [1000] + [1] * 79
+        lines = _render_vocab_lines(self._make_vd(shape_80=shape))
+        sparkline = lines[4][4:]
+        assert sparkline[0] == "█"
+        # The small buckets must render as non-space (i.e. a visible block).
+        # Log scaling guarantees log1p(1)/log1p(1000) ≈ 0.10, well above the
+        # ▁ threshold of 1/8 = 0.125 only just; allow ▁ as the minimum.
+        block_chars = set("▁▂▃▄▅▆▇█")
+        for ch in sparkline[1:]:
+            assert ch in block_chars
+
+    def test_axis_tick_line(self) -> None:
+        lines = _render_vocab_lines(self._make_vd(vocab_size=151936))
+        # lines[5] is the axis tick line. The leftmost label '0' starts at
+        # column 4 (after the indent); the rightmost ('152K') ends at column
+        # 4 + 80 = 84.
+        ticks = lines[5]
+        assert ticks.startswith("    0")
+        assert ticks.rstrip().endswith("152K")
+        # Includes the three middle ticks at 25%/50%/75% positions.
+        assert "38K" in ticks
+        assert "76K" in ticks
+        assert "114K" in ticks
