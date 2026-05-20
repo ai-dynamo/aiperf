@@ -7,12 +7,20 @@ from __future__ import annotations
 import pytest
 
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
-from tests.kubernetes.chaos_dynamo.test_chaos_d112_deployment_create_rbac import (
-    _apply_fresh_dgd,
-    _delete_dgd,
-    _find_unique_operator_rbac_owner,
-    _observe_not_successful,
-    _rbac_target,
+from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
+    _d112_apply_fresh_dgd as _apply_fresh_dgd,
+)
+from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
+    _d112_delete_dgd as _delete_dgd,
+)
+from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
+    _d112_find_unique_operator_rbac_owner as _find_unique_operator_rbac_owner,
+)
+from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
+    _d112_observe_not_successful as _observe_not_successful,
+)
+from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
+    _d112_rbac_target as _rbac_target,
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
