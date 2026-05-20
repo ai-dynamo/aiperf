@@ -139,28 +139,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Restore from a prior attempt's archived snapshot. New runs write
-          # version-info.txt; the .env fallback exists so re-attempts of runs
-          # started before this rename still hit a source-able file.
-          VERSION_INFO_FILE=""
+          # Restore from a prior attempt's archived snapshot. GH Actions
+          # re-runs always execute the same workflow file as the original
+          # run, so an artifact written by this code is always read back
+          # by this same code — no cross-version compat needed.
           if [ -f ".nightly-version/version-info.txt" ]; then
-            VERSION_INFO_FILE=".nightly-version/version-info.txt"
-          elif [ -f ".nightly-version/version-info.env" ]; then
-            VERSION_INFO_FILE=".nightly-version/version-info.env"
-          fi
-          if [ -n "${VERSION_INFO_FILE}" ]; then
-            echo "Restoring version strings from prior run attempt (${VERSION_INFO_FILE})."
+            echo "Restoring version strings from prior run attempt."
             # shellcheck source=/dev/null
-            source "${VERSION_INFO_FILE}"
-            # Backfill outputs added after the original snapshot was
-            # written. Legacy version-info.env files (from before the
-            # scheduled/manual split) don't define STAGE_SUBPATH, which
-            # would abort this step under `set -u` before any output is
-            # written. All legacy artifacts landed under the bare
-            # nightly/<date>/ path, so that's the correct default.
-            if [ -z "${STAGE_SUBPATH:-}" ]; then
-              STAGE_SUBPATH="nightly/${TIMESTAMP}"
-            fi
+            source .nightly-version/version-info.txt
           else
             # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
             # WHEEL_VERSION are disambiguated by the 7-char short SHA so
