@@ -77,6 +77,17 @@ from tests.kubernetes.helpers.kubectl import KubectlClient
 logger = AIPerfLogger(__name__)
 
 
+# Load the gpu conftest as a plugin so its ``pytest_addoption`` (the
+# ``--gpu-*`` CLI options + ``GPU_TEST_*`` env vars) and its
+# package-scoped ``gpu_settings`` fixture are visible from this sibling
+# package. Without this, tests that transitively depend on ``gpu_settings``
+# (e.g. ``dynamo_operator``, ``dynamo_config``) ERROR at fixture-resolution
+# with ``fixture 'gpu_settings' not found``. ``pytest_plugins`` is only
+# honored from rootdir/conftest.py and from conftest files of top-level
+# test packages, so keeping this here is load-bearing.
+pytest_plugins = ["tests.kubernetes.gpu.conftest"]
+
+
 # ============================================================================
 # Toxiproxy fixture (package-scoped)
 # ============================================================================
