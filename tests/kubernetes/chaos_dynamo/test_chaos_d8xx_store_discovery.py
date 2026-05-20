@@ -26,7 +26,7 @@ from dev.versions import DYNAMO_VERSION
 from tests.kubernetes.chaos_dynamo.conftest import scrape_frontend_metrics
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
-pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
+pytestmark = [pytest.mark.k8s_slow]
 logger = AIPerfLogger(__name__)
 
 
@@ -45,6 +45,7 @@ _TRAFFIC_PROBE_TIMEOUT_S = 30.0
 _ETCD_ERROR_NEEDLES = (b"etcd", b"register", b"lease")
 
 
+@pytest.mark.asyncio
 async def test_d801_etcd_kill_during_registration_race(
     faults: Any,
     kubectl: Any,
@@ -476,6 +477,7 @@ async def _etcd_service_exists(kubectl: KubectlClient) -> bool:
     return result.returncode == 0
 
 
+@pytest.mark.asyncio
 async def test_d802_etcd_30s_pause_recovers(
     request: pytest.FixtureRequest,
 ) -> None:
@@ -550,6 +552,7 @@ ERROR_RATE_DURING_OUTAGE_THRESHOLD = 0.20
 ERROR_RATE_RECOVERY_THRESHOLD = 0.05
 
 
+@pytest.mark.asyncio
 async def test_d803_nats_kill_mid_traffic(
     faults,  # noqa: ANN001 - InjectorRegistry, see conftest.py
     kubectl,  # noqa: ANN001 - KubectlClient, see tests.kubernetes.conftest
@@ -797,6 +800,7 @@ def _d804_static_skip_reason() -> str | None:
     )
 
 
+@pytest.mark.asyncio
 async def test_d804_nats_slow_close_recovers_metrics_and_traffic(
     request: pytest.FixtureRequest,
 ) -> None:
@@ -1163,6 +1167,7 @@ class _RbacWatchOwner:
         return f"role/{self.namespace}/{self.name}"
 
 
+@pytest.mark.asyncio
 async def test_d805_discovery_rbac_watch_revocation_preserves_existing_traffic(
     request: pytest.FixtureRequest,
     kubectl: KubectlClient,
@@ -1397,6 +1402,7 @@ class _ServiceSelectorPatch:
     original_selector: dict[str, str]
 
 
+@pytest.mark.asyncio
 async def test_d806_etcd_keepalive_blackhole_expires_one_worker(
     request: pytest.FixtureRequest,
 ) -> None:
@@ -1455,6 +1461,7 @@ async def test_d806_etcd_keepalive_blackhole_expires_one_worker(
             )
 
 
+@pytest.mark.asyncio
 async def test_d807_nats_frontend_partition_converges_after_heal(
     request: pytest.FixtureRequest,
 ) -> None:
@@ -1519,6 +1526,7 @@ async def test_d807_nats_frontend_partition_converges_after_heal(
             )
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("case_id", "verb"),
     [
@@ -1548,6 +1556,7 @@ async def test_d808_d810_dwm_rbac_revocation_preserves_cached_traffic(
     )
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("case_id", "verb"),
     [
@@ -1579,6 +1588,7 @@ async def test_d811_d815_endpointslice_rbac_revocation_preserves_cached_traffic(
     )
 
 
+@pytest.mark.asyncio
 async def test_d816_service_selector_mismatch_does_not_poison_cached_discovery(
     request: pytest.FixtureRequest,
     kubectl: KubectlClient,
@@ -1627,6 +1637,7 @@ async def test_d816_service_selector_mismatch_does_not_poison_cached_discovery(
         )
 
 
+@pytest.mark.asyncio
 async def test_d817_coredns_outage_does_not_poison_cached_discovery(
     request: pytest.FixtureRequest,
     kubectl: KubectlClient,
