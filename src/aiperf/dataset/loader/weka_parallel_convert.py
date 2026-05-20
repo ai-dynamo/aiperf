@@ -368,6 +368,16 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     # Subagent grouping: spawning parent turn plus computed join turn. This
     # mirrors the serial loader and preserves tiered joins for mixed-duration
     # sibling subagents.
+    #
+    # Example, all three subagents appear after parent turn 0 in JSON:
+    #   parent[0] t=0
+    #   subagent A ends t=6, subagent B ends t=12.5, subagent C ends t=24
+    #   parent[1] t=6
+    #   parent[2] t=20
+    # We emit three branches from parent[0]:
+    #   A -> SPAWN_JOIN on parent[1]
+    #   B -> SPAWN_JOIN on parent[2]
+    #   C -> background branch, because no later parent turn reaches t=24
     groups: dict[tuple[int, int | None], list[_WekaSubagentMarkerPayload]] = (
         defaultdict(list)
     )
