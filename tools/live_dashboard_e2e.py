@@ -194,10 +194,8 @@ def start_aiperf(
         "--streaming",
         "--request-rate",
         str(request_rate),
-        # Uses the shorthand string form — "40s" — to exercise the
-        # duration parser (helped shake out a pydantic float-only bug).
         "--benchmark-duration",
-        f"{duration_sec}s",
+        str(duration_sec),
         "--concurrency",
         str(concurrency),
         "--warmup-request-count",
