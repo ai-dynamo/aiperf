@@ -18,6 +18,7 @@ from aiperf_mock_server.models import (
     RequestT,
     SolidoRAGRequest,
     TGIGenerateRequest,
+    flatten_completion_prompt_token_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,7 @@ def count_tokens(text: str) -> int:
 def tokenize_request(request: RequestT) -> TokenizedText:
     """Tokenize a request and return TokenizedText with usage."""
     text, max_tokens = _extract_request_content(request)
-    prompt_tokens = list(_tokenize(text))
+    prompt_tokens = _extract_prompt_tokens(request, text)
     prompt_token_count = len(prompt_tokens)
 
     # For embeddings, rankings, and images - simple token counting without generation options
@@ -244,6 +245,14 @@ def tokenize_request(request: RequestT) -> TokenizedText:
 # ============================================================================
 # Internal Helpers
 # ============================================================================
+
+
+def _extract_prompt_tokens(request: RequestT, text: str) -> list[str]:
+    if isinstance(request, CompletionRequest):
+        prompt_token_ids = flatten_completion_prompt_token_ids(request.prompt)
+        if prompt_token_ids is not None:
+            return [str(token_id) for token_id in prompt_token_ids]
+    return list(_tokenize(text))
 
 
 def _calculate_budget(

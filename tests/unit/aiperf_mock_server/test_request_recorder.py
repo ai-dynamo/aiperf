@@ -491,6 +491,38 @@ class TestRecorderTokenIdTracking:
         assert row["tokenization_mode"] == "tokenizer_call"
         r._file.close()
 
+    @pytest.mark.parametrize(
+        "prompt,expected_ids",
+        [
+            ([11, 22, 33], [11, 22, 33]),
+            ([[11, 22], [33, 44]], [11, 22, 33, 44]),
+        ],
+    )
+    def test_record_request_completion_prompt_token_ids_skip_tokenizer(
+        self, tmp_path, prompt, expected_ids
+    ) -> None:
+        tok = _FakeTokenizer(vocab_size=100, encodings={"11 22 33": [99]})
+        r = _make_recorder(tmp_path, tok)
+        req = CompletionRequest(model="m", prompt=prompt, max_tokens=4)
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={"max_tokens": 4},
+        )
+        r._file.flush()
+
+        assert tok.called_texts == []
+        assert r._vocab_counts["/v1/completions"] == Counter(expected_ids)
+        row = _read_jsonl(r.path)[0]
+        assert row["isl"] == len(expected_ids)
+        assert row["tokenization_mode"] == "prompt_token_ids"
+        r._file.close()
+
     def test_record_request_chat_fallback_preserves_roles(self, tmp_path) -> None:
         tok = _CountingTokenizer()
         r = _make_recorder(tmp_path, tok)
