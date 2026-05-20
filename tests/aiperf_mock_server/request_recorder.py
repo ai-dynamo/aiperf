@@ -176,7 +176,9 @@ class RequestRecorder:
             self._file = None
         decode_fn: Callable[[int], str] | None
         if self._tokenizer is not None:
-            decode_fn = lambda token_id: self._tokenizer.decode([token_id])  # noqa: E731
+
+            def decode_fn(token_id: int) -> str:
+                return self._tokenizer.decode([token_id])
         else:
             decode_fn = None
         summary = _build_summary(
@@ -309,6 +311,9 @@ def _vocab_distribution(
             text = decode_fn(token_id)
         except Exception:
             text = f"<id={token_id}>"
+        else:
+            if not text.isprintable():
+                text = f"<id={token_id}>"
         top_tokens.append({"id": int(token_id), "text": text, "count": int(count)})
 
     top_10_count = sum(count for _, count in sorted_items)
@@ -328,7 +333,7 @@ def _vocab_distribution(
         "total_tokens": int(total),
         "top_10_concentration_pct": top_10_concentration_pct,
         "entropy_bits": round(entropy_bits, 4),
-        "max_entropy_bits": max_entropy_bits,
+        "max_entropy_bits": round(max_entropy_bits, 4),
         "top_tokens": top_tokens,
         "shape_80": _compute_shape_80(counts, vocab_size),
         "frequencies": {str(tid): int(c) for tid, c in counts.items()},
@@ -393,10 +398,15 @@ def _build_summary(
         isl_vals = isls[ep]
         osl_vals = osls.get(ep, [])
         ep_vocab_counter = vocab_counts.get(ep, Counter())
-        if vocab_size is not None and decode_fn is not None:
+        if decode_fn is not None and (
+            vocab_size is not None or vocab_size_source == "observed"
+        ):
+            resolved_size = _resolve_vocab_size(
+                vocab_size, vocab_size_source, ep_vocab_counter
+            )
             vd = _vocab_distribution(
                 ep_vocab_counter,
-                _resolve_vocab_size(vocab_size, vocab_size_source, ep_vocab_counter),
+                resolved_size,
                 vocab_size_source,
                 decode_fn,
             )

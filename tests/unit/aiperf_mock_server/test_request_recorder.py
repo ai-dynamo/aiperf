@@ -359,6 +359,52 @@ class TestRecorderTokenIdTracking:
         finally:
             r.close()
 
+    def test_observed_path_when_tokenizer_has_no_vocab_size(self, tmp_path) -> None:
+        """When `len(tokenizer)` raises AND no `vocab_size`/`n_vocab` attrs
+        are available, the recorder must fall back to deriving vocab_size
+        from observed ids — not silently emit `vocab_distribution: null`."""
+
+        class _SilentVocabTokenizer:
+            # Looks like a tokenizer but exposes no vocab_size signal.
+            def encode(self, text: str) -> list[int]:
+                return [10, 20, 30] if text == "hello" else []
+
+            def decode(self, ids: list[int]) -> str:
+                return " ".join(str(i) for i in ids)
+
+        import orjson
+
+        tok = _SilentVocabTokenizer()
+        path = tmp_path / "rec.jsonl"
+        r = RequestRecorder(
+            path=str(path),
+            tokenizer_name="silent",
+            tokenizer_revision="main",
+            trust_remote_code=False,
+        )
+        # Bypass open()'s `from_pretrained` call by injecting the tokenizer
+        # directly, then run the same vocab-size probe `open()` would run.
+        r._tokenizer = tok
+        try:
+            r._vocab_size = len(tok)
+            r._vocab_size_source = "tokenizer"
+        except TypeError:
+            r._vocab_size = None
+            r._vocab_size_source = "observed"
+        r._file = open(path, "wb")  # noqa: SIM115 — lifetime managed by test (explicit close via r.close())
+
+        r.record(0.0, "/v1/chat/completions", "x", "m", "hello", False, {})
+        r.close()
+
+        summary = orjson.loads((tmp_path / "rec.jsonl.summary.json").read_bytes())
+        vd = summary["per_endpoint"]["/v1/chat/completions"]["vocab_distribution"]
+        assert vd is not None
+        assert vd["vocab_size_source"] == "observed"
+        # Observed vocab_size is max_observed + 1 = 31.
+        assert vd["vocab_size"] == 31
+        assert vd["unique_ids"] == 3
+        assert vd["total_tokens"] == 3
+
 
 class TestComputeShape80:
     def test_length_is_always_80(self) -> None:
@@ -460,15 +506,15 @@ class TestVocabDistribution:
         vd = _vocab_distribution(Counter({42: 100}), 1000, "tokenizer", _id_to_text)
         assert vd is not None
         assert vd["entropy_bits"] == 0.0
-        assert vd["max_entropy_bits"] == pytest.approx(math.log2(1000))
+        assert vd["max_entropy_bits"] == pytest.approx(math.log2(1000), abs=5e-5)
 
     def test_entropy_at_max_for_uniform_sampling(self) -> None:
         # Perfectly uniform sampling over the full vocab -> entropy_bits == log2(V).
         counts = Counter({i: 5 for i in range(64)})
         vd = _vocab_distribution(counts, 64, "tokenizer", _id_to_text)
         assert vd is not None
-        assert vd["entropy_bits"] == pytest.approx(math.log2(64))
-        assert vd["max_entropy_bits"] == pytest.approx(math.log2(64))
+        assert vd["entropy_bits"] == pytest.approx(math.log2(64), abs=5e-5)
+        assert vd["max_entropy_bits"] == pytest.approx(math.log2(64), abs=5e-5)
 
     def test_shape_80_length(self) -> None:
         counts = Counter({i: 1 for i in range(80)})
@@ -611,8 +657,8 @@ class TestRenderVocabShape:
         sparkline = lines[4][4:]
         assert sparkline[0] == "█"
         # The small buckets must render as non-space (i.e. a visible block).
-        # Log scaling guarantees log1p(1)/log1p(1000) ≈ 0.10, well above the
-        # ▁ threshold of 1/8 = 0.125 only just; allow ▁ as the minimum.
+        # log1p(1)/log1p(1000) ≈ 0.10, which maps to idx 0 (▁) under our
+        # ratio*8 quantization — the smallest visible block, not space.
         block_chars = set("▁▂▃▄▅▆▇█")
         for ch in sparkline[1:]:
             assert ch in block_chars
@@ -739,8 +785,8 @@ class TestPrintSummaryVocab:
         _print_summary(self._summary(self._vd()))
         out = capsys.readouterr().out
         lines = out.splitlines()
-        # Find the index of the endpoint header.
-        ep_idx = next(i for i, ln in enumerate(lines) if "/v1/chat/completions" in ln)
-        # Confirm blank-line separators are present in the per-endpoint body.
-        post = lines[ep_idx + 1 :]
-        assert "" in post  # at least one blank-line separator present
+        isl_hist_idx = next(i for i, ln in enumerate(lines) if "ISL histogram" in ln)
+        vocab_idx = next(i for i, ln in enumerate(lines) if "Vocab  used" in ln)
+        # The line immediately before each block start should be blank.
+        assert lines[isl_hist_idx - 1] == ""
+        assert lines[vocab_idx - 1] == ""

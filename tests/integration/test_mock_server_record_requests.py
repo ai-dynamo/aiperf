@@ -182,7 +182,8 @@ class TestRecordRequests:
         # Embeddings endpoint exists in the fixture; its vocab block should
         # also exist (ISL is recorded) — sanity-check that this isn't broken.
         emb_vd = emb_stats["vocab_distribution"]
-        assert emb_vd is None or emb_vd["unique_ids"] >= 1
+        assert emb_vd is not None
+        assert emb_vd["unique_ids"] >= 1
 
     async def test_record_requests_forces_workers_to_one(self) -> None:
         """The validator must collapse workers to 1 whenever recording is on —
