@@ -836,7 +836,7 @@ def _format_shape_stats_line(stats: dict[str, Any]) -> str:
 
 
 def _render_vocab_lines(vd: dict[str, Any]) -> list[str]:
-    """Return the 7-line stdout block for one endpoint's vocab_distribution.
+    """Return the stdout block for one endpoint's vocab_distribution.
 
     Layout (4-space indent on top-level rows, 6-space indent on token details):
         ``    Vocab  used N/V (P%)  top-10 cover X%  entropy E/M bits``
