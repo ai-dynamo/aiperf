@@ -79,6 +79,8 @@ def _build_prompts(cli: CLIConfig) -> dict[str, Any]:
         prompts["block_size"] = cli.prompt_input_tokens_block_size
     if "prompt_batch_size" in s:
         prompts["batch_size"] = cli.prompt_batch_size
+    if "prompt_corpus" in s and cli.prompt_corpus is not None:
+        prompts["corpus"] = cli.prompt_corpus
     return prompts
 
 

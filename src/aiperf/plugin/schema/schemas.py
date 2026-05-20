@@ -11,9 +11,16 @@ To regenerate JSON schemas: python tools/generate_plugin_artifacts.py --schemas
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Schema fields use Literal["sonnet", "coding"] rather than the PromptCorpus
+# enum to avoid importing aiperf.common.enums here. That package's __init__
+# pulls in aiperf.plugin.enums, which pulls in aiperf.plugin.plugins, which
+# pulls in this module — triggering a circular import at load time. The
+# Literal values mirror PromptCorpus members exactly.
+_PromptCorpusLiteral = Literal["sonnet", "coding"]
 
 # =============================================================================
 # Plugins YAML Schema (plugins.yaml)
@@ -357,6 +364,17 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "(e.g. 16 for Bailian, 512 for Mooncake)."
         ),
     )
+    default_prompt_corpus: _PromptCorpusLiteral = Field(
+        default="sonnet",
+        description=(
+            "Default synthetic prompt corpus for this loader. Applied when "
+            "the user does not explicitly pass --prompt-corpus. Loaders for "
+            "agentic-coding traces override to 'coding' so reconstructed "
+            "prompts drive realistic expert-routing on Mixture-of-Experts "
+            "models instead of biasing toward Shakespeare's English-prose "
+            "expert subset."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):
@@ -421,6 +439,17 @@ class PublicDatasetLoaderMetadata(BaseModel):
     prompt_template: str | None = Field(
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
+    )
+    default_prompt_corpus: _PromptCorpusLiteral = Field(
+        default="sonnet",
+        description=(
+            "Default synthetic prompt corpus for this loader. Applied when "
+            "the user does not explicitly pass --prompt-corpus. Loaders for "
+            "agentic-coding traces override to 'coding' so reconstructed "
+            "prompts drive realistic expert-routing on Mixture-of-Experts "
+            "models instead of biasing toward Shakespeare's English-prose "
+            "expert subset."
+        ),
     )
 
 

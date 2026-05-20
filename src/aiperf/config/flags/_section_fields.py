@@ -74,6 +74,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "prompt_prefix_shared_system_length",
         "prompt_prefix_user_context_length",
         "prompt_sequence_distribution",
+        "prompt_corpus",
         # ----- image modality -----
         "image_width_mean",
         "image_width_stddev",

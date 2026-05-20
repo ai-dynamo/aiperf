@@ -168,6 +168,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/generator/video.py",
       ""
     ],
@@ -264,6 +269,11 @@
     [
       "file-size",
       "src/aiperf/plugin/plugins.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/plugin/schema/schemas.py",
       ""
     ],
     [
@@ -400,6 +410,36 @@
       "function-size",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
       "SessionSynthesizer.synthesize_session"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_config_file"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_error_traceback"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_git_diff"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_markdown_doc"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_sql_query"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_tool_read_long"
     ],
     [
       "function-size",
@@ -1210,6 +1250,11 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_config_file"
     ],
     [
       "nesting-depth",

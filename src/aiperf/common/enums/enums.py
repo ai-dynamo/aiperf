@@ -430,6 +430,19 @@ class PrometheusMetricType(CaseInsensitiveStrEnum):
             return cls.UNKNOWN
 
 
+class PromptCorpus(CaseInsensitiveStrEnum):
+    """Corpus used for synthetic prompt text generation.
+
+    Defined in :mod:`aiperf.common.enums.prompt_corpus` and re-exported here so
+    leaf modules (e.g. ``aiperf.plugin.schema.schemas``) can import it without
+    triggering this package's ``__init__`` chain. Keep that file as the
+    authoritative definition.
+    """
+
+    SONNET = "sonnet"
+    CODING = "coding"
+
+
 class PromptSource(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     FILE = "file"

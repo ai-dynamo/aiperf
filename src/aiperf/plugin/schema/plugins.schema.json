@@ -648,6 +648,16 @@
               "default": null,
               "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids (e.g. 16 for Bailian, 512 for Mooncake).",
               "title": "Default Block Size"
+            },
+            "default_prompt_corpus": {
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for agentic-coding traces override to 'coding' so reconstructed prompts drive realistic expert-routing on Mixture-of-Experts models instead of biasing toward Shakespeare's English-prose expert subset.",
+              "enum": [
+                "sonnet",
+                "coding"
+              ],
+              "title": "Default Prompt Corpus",
+              "type": "string"
             }
           },
           "title": "CustomDatasetLoaderMetadata",
@@ -817,6 +827,16 @@
               "default": null,
               "description": "Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
               "title": "Prompt Template"
+            },
+            "default_prompt_corpus": {
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for agentic-coding traces override to 'coding' so reconstructed prompts drive realistic expert-routing on Mixture-of-Experts models instead of biasing toward Shakespeare's English-prose expert subset.",
+              "enum": [
+                "sonnet",
+                "coding"
+              ],
+              "title": "Default Prompt Corpus",
+              "type": "string"
             }
           },
           "title": "PublicDatasetLoaderMetadata",

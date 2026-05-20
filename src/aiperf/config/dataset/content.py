@@ -27,6 +27,7 @@ from aiperf.common.enums import (
     AudioFormat,
     ImageFormat,
     ImageSource,
+    PromptCorpus,
 )
 from aiperf.config.base import BaseConfig
 from aiperf.config.types import (
@@ -122,6 +123,25 @@ class PromptConfig(BaseConfig):
             "Each entry specifies {isl, osl, probability}. "
             "Probabilities are percentages (0-100) and must sum to 100. "
             "When specified, requests are sampled from this distribution instead of using isl/osl fields.",
+        ),
+    ]
+
+    corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            default=None,
+            description="Source corpus for synthetic prompt text generation. "
+            "'sonnet' uses Shakespeare sonnets (default for most loaders). "
+            "'coding' uses pseudo-realistic, template-filled coding content "
+            "(code, bash output, JSON, error tracebacks, git diffs, configs, "
+            "markdown) — filler whose token distribution approximates real "
+            "coding-agent traffic, driving realistic expert-routing patterns "
+            "on Mixture-of-Experts models (sonnet over-activates English-prose "
+            "experts and underweights the broader expert set hit by real "
+            "agentic-coding workloads). "
+            "When unset, the active dataset loader's default applies — most "
+            "loaders default to 'sonnet'; agentic-coding loaders override to "
+            "'coding'.",
         ),
     ]
 

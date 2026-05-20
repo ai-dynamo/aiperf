@@ -470,6 +470,11 @@ Number of text inputs to include in each request for batch processing endpoints.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `1`_
 
+#### `--prompt-corpus` `<str>`
+
+Source corpus for synthetic prompt text generation. `sonnet` uses Shakespeare sonnets (default for most loaders). `coding` uses pseudo-realistic, template-filled coding content (code, bash output, JSON, error tracebacks, git diffs, configs, markdown) — filler whose token distribution approximates real coding-agent traffic, driving realistic expert-routing patterns on Mixture-of-Experts models (sonnet over-activates English-prose experts and underweights the broader expert set hit by real agentic-coding workloads). When unset, the active dataset loader's default applies — most loaders default to 'sonnet'; agentic-coding loaders override to 'coding'.
+<br/>_Choices: [`sonnet`, `coding`]_
+
 ### Prefix Prompt
 
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
@@ -1783,6 +1788,11 @@ Clamp per-turn replay delays (read from JSONL trace files) to at most this many 
 Number of text inputs to include in each request for batch processing endpoints. Supported by `embeddings` and `rankings` endpoint types where models can process multiple inputs simultaneously for efficiency. Set to 1 for single-input requests. Not applicable to `chat` or `completions` endpoints.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `1`_
+
+#### `--prompt-corpus` `<str>`
+
+Source corpus for synthetic prompt text generation. `sonnet` uses Shakespeare sonnets (default for most loaders). `coding` uses pseudo-realistic, template-filled coding content (code, bash output, JSON, error tracebacks, git diffs, configs, markdown) — filler whose token distribution approximates real coding-agent traffic, driving realistic expert-routing patterns on Mixture-of-Experts models (sonnet over-activates English-prose experts and underweights the broader expert set hit by real agentic-coding workloads). When unset, the active dataset loader's default applies — most loaders default to 'sonnet'; agentic-coding loaders override to 'coding'.
+<br/>_Choices: [`sonnet`, `coding`]_
 
 ### Prefix Prompt
 

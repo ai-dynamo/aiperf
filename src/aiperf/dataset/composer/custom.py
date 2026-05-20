@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.enums import ConversationContextMode, DatasetFormat
+from aiperf.common.enums import ConversationContextMode, DatasetFormat, PromptCorpus
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.config.dataset import FileDataset
+from aiperf.config.dataset.content import PromptConfig
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.dataset.utils import check_file_exists
@@ -254,7 +255,29 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     "Trace datasets require a tokenizer for prompt synthesis. "
                     "Ensure the endpoint supports tokenization or provide a --tokenizer."
                 )
-            kwargs["prompt_generator"] = self.prompt_generator
+
+            corpus = (
+                self._synthetic_prompts.corpus
+                if self._synthetic_prompts is not None
+                and self._synthetic_prompts.corpus is not None
+                else loader_metadata.default_prompt_corpus
+            )
+            if corpus == PromptCorpus.CODING:
+                from aiperf.dataset.generator.coding_content import (
+                    CodingContentGenerator,
+                )
+
+                prompt_config = (
+                    self._synthetic_prompts
+                    if self._synthetic_prompts is not None
+                    else PromptConfig()
+                )
+                kwargs["prompt_generator"] = CodingContentGenerator(
+                    config=prompt_config,
+                    tokenizer=self.prompt_generator.tokenizer,
+                )
+            else:
+                kwargs["prompt_generator"] = self.prompt_generator
 
             if loader_metadata.default_block_size is not None:
                 kwargs["default_block_size"] = loader_metadata.default_block_size

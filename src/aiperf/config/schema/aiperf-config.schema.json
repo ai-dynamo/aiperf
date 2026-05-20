@@ -9324,10 +9324,31 @@
           "default": null,
           "description": "Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Each entry specifies {isl, osl, probability}. Probabilities are percentages (0-100) and must sum to 100. When specified, requests are sampled from this distribution instead of using isl/osl fields.",
           "title": "Sequencedistribution"
+        },
+        "corpus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptCorpus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets (default for most loaders). 'coding' uses pseudo-realistic, template-filled coding content (code, bash output, JSON, error tracebacks, git diffs, configs, markdown) — filler whose token distribution approximates real coding-agent traffic, driving realistic expert-routing patterns on Mixture-of-Experts models (sonnet over-activates English-prose experts and underweights the broader expert set hit by real agentic-coding workloads). When unset, the active dataset loader's default applies — most loaders default to 'sonnet'; agentic-coding loaders override to 'coding'."
         }
       },
       "title": "PromptConfig",
       "type": "object"
+    },
+    "PromptCorpus": {
+      "description": "Corpus used for synthetic prompt text generation.\n\nDefined in :mod:`aiperf.common.enums.prompt_corpus` and re-exported here so\nleaf modules (e.g. ``aiperf.plugin.schema.schemas``) can import it without\ntriggering this package's ``__init__`` chain. Keep that file as the\nauthoritative definition.",
+      "enum": [
+        "sonnet",
+        "coding"
+      ],
+      "title": "PromptCorpus",
+      "type": "string"
     },
     "PublicDataset": {
       "additionalProperties": false,
