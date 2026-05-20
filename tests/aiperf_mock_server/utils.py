@@ -42,7 +42,6 @@ from aiperf_mock_server.request_recorder import get_global_recorder
 from aiperf_mock_server.tokens import (
     TokenizedText,
     _extract_osl_fingerprint,
-    _extract_request_content,
     tokenize_request,
 )
 from fastapi import HTTPException
@@ -437,14 +436,13 @@ def _maybe_record_request(
     recorder = get_global_recorder()
     if recorder is None:
         return
-    text, _resolved_osl = _extract_request_content(request)
     fingerprint = _extract_osl_fingerprint(request)
-    recorder.record(
+    recorder.record_request(
         ts=time.time(),
         endpoint=endpoint,
         request_id=request_id,
         model=model,
-        text=text,
+        request=request,
         stream=getattr(request, "stream", None),
         osl_fingerprint=fingerprint,
     )

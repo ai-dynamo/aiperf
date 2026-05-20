@@ -4,8 +4,15 @@
 
 import math
 from collections import Counter, defaultdict
+from pathlib import Path
 
+import orjson
 import pytest
+from aiperf_mock_server.models import (
+    ChatCompletionRequest,
+    CompletionRequest,
+    Message,
+)
 from aiperf_mock_server.request_recorder import (
     RequestRecorder,
     _build_summary,
@@ -270,15 +277,58 @@ class _FakeTokenizer:
     def __init__(self, vocab_size: int, encodings: dict[str, list[int]]) -> None:
         self._vocab_size = vocab_size
         self._encodings = encodings
+        self.called_texts: list[str] = []
+        self.encoded_texts: list[str] = []
 
     def __len__(self) -> int:
         return self._vocab_size
 
-    def encode(self, text: str) -> list[int]:
+    def __call__(self, text: str) -> dict[str, list[int]]:
+        self.called_texts.append(text)
+        return {"input_ids": self.encode(text)}
+
+    def encode(self, text: str, **_: object) -> list[int]:
+        self.encoded_texts.append(text)
         return list(self._encodings.get(text, []))
 
     def decode(self, ids: list[int]) -> str:
         return " ".join(str(i) for i in ids)
+
+
+class _ChatTemplateTokenizer(_FakeTokenizer):
+    def __init__(self) -> None:
+        super().__init__(vocab_size=1000, encodings={})
+        self.template_calls: list[dict[str, object]] = []
+
+    def apply_chat_template(
+        self,
+        messages: list[dict] | None = None,
+        *,
+        conversation: list[dict] | None = None,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
+    ) -> list[int]:
+        rendered_messages = messages if messages is not None else conversation
+        assert rendered_messages is not None
+        self.template_calls.append(
+            {
+                "messages": rendered_messages,
+                "add_generation_prompt": add_generation_prompt,
+                "tokenize": tokenize,
+                "return_dict": return_dict,
+            }
+        )
+        return [101, len(rendered_messages), 201 if add_generation_prompt else 200]
+
+
+class _CountingTokenizer(_FakeTokenizer):
+    def __init__(self) -> None:
+        super().__init__(vocab_size=1000, encodings={})
+
+    def encode(self, text: str, **_: object) -> list[int]:
+        self.encoded_texts.append(text)
+        return list(range(max(1, len(text.split()))))
 
 
 def _make_recorder(tmp_path, tokenizer: _FakeTokenizer) -> RequestRecorder:
@@ -295,6 +345,10 @@ def _make_recorder(tmp_path, tokenizer: _FakeTokenizer) -> RequestRecorder:
     r._vocab_size_source = "tokenizer"
     r._file = open(path, "wb")  # noqa: SIM115 — lifetime managed by test (explicit close)
     return r
+
+
+def _read_jsonl(path: str) -> list[dict]:
+    return [orjson.loads(line) for line in Path(path).read_bytes().splitlines()]
 
 
 class TestRecorderTokenIdTracking:
@@ -340,6 +394,132 @@ class TestRecorderTokenIdTracking:
             "/v1/chat/completions",
             "/v1/embeddings",
         ]
+        r._file.close()
+
+    def test_record_request_chat_uses_chat_template(self, tmp_path) -> None:
+        tok = _ChatTemplateTokenizer()
+        r = _make_recorder(tmp_path, tok)
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                Message(role="system", content="policy"),
+                Message(role="user", content="hello"),
+                Message(role="assistant", content="prior answer"),
+            ],
+            max_tokens=8,
+        )
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={"max_tokens": 8},
+        )
+        r._file.flush()
+
+        assert tok.template_calls
+        call = tok.template_calls[0]
+        assert [m["role"] for m in call["messages"]] == [
+            "system",
+            "user",
+            "assistant",
+        ]
+        assert call["add_generation_prompt"] is True
+        assert call["tokenize"] is True
+        assert r._vocab_counts["/v1/chat/completions"] == Counter(
+            {101: 1, 3: 1, 201: 1}
+        )
+        row = _read_jsonl(r.path)[0]
+        assert row["isl"] == 3
+        assert row["tokenization_mode"] == "chat_template"
+        r._file.close()
+
+    def test_record_request_chat_prompt_token_ids_skip_template(self, tmp_path) -> None:
+        tok = _ChatTemplateTokenizer()
+        r = _make_recorder(tmp_path, tok)
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[Message(role="user", content="hello")],
+        )
+        req.prompt_token_ids = [42, 43, 44]
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={},
+        )
+        r._file.flush()
+
+        assert tok.template_calls == []
+        assert r._vocab_counts["/v1/chat/completions"] == Counter({42: 1, 43: 1, 44: 1})
+        row = _read_jsonl(r.path)[0]
+        assert row["isl"] == 3
+        assert row["tokenization_mode"] == "prompt_token_ids"
+        r._file.close()
+
+    def test_record_request_completion_tokenizes_each_prompt(self, tmp_path) -> None:
+        tok = _FakeTokenizer(
+            vocab_size=100,
+            encodings={"alpha": [1, 2], "beta": [3], "alpha\nbeta": [99]},
+        )
+        r = _make_recorder(tmp_path, tok)
+        req = CompletionRequest(model="m", prompt=["alpha", "beta"], max_tokens=4)
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={"max_tokens": 4},
+        )
+        r._file.flush()
+
+        assert tok.called_texts == ["alpha", "beta"]
+        assert "alpha\nbeta" not in tok.called_texts
+        assert r._vocab_counts["/v1/completions"] == Counter({1: 1, 2: 1, 3: 1})
+        row = _read_jsonl(r.path)[0]
+        assert row["isl"] == 3
+        assert row["tokenization_mode"] == "tokenizer_call"
+        r._file.close()
+
+    def test_record_request_chat_fallback_preserves_roles(self, tmp_path) -> None:
+        tok = _CountingTokenizer()
+        r = _make_recorder(tmp_path, tok)
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                Message(role="system", content="policy"),
+                Message(role="user", content="hello"),
+            ],
+        )
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={},
+        )
+        r._file.flush()
+
+        assert tok.encoded_texts
+        rendered = tok.encoded_texts[0]
+        assert "<|im_start|>system\npolicy<|im_end|>" in rendered
+        assert "<|im_start|>user\nhello<|im_end|>" in rendered
+        assert rendered.endswith("<|im_start|>assistant\n")
+        row = _read_jsonl(r.path)[0]
+        assert row["tokenization_mode"] == "chat_template_fallback"
         r._file.close()
 
     def test_open_sets_vocab_size_from_tokenizer(self, tmp_path) -> None:
@@ -598,7 +778,7 @@ class TestRenderVocabShape:
             ]
         )
         lines = _render_vocab_lines(vd)
-        assert lines[1] == '      top: " the" 3201, " a" 2890'
+        assert lines[1] == '      top decoded tokens: " the" 3201, " a" 2890'
 
     def test_top_line_caps_at_5(self) -> None:
         vd = self._make_vd(
@@ -772,14 +952,24 @@ class TestPrintSummaryVocab:
         out = capsys.readouterr().out
         idx_isl_hist = out.index("ISL histogram")
         idx_vocab_headline = out.index("Vocab  used")
-        idx_shape = out.index("vocab shape")
+        idx_shape = out.index("    vocab shape  (")
         assert idx_isl_hist < idx_vocab_headline < idx_shape
 
     def test_no_vocab_lines_when_distribution_is_none(self, capsys) -> None:
         _print_summary(self._summary(None))
         out = capsys.readouterr().out
+        assert "Definitions" not in out
         assert "Vocab  used" not in out
         assert "vocab shape" not in out
+
+    def test_description_box_prints_when_vocab_distribution_exists(
+        self, capsys
+    ) -> None:
+        _print_summary(self._summary(self._vd()))
+        out = capsys.readouterr().out
+        assert "Definitions" in out
+        assert "entropy: token-id diversity" in out
+        assert "top decoded tokens: most frequent token IDs" in out
 
     def test_blank_lines_between_blocks(self, capsys) -> None:
         _print_summary(self._summary(self._vd()))

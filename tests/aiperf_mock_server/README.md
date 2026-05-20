@@ -511,7 +511,7 @@ No CLI knob — this is always-on. Streaming success paths set a `_finished` fla
 
 ## Request Recording
 
-Used to verify that an aiperf run actually generates the requested ISL / OSL distribution on the wire. When `--record-requests PATH` is set, the server tokenizes every incoming request inline with the configured `--tokenizer` and appends one JSONL record per request. On shutdown it writes a per-endpoint distribution summary to `<PATH>.summary.json` (and prints the same summary to stdout).
+Used to verify that an aiperf run actually generates the requested ISL / OSL distribution on the wire. When `--record-requests PATH` is set, the server tokenizes every incoming request inline with the configured `--tokenizer` and appends one JSONL record per request. Chat requests are counted from the framework-shaped prompt: `prompt_token_ids` if supplied, otherwise `tokenizer.apply_chat_template(..., tokenize=True, add_generation_prompt=True)` when the tokenizer supports it. Tokenizers without chat templates (including `builtin`) use a role-preserving fallback and record that mode explicitly. On shutdown it writes a per-endpoint distribution summary to `<PATH>.summary.json` (and prints the same summary to stdout).
 
 ```mermaid
 flowchart LR
@@ -547,7 +547,7 @@ flowchart LR
 **Properties:**
 
 - The recorder lives in the FastAPI lifespan; tokenization and the JSONL append both run on the event loop in `make_ctx`. Real HF `tokenizer.encode()` is fast (sub-ms for typical prompts), and `--workers=1` means there is exactly one producer — no locking, no queue, no subprocess.
-- The recorder reuses the configured `--tokenizer` rather than introducing a separate one, so ISL counts match whatever vocab the corpus is using.
+- The recorder reuses the configured `--tokenizer` rather than introducing a separate one, so ISL counts match whatever vocab the corpus is using. For chat models with HuggingFace chat templates, this mirrors trtllm-serve's prompt-token path instead of counting only user-message text.
 - `--record-requests` rejects `--no-tokenizer` at config validation time, since recording with no tokenizer is incoherent.
 - `--record-requests` forces `--workers=1` because per-request stats are kept in process memory and need a single producer to attribute cleanly to one output file.
 
@@ -558,7 +558,7 @@ flowchart LR
  "model": "Qwen/Qwen3-0.6B", "isl": 512,
  "requested_osl": 256, "max_tokens": null, "max_completion_tokens": 256,
  "min_tokens": null, "ignore_eos": false, "reasoning_effort": null,
- "stream": true}
+ "stream": true, "tokenization_mode": "chat_template"}
 ```
 
 | Field | Meaning |
@@ -570,12 +570,21 @@ flowchart LR
 | `ignore_eos` | If `true`, server generates exactly `max_tokens`. |
 | `reasoning_effort` | `low`/`medium`/`high` for reasoning models — adds a reasoning budget on top of the main output. |
 | `stream` | Whether the request asked for streaming. |
+| `tokenization_mode` | How ISL was counted: `prompt_token_ids`, `chat_template`, `chat_template_string`, `chat_template_fallback`, `tokenizer_call`, `encode_without_special_tokens`, or `plain_text_encode` for the low-level recorder API. |
 
 **Summary** — `<PATH>.summary.json` and stdout, per endpoint:
 
 ```
 Request distribution (100 requests)
 ──────────────────────────────────────────────
+  Definitions
+    ISL/OSL: input/output sequence length in tokens.
+    Vocab used: unique token IDs observed / tokenizer vocab size.
+    top-10 cover: share of prompt tokens from the 10 most common token IDs.
+    entropy: token-id diversity; higher means broader prompt vocabulary use.
+    top decoded tokens: most frequent token IDs decoded for sanity checks; tokens are not words.
+    vocab shape: log-scaled 80-bucket view across token-id space.
+
   /v1/chat/completions  n=100
     ISL    mean  1010.5   p50   998   p99  1819
     OSL    mean   127.5   p50   129   p99   229
@@ -591,7 +600,7 @@ Request distribution (100 requests)
        210-  230   6 ████░░░░░░░░░░░░░░░░
 
     Vocab  used 5234/151936 (3.4%)  top-10 cover 47%  entropy 8.2/17.2 bits
-      top: " the" 3201, " a" 2890, " of" 2455, " to" 2103, " and" 1987
+      top decoded tokens: " the" 3201, " a" 2890, " of" 2455, " to" 2103, " and" 1987
 
     vocab shape  (80 buckets over id 0..151935, log-y)
     ▇▇▇▅▅▄▄▃▃▃▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ▁ ▁ ▁  ▁  ▁  ▁         ▁       ▁    ▁       ▁
