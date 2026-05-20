@@ -390,15 +390,35 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     #   B joins parent[2] because parent[1].t < B.end <= parent[2].t.
     #   C is background because no later parent turn reaches C.end.
     #
-    # More edge cases:
-    #   - If A and B both ended before parent[1], they share one
-    #     (parent[0], parent[1]) branch group so parent[1] waits for both.
-    #   - If B ends after parent[1] but before parent[2], parent[1] can
-    #     proceed while B is still running; parent[2] is the gated turn.
-    #   - If a subagent marker appears before any retained parent turn,
-    #     it is dropped because there is no spawning parent turn.
-    #   - Equality is a join: subagent.end == parent[k].t joins parent[k]
-    #     within _JOIN_EPSILON_SECONDS.
+    # Additional examples:
+    #   Shared join group:
+    #     parent[0] t=0
+    #     subagent A ends t=4
+    #     subagent B ends t=5
+    #     parent[1] t=6
+    #     => A and B share group (parent[0], parent[1]); parent[1]
+    #        waits for both.
+    #
+    #   Tiered siblings:
+    #     parent[0] t=0
+    #     subagent A ends t=4
+    #     subagent B ends t=9
+    #     parent[1] t=6
+    #     parent[2] t=12
+    #     => A gates parent[1]; B keeps running through parent[1] and
+    #        gates parent[2].
+    #
+    #   No spawning parent:
+    #     subagent A marker t=1 appears before the first retained
+    #     parent turn
+    #     parent[0] t=5
+    #     => A is dropped because no parent turn can spawn it.
+    #
+    #   Equality joins:
+    #     parent[0] t=0
+    #     subagent A ends t=10
+    #     parent[1] t=10
+    #     => A joins parent[1] within _JOIN_EPSILON_SECONDS.
     groups: dict[tuple[int, int | None], list[_WekaSubagentMarkerPayload]] = (
         defaultdict(list)
     )
