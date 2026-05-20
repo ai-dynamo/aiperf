@@ -38,6 +38,7 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 _logger = AIPerfLogger(__name__)
 
 _NormalRequestT = WekaNormalRequest | WekaStreamingRequest
+_JOIN_EPSILON_SECONDS = 1e-6
 
 
 def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
@@ -770,13 +771,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
 
-            # Group subagents by (preceding, following) anchor pair so adjacent
-            # subagents collapse into one multi-child branch.
-            groups: dict[tuple[int | None, int | None], list[WekaSubagentEntry]] = (
-                defaultdict(list)
+            # Group subagents by spawning parent turn and the first later parent
+            # turn whose timestamp is at or after that subagent's recorded end.
+            # This preserves tiered joins: short children can gate the next main
+            # turn while longer siblings gate a later turn or run background.
+            groups: dict[tuple[int, int | None], list[WekaSubagentEntry]] = defaultdict(
+                list
             )
-            group_order: list[tuple[int | None, int | None]] = []
-            group_following_outer: dict[tuple[int | None, int | None], int | None] = {}
+            group_order: list[tuple[int, int | None]] = []
             dropped_sa_agent_ids: set[str] = set()
             outer_to_t: dict[int, float] = {
                 outer_idx: req.t for outer_idx, req in plan.normals
@@ -787,10 +789,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     (pos for oi, pos in outer_to_turn_pos.items() if oi < sa_outer_idx),
                     default=None,
                 )
-                following = min(
-                    (pos for oi, pos in outer_to_turn_pos.items() if oi > sa_outer_idx),
-                    default=None,
-                )
                 if preceding is None:
                     _logger.info(
                         f"Dropping subagent '{sa_entry.agent_id}' from trace "
@@ -798,18 +796,23 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                     dropped_sa_agent_ids.add(sa_entry.agent_id)
                     continue
-                following_outer_idx = min(
-                    (oi for oi in outer_to_t if oi > sa_outer_idx),
-                    default=None,
-                )
-                key = (preceding, following)
+
+                sa_end_t = _sa_end_seconds(sa_entry)
+                join_turn: int | None = None
+                for oi, pos in sorted(outer_to_turn_pos.items()):
+                    if oi <= sa_outer_idx:
+                        continue
+                    if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= sa_end_t:
+                        join_turn = pos
+                        break
+
+                key = (preceding, join_turn)
                 if key not in groups:
                     group_order.append(key)
-                    group_following_outer[key] = following_outer_idx
                 groups[key].append(sa_entry)
 
-            for preceding, following in group_order:
-                entries = groups[(preceding, following)]
+            for preceding, join_turn in group_order:
+                entries = groups[(preceding, join_turn)]
                 child_sids: list[str] = []
                 for e in entries:
                     e_streams = _pack_into_streams(list(e.requests))
@@ -826,20 +829,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             f"as sibling child conversations."
                         )
                 branch_id = f"{plan.trace_id}:spawn:{entries[0].agent_id}"
-                is_background = following is None
-                if not is_background:
-                    following_outer_idx = group_following_outer[(preceding, following)]
-                    following_t = outer_to_t[following_outer_idx]
-                    sa_end_t = max(_sa_end_seconds(entry) for entry in entries)
-                    if sa_end_t > following_t:
-                        is_background = True
-                        _logger.info(
-                            f"Trace {plan.trace_id}: reclassifying subagent branch "
-                            f"'{branch_id}' as background - recorded subagent end "
-                            f"t={sa_end_t:.2f}s exceeds following parent turn "
-                            f"t={following_t:.2f}s (parent did not wait in the "
-                            f"recording)."
-                        )
+                is_background = join_turn is None
                 conv.branches.append(
                     ConversationBranchInfo(
                         branch_id=branch_id,
@@ -849,8 +839,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                 )
                 conv.turns[preceding].branch_ids.append(branch_id)
-                if following is not None and not is_background:
-                    conv.turns[following].prerequisites.append(
+                if join_turn is not None:
+                    conv.turns[join_turn].prerequisites.append(
                         TurnPrerequisite(
                             kind=PrerequisiteKind.SPAWN_JOIN,
                             branch_id=branch_id,

@@ -35,6 +35,8 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset._mp_context import get_loader_mp_context
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
 
+_JOIN_EPSILON_SECONDS = 1e-6
+
 
 class _WekaParentTurnDict(TypedDict):
     """One reconstructed turn (parent or child) shipped from worker -> orchestrator."""
@@ -49,7 +51,7 @@ class _WekaParentTurnDict(TypedDict):
 
 
 class _WekaBranchDict(TypedDict):
-    """Subagent SPAWN branch metadata for one (preceding, following) anchor pair."""
+    """Subagent SPAWN branch metadata for one tiered join bucket."""
 
     branch_id: str
     child_session_ids: list[str]
@@ -97,9 +99,8 @@ class _WekaSubagentMarkerPayload(TypedDict):
     ``child_session_ids`` enumerates the per-stream child SIDs the worker must
     register on the SPAWN branch (legacy single-stream subagents emit one
     SID; multi-stream subagents emit ``:s0`` / ``:s1`` / ...).
-    ``sa_end_seconds`` is the subagent's recorded end time, used by the
-    worker to reclassify a branch as ``is_background`` when the subagent
-    ran past the following parent turn.
+    ``sa_end_seconds`` is the subagent's recorded end time, used by the worker
+    to select the first later parent turn that should join this child.
     """
 
     agent_id: str
@@ -364,12 +365,13 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         )
         outer_to_turn_pos[outer_idx] = len(parent_turns) - 1
 
-    # Subagent grouping: anchor pair (preceding parent turn pos, following parent turn pos).
-    groups: dict[tuple[int | None, int | None], list[_WekaSubagentMarkerPayload]] = (
+    # Subagent grouping: spawning parent turn plus computed join turn. This
+    # mirrors the serial loader and preserves tiered joins for mixed-duration
+    # sibling subagents.
+    groups: dict[tuple[int, int | None], list[_WekaSubagentMarkerPayload]] = (
         defaultdict(list)
     )
-    group_order: list[tuple[int | None, int | None]] = []
-    group_following_outer: dict[tuple[int | None, int | None], int | None] = {}
+    group_order: list[tuple[int, int | None]] = []
     outer_to_t: dict[int, float] = {oi: req["t"] for oi, req in normals}
     dropped_agent_ids: set[str] = set()
     for sa_outer_idx, sa_entry in parent["subagents"]:
@@ -377,43 +379,37 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             (pos for oi, pos in outer_to_turn_pos.items() if oi < sa_outer_idx),
             default=None,
         )
-        following = min(
-            (pos for oi, pos in outer_to_turn_pos.items() if oi > sa_outer_idx),
-            default=None,
-        )
         if preceding is None:
             dropped_agent_ids.add(sa_entry["agent_id"])
             continue
-        following_outer_idx = min(
-            (oi for oi in outer_to_t if oi > sa_outer_idx),
-            default=None,
-        )
-        key = (preceding, following)
+
+        join_turn: int | None = None
+        for oi, pos in sorted(outer_to_turn_pos.items()):
+            if oi <= sa_outer_idx:
+                continue
+            if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= sa_entry["sa_end_seconds"]:
+                join_turn = pos
+                break
+
+        key = (preceding, join_turn)
         if key not in groups:
             group_order.append(key)
-            group_following_outer[key] = following_outer_idx
         groups[key].append(sa_entry)
 
     branches: list[_WekaBranchDict] = []
-    for preceding, following in group_order:
-        entries = groups[(preceding, following)]
+    for preceding, join_turn in group_order:
+        entries = groups[(preceding, join_turn)]
         child_sids: list[str] = []
         for e in entries:
             child_sids.extend(e["child_session_ids"])
-        is_background = following is None
-        if not is_background:
-            following_outer_idx = group_following_outer[(preceding, following)]
-            following_t = outer_to_t[following_outer_idx]
-            sa_end_t = max(e["sa_end_seconds"] for e in entries)
-            if sa_end_t > following_t:
-                is_background = True
+        is_background = join_turn is None
         branches.append(
             {
                 "branch_id": f"{task.trace_id}:spawn:{entries[0]['agent_id']}",
                 "child_session_ids": child_sids,
                 "is_background": is_background,
                 "preceding_turn": preceding,
-                "following_turn": None if is_background else following,
+                "following_turn": join_turn,
             }
         )
 

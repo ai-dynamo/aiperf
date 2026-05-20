@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -260,6 +261,120 @@ def test_terminal_subagent_becomes_background_branch_no_prereq(monkeypatch):
     assert branch.mode == ConversationBranchMode.SPAWN
     # Only one parent turn exists -> no prereq anywhere.
     assert all(not t.prerequisites for t in parent.turns)
+
+
+def test_mixed_duration_subagents_emit_tiered_join_branches(tmp_path, monkeypatch):
+    from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+
+    model = "claude-opus-4-5-20251101"
+    child_model = "claude-haiku-4-5-20251001"
+
+    def normal(t, input_length, output_length, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": model,
+            "in": input_length,
+            "out": output_length,
+            "hash_ids": hash_ids,
+            "input_types": ["text"],
+            "output_types": ["text"],
+            "stop": "end_turn",
+            "api_time": 1.0,
+            "think_time": 0.0,
+        }
+
+    def subagent(agent_id, t, duration_ms, hash_ids):
+        return {
+            "t": t,
+            "type": "subagent",
+            "agent_id": agent_id,
+            "subagent_type": "Explore",
+            "duration_ms": duration_ms,
+            "total_tokens": 100,
+            "tool_use_count": 1,
+            "status": "completed",
+            "requests": [
+                {
+                    "t": t,
+                    "type": "n",
+                    "model": child_model,
+                    "in": 100,
+                    "out": 20,
+                    "hash_ids": hash_ids,
+                    "input_types": ["text"],
+                    "output_types": ["text"],
+                    "stop": "end_turn",
+                    "api_time": 0.5,
+                    "think_time": 0.0,
+                }
+            ],
+            "models": [child_model],
+            "tool_tokens": 20,
+            "system_tokens": 10,
+        }
+
+    trace = {
+        "id": "trace_tiered",
+        "models": [model, child_model],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "requests": [
+            normal(0.0, 200, 30, [1, 2, 3]),
+            subagent("agent_a", 1.0, 5000, [10, 11]),  # ends at t=6, joins turn 1
+            subagent("agent_b", 1.5, 11000, [12, 13]),  # ends at t=12.5, joins turn 2
+            subagent("agent_c", 1.6, 24000, [14, 15]),  # ends after all main turns
+            normal(6.0, 250, 40, [1, 2, 3, 4]),
+            normal(20.0, 300, 50, [1, 2, 3, 4, 5]),
+        ],
+    }
+    path = tmp_path / "tiered.json"
+    path.write_text(json.dumps(trace))
+
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(filename=str(path), user_config=uc)
+    _stub_prompt_generator_for_reconstructor(loader)
+    loader._tokenizer_name = "test-tok"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 64
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    parent = next(c for c in convs if c.session_id == "trace_tiered")
+
+    assert len(parent.branches) == 3
+    branches_by_child = {
+        tuple(branch.child_conversation_ids): branch for branch in parent.branches
+    }
+    branch_a = branches_by_child[("trace_tiered::sa:agent_a",)]
+    branch_b = branches_by_child[("trace_tiered::sa:agent_b",)]
+    branch_c = branches_by_child[("trace_tiered::sa:agent_c",)]
+
+    assert all(
+        branch.mode == ConversationBranchMode.SPAWN for branch in parent.branches
+    )
+    assert parent.turns[0].branch_ids == [
+        branch_a.branch_id,
+        branch_b.branch_id,
+        branch_c.branch_id,
+    ]
+
+    assert branch_a.is_background is False
+    assert len(parent.turns[1].prerequisites) == 1
+    prereq_a = parent.turns[1].prerequisites[0]
+    assert prereq_a.kind == PrerequisiteKind.SPAWN_JOIN
+    assert prereq_a.branch_id == branch_a.branch_id
+
+    assert branch_b.is_background is False
+    assert len(parent.turns[2].prerequisites) == 1
+    prereq_b = parent.turns[2].prerequisites[0]
+    assert prereq_b.kind == PrerequisiteKind.SPAWN_JOIN
+    assert prereq_b.branch_id == branch_b.branch_id
+
+    assert branch_c.is_background is True
+    assert branch_c.branch_id not in {
+        prereq.branch_id for turn in parent.turns for prereq in turn.prerequisites
+    }
 
 
 def test_filters_requests_exceeding_max_isl(monkeypatch):
