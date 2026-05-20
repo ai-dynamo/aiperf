@@ -34,6 +34,10 @@ from tests.kubernetes.chaos_dynamo.conftest import (
     DYNAMO_TOXIPROXY_SERVICE,
     wait_for_dgd_state,
 )
+from tests.kubernetes.chaos_dynamo.rbac_helpers import (
+    find_unique_operator_rbac_owner,
+    rbac_revoke_target,
+)
 from tests.kubernetes.gpu.dynamo.helpers import (
     DynamoConfig,
     DynamoDeployer,
@@ -2390,165 +2394,6 @@ _OPERATOR_SELECTOR = "app.kubernetes.io/name=dynamo-operator"
 _OBSERVE_REVOKED_S = 45.0
 
 
-@dataclass(frozen=True, slots=True)
-class _d112_RbacOwner:
-    scope: Literal["role", "clusterrole"]
-    name: str
-    namespace: str | None
-
-    @property
-    def label(self) -> str:
-        if self.namespace is None:
-            return f"clusterrole/{self.name}"
-        return f"role/{self.namespace}/{self.name}"
-
-
-async def _d112_operator_service_account(kubectl: KubectlClient) -> str:
-    result = await kubectl.run(
-        "get",
-        "deployment",
-        "-n",
-        _OPERATOR_NAMESPACE,
-        "-l",
-        _OPERATOR_SELECTOR,
-        "-o",
-        "json",
-        check=True,
-    )
-    deployments = orjson.loads(result.stdout or b"{}").get("items", [])
-    if len(deployments) != 1:
-        names = [
-            item.get("metadata", {}).get("name", "<unnamed>") for item in deployments
-        ]
-        pytest.skip(
-            "Dynamo RBAC chaos requires exactly one operator deployment; found "
-            f"{', '.join(names) if names else '<none>'}"
-        )
-    return str(
-        deployments[0]["spec"]["template"]["spec"].get("serviceAccountName", "default")
-    )
-
-
-async def _d112_find_unique_operator_rbac_owner(
-    kubectl: KubectlClient,
-    *,
-    api_group: str,
-    resource: str,
-    verb: str,
-    case_id: str,
-) -> _d112_RbacOwner:
-    service_account = await _d112_operator_service_account(kubectl)
-    candidates: list[_d112_RbacOwner] = []
-    inspected: list[str] = []
-    for scope, name, namespace in await _d112_operator_bound_role_refs(
-        kubectl, service_account
-    ):
-        inspected.append(f"{scope}/{namespace + '/' if namespace else ''}{name}")
-        body = await _d112_load_rbac(kubectl, scope, name, namespace)
-        if body is None:
-            continue
-        if _d112_has_exact_rule(body.get("rules") or [], api_group, resource, verb):
-            candidates.append(
-                _d112_RbacOwner(scope=scope, name=name, namespace=namespace)
-            )
-    if len(candidates) != 1:
-        pytest.skip(
-            f"{case_id} requires exactly one operator-bound RBAC rule granting "
-            f"{verb!r} on {resource!r} apiGroup={api_group!r}; candidates="
-            f"{', '.join(c.label for c in candidates) or '<none>'}; inspected="
-            f"{', '.join(inspected) if inspected else '<none>'}"
-        )
-    return candidates[0]
-
-
-async def _d112_operator_bound_role_refs(
-    kubectl: KubectlClient,
-    service_account: str,
-) -> list[tuple[Literal["role", "clusterrole"], str, str | None]]:
-    refs: list[tuple[Literal["role", "clusterrole"], str, str | None]] = []
-    for binding_kind, namespaced in (
-        ("rolebinding", True),
-        ("clusterrolebinding", False),
-    ):
-        args = ["get", binding_kind, "-o", "json"]
-        if namespaced:
-            args.insert(2, "-n")
-            args.insert(3, _OPERATOR_NAMESPACE)
-        result = await kubectl.run(*args, check=True)
-        for binding in orjson.loads(result.stdout or b"{}").get("items", []):
-            if not _d112_has_operator_subject(
-                binding.get("subjects") or [], service_account
-            ):
-                continue
-            role_ref = binding.get("roleRef") or {}
-            scope = str(role_ref.get("kind", "")).lower()
-            if scope not in {"role", "clusterrole"}:
-                continue
-            namespace = (
-                binding.get("metadata", {}).get("namespace")
-                if scope == "role"
-                else None
-            )
-            refs.append((scope, str(role_ref.get("name", "")), namespace))
-    return refs
-
-
-def _d112_has_operator_subject(
-    subjects: list[dict[str, Any]], service_account: str
-) -> bool:
-    return any(
-        subject.get("kind") == "ServiceAccount"
-        and subject.get("name") == service_account
-        and subject.get("namespace") == _OPERATOR_NAMESPACE
-        for subject in subjects
-    )
-
-
-async def _d112_load_rbac(
-    kubectl: KubectlClient,
-    scope: Literal["role", "clusterrole"],
-    name: str,
-    namespace: str | None,
-) -> dict[str, Any] | None:
-    args = ["get", scope, name]
-    if namespace is not None:
-        args.extend(["-n", namespace])
-    args.extend(["-o", "json"])
-    result = await kubectl.run(*args, check=False)
-    if result.returncode != 0:
-        return None
-    return dict(orjson.loads(result.stdout or b"{}"))
-
-
-def _d112_has_exact_rule(
-    rules: list[dict[str, Any]],
-    api_group: str,
-    resource: str,
-    verb: str,
-) -> bool:
-    for rule in rules:
-        if "*" in (rule.get("apiGroups") or []):
-            continue
-        if "*" in (rule.get("resources") or []):
-            continue
-        if "*" in (rule.get("verbs") or []):
-            continue
-        if (
-            api_group in (rule.get("apiGroups") or [])
-            and resource in (rule.get("resources") or [])
-            and verb in (rule.get("verbs") or [])
-        ):
-            return True
-    return False
-
-
-def _d112_rbac_target(owner: _d112_RbacOwner) -> dict[str, str]:
-    target = {"scope": owner.scope, "name": owner.name}
-    if owner.namespace is not None:
-        target["ns"] = owner.namespace
-    return target
-
-
 async def _d112_apply_fresh_dgd(
     kubectl: KubectlClient, namespace: str
 ) -> tuple[str, str]:
@@ -2613,7 +2458,7 @@ async def test_d112_child_deployment_create_rbac_revoked_before_apply(
     kubectl: KubectlClient,
     dynamo_deployment_namespace: str,
 ) -> None:
-    owner = await _d112_find_unique_operator_rbac_owner(
+    owner = await find_unique_operator_rbac_owner(
         kubectl, api_group="apps", resource="deployments", verb="create", case_id="D112"
     )
     faults = request.getfixturevalue("faults")
@@ -2622,7 +2467,7 @@ async def test_d112_child_deployment_create_rbac_revoked_before_apply(
     try:
         async with faults.inject(
             "cluster.rbac.revoke",
-            target=_d112_rbac_target(owner),
+            target=rbac_revoke_target(owner),
             api_group="apps",
             resource="deployments",
             verb="create",

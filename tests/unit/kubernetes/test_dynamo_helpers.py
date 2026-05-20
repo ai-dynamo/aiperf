@@ -16,6 +16,11 @@ import pytest
 import yaml
 from pytest import param
 
+from tests.kubernetes.chaos_dynamo.rbac_helpers import (
+    RbacOwner,
+    rbac_revoke_target,
+    rbac_rule_grants,
+)
 from tests.kubernetes.chaos_dynamo.test_chaos_d3xx_nixl_kvbm import (
     _nixl_route_skip_reason,
 )
@@ -60,6 +65,61 @@ DynamoConfig.single_gpu_disagg = _single_gpu_disagg_beta  # type: ignore[attr-de
 def kubectl() -> KubectlClient:
     """Create a kubectl client (not used for real calls in these tests)."""
     return KubectlClient()
+
+
+class TestDynamoRbacHelpers:
+    """Shared RBAC helper primitives preserve Dynamo chaos target semantics."""
+
+    def test_owner_label_formats_cluster_and_namespaced_roles(self) -> None:
+        assert RbacOwner(
+            scope="clusterrole", name="dynamo-operator", namespace=None
+        ).label == ("clusterrole/dynamo-operator")
+        assert RbacOwner(
+            scope="role", name="dynamo-writer", namespace="dynamo-system"
+        ).label == ("role/dynamo-system/dynamo-writer")
+
+    def test_revoke_target_omits_namespace_for_clusterrole(self) -> None:
+        owner = RbacOwner(scope="clusterrole", name="dynamo-operator", namespace=None)
+
+        assert rbac_revoke_target(owner) == {
+            "scope": "clusterrole",
+            "name": "dynamo-operator",
+        }
+
+    def test_revoke_target_includes_namespace_for_role(self) -> None:
+        owner = RbacOwner(scope="role", name="dynamo-writer", namespace="dynamo-system")
+
+        assert rbac_revoke_target(owner) == {
+            "scope": "role",
+            "name": "dynamo-writer",
+            "ns": "dynamo-system",
+        }
+
+    def test_rule_grants_rejects_wildcards_when_exact_match_required(self) -> None:
+        rules = [
+            {"apiGroups": ["*"], "resources": ["deployments"], "verbs": ["create"]},
+            {"apiGroups": ["apps"], "resources": ["*"], "verbs": ["create"]},
+            {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["*"]},
+        ]
+
+        assert not rbac_rule_grants(
+            rules,
+            api_group="apps",
+            resource="deployments",
+            verb="create",
+            reject_wildcards=True,
+        )
+
+    def test_rule_grants_accepts_wildcards_when_allowed(self) -> None:
+        rules = [{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["*"]}]
+
+        assert rbac_rule_grants(
+            rules,
+            api_group="apps",
+            resource="deployments",
+            verb="create",
+            reject_wildcards=False,
+        )
 
 
 def _parse_manifest(deployer: DynamoDeployer) -> list[dict]:

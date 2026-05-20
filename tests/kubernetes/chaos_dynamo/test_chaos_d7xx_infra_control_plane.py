@@ -17,12 +17,14 @@ import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
+from tests.kubernetes.chaos_dynamo.rbac_helpers import (
+    find_unique_operator_rbac_owner,
+    rbac_revoke_target,
+)
 from tests.kubernetes.chaos_dynamo.test_chaos_d1xx_operator_admission import (
     _d112_apply_fresh_dgd,
     _d112_delete_dgd,
-    _d112_find_unique_operator_rbac_owner,
     _d112_observe_not_successful,
-    _d112_rbac_target,
 )
 from tests.kubernetes.gpu.conftest import GPUTestSettings
 from tests.kubernetes.gpu.dynamo.helpers import (
@@ -1525,7 +1527,7 @@ async def test_d712_rbac_child_rolebinding_create_denial_blocks_then_recovers(
     dynamo_deployment_namespace: str,
 ) -> None:
     """Revoke child RoleBinding create RBAC before apply, then restore and recover."""
-    owner = await _d112_find_unique_operator_rbac_owner(
+    owner = await find_unique_operator_rbac_owner(
         kubectl,
         api_group="rbac.authorization.k8s.io",
         resource="rolebindings",
@@ -1538,7 +1540,7 @@ async def test_d712_rbac_child_rolebinding_create_denial_blocks_then_recovers(
     try:
         async with faults.inject(
             "cluster.rbac.revoke",
-            target=_d112_rbac_target(owner),
+            target=rbac_revoke_target(owner),
             api_group="rbac.authorization.k8s.io",
             resource="rolebindings",
             verb="create",
