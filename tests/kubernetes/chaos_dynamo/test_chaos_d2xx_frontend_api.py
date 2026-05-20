@@ -26,6 +26,15 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos.toxiproxy import ToxiproxyError
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
 from tests.kubernetes.chaos_dynamo.conftest import scrape_frontend_metrics
+from tests.kubernetes.chaos_dynamo.frontend_request_helpers import (
+    HTTPJSON,
+    append_sse_data_lines,
+    append_sse_events,
+    chat_completion_url,
+    chat_payload,
+    drain_response_chunks,
+    post_json,
+)
 from tests.kubernetes.gpu.dynamo.helpers import DynamoConfig
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
@@ -121,22 +130,21 @@ async def _stream_one(
     Returns a small dict describing the terminal state so the test body can
     bucket outcomes (clean-RST vs 503 vs unexpected) without re-raising.
     """
-    payload = {
-        "model": "test-model",
-        "messages": [{"role": "user", "content": f"stream {idx}"}],
-        "stream": True,
-        "max_tokens": 10,
-    }
+    payload = chat_payload(
+        f"stream {idx}",
+        model="test-model",
+        stream=True,
+        max_tokens=10,
+        temperature=None,
+    )
     try:
         async with session.post(
-            f"{url}/v1/chat/completions",
+            chat_completion_url(url, include_v1=True),
             json=payload,
             timeout=aiohttp.ClientTimeout(total=CLIENT_TIMEOUT_SECONDS),
         ) as resp:
             status = resp.status
-            chunks = 0
-            async for _chunk in resp.content.iter_chunked(1024):
-                chunks += 1
+            chunks = await drain_response_chunks(resp, chunk_size=1024)
             return {"idx": idx, "kind": "closed", "status": status, "chunks": chunks}
     except aiohttp.ServerDisconnectedError as exc:
         return {"idx": idx, "kind": "server_disconnect", "error": repr(exc)}
@@ -232,13 +240,14 @@ async def test_d201_force_kill_frontend_under_sse(
     async with (
         aiohttp.ClientSession() as session,
         session.post(
-            f"{dynamo_endpoint_url}/v1/chat/completions",
-            json={
-                "model": "test-model",
-                "messages": [{"role": "user", "content": "post-recovery probe"}],
-                "stream": False,
-                "max_tokens": 10,
-            },
+            chat_completion_url(dynamo_endpoint_url, include_v1=True),
+            json=chat_payload(
+                "post-recovery probe",
+                model="test-model",
+                stream=False,
+                max_tokens=10,
+                temperature=None,
+            ),
             timeout=aiohttp.ClientTimeout(total=10.0),
         ) as resp,
     ):
@@ -528,15 +537,16 @@ async def _post_chat_completion(
     dynamo_endpoint_url: str,
 ) -> str:
     """POST one non-streaming chat-completions request and return an outcome token."""
-    payload = {
-        "model": "Qwen/Qwen3-0.6B",
-        "messages": [{"role": "user", "content": "Hello"}],
-        "stream": False,
-        "max_tokens": 10,
-    }
+    payload = chat_payload(
+        "Hello",
+        model="Qwen/Qwen3-0.6B",
+        stream=False,
+        max_tokens=10,
+        temperature=None,
+    )
     try:
         async with session.post(
-            dynamo_endpoint_url + "/chat/completions",
+            chat_completion_url(dynamo_endpoint_url),
             json=payload,
             timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS),
         ) as response:
@@ -849,18 +859,11 @@ def _response_timeout_count(metrics_text: str) -> float:
 
 async def _stream_with_latency_fault(url: str, client_budget: float) -> dict[str, Any]:
     """Issue one streaming chat request and return its terminal outcome."""
-    payload = {
-        "model": "default",
-        "messages": [
-            {
-                "role": "user",
-                "content": "Write a detailed paragraph about backend stream timeouts.",
-            }
-        ],
-        "max_tokens": 200,
-        "stream": True,
-        "temperature": 0.0,
-    }
+    payload = chat_payload(
+        "Write a detailed paragraph about backend stream timeouts.",
+        stream=True,
+        max_tokens=200,
+    )
     started = time.monotonic()
     frames: list[str] = []
     try:
@@ -868,7 +871,7 @@ async def _stream_with_latency_fault(url: str, client_budget: float) -> dict[str
             aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=client_budget)
             ) as session,
-            session.post(f"{url}/chat/completions", json=payload) as resp,
+            session.post(chat_completion_url(url), json=payload) as resp,
         ):
             if resp.status >= 500:
                 body = (await resp.read()).decode(errors="replace")[:512]
@@ -1064,15 +1067,10 @@ def _append_sse_data_frames(
     first_frame_seen: asyncio.Event,
 ) -> str:
     """Append complete SSE ``data:`` lines and return the incomplete suffix."""
-    while "\n" in buffered_text:
-        raw_line, buffered_text = buffered_text.split("\n", 1)
-        line = raw_line.rstrip("\r")
-        if not line.startswith("data:"):
-            continue
-        payload = line.removeprefix("data:").strip()
-        frames.append(payload)
-        if payload != "[DONE]":
-            first_frame_seen.set()
+    before_count = len(frames)
+    buffered_text = append_sse_data_lines(buffered_text, frames)
+    if any(payload != "[DONE]" for payload in frames[before_count:]):
+        first_frame_seen.set()
     return buffered_text
 
 
@@ -1326,19 +1324,15 @@ async def test_d209_sse_first_byte_latency_under_frontend_throttling(
             namespace="chaos-toxiproxy",
         ) as local_port:
             url = f"http://127.0.0.1:{local_port}/v1"
-            payload = {
-                "model": "default",
-                "messages": [{"role": "user", "content": "Say hello in one sentence."}],
-                "max_tokens": 32,
-                "stream": True,
-                "temperature": 0.0,
-            }
+            payload = chat_payload(
+                "Say hello in one sentence.", stream=True, max_tokens=32
+            )
             started = time.monotonic()
             async with (
                 aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=_FIRST_BYTE_TIMEOUT_S)
                 ) as session,
-                session.post(f"{url}/chat/completions", json=payload) as resp,
+                session.post(chat_completion_url(url), json=payload) as resp,
             ):
                 body = await resp.text() if resp.status != 200 else ""
                 assert resp.status == 200, (
@@ -1388,16 +1382,7 @@ async def _d210_frontend_service_name(
 
 def _append_complete_sse_payloads(buffer: str, payloads: list[str]) -> str:
     """Append complete LF/CRLF-delimited SSE data payloads; return suffix."""
-    while "\n\n" in buffer or "\r\n\r\n" in buffer:
-        lf_pos = buffer.find("\n\n") if "\n\n" in buffer else len(buffer) + 1
-        crlf_pos = buffer.find("\r\n\r\n") if "\r\n\r\n" in buffer else len(buffer) + 1
-        delimiter = "\n\n" if lf_pos < crlf_pos else "\r\n\r\n"
-        raw_event, buffer = buffer.split(delimiter, 1)
-        for raw_line in raw_event.splitlines():
-            line = raw_line.rstrip("\r")
-            if line.startswith("data:"):
-                payloads.append(line.removeprefix("data:").strip())
-    return buffer
+    return append_sse_events(buffer, payloads)
 
 
 async def _configure_sliced_frontend_proxy(request: pytest.FixtureRequest) -> None:
@@ -1443,14 +1428,8 @@ async def test_d210_sse_fragmented_frames_parse_to_complete_chunks(
             _FRONTEND_PROXY_PORT,
             namespace="chaos-toxiproxy",
         ) as local_port:
-            url = f"http://127.0.0.1:{local_port}/v1/chat/completions"
-            body = {
-                "model": "default",
-                "messages": [{"role": "user", "content": "Count from one to ten."}],
-                "max_tokens": 64,
-                "stream": True,
-                "temperature": 0.0,
-            }
+            url = chat_completion_url(f"http://127.0.0.1:{local_port}/v1")
+            body = chat_payload("Count from one to ten.", stream=True, max_tokens=64)
             buffer = ""
             async with (
                 aiohttp.ClientSession(
@@ -1556,13 +1535,7 @@ async def test_d211_crlf_delimited_http_request_returns_openai_json(
     dynamo_endpoint_url: str,
 ) -> None:
     """Use raw CRLF HTTP framing and assert Dynamo returns a normal JSON shape."""
-    payload: dict[str, object] = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with the word ok."}],
-        "max_tokens": 8,
-        "stream": False,
-        "temperature": 0.0,
-    }
+    payload = chat_payload("Reply with the word ok.", stream=False, max_tokens=8)
     status, body = _split_http_response(
         await _post_with_raw_crlf(dynamo_endpoint_url, payload)
     )
@@ -1587,16 +1560,10 @@ async def test_d211_crlf_delimited_http_request_returns_openai_json(
 
 
 async def _assert_followup_chat_succeeds(endpoint_url: str, case_id: str) -> None:
-    payload = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with ok."}],
-        "max_tokens": 8,
-        "stream": False,
-        "temperature": 0.0,
-    }
+    payload = chat_payload("Reply with ok.", stream=False, max_tokens=8)
     async with (
         aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0)) as session,
-        session.post(f"{endpoint_url}/chat/completions", json=payload) as resp,
+        session.post(chat_completion_url(endpoint_url), json=payload) as resp,
     ):
         body = await resp.text()
     assert resp.status == 200, (
@@ -1608,22 +1575,15 @@ async def test_d212_disconnect_before_first_token_is_clean(
     dynamo_endpoint_url: str,
 ) -> None:
     """Open a stream and drop the socket before reading any SSE body bytes."""
-    payload = {
-        "model": "default",
-        "messages": [
-            {
-                "role": "user",
-                "content": "Write a long paragraph about graceful streaming cancellation.",
-            }
-        ],
-        "max_tokens": 256,
-        "stream": True,
-        "temperature": 0.0,
-    }
+    payload = chat_payload(
+        "Write a long paragraph about graceful streaming cancellation.",
+        stream=True,
+        max_tokens=256,
+    )
     session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15.0))
     try:
         resp = await session.post(
-            f"{dynamo_endpoint_url}/chat/completions", json=payload
+            chat_completion_url(dynamo_endpoint_url), json=payload
         )
         try:
             assert resp.status == 200, (
@@ -1646,28 +1606,19 @@ async def _read_first_data_payload(resp: aiohttp.ClientResponse) -> str | None:
     buffer = ""
     async for chunk in resp.content.iter_any():
         buffer += chunk.decode("utf-8", errors="replace")
-        while "\n" in buffer:
-            raw_line, buffer = buffer.split("\n", 1)
-            line = raw_line.rstrip("\r")
-            if not line.startswith("data:"):
-                continue
-            payload = line.removeprefix("data:").strip()
+        payloads: list[str] = []
+        buffer = append_sse_data_lines(buffer, payloads)
+        for payload in payloads:
             if payload and payload != "[DONE]":
                 return payload
     return None
 
 
 async def _d213_assert_followup_chat_succeeds(endpoint_url: str) -> None:
-    payload = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with ok."}],
-        "max_tokens": 8,
-        "stream": False,
-        "temperature": 0.0,
-    }
+    payload = chat_payload("Reply with ok.", stream=False, max_tokens=8)
     async with (
         aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0)) as session,
-        session.post(f"{endpoint_url}/chat/completions", json=payload) as resp,
+        session.post(chat_completion_url(endpoint_url), json=payload) as resp,
     ):
         body = await resp.text()
     assert resp.status == 200, (
@@ -1679,22 +1630,15 @@ async def test_d213_disconnect_after_first_token_is_clean(
     dynamo_endpoint_url: str,
 ) -> None:
     """Read one SSE data frame, close the socket, then verify fresh traffic works."""
-    payload = {
-        "model": "default",
-        "messages": [
-            {
-                "role": "user",
-                "content": "Write three short sentences about streaming clients.",
-            }
-        ],
-        "max_tokens": 128,
-        "stream": True,
-        "temperature": 0.0,
-    }
+    payload = chat_payload(
+        "Write three short sentences about streaming clients.",
+        stream=True,
+        max_tokens=128,
+    )
     session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20.0))
     try:
         resp = await session.post(
-            f"{dynamo_endpoint_url}/chat/completions", json=payload
+            chat_completion_url(dynamo_endpoint_url), json=payload
         )
         try:
             assert resp.status == 200, (
@@ -1718,23 +1662,16 @@ async def test_d213_disconnect_after_first_token_is_clean(
 
 def _append_sse_payloads(buffer: str, payloads: list[str]) -> str:
     """Append complete SSE ``data:`` payloads and return the incomplete suffix."""
-    while "\n" in buffer:
-        raw_line, buffer = buffer.split("\n", 1)
-        line = raw_line.rstrip("\r")
-        if line.startswith("data:"):
-            payloads.append(line.removeprefix("data:").strip())
-    return buffer
+    return append_sse_data_lines(buffer, payloads)
 
 
 async def _collect_stream_payloads(endpoint_url: str) -> list[str]:
-    request_body = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with a short sentence."}],
-        "max_tokens": 32,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-        "temperature": 0.0,
-    }
+    request_body = chat_payload(
+        "Reply with a short sentence.",
+        stream=True,
+        max_tokens=32,
+        extra={"stream_options": {"include_usage": True}},
+    )
     payloads: list[str] = []
     buffer = ""
     async with (
@@ -1783,12 +1720,7 @@ async def test_d214_stream_usage_final_chunk_precedes_done(
 
 def _d215_append_sse_payloads(buffer: str, payloads: list[str]) -> str:
     """Append complete SSE ``data:`` payloads and return the incomplete suffix."""
-    while "\n" in buffer:
-        raw_line, buffer = buffer.split("\n", 1)
-        line = raw_line.rstrip("\r")
-        if line.startswith("data:"):
-            payloads.append(line.removeprefix("data:").strip())
-    return buffer
+    return append_sse_data_lines(buffer, payloads)
 
 
 def _d215_is_usage_chunk(payload: str) -> bool:
@@ -1806,14 +1738,12 @@ async def test_d215_include_usage_false_has_no_usage_only_sse_chunk(
     dynamo_endpoint_url: str,
 ) -> None:
     """Request include_usage=false and assert no usage-only SSE chunk appears."""
-    payload = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with a short sentence."}],
-        "max_tokens": 32,
-        "stream": True,
-        "stream_options": {"include_usage": False},
-        "temperature": 0.0,
-    }
+    payload = chat_payload(
+        "Reply with a short sentence.",
+        stream=True,
+        max_tokens=32,
+        extra={"stream_options": {"include_usage": False}},
+    )
     payloads: list[str] = []
     buffer = ""
     async with (
@@ -1844,21 +1774,14 @@ _CONCURRENCY = 32
 
 
 async def _post_non_stream(endpoint_url: str, idx: int) -> dict[str, Any]:
-    payload = {
-        "model": "default",
-        "messages": [
-            {
-                "role": "user",
-                "content": f"Reply with one concise sentence for overload request {idx}.",
-            }
-        ],
-        "max_tokens": 32,
-        "stream": False,
-        "temperature": 0.0,
-    }
+    payload = chat_payload(
+        f"Reply with one concise sentence for overload request {idx}.",
+        stream=False,
+        max_tokens=32,
+    )
     async with (
         aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45.0)) as session,
-        session.post(f"{endpoint_url}/chat/completions", json=payload) as resp,
+        session.post(chat_completion_url(endpoint_url), json=payload) as resp,
     ):
         body = await resp.read()
     try:
@@ -1923,36 +1846,13 @@ async def test_d216_non_stream_shape_under_overload(
 # D217
 
 
-@dataclass(frozen=True)
-class _HTTPJSON:
-    status: int
-    body: dict[str, object]
-    text: str
-
-
 def _service_root(endpoint_url: str) -> str:
     """Return the Dynamo service root regardless of whether fixture includes /v1."""
     trimmed = endpoint_url.rstrip("/")
     return trimmed.removesuffix("/v1")
 
 
-async def _post_json(
-    session: aiohttp.ClientSession,
-    url: str,
-    payload: dict[str, object],
-) -> _HTTPJSON:
-    """POST JSON and decode the response body for assertion diagnostics."""
-    async with session.post(url, json=payload) as resp:
-        text = await resp.text()
-    try:
-        decoded = orjson.loads(text)
-    except orjson.JSONDecodeError:
-        decoded = {}
-    body = decoded if isinstance(decoded, dict) else {}
-    return _HTTPJSON(status=resp.status, body=body, text=text)
-
-
-def _assert_chat_completion_shape(case_id: str, result: _HTTPJSON) -> None:
+def _assert_chat_completion_shape(case_id: str, result: HTTPJSON) -> None:
     """Assert a minimal OpenAI chat-completion response envelope."""
     assert result.status == 200, (
         f"{case_id}: chat endpoint returned HTTP {result.status}; body={result.text!r}"
@@ -1988,8 +1888,8 @@ async def test_d217_chat_path_alias_compatibility(dynamo_endpoint_url: str) -> N
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30.0)
     ) as session:
-        canonical = await _post_json(session, canonical_url, payload)
-        alias = await _post_json(session, alias_url, payload)
+        canonical = await post_json(session, canonical_url, payload)
+        alias = await post_json(session, alias_url, payload)
 
     _assert_chat_completion_shape("D217 canonical", canonical)
     if alias.status in {404, 405, 501}:
@@ -2003,30 +1903,7 @@ async def test_d217_chat_path_alias_compatibility(dynamo_endpoint_url: str) -> N
 # D218
 
 
-@dataclass(frozen=True)
-class _d218_HTTPJSON:
-    status: int
-    body: dict[str, object]
-    text: str
-
-
-async def _d218_post_json(
-    session: aiohttp.ClientSession,
-    url: str,
-    payload: dict[str, object],
-) -> _d218_HTTPJSON:
-    """POST JSON and decode an object response when present."""
-    async with session.post(url, json=payload) as resp:
-        text = await resp.text()
-    try:
-        decoded = orjson.loads(text)
-    except orjson.JSONDecodeError:
-        decoded = {}
-    body = decoded if isinstance(decoded, dict) else {}
-    return _d218_HTTPJSON(status=resp.status, body=body, text=text)
-
-
-def _assert_responses_shape(result: _d218_HTTPJSON) -> None:
+def _assert_responses_shape(result: HTTPJSON) -> None:
     """Assert a minimal Responses API success envelope."""
     assert result.status == 200, (
         f"D218: /responses returned HTTP {result.status}; body={result.text!r}"
@@ -2057,7 +1934,7 @@ async def test_d218_responses_api_compatibility_probe(
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30.0)
     ) as session:
-        result = await _d218_post_json(session, url, payload)
+        result = await post_json(session, url, payload)
 
     if result.status in {404, 405, 501}:
         pytest.skip(
@@ -2074,30 +1951,7 @@ async def test_d218_responses_api_compatibility_probe(
 # D219
 
 
-@dataclass(frozen=True)
-class _d219_HTTPJSON:
-    status: int
-    body: dict[str, object]
-    text: str
-
-
-async def _d219_post_json(
-    session: aiohttp.ClientSession,
-    url: str,
-    payload: dict[str, object],
-) -> _d219_HTTPJSON:
-    """POST JSON and decode an object response when present."""
-    async with session.post(url, json=payload) as resp:
-        text = await resp.text()
-    try:
-        decoded = orjson.loads(text)
-    except orjson.JSONDecodeError:
-        decoded = {}
-    body = decoded if isinstance(decoded, dict) else {}
-    return _d219_HTTPJSON(status=resp.status, body=body, text=text)
-
-
-def _assert_completions_shape(result: _d219_HTTPJSON) -> None:
+def _assert_completions_shape(result: HTTPJSON) -> None:
     """Assert a minimal OpenAI legacy completion response envelope."""
     assert result.status == 200, (
         f"D219: /completions returned HTTP {result.status}; body={result.text!r}"
@@ -2133,7 +1987,7 @@ async def test_d219_completions_api_compatibility_probe(
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30.0)
     ) as session:
-        result = await _d219_post_json(session, url, payload)
+        result = await post_json(session, url, payload)
 
     if result.status in {404, 405, 501}:
         pytest.skip(
@@ -2375,35 +2229,7 @@ async def test_d222_wrong_content_type_rejection(dynamo_endpoint_url: str) -> No
 # D223
 
 
-@dataclass(frozen=True)
-class _d223_HTTPJSON:
-    status: int
-    body: dict[str, object]
-    text: str
-
-
-async def _post_chat_without_auth(
-    session: aiohttp.ClientSession,
-    url: str,
-) -> _d223_HTTPJSON:
-    """POST a valid chat completion without an Authorization header."""
-    payload: dict[str, object] = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with pong."}],
-        "max_tokens": 8,
-        "temperature": 0.0,
-    }
-    async with session.post(url, json=payload) as resp:
-        text = await resp.text()
-    try:
-        decoded = orjson.loads(text)
-    except orjson.JSONDecodeError:
-        decoded = {}
-    body = decoded if isinstance(decoded, dict) else {}
-    return _d223_HTTPJSON(status=resp.status, body=body, text=text)
-
-
-def _d223_assert_chat_completion_shape(result: _d223_HTTPJSON) -> None:
+def _d223_assert_chat_completion_shape(result: HTTPJSON) -> None:
     """Assert a minimal OpenAI chat-completion response envelope."""
     assert result.status == 200, (
         f"D223: missing Authorization should remain compatible; "
@@ -2431,7 +2257,16 @@ async def test_d223_missing_authorization_compatibility(
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30.0)
     ) as session:
-        result = await _post_chat_without_auth(session, url)
+        result = await post_json(
+            session,
+            url,
+            {
+                "model": "default",
+                "messages": [{"role": "user", "content": "Reply with pong."}],
+                "max_tokens": 8,
+                "temperature": 0.0,
+            },
+        )
 
     if result.status in {401, 403}:
         pytest.skip(
@@ -2444,39 +2279,7 @@ async def test_d223_missing_authorization_compatibility(
 # D224
 
 
-@dataclass(frozen=True)
-class _d224_HTTPJSON:
-    status: int
-    body: dict[str, object]
-    text: str
-
-
-async def _post_chat_with_bad_auth(
-    session: aiohttp.ClientSession,
-    url: str,
-) -> _d224_HTTPJSON:
-    """POST a valid chat completion with an intentionally bad bearer token."""
-    payload: dict[str, object] = {
-        "model": "default",
-        "messages": [{"role": "user", "content": "Reply with pong."}],
-        "max_tokens": 8,
-        "temperature": 0.0,
-    }
-    async with session.post(
-        url,
-        json=payload,
-        headers={"authorization": "Bearer definitely-not-a-real-token"},
-    ) as resp:
-        text = await resp.text()
-    try:
-        decoded = orjson.loads(text)
-    except orjson.JSONDecodeError:
-        decoded = {}
-    body = decoded if isinstance(decoded, dict) else {}
-    return _d224_HTTPJSON(status=resp.status, body=body, text=text)
-
-
-def _d224_assert_chat_completion_shape(result: _d224_HTTPJSON) -> None:
+def _d224_assert_chat_completion_shape(result: HTTPJSON) -> None:
     """Assert a minimal OpenAI chat-completion response envelope."""
     assert result.status == 200, (
         f"D224: bad Authorization should remain compatible; "
@@ -2502,7 +2305,17 @@ async def test_d224_bad_authorization_compatibility(dynamo_endpoint_url: str) ->
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30.0)
     ) as session:
-        result = await _post_chat_with_bad_auth(session, url)
+        result = await post_json(
+            session,
+            url,
+            {
+                "model": "default",
+                "messages": [{"role": "user", "content": "Reply with pong."}],
+                "max_tokens": 8,
+                "temperature": 0.0,
+            },
+            headers={"authorization": "Bearer definitely-not-a-real-token"},
+        )
 
     if result.status in {401, 403}:
         pytest.skip(
@@ -2602,31 +2415,6 @@ async def _d225_d233_raw_frontend_metrics(
         return body
 
 
-def _chat_url(endpoint_url: str) -> str:
-    """Build the chat-completions URL from the package /v1 endpoint fixture."""
-    return f"{endpoint_url.rstrip('/')}/chat/completions"
-
-
-def _chat_payload(
-    prompt: str,
-    *,
-    stream: bool,
-    max_tokens: int = 32,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return a minimal OpenAI-compatible chat-completions payload."""
-    payload: dict[str, Any] = {
-        "model": DEFAULT_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": stream,
-        "max_tokens": max_tokens,
-        "temperature": 0.0,
-    }
-    if extra:
-        payload.update(extra)
-    return payload
-
-
 def _metric_samples(metrics_text: str, hints: Iterable[str]) -> dict[str, float]:
     """Return metric samples whose metric name or labels contain any hint."""
     lowered_hints = tuple(hint.lower() for hint in hints)
@@ -2663,7 +2451,7 @@ async def _post_chat(
     started = time.monotonic()
     try:
         async with session.post(
-            _chat_url(endpoint_url),
+            chat_completion_url(endpoint_url),
             json=payload,
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=timeout),
@@ -2705,7 +2493,7 @@ async def _read_stream(
     chunks: list[str] = []
     try:
         async with session.post(
-            _chat_url(endpoint_url),
+            chat_completion_url(endpoint_url),
             json=payload,
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=timeout),
@@ -2751,15 +2539,17 @@ async def _mixed_traffic(
     """Run a short mixed streaming/non-stream traffic burst."""
     tasks: set[asyncio.Task[dict[str, Any]]] = set()
     for idx in range(stream_count):
-        payload = _chat_payload(
+        payload = chat_payload(
             f"D233 streaming metrics availability probe {idx}",
+            model=DEFAULT_MODEL,
             stream=True,
             max_tokens=96,
         )
         tasks.add(asyncio.create_task(_read_stream(session, endpoint_url, payload)))
     for idx in range(non_stream_count):
-        payload = _chat_payload(
+        payload = chat_payload(
             f"D233 non-stream metrics availability probe {idx}",
+            model=DEFAULT_MODEL,
             stream=False,
             max_tokens=32,
         )
@@ -2811,7 +2601,11 @@ async def test_d225_request_id_header_propagation(
         result = await _post_chat(
             session,
             dynamo_endpoint_url,
-            _chat_payload("D225 request ID propagation probe", stream=False),
+            chat_payload(
+                "D225 request ID propagation probe",
+                model=DEFAULT_MODEL,
+                stream=False,
+            ),
             headers=headers,
         )
 
@@ -2849,8 +2643,11 @@ async def test_d226_concurrent_stream_admission_load_shedding(
                 _read_stream(
                     session,
                     dynamo_endpoint_url,
-                    _chat_payload(
-                        f"D226 stream overload {idx}", stream=True, max_tokens=128
+                    chat_payload(
+                        f"D226 stream overload {idx}",
+                        model=DEFAULT_MODEL,
+                        stream=True,
+                        max_tokens=128,
                     ),
                     timeout=45.0,
                 )
@@ -2889,7 +2686,11 @@ async def test_d227_non_stream_load_shedding_metrics(
                 _post_chat(
                     session,
                     dynamo_endpoint_url,
-                    _chat_payload(f"D227 non-stream overload {idx}", stream=False),
+                    chat_payload(
+                        f"D227 non-stream overload {idx}",
+                        model=DEFAULT_MODEL,
+                        stream=False,
+                    ),
                     timeout=30.0,
                 )
                 for idx in range(128)
@@ -2934,8 +2735,11 @@ async def test_d228_streaming_load_shedding_metrics(
                 _read_stream(
                     session,
                     dynamo_endpoint_url,
-                    _chat_payload(
-                        f"D228 stream overload {idx}", stream=True, max_tokens=128
+                    chat_payload(
+                        f"D228 stream overload {idx}",
+                        model=DEFAULT_MODEL,
+                        stream=True,
+                        max_tokens=128,
                     ),
                     timeout=45.0,
                 )
@@ -2973,8 +2777,11 @@ async def test_d229_slow_client_reader_backpressure(
         result = await _read_stream(
             session,
             dynamo_endpoint_url,
-            _chat_payload(
-                "D229 slow reader backpressure probe", stream=True, max_tokens=128
+            chat_payload(
+                "D229 slow reader backpressure probe",
+                model=DEFAULT_MODEL,
+                stream=True,
+                max_tokens=128,
             ),
             timeout=60.0,
             read_delay=0.25,
@@ -2982,7 +2789,9 @@ async def test_d229_slow_client_reader_backpressure(
         followup = await _post_chat(
             session,
             dynamo_endpoint_url,
-            _chat_payload("D229 follow-up after slow reader", stream=False),
+            chat_payload(
+                "D229 follow-up after slow reader", model=DEFAULT_MODEL, stream=False
+            ),
         )
 
     assert result["kind"] != "timeout", f"D229: slow reader hung: {result!r}"
@@ -3009,8 +2818,11 @@ async def test_d230_idle_no_token_stall_terminates_stream(
         result = await _read_stream(
             session,
             dynamo_endpoint_url,
-            _chat_payload(
-                "D230 idle no-token stall probe", stream=True, max_tokens=512
+            chat_payload(
+                "D230 idle no-token stall probe",
+                model=DEFAULT_MODEL,
+                stream=True,
+                max_tokens=512,
             ),
             timeout=75.0,
         )
@@ -3024,8 +2836,9 @@ async def test_d231_tool_call_streaming_compatibility(
     dynamo_endpoint_url: str,
 ) -> None:
     """D231: OpenAI tool-call payloads remain valid under streaming."""
-    tool_payload = _chat_payload(
+    tool_payload = chat_payload(
         "D231 call the weather tool for San Jose, then summarize the result.",
+        model=DEFAULT_MODEL,
         stream=True,
         max_tokens=128,
         extra={
@@ -3069,8 +2882,9 @@ async def test_d232_extra_openai_fields_tolerated(
     dynamo_endpoint_url: str,
 ) -> None:
     """D232: forward-compatible OpenAI fields are ignored or accepted, not 5xx."""
-    payload = _chat_payload(
+    payload = chat_payload(
         "D232 tolerate extra OpenAI-compatible request fields.",
+        model=DEFAULT_MODEL,
         stream=False,
         extra={
             "frequency_penalty": 0.0,

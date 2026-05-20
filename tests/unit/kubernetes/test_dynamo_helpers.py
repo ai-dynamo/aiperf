@@ -16,6 +16,12 @@ import pytest
 import yaml
 from pytest import param
 
+from tests.kubernetes.chaos_dynamo.frontend_request_helpers import (
+    append_sse_data_lines,
+    append_sse_events,
+    chat_completion_url,
+    chat_payload,
+)
 from tests.kubernetes.chaos_dynamo.rbac_helpers import (
     RbacOwner,
     rbac_revoke_target,
@@ -65,6 +71,72 @@ DynamoConfig.single_gpu_disagg = _single_gpu_disagg_beta  # type: ignore[attr-de
 def kubectl() -> KubectlClient:
     """Create a kubectl client (not used for real calls in these tests)."""
     return KubectlClient()
+
+
+class TestDynamoFrontendRequestHelpers:
+    """Shared frontend request helpers preserve low-level HTTP/SSE semantics."""
+
+    def test_chat_completion_url_uses_alias_path_by_default(self) -> None:
+        assert chat_completion_url("http://frontend.example/") == (
+            "http://frontend.example/chat/completions"
+        )
+
+    def test_chat_completion_url_can_include_v1_prefix(self) -> None:
+        assert chat_completion_url("http://frontend.example/v1", include_v1=True) == (
+            "http://frontend.example/v1/v1/chat/completions"
+        )
+
+    def test_chat_payload_omits_temperature_none_and_preserves_extra(self) -> None:
+        extra: dict[str, object] = {"stream_options": {"include_usage": True}}
+
+        payload = chat_payload(
+            "hello",
+            model="chaos-model",
+            stream=True,
+            max_tokens=16,
+            temperature=None,
+            extra=extra,
+        )
+
+        assert payload == {
+            "model": "chaos-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+            "max_tokens": 16,
+            "stream_options": {"include_usage": True},
+        }
+        assert extra == {"stream_options": {"include_usage": True}}
+
+    def test_chat_payload_extra_overrides_base_fields_without_mutating_extra(
+        self,
+    ) -> None:
+        extra: dict[str, object] = {"model": "override", "metadata": {"case": "D232"}}
+
+        payload = chat_payload("hello", extra=extra)
+
+        assert payload["model"] == "override"
+        assert payload["temperature"] == 0.0
+        assert extra == {"model": "override", "metadata": {"case": "D232"}}
+
+    def test_append_sse_data_lines_keeps_incomplete_suffix(self) -> None:
+        payloads: list[str] = []
+
+        suffix = append_sse_data_lines(
+            "data: one\r\nevent: ignored\ndata: tw", payloads
+        )
+        suffix = append_sse_data_lines(suffix + "o\n", payloads)
+
+        assert payloads == ["one", "two"]
+        assert suffix == ""
+
+    def test_append_sse_events_keeps_partial_event_until_blank_line(self) -> None:
+        payloads: list[str] = []
+
+        suffix = append_sse_events("data: one\n\ndata: tw", payloads)
+        suffix = append_sse_events(suffix + "o\r\n\r\ndata: three", payloads)
+
+        assert payloads == ["one", "two"]
+        assert suffix == "data: three"
 
 
 class TestDynamoRbacHelpers:
