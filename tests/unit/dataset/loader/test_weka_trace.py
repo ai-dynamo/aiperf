@@ -720,6 +720,7 @@ def test_trace_idle_gap_cap_is_per_trace_and_includes_subagent_activity(tmp_path
 
     uc = _mk_user_config()
     uc.input.use_think_time_only = True
+    uc.loadgen.inter_turn_delay_cap_seconds = 60.0
     uc.loadgen.trace_idle_gap_cap_seconds = 60.0
     loader = WekaTraceLoader(filename=str(traces_dir), user_config=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -734,6 +735,8 @@ def test_trace_idle_gap_cap_is_per_trace_and_includes_subagent_activity(tmp_path
     trace_a_turns = conv_by_id["trace_idle_a"].turns
     assert trace_a_turns[0].timestamp == 0.0
     assert trace_a_turns[1].timestamp == 160_000.0
+    # The trace-wide idle-gap cap takes precedence over the old per-turn cap,
+    # so this stays 160s rather than being independently clamped to 60s.
     assert trace_a_turns[1].delay == 160_000.0
     assert conv_by_id["trace_idle_a::sa:agent_idle"].turns[0].timestamp == 20_000.0
 
