@@ -17,6 +17,13 @@ import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
+from tests.kubernetes.chaos_dynamo.d7_status_helpers import (
+    dgd_state_from_status_text,
+    mentions_any,
+    minimal_v1alpha1_frontend_dgd_manifest,
+    read_dgd_status_text,
+    wait_for_events_or_status,
+)
 from tests.kubernetes.chaos_dynamo.rbac_helpers import (
     find_unique_operator_rbac_owner,
     rbac_revoke_target,
@@ -264,7 +271,14 @@ async def test_d702_impossible_node_selector_surfaces_failed_status(
     await kubectl.create_namespace(_D702_DGD_NAMESPACE)
     try:
         await kubectl.apply(_D702_manifest(), namespace=_D702_DGD_NAMESPACE)
-        scheduling_event = await _D702_wait_for_event(kubectl, _D702_DGD_NAMESPACE)
+        scheduling_event = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D702_DGD_NAMESPACE,
+            name=_D702_DGD_NAME,
+            needles=_D702_STATUS_TERMS,
+            timeout_s=_D702_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert scheduling_event, (
             f"D702: no unschedulable/nodeSelector event appeared in namespace "
             f"{_D702_DGD_NAMESPACE!r} within {_D702_EVENT_TIMEOUT_S}s"
@@ -279,8 +293,8 @@ async def test_d702_impossible_node_selector_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D702_read_dgd_status_text(
-            kubectl, _D702_DGD_NAMESPACE, _D702_DGD_NAME
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D702_DGD_NAMESPACE, name=_D702_DGD_NAME
         )
         assert any(term in status_text.lower() for term in _D702_STATUS_TERMS), (
             "D702: DGD failed status did not name the nodeSelector/scheduling cause. "
@@ -291,63 +305,14 @@ async def test_d702_impossible_node_selector_surfaces_failed_status(
 
 
 def _D702_manifest() -> str:
-    manifest = {
-        "apiVersion": "nvidia.com/v1alpha1",
-        "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _D702_DGD_NAME, "namespace": _D702_DGD_NAMESPACE},
-        "spec": {
-            "services": {
-                "Frontend": {
-                    "componentType": "frontend",
-                    "replicas": 1,
-                    "extraPodSpec": {
-                        "nodeSelector": _IMPOSSIBLE_NODE_SELECTOR,
-                        "mainContainer": {"image": "busybox:1.36"},
-                    },
-                }
-            }
+    return minimal_v1alpha1_frontend_dgd_manifest(
+        _D702_DGD_NAME,
+        _D702_DGD_NAMESPACE,
+        extra_pod_spec={
+            "nodeSelector": _IMPOSSIBLE_NODE_SELECTOR,
+            "mainContainer": {"image": "busybox:1.36"},
         },
-    }
-    return orjson.dumps(manifest).decode()
-
-
-async def _D702_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D702_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D702_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D702_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D702_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D702_read_dgd_status_text(
-    kubectl: KubectlClient, namespace: str, name: str
-) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D703
@@ -484,15 +449,7 @@ async def _wait_for_failed_dgd_status(
 
 def _state_from_status_text(status_text: str) -> str:
     """Extract ``status.state`` from a JSON status payload."""
-    if not status_text:
-        return "<empty>"
-    try:
-        status = orjson.loads(status_text)
-    except orjson.JSONDecodeError as exc:
-        logger.debug(lambda exc=exc: f"D703 DGD status parse failed: {exc!r}")
-        return "<unparsable>"
-    state = status.get("state")
-    return state if isinstance(state, str) and state else "<empty>"
+    return dgd_state_from_status_text(status_text)
 
 
 async def _D703_read_dgd_status_text(
@@ -750,7 +707,14 @@ async def test_d705_limitrange_conflict_surfaces_failed_status(
         await kubectl.apply(_limitrange_manifest(), namespace=_D705_DGD_NAMESPACE)
         await kubectl.apply(_D705_dgd_manifest(), namespace=_D705_DGD_NAMESPACE)
 
-        event_text = await _D705_wait_for_event(kubectl, _D705_DGD_NAMESPACE)
+        event_text = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D705_DGD_NAMESPACE,
+            name=_D705_DGD_NAME,
+            needles=_D705_STATUS_TERMS,
+            timeout_s=_D705_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert event_text, (
             f"D705: no LimitRange admission event appeared within {_D705_EVENT_TIMEOUT_S}s"
         )
@@ -764,8 +728,8 @@ async def test_d705_limitrange_conflict_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D705_read_status(
-            kubectl, _D705_DGD_NAMESPACE, _D705_DGD_NAME
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D705_DGD_NAMESPACE, name=_D705_DGD_NAME
         )
         assert any(term in status_text.lower() for term in _D705_STATUS_TERMS), (
             "D705: DGD failed status did not name the LimitRange cause. "
@@ -795,58 +759,11 @@ def _limitrange_manifest() -> str:
 
 
 def _D705_dgd_manifest() -> str:
-    manifest = {
-        "apiVersion": "nvidia.com/v1alpha1",
-        "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _D705_DGD_NAME, "namespace": _D705_DGD_NAMESPACE},
-        "spec": {
-            "services": {
-                "Frontend": {
-                    "componentType": "frontend",
-                    "replicas": 1,
-                    "extraPodSpec": {"mainContainer": {"image": "busybox:1.36"}},
-                }
-            }
-        },
-    }
-    return orjson.dumps(manifest).decode()
-
-
-async def _D705_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D705_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D705_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D705_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D705_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
+    return minimal_v1alpha1_frontend_dgd_manifest(
+        _D705_DGD_NAME,
+        _D705_DGD_NAMESPACE,
+        extra_pod_spec={"mainContainer": {"image": "busybox:1.36"}},
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D705_read_status(kubectl: KubectlClient, namespace: str, name: str) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D706
@@ -876,7 +793,14 @@ async def test_d706_podsecurity_rejection_surfaces_failed_status(
     try:
         await kubectl.apply(_D706_dgd_manifest(), namespace=_D706_DGD_NAMESPACE)
 
-        event_text = await _D706_wait_for_event(kubectl, _D706_DGD_NAMESPACE)
+        event_text = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D706_DGD_NAMESPACE,
+            name=_D706_DGD_NAME,
+            needles=_D706_STATUS_TERMS,
+            timeout_s=_D706_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert event_text, (
             f"D706: no PodSecurity admission event appeared within {_D706_EVENT_TIMEOUT_S}s"
         )
@@ -890,8 +814,8 @@ async def test_d706_podsecurity_rejection_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D706_read_status(
-            kubectl, _D706_DGD_NAMESPACE, _D706_DGD_NAME
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D706_DGD_NAMESPACE, name=_D706_DGD_NAME
         )
         assert any(term in status_text.lower() for term in _D706_STATUS_TERMS), (
             "D706: DGD failed status did not name the PodSecurity cause. "
@@ -917,67 +841,20 @@ def _namespace_manifest() -> str:
 
 
 def _D706_dgd_manifest() -> str:
-    manifest = {
-        "apiVersion": "nvidia.com/v1alpha1",
-        "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _D706_DGD_NAME, "namespace": _D706_DGD_NAMESPACE},
-        "spec": {
-            "services": {
-                "Frontend": {
-                    "componentType": "frontend",
-                    "replicas": 1,
-                    "extraPodSpec": {
-                        "hostNetwork": True,
-                        "mainContainer": {
-                            "image": "busybox:1.36",
-                            "securityContext": {
-                                "privileged": True,
-                                "runAsUser": 0,
-                            },
-                        },
-                    },
-                }
-            }
+    return minimal_v1alpha1_frontend_dgd_manifest(
+        _D706_DGD_NAME,
+        _D706_DGD_NAMESPACE,
+        extra_pod_spec={
+            "hostNetwork": True,
+            "mainContainer": {
+                "image": "busybox:1.36",
+                "securityContext": {
+                    "privileged": True,
+                    "runAsUser": 0,
+                },
+            },
         },
-    }
-    return orjson.dumps(manifest).decode()
-
-
-async def _D706_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D706_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D706_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D706_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D706_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D706_read_status(kubectl: KubectlClient, namespace: str, name: str) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D707
@@ -1007,7 +884,14 @@ async def test_d707_missing_image_pull_secret_surfaces_failed_status(
     await kubectl.create_namespace(_D707_DGD_NAMESPACE)
     try:
         await kubectl.apply(_D707_manifest(), namespace=_D707_DGD_NAMESPACE)
-        event_text = await _D707_wait_for_event(kubectl, _D707_DGD_NAMESPACE)
+        event_text = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D707_DGD_NAMESPACE,
+            name=_D707_DGD_NAME,
+            needles=_D707_STATUS_TERMS,
+            timeout_s=_D707_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert event_text, (
             f"D707: no imagePullSecret/pull event appeared within {_D707_EVENT_TIMEOUT_S}s"
         )
@@ -1021,8 +905,8 @@ async def test_d707_missing_image_pull_secret_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D707_read_status(
-            kubectl, _D707_DGD_NAMESPACE, _D707_DGD_NAME
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D707_DGD_NAMESPACE, name=_D707_DGD_NAME
         )
         assert any(term in status_text.lower() for term in _D707_STATUS_TERMS), (
             "D707: DGD failed status did not name the missing imagePullSecret. "
@@ -1033,64 +917,17 @@ async def test_d707_missing_image_pull_secret_surfaces_failed_status(
 
 
 def _D707_manifest() -> str:
-    manifest = {
-        "apiVersion": "nvidia.com/v1alpha1",
-        "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _D707_DGD_NAME, "namespace": _D707_DGD_NAMESPACE},
-        "spec": {
-            "services": {
-                "Frontend": {
-                    "componentType": "frontend",
-                    "replicas": 1,
-                    "extraPodSpec": {
-                        "imagePullSecrets": [{"name": _D707_MISSING_SECRET}],
-                        "mainContainer": {
-                            "image": "nvcr.io/nvidia/private-dynamo-test:missing",
-                            "imagePullPolicy": "Always",
-                        },
-                    },
-                }
-            }
+    return minimal_v1alpha1_frontend_dgd_manifest(
+        _D707_DGD_NAME,
+        _D707_DGD_NAMESPACE,
+        extra_pod_spec={
+            "imagePullSecrets": [{"name": _D707_MISSING_SECRET}],
+            "mainContainer": {
+                "image": "nvcr.io/nvidia/private-dynamo-test:missing",
+                "imagePullPolicy": "Always",
+            },
         },
-    }
-    return orjson.dumps(manifest).decode()
-
-
-async def _D707_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D707_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D707_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D707_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D707_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D707_read_status(kubectl: KubectlClient, namespace: str, name: str) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D708
@@ -1127,7 +964,14 @@ async def test_d708_missing_hf_secret_surfaces_failed_status(
     await kubectl.create_namespace(_D708_DGD_NAMESPACE)
     try:
         await kubectl.apply(deployer.generate_manifest(), namespace=_D708_DGD_NAMESPACE)
-        event_text = await _D708_wait_for_event(kubectl, _D708_DGD_NAMESPACE)
+        event_text = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D708_DGD_NAMESPACE,
+            name=dgd_name,
+            needles=_D708_STATUS_TERMS,
+            timeout_s=_D708_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert event_text, (
             f"D708: no missing-secret event appeared within {_D708_EVENT_TIMEOUT_S}s"
         )
@@ -1141,50 +985,15 @@ async def test_d708_missing_hf_secret_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D708_read_status(kubectl, _D708_DGD_NAMESPACE, dgd_name)
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D708_DGD_NAMESPACE, name=dgd_name
+        )
         assert any(term in status_text.lower() for term in _D708_STATUS_TERMS), (
             "D708: DGD failed status did not name the missing HF token secret. "
             f"status={status_text!r}; event={event_text!r}"
         )
     finally:
         await kubectl.delete_namespace(_D708_DGD_NAMESPACE, wait=False)
-
-
-async def _D708_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D708_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D708_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D708_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D708_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D708_read_status(kubectl: KubectlClient, namespace: str, name: str) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D709
@@ -1341,7 +1150,14 @@ async def test_d710_missing_runtimeclass_surfaces_failed_status(
     await kubectl.create_namespace(_D710_DGD_NAMESPACE)
     try:
         await kubectl.apply(_D710_manifest(), namespace=_D710_DGD_NAMESPACE)
-        event_text = await _D710_wait_for_event(kubectl, _D710_DGD_NAMESPACE)
+        event_text = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D710_DGD_NAMESPACE,
+            name=_D710_DGD_NAME,
+            needles=_D710_STATUS_TERMS,
+            timeout_s=_D710_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert event_text, (
             f"D710: no RuntimeClass event appeared within {_D710_EVENT_TIMEOUT_S}s"
         )
@@ -1355,8 +1171,8 @@ async def test_d710_missing_runtimeclass_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D710_read_status(
-            kubectl, _D710_DGD_NAMESPACE, _D710_DGD_NAME
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D710_DGD_NAMESPACE, name=_D710_DGD_NAME
         )
         assert any(term in status_text.lower() for term in _D710_STATUS_TERMS), (
             "D710: DGD failed status did not name the missing RuntimeClass. "
@@ -1367,61 +1183,14 @@ async def test_d710_missing_runtimeclass_surfaces_failed_status(
 
 
 def _D710_manifest() -> str:
-    manifest = {
-        "apiVersion": "nvidia.com/v1alpha1",
-        "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _D710_DGD_NAME, "namespace": _D710_DGD_NAMESPACE},
-        "spec": {
-            "services": {
-                "Frontend": {
-                    "componentType": "frontend",
-                    "replicas": 1,
-                    "extraPodSpec": {
-                        "runtimeClassName": _MISSING_RUNTIME_CLASS,
-                        "mainContainer": {"image": "busybox:1.36"},
-                    },
-                }
-            }
+    return minimal_v1alpha1_frontend_dgd_manifest(
+        _D710_DGD_NAME,
+        _D710_DGD_NAMESPACE,
+        extra_pod_spec={
+            "runtimeClassName": _MISSING_RUNTIME_CLASS,
+            "mainContainer": {"image": "busybox:1.36"},
         },
-    }
-    return orjson.dumps(manifest).decode()
-
-
-async def _D710_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D710_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D710_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D710_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D710_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D710_read_status(kubectl: KubectlClient, namespace: str, name: str) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D711
@@ -1458,7 +1227,14 @@ async def test_d711_worker_node_selector_surfaces_failed_status(
     await kubectl.create_namespace(_D711_DGD_NAMESPACE)
     try:
         await kubectl.apply(deployer.generate_manifest(), namespace=_D711_DGD_NAMESPACE)
-        event_text = await _D711_wait_for_event(kubectl, _D711_DGD_NAMESPACE)
+        event_text = await wait_for_events_or_status(
+            kubectl,
+            namespace=_D711_DGD_NAMESPACE,
+            name=dgd_name,
+            needles=_D711_STATUS_TERMS,
+            timeout_s=_D711_EVENT_TIMEOUT_S,
+            poll_interval_s=1.0,
+        )
         assert event_text, (
             f"D711: no worker nodeSelector event appeared within {_D711_EVENT_TIMEOUT_S}s"
         )
@@ -1472,50 +1248,15 @@ async def test_d711_worker_node_selector_surfaces_failed_status(
         )
         assert observed_state == "failed"
 
-        status_text = await _D711_read_status(kubectl, _D711_DGD_NAMESPACE, dgd_name)
+        status_text = await read_dgd_status_text(
+            kubectl, namespace=_D711_DGD_NAMESPACE, name=dgd_name
+        )
         assert any(term in status_text.lower() for term in _D711_STATUS_TERMS), (
             "D711: DGD failed status did not name the worker nodeSelector cause. "
             f"status={status_text!r}; event={event_text!r}"
         )
     finally:
         await kubectl.delete_namespace(_D711_DGD_NAMESPACE, wait=False)
-
-
-async def _D711_wait_for_event(kubectl: KubectlClient, namespace: str) -> str:
-    deadline = asyncio.get_event_loop().time() + _D711_EVENT_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        events = await _D711_read_events(kubectl, namespace)
-        if any(term in events.lower() for term in _D711_STATUS_TERMS):
-            return events
-        await asyncio.sleep(1.0)
-    return ""
-
-
-async def _D711_read_events(kubectl: KubectlClient, namespace: str) -> str:
-    result = await kubectl.run(
-        "get", "events", "-n", namespace, "-o", "json", check=False
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return ""
-    data = orjson.loads(result.stdout)
-    return "\n".join(
-        f"{item.get('reason', '')}: {item.get('message', '')}"
-        for item in data.get("items", [])
-    )
-
-
-async def _D711_read_status(kubectl: KubectlClient, namespace: str, name: str) -> str:
-    result = await kubectl.run(
-        "get",
-        "dynamographdeployment",
-        name,
-        "-n",
-        namespace,
-        "-o",
-        "jsonpath={.status}",
-        check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 # D712
@@ -3073,27 +2814,17 @@ def _minimal_dgd_manifest(
     *,
     extra_pod_spec: dict[str, Any] | None = None,
 ) -> str:
-    pod_spec = extra_pod_spec or {
-        "mainContainer": {
-            "image": _D725_D739_BOGUS_IMAGE,
-            "imagePullPolicy": "IfNotPresent",
-        }
-    }
-    manifest = {
-        "apiVersion": "nvidia.com/v1alpha1",
-        "kind": "DynamoGraphDeployment",
-        "metadata": {"name": name, "namespace": namespace},
-        "spec": {
-            "services": {
-                "Frontend": {
-                    "componentType": "frontend",
-                    "replicas": 1,
-                    "extraPodSpec": pod_spec,
-                }
+    return minimal_v1alpha1_frontend_dgd_manifest(
+        name,
+        namespace,
+        extra_pod_spec=extra_pod_spec
+        or {
+            "mainContainer": {
+                "image": _D725_D739_BOGUS_IMAGE,
+                "imagePullPolicy": "IfNotPresent",
             }
         },
-    }
-    return orjson.dumps(manifest).decode()
+    )
 
 
 def _deny_all_egress_policy(namespace: str, name: str) -> str:
@@ -3182,8 +2913,7 @@ async def _dgd_status_text(kubectl: KubectlClient, *, namespace: str, name: str)
 
 
 def _mentions_any(text: str, needles: tuple[str, ...]) -> bool:
-    lower = text.lower()
-    return any(needle.lower() in lower for needle in needles)
+    return mentions_any(text, needles)
 
 
 async def _wait_for_frontend_selector(

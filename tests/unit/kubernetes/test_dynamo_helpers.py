@@ -16,6 +16,11 @@ import pytest
 import yaml
 from pytest import param
 
+from tests.kubernetes.chaos_dynamo.d7_status_helpers import (
+    dgd_state_from_status_text,
+    mentions_any,
+    minimal_v1alpha1_frontend_dgd_manifest,
+)
 from tests.kubernetes.chaos_dynamo.frontend_request_helpers import (
     append_sse_data_lines,
     append_sse_events,
@@ -137,6 +142,54 @@ class TestDynamoFrontendRequestHelpers:
 
         assert payloads == ["one", "two"]
         assert suffix == "data: three"
+
+
+class TestDynamoD7StatusHelpers:
+    """Shared D7 helpers preserve DGD status and manifest semantics."""
+
+    @pytest.mark.parametrize(
+        "status_text,expected",
+        [
+            param('{"state":"failed","message":"boom"}', "failed", id="state"),
+            param('{"message":"boom"}', "", id="missing-state"),
+            param("not-json", "", id="unparsable"),
+            param("", "", id="empty"),
+        ],
+    )  # fmt: skip
+    def test_dgd_state_from_status_text_extracts_state_or_empty(
+        self, status_text: str, expected: str
+    ) -> None:
+        assert dgd_state_from_status_text(status_text) == expected
+
+    def test_mentions_any_matches_case_insensitively(self) -> None:
+        assert mentions_any(
+            "FailedScheduling: Node Selector mismatch", ("node selector",)
+        )
+        assert not mentions_any("FailedScheduling: Node Selector mismatch", ("quota",))
+
+    def test_minimal_v1alpha1_frontend_dgd_manifest_preserves_extra_pod_spec(
+        self,
+    ) -> None:
+        extra_pod_spec = {
+            "nodeSelector": {"aiperf.nvidia.com/missing": "true"},
+            "mainContainer": {"image": "busybox:1.36"},
+        }
+
+        manifest = yaml.safe_load(
+            minimal_v1alpha1_frontend_dgd_manifest(
+                "d7-test",
+                "d7-namespace",
+                extra_pod_spec=extra_pod_spec,
+            )
+        )
+
+        assert manifest["apiVersion"] == "nvidia.com/v1alpha1"
+        assert manifest["kind"] == "DynamoGraphDeployment"
+        assert manifest["metadata"] == {"name": "d7-test", "namespace": "d7-namespace"}
+        frontend = manifest["spec"]["services"]["Frontend"]
+        assert frontend["componentType"] == "frontend"
+        assert frontend["replicas"] == 1
+        assert frontend["extraPodSpec"] == extra_pod_spec
 
 
 class TestDynamoRbacHelpers:
