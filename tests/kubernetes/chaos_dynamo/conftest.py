@@ -150,7 +150,7 @@ async def _ensure_toxiproxy_deployed(
         "deployment",
         DYNAMO_TOXIPROXY_SERVICE,
         namespace=DYNAMO_TOXIPROXY_NAMESPACE,
-        timeout=60,
+        timeout=300,
     )
     if not ok:
         logs = await kubectl.get_logs(
