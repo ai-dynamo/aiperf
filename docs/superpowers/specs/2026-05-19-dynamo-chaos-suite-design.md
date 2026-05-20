@@ -9,9 +9,16 @@
 
 ## 1. Goal
 
-Build a chaos suite for Dynamo analogous to AIPerf's `tests/kubernetes/chaos/` (C1–C16, B1–B3, K1–K3, H1–H4) but targeting a fundamentally different SUT: a Go-based operator reconciling `DynamoGraphDeployment` CRDs that orchestrate Frontend / Prefill-worker / Decode-worker pods, coordinating through etcd + NATS, with a KV-aware router and a KVBM/NIXL KV-transfer plane.
+Build a chaos suite for Dynamo analogous to AIPerf's `tests/kubernetes/chaos/` (13 implemented C-scenarios C1, C3–C12, C15, C16 + B1–B3, K1–K3, H1–H4) but targeting a fundamentally different SUT: a Go-based operator reconciling `DynamoGraphDeployment` CRDs that orchestrate Frontend / Prefill-worker / Decode-worker pods, coordinating through etcd + NATS, with a KV-aware router and a KVBM/NIXL KV-transfer plane.
 
-**Deliverable:** ~30 scenarios (D-series) organized into 8 families, with a clear "Wave 0" of 10 high-leverage tests that ship first.
+**API-version target:** This spec targets **v1beta1** of the DynamoGraphDeployment CRD (`deploy/operator/api/v1beta1/dynamographdeployment_types.go`). v1beta1 changed two shape facts that the prior draft of this spec got wrong:
+
+- Components are a **list** under `spec.components[]` (each element has a `name` field), not a `spec.services` map. (v1alpha1 had the map form.)
+- Per-component pod customization is `spec.components[].podTemplate.spec.*` (standard `corev1.PodSpec`); the `extraPodSpec` / `mainContainer` escape hatches from v1alpha1 are removed. To target the inference container, match on `containers[?(@.name=="main")]` (constant `MainContainerName = "main"` in `dynamocomponentdeployment_types.go:46`).
+
+Every scenario, injector, and CRD reference below uses the v1beta1 shape.
+
+**Deliverable:** ~40 scenarios (D-series) organized into 8 families, with a clear "Wave 0" of 10 high-leverage tests that ship first.
 
 ## 2. SUT topology (compressed)
 
@@ -40,7 +47,7 @@ graph TB
 | Layer | File | Purpose |
 |---|---|---|
 | Operator | `deploy/operator/internal/controller/dynamographdeployment_controller.go:119` | Main reconcile |
-| Operator | `deploy/operator/internal/controller/failover_cascade_controller.go:68` | Pod-failure cohort recreation |
+| Operator | `deploy/operator/internal/controller/failover_cascade_controller.go:75` | Pod-failure cohort recreation (`FailoverCascadeReconciler.Reconcile`) |
 | CRDs | `deploy/operator/api/v1beta1/{dynamographdeployment,dynamocomponentdeployment,…}_types.go` | DGD / DCD / DGDR / DGDSA |
 | Frontend HTTP | `lib/llm/src/http/service/service_v2.rs:330,575` | Axum server + router |
 | Frontend SSE | `lib/llm/src/http/service/disconnect.rs:212` | Stream monitor + disconnect |
@@ -65,12 +72,12 @@ graph TB
 |---|---|
 | `tests/kubernetes/helpers/{kubectl, log_streamer, cluster, helm, preflight, images}.py` | Use as-is. Operator-agnostic. |
 | `tests/kubernetes/chaos/toxiproxy.py` + fixture YAML | Rename namespace `aiperf-chaos-toxiproxy` → `chaos-toxiproxy`. Add named ports for NATS (20020), etcd (20030), NIXL (20040–20049), frontend (20011). Port-pool invariant + per-call short-lived aiohttp session pattern carry over verbatim. |
-| `tests/kubernetes/gpu/dynamo/{conftest.py, helpers.py}` (`DynamoDeployer`, `DynamoConfig`, `dynamo_operator`/`dynamo_server` fixtures) | Direct dependency. `generate_manifest()` is the hook for injecting `extraPodSpec.shareProcessNamespace`, `envs[]` toxiproxy overrides, and invalid-CR variants. |
+| `tests/kubernetes/gpu/dynamo/{conftest.py, helpers.py}` (`DynamoDeployer`, `DynamoConfig`, `dynamo_operator`/`dynamo_server` fixtures) | Direct dependency. `generate_manifest()` is the hook for injecting `podTemplate.spec.shareProcessNamespace`, container env overrides (via `containers[?(@.name=="main")].env`), and invalid-CR variants. **Note:** `DynamoDeployer` currently emits v1alpha1 manifests; chaos suite tests should be authored against v1beta1, so `DynamoDeployer` either needs a v1beta1 mode or the chaos tests build their own manifests. |
 | Pytest conventions (`@pytest.mark.k8s_slow`, `try/finally` cleanup, xfail-with-flip-condition) | Copy verbatim. |
 
 ### 3.2 Parameterize then reuse
 
-The existing `ChaosInjector` needs a constructor refactor so its generic methods aren't bound to AIPerfJob:
+The existing AIPerf `ChaosInjector` (`tests/kubernetes/chaos/chaos_injector.py:62`) currently takes only a `kubectl` arg; everything else is module-level constants (`OPERATOR_NAMESPACE = "aiperf-system"` at line 31, `OPERATOR_SELECTOR = "app.kubernetes.io/name=aiperf-operator"` at line 32, the literal `"aiperfjob"` resource kind inlined in several methods, the `AIPERF_CLAIM_ANNOTATION` constant at line 33). To share the generic helpers across SUTs, lift those module-level constants into ctor args:
 
 ```python
 # tests/kubernetes/chaos_common/chaos_injector.py (new shared module)
@@ -79,10 +86,10 @@ class ChaosInjector:
         self,
         kubectl: KubectlClient,
         *,
-        cr_kind: str,            # was hardcoded "aiperfjob"
+        cr_kind: str,            # was inlined literal "aiperfjob"
         cr_api_group: str,       # was implicit
-        operator_namespace: str, # was "aiperf-system"
-        operator_selector: str,  # was "app.kubernetes.io/name=aiperf-operator"
+        operator_namespace: str, # was module constant OPERATOR_NAMESPACE
+        operator_selector: str,  # was module constant OPERATOR_SELECTOR
     ):
         ...
 ```
@@ -94,7 +101,7 @@ class ChaosInjector:
 **Dynamo-specific rewrites** (separate `DynamoChaosInjector(ChaosInjector)` subclass):
 - `wait_for_state(name, states={"successful","failed",…})` → polls `.status.state` (not `.status.phase`).
 - `wait_for_condition(name, condition_type="Ready", status="True")` → standard k8s conditions.
-- `get_component_pods(deployment, role: Literal["frontend","decode","prefill"])` → label selectors `componentType=…`, `subComponentType=…`.
+- `get_component_pods(deployment, role: Literal["frontend","decode","prefill","worker","planner","epp"])` → label selectors `nvidia.com/dynamo-component-type=…` and `nvidia.com/dynamo-sub-component-type=…` (constants `KubeLabelDynamoComponentType` / `KubeLabelDynamoSubComponentType` in `deploy/operator/internal/consts/consts.go:59-60`).
 - `create_invalid_graph_deployment(spec_patch)` → builds a minimal `DynamoGraphDeployment` with the patch applied.
 
 ### 3.3 New injectors needed
@@ -103,13 +110,13 @@ class ChaosInjector:
 |---|---|---|---|
 | **`EtcdInjector`** | etcd kill, partition, slow | Targets dynamo-platform helm release's bundled etcd; combines `kubectl scale sts` + Toxiproxy on `<release>-etcd:2379`. | None. |
 | **`NatsInjector`** | NATS kill, partition | Targets the bundled NATS Service. Toxiproxy with `bandwidth: 0` / `slow_close` / `timeout: 0`. | None. |
-| **`NixlTransportInjector`** | KV-transfer disruption | Toxiproxy in front of `VLLM_NIXL_SIDE_CHANNEL_PORT` (default 5601). `latency`, `bandwidth`, `reset_peer`, full blackhole. Mutate `extraPodSpec.mainContainer.env` to point at toxiproxy Service. Only meaningful in disagg mode. | GPU node + disagg deployment. |
+| **`NixlTransportInjector`** | KV-transfer disruption | Toxiproxy in front of `VLLM_NIXL_SIDE_CHANNEL_PORT` (stamped per-engine as `5600 + engineID` in `deploy/operator/internal/dynamo/failover_vllm.go:35` — engine-0 → 5600, engine-1 → 5601, …). `latency`, `bandwidth`, `reset_peer`, full blackhole. Mutate `podTemplate.spec.containers[?(@.name=="main")].env` to point the side-channel host at the toxiproxy Service. Only meaningful in disagg mode. | GPU node + disagg deployment. |
 | **`TPRankKillInjector`** | Multi-pod TP/PP group disruption | `kubectl delete pod <decode-worker-N> --force --grace-period=0` of a single rank in a TP-group; assert Grove/LWS recreates the whole cohort, not just the one pod. | Multi-GPU (TP>1) or Grove enabled. |
-| **`WeightDownloadBlackholeInjector`** | HF Hub egress block | NetworkPolicy denying egress to `0.0.0.0/0` except cluster CIDR; or `extraPodSpec.initContainers` that writes `127.0.0.1 huggingface.co` to `/etc/hosts` via emptyDir share. | NetworkPolicy-aware CNI (Cilium); **NOT kindnet** — needs Cilium overlay on kind or a real cluster. |
+| **`WeightDownloadBlackholeInjector`** | HF Hub egress block | NetworkPolicy denying egress to `0.0.0.0/0` except cluster CIDR; or `podTemplate.spec.initContainers` that writes `127.0.0.1 huggingface.co` to `/etc/hosts` via emptyDir share. | NetworkPolicy-aware CNI (Cilium); **NOT kindnet** — needs Cilium overlay on kind or a real cluster. |
 | **`GpuVramPressureInjector`** | VRAM contention | Sidecar `nvidia/cuda:12.2.0-base` running a tiny PyTorch alloc-and-sleep script. Vary size via env. | `runtimeClassName: nvidia` + shared `NVIDIA_VISIBLE_DEVICES`. Maps to `single_gpu_disagg` preset; for production multi-GPU needs MIG/MPS. |
 | **`DeploymentMutator`** (generalize `MockServerInjector`) | Per-component env/scale/restart with LIFO restore | Lift the AIPerf class shape; instantiate three times (frontend, decode, prefill). Knobs: `DYN_KVBM_CPU_CACHE_GB`, `VLLM_NIXL_SIDE_CHANNEL_PORT`, `DYN_ROUTER_MODE`, `--gpu-memory-utilization`. | None. |
 | **`DiscoveryRBACInjector`** | Watch-loop disruption | `kubectl patch role` denying `watch` on `dynamoworkermetadatas` / `endpointslices`; assert reflector backoff + stale-roster behavior. | None. |
-| **`SSHSecretInjector`** (TRT-LLM only) | MPI bootstrap | Delete / corrupt `mpi-run-ssh-secret` before deploy or mid-rollout. | TRT-LLM multi-node. |
+| **`SSHSecretInjector`** (TRT-LLM only) | MPI bootstrap | Delete / corrupt the secret named by `MPIConfiguration.SSHSecretName` (validated as required in `deploy/operator/api/config/validation/validation.go:98`; commonly `mpi-run-ssh-secret` in test fixtures but the operator does not hardcode it) before deploy or mid-rollout. | TRT-LLM multi-node. |
 
 ## 4. Scenario catalogue — the D-series
 
@@ -123,8 +130,8 @@ Each scenario lists: **fault**, **injector**, **assertion**, **target Wave**. Se
 |---|---|---|---|---|---|
 | D101 | Kill operator pod mid-DGD-apply | `kill_operator_pod(force=True)` while applying a fresh DGD | DGD reconciles to `state=successful` after operator restart; no orphan child resources | 🔴 | **0** |
 | D102 | Rapid double-delete DGD is idempotent | `delete_cr_twice` | `.status.state=…` → CR-gone within 60 s; no stuck finalizer | 🟠 | 0 |
-| D103 | Operator pod kill during failover-cascade | Kill operator while a pod is in `Failed`/`Terminating`; assert `FailoverCascadeReconciler` resumes | DGD `services.<x>.replicas` returns to spec after restart | 🟠 | 1 |
-| D104 | Invalid DGD spec surfaces in status | Apply DGD with `services.Frontend.replicas: -1` or missing `componentType` | `state=failed`, `conditions[?type=Ready].status=False`, reason names validation | 🟡 | 0 |
+| D103 | Operator pod kill during failover-cascade | Kill operator while a pod is in `Failed`/`Terminating`; assert `FailoverCascadeReconciler` resumes | DGD `spec.components[?(@.name=="<x>")].replicas` returns to spec after restart (status replica counts in `status.components` recover) | 🟠 | 1 |
+| D104 | Invalid DGD spec surfaces in status | Apply DGD with `spec.components[?(@.name=="Frontend")].replicas: -1` or missing required component name | `state=failed`, `conditions[?type=Ready].status=False`, reason names validation | 🟡 | 0 |
 | D105 | Rapid create-delete-create-same-name | Apply, delete, re-apply within 5 s, same name | New DGD reaches `successful` despite the prior tombstone | 🟡 | 1 |
 | D106 | Webhook validation pod down | Scale validator webhook deployment to 0 mid-traffic | Apply fails fast or is admitted-then-rejected; no half-created children | 🟡 | 2 |
 | D107 | Operator RBAC revoked mid-reconcile | `kubectl patch clusterrole` to drop `deployments: patch` | Reconcile errors; CR state stays accurate (does not falsely flip to successful) | 🟡 | 2 |
@@ -183,7 +190,7 @@ Each scenario lists: **fault**, **injector**, **assertion**, **target Wave**. Se
 | D601 | Delete TP-rank-1 of 2 mid-traffic | `kubectl delete pod` on a non-leader rank | Whole group recreated by Grove/LWS; not stranded | 🔴 | 1 |
 | D602 | Delete the headless service during init | `kubectl delete svc <model-hash>` during TP init | DNS unresolved → allreduce deadlock; assert operator surfaces failure within 5 min | 🟠 | 2 |
 | D603 | Recreate headless service with wrong selector | Bad selector pointing to no pods | Pods Pending; eventually surface as DGD `state=failed` (not infinite Pending) | 🟡 | 2 |
-| D604 | Delete `mpi-run-ssh-secret` pre-startup | `kubectl delete secret` before TRT-LLM multinode pod boots | Pod fails with clear "secret not found" not opaque CrashLoopBackOff | 🟠 | 2 |
+| D604 | Delete the configured MPI SSH secret pre-startup | `kubectl delete secret <MPIConfiguration.SSHSecretName>` (test rig uses `mpi-run-ssh-secret`) before TRT-LLM multinode pod boots | Pod fails with clear "secret not found" not opaque CrashLoopBackOff | 🟠 | 2 |
 | D605 | Corrupt SSH `authorized_keys` | Patch secret with bad pubkey | mpirun SSH timeout surfaces clean error, not infinite hang | 🟡 | 3 |
 | D606 | Block port 2222 between MPI peers | NetworkPolicy denying TCP/2222 | mpirun timeout; DGD surfaces `state=failed` within 10 min | 🟡 | 3 |
 | D607 | Disable Grove mid-multinode deploy | `helm upgrade --set global.grove.enabled=false` while DGD is reconciling | DGD does not silently corrupt; either succeeds on the old PCSGs or surfaces a clear error | 🟠 | 3 |
@@ -336,7 +343,7 @@ async def test_d803_nats_kill_mid_traffic_router_falls_back(
 2. **GPU dependency tiering**: D3xx (NIXL/KVBM) and D5xx-D6xx (NCCL, MPI) need real GPU nodes. D1xx, D2xx, D4xx, D7xx, D8xx can run on Kind without GPUs by using vLLM CPU-only or by stubbing the worker engine entirely — design the fixture layering so non-GPU scenarios are runnable in plain CI.
 3. **Existing dynamo coverage overlap**: dynamo's own `tests/fault_tolerance/{etcd_ha,migration,cancellation,hardware}` already runs in-process. Where overlap exists (D504 vs `test_canary_rank_pause.py`, D801/D802 vs `etcd_ha/`), the k8s-layer test asserts on the **operator + CR status surface**, not on the runtime internals — they are complements, not duplicates.
 4. **`grove` vs `lws` vs plain `Deployment` backend**: dynamo's operator picks one based on `numberOfNodes` and helm chart values. Multinode tests (D6xx) must assert against the active backend, not assume Grove. Ship D6xx in Wave 2 once we've confirmed which backend dynamo deploys by default in our test cluster.
-5. **Shared-PID-namespace**: AIPerf's `podTemplate.shareProcessNamespace` helm value maps to dynamo as `extraPodSpec.shareProcessNamespace: true`; verify `DynamoGraphDeployment.spec.services.*.extraPodSpec` forwards the field unchanged. Needed for cross-container `kill` in D304, D502, D504.
+5. **Shared-PID-namespace**: AIPerf's `podTemplate.shareProcessNamespace` helm value maps to dynamo as `spec.components[].podTemplate.spec.shareProcessNamespace: true` (standard `corev1.PodSpec` field — supported by v1beta1 by definition since `podTemplate` is a passthrough). Needed for cross-container `kill` in D304, D502, D504. **Caveat:** `DynamoDeployer.generate_manifest()` currently emits v1alpha1; the chaos suite either rolls its own manifest builder or asks `DynamoDeployer` to gain a v1beta1 mode.
 
 ## 9. Acceptance criteria for Wave 0
 
