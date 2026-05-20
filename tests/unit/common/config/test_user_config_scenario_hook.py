@@ -131,6 +131,14 @@ class TestExplicitlySetFlags:
         cfg = LoadGeneratorConfig()
         assert cfg._inter_turn_delay_cap_explicitly_set is False
 
+    def test_trace_idle_gap_cap_explicit_flag_when_passed(self):
+        cfg = LoadGeneratorConfig(trace_idle_gap_cap_seconds=60.0)
+        assert cfg._trace_idle_gap_cap_explicitly_set is True
+
+    def test_trace_idle_gap_cap_explicit_flag_when_omitted(self):
+        cfg = LoadGeneratorConfig()
+        assert cfg._trace_idle_gap_cap_explicitly_set is False
+
     def test_cache_bust_target_explicit_flag_when_passed(self):
         cfg = CacheBustConfig(target=CacheBustTarget.SYSTEM_PREFIX)
         assert cfg._target_explicitly_set is True

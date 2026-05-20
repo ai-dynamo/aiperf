@@ -19,6 +19,7 @@ class LoadGeneratorConfig(BaseConfig):
     """A configuration class for defining top-level load generator settings."""
 
     _inter_turn_delay_cap_explicitly_set: bool = False
+    _trace_idle_gap_cap_explicitly_set: bool = False
 
     @model_validator(mode="after")
     def _record_explicit_set_flags(self) -> Self:
@@ -31,6 +32,9 @@ class LoadGeneratorConfig(BaseConfig):
         """
         self._inter_turn_delay_cap_explicitly_set = (
             "inter_turn_delay_cap_seconds" in self.model_fields_set
+        )
+        self._trace_idle_gap_cap_explicitly_set = (
+            "trace_idle_gap_cap_seconds" in self.model_fields_set
         )
         return self
 
