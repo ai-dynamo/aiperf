@@ -35,6 +35,7 @@ def _mk_user_config(*, max_isl=None, model_names=("primary",)):
     uc.tokenizer.name = "t"
     uc.endpoint.model_names = list(model_names)
     uc.loadgen.inter_turn_delay_cap_seconds = None
+    uc.loadgen.trace_idle_gap_cap_seconds = None
     return uc
 
 

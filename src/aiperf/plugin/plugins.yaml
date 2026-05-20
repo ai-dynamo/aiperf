@@ -1801,6 +1801,28 @@ public_dataset_loader:
       default_block_size: 64
       default_prompt_corpus: coding
 
+  semianalysis_cc_traces_weka_with_subagents:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents variant — hosted on HuggingFace
+      as semianalysisai/cc-traces-weka-with-subagents-051926 (219 traces,
+      ~78k requests, public, no auth). v5-only + CC ≥ 2.1.139 filtered with
+      WekaSubagentEntry blocks preserved — captures full parent + Task-tool
+      sub-agent fan-out structure. ≥20 main-agent turns per trace; non-
+      conversational classifier calls (max_tokens ≤ 64 + no tools) excluded
+      at source so the OSL distribution is not polluted by the 5-10-token
+      spike. Use this corpus when you want the full agentic-coding workload
+      including parallel sub-agent fan-out. Each row is a complete WekaTrace;
+      reconstruction is delegated to WekaTraceLoader so file-based and HF-
+      based replay produce byte-identical conversations.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-051926
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
   # ---------------------------------------------------------------------------
   # ASR (Automatic Speech Recognition) datasets
   # ---------------------------------------------------------------------------

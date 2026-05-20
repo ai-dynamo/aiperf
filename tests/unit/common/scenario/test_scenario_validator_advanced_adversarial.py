@@ -37,9 +37,10 @@ def _user_config(
     use_think_time_only: bool = True,
     ignore_trace_delays: bool = False,
     synthesis_max_isl: int | None = None,
-    loader: str | None = "semianalysis_cc_traces_weka_no_subagents",
+    loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
     benchmark_duration: float | None = 900.0,
-    inter_turn_delay_cap_seconds: float | None = 60.0,
+    inter_turn_delay_cap_seconds: float | None = None,
+    trace_idle_gap_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
@@ -57,9 +58,11 @@ def _user_config(
     cfg.input.detected_loader = loader
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
+    cfg.loadgen.trace_idle_gap_cap_seconds = trace_idle_gap_cap_seconds
     cfg.input.prompt.cache_bust.target = cache_bust_target
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = False
     cfg.input.prompt.cache_bust._target_explicitly_set = False
     return cfg
 
@@ -127,20 +130,20 @@ def test_ignore_eos_falsy_string_zero_violates() -> None:
 
 
 # ---------------------------------------------------------------------------
-# inter_turn_delay_cap_seconds: explicit-and-matching path
+# trace_idle_gap_cap_seconds: explicit-and-matching path
 # ---------------------------------------------------------------------------
-def test_inter_turn_delay_cap_explicit_matching_no_violation() -> None:
+def test_trace_idle_gap_cap_explicit_matching_no_violation() -> None:
     """When the user explicitly sets the cap to the spec value, no violation
     fires and no auto-fill log line is emitted."""
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
-        inter_turn_delay_cap_seconds=60.0,
+        trace_idle_gap_cap_seconds=60.0,
     )
-    cfg.loadgen._inter_turn_delay_cap_explicitly_set = True
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = True
     outcome = validate_scenario(cfg)
     assert outcome.violations == []
     assert outcome.submission_valid is True
-    assert cfg.loadgen.inter_turn_delay_cap_seconds == 60.0
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +162,7 @@ def test_unsafe_override_with_no_violations_returns_submission_valid_true() -> N
 
 # ---------------------------------------------------------------------------
 # detected_loader=None: when scenario requires a loader, an unset detection
-# IS a violation (None != "semianalysis_cc_traces_weka_no_subagents"). Loader auto-detection runs before
+# IS a violation (None != "semianalysis_cc_traces_weka_with_subagents"). Loader auto-detection runs before
 # scenario validation in production; if it produced None, the user gave us
 # something we couldn't classify as the required loader.
 # ---------------------------------------------------------------------------

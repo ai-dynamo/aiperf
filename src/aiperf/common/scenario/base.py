@@ -24,7 +24,8 @@ class ScenarioSpec(AIPerfBaseModel):
         description="Inject ignore_eos=true into extra_inputs; error on explicit false."
     )
     require_use_think_time_only: bool = Field(
-        description="Force --use-think-time-only=true to exclude response time from inter-turn delays."
+        default=False,
+        description="Force --use-think-time-only=true to exclude response time from inter-turn delays.",
     )
     forbid_input_truncation: bool = Field(
         description=(
@@ -44,8 +45,18 @@ class ScenarioSpec(AIPerfBaseModel):
     min_benchmark_duration_seconds: int = Field(
         description="Floor on --benchmark-duration in seconds."
     )
-    inter_turn_delay_cap_seconds: float = Field(
-        description="Hard ceiling for trace inter-turn delays in seconds."
+    inter_turn_delay_cap_seconds: float | None = Field(
+        default=None,
+        description="Hard ceiling for trace inter-turn delays in seconds. None disables.",
+    )
+    trace_idle_gap_cap_seconds: float | None = Field(
+        default=None,
+        description=(
+            "Hard ceiling (seconds) for idle gaps within each root trace. For "
+            "Weka, parent + subagent request-start timestamps are compressed "
+            "per-trace before per-turn delays are derived. Takes precedence over "
+            "inter_turn_delay_cap_seconds and supersedes use_think_time_only."
+        ),
     )
     require_cache_bust: CacheBustTarget | None = Field(
         default=None,
