@@ -152,6 +152,15 @@ jobs:
             echo "Restoring version strings from prior run attempt (${VERSION_INFO_FILE})."
             # shellcheck source=/dev/null
             source "${VERSION_INFO_FILE}"
+            # Backfill outputs added after the original snapshot was
+            # written. Legacy version-info.env files (from before the
+            # scheduled/manual split) don't define STAGE_SUBPATH, which
+            # would abort this step under `set -u` before any output is
+            # written. All legacy artifacts landed under the bare
+            # nightly/<date>/ path, so that's the correct default.
+            if [ -z "${STAGE_SUBPATH:-}" ]; then
+              STAGE_SUBPATH="nightly/${TIMESTAMP}"
+            fi
           else
             # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
             # WHEEL_VERSION are disambiguated by the 7-char short SHA so
