@@ -131,6 +131,20 @@ The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiper
 - **Completion-parse resilience** — `operator/handlers/completion.py:_parse_metrics_from_files` wraps each candidate file in its own `try/except` so one malformed file cannot zero out `status.summary` for the whole job. The same shape applies to `sweep_controller/main.py` aggregate-bundle loading and `runs_index.py` per-variation upsert.
 - **Operator-namespace fallback** — code that needs the chart-default operator namespace MUST import `DEFAULT_OPERATOR_NAMESPACE` from `aiperf.kubernetes.constants`, never hardcode `"aiperf-system"`. Callers with cluster API access should still prefer `find_operator_namespace` (cluster-wide pod-label search).
 
+### Chaos testing — unified API
+
+The `chaos_common/` module (under `tests/kubernetes/chaos_common/`) provides
+a unified `FaultInjector` ABC + `InjectorRegistry` that wraps both AIPerf
+chaos primitives (`chaos/`) and dynamo-specific scenarios (`chaos_dynamo/`).
+Test authors write `async with faults.inject("pod.kill", target=...):` and
+the registry resolves to the right concrete injector by dotted prefix
+(`pod.*`, `workload.*`, `crd.*`, `operator.*`, `network.*`, `store.*`,
+`gpu.*`, `process.*`, `client.*`, `cluster.*`). LIFO restore is automatic
+via async-context-manager semantics. New chaos scenarios should use this
+API; the legacy `ChaosInjector` / `ToxiproxyInjector` / `MockServerInjector`
+classes remain for the 23 existing AIPerf scenarios (frozen, not migrated).
+See `tests/kubernetes/chaos_common/README.md`.
+
 ## Parameter Sweeping (Kubernetes)
 
 In-process sweeps and adaptive search are documented in main's `docs/sweeping/` tutorials. The Kubernetes-side path is:
