@@ -399,7 +399,7 @@ Non-streaming commands (`status`, `doctor`, `cleanup`) emit a single `summary` l
 | `MODEL` | `Qwen/Qwen3-0.6B` | Model name for server deployment |
 | `GPUS` | `1` | GPUs per server instance |
 | `VLLM_IMAGE` | `vllm/vllm-openai:latest` | vLLM container image |
-| `DYNAMO_IMAGE` | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0` | Dynamo container image |
+| `DYNAMO_IMAGE` | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0` | Dynamo container image |
 | `DYNAMO_MODE` | `agg` | `agg`, `disagg`, or `disagg-1gpu` |
 | `HF_TOKEN` | (none) | Hugging Face token for gated models |
 | `MAX_MODEL_LEN` | `4096` | Max context length |

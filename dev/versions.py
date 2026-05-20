@@ -8,7 +8,7 @@ dev CLI and the Kubernetes E2E test fixtures.
 
 JOBSET_VERSION = "v0.8.0"
 DEVICE_PLUGIN_VERSION = "v0.17.0"
-DYNAMO_VERSION = "0.9.0"
+DYNAMO_VERSION = "1.1.0"
 KUEUE_VERSION = "v0.10.1"
 
 JOBSET_CRD_URL_TEMPLATE = (

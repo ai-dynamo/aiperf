@@ -8,6 +8,7 @@ import orjson
 import pytest
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from dev.versions import DYNAMO_VERSION
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 from tests.kubernetes.helpers.kubectl import KubectlClient
@@ -64,7 +65,7 @@ async def _run_d104_assertion(
                             "containers": [
                                 {
                                     "name": "main",
-                                    "image": "nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0",
+                                    "image": f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{DYNAMO_VERSION}",
                                 }
                             ]
                         }

@@ -219,7 +219,7 @@ can be set via CLI or env var; CLI wins.
 | `--gpu-dynamo-kvbm-cpu-cache-gb` | `GPU_TEST_DYNAMO_KVBM_CPU_CACHE_GB` | KVBM CPU cache GB for prefill workers | none |
 | `--gpu-dynamo-endpoint` | `GPU_TEST_DYNAMO_ENDPOINT` | Skip Dynamo deploy, use existing | (deploys Dynamo) |
 | `--gpu-dynamo-deploy-timeout` | `GPU_TEST_DYNAMO_DEPLOY_TIMEOUT` | Dynamo deploy timeout (seconds) | `600` |
-| `--gpu-dynamo-version` | `GPU_TEST_DYNAMO_VERSION` | Dynamo Helm chart version | `0.9.0` |
+| `--gpu-dynamo-version` | `GPU_TEST_DYNAMO_VERSION` | Dynamo Helm chart version | `1.1.0` |
 | `--gpu-local-keygen` | `GPU_TEST_LOCAL_KEYGEN` | Create MPI SSH secret locally | `false` |
 
 ## Pytest Markers

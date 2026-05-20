@@ -254,8 +254,8 @@ uv run python scripts/publish_aiperf_arm64.py --file dev/deploy/mock-250k-stream
 | Flag / variable                                  | Default   | Description |
 |--------------------------------------------------|-----------|-------------|
 | `--mode` / `DYNAMO_MODE`                        | `agg`     | `agg`, `disagg`, or `disagg-1gpu`. |
-| `--dynamo-image` / `DYNAMO_IMAGE`               | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0` | Dynamo runtime image. |
-| `DYNAMO_VERSION`                                  | `0.9.0`   | Dynamo operator version. |
+| `--dynamo-image` / `DYNAMO_IMAGE`               | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0` | Dynamo runtime image. |
+| `DYNAMO_VERSION`                                  | `1.1.0`   | Dynamo operator version. |
 | `DYNAMO_1GPU_MEM_UTIL`                            | `0.3`     | GPU memory util for single-GPU disagg. |
 | `--router-mode` / `DYNAMO_ROUTER_MODE`           | —         | e.g. `kv`, `round-robin`. |
 | `--kvbm-cpu-cache-gb` / `DYNAMO_KVBM_CPU_CACHE_GB` | —      | KVBM CPU cache (GB). |

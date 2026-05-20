@@ -81,7 +81,7 @@ This takes about 5-10 minutes. When it finishes you will see:
   ✓ Cluster          created (Kind, GPU)
   ✓ Build images     aiperf:local, aiperf-mock-server:latest
   ✓ Load images      2 images -> kind
-  ✓ Dynamo           0.9.0 installed
+  ✓ Dynamo           1.1.0 installed
   ✓ JobSet           v0.8.0 installed
   ✓ Mock server      deployed
 ```
@@ -137,16 +137,10 @@ If you used `python dev/kube.py setup`, the Dynamo operator and JobSet are alrea
 ### Install the Dynamo Operator
 
 ```bash
-# Install Dynamo CRDs
-helm install dynamo-crds \
-  oci://nvcr.io/nvidia/ai-dynamo/dynamo-crds \
-  --version 0.9.0 \
-  --namespace default
-
-# Install Dynamo platform
+# Install Dynamo platform (CRDs are bundled into the platform chart in v1.x)
 helm install dynamo-platform \
   oci://nvcr.io/nvidia/ai-dynamo/dynamo-platform \
-  --version 0.9.0 \
+  --version 1.1.0 \
   --namespace dynamo-system \
   --create-namespace \
   --set dynamo-operator.webhook.enabled=false \
@@ -218,7 +212,7 @@ spec:
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
           env:
             - name: POD_UID
               valueFrom:
@@ -234,7 +228,7 @@ spec:
       extraPodSpec:
         runtimeClassName: nvidia
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
           workingDir: /workspace/examples/backends/vllm
           command: ["python3", "-m", "dynamo.vllm"]
           args:
@@ -406,7 +400,7 @@ spec:
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
           env:
             - name: POD_UID
               valueFrom:
@@ -425,7 +419,7 @@ spec:
       extraPodSpec:
         runtimeClassName: nvidia
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
           workingDir: /workspace/examples/backends/vllm
           command: ["python3", "-m", "dynamo.vllm"]
           args:
@@ -452,7 +446,7 @@ spec:
       extraPodSpec:
         runtimeClassName: nvidia
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
           workingDir: /workspace/examples/backends/vllm
           command: ["python3", "-m", "dynamo.vllm"]
           args:
@@ -591,9 +585,9 @@ Dynamo supports three inference backends. Change the worker image and command:
 
 | Backend | Image | Worker Command |
 |---------|-------|---------------|
-| vLLM | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0` | `python3 -m dynamo.vllm` |
-| TRT-LLM | `nvcr.io/nvidia/ai-dynamo/trtllm-runtime:0.9.0` | `python3 -m dynamo.trtllm` |
-| SGLang | `nvcr.io/nvidia/ai-dynamo/sglang-runtime:0.9.0` | `python3 -m dynamo.sglang` |
+| vLLM | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0` | `python3 -m dynamo.vllm` |
+| TRT-LLM | `nvcr.io/nvidia/ai-dynamo/trtllm-runtime:1.1.0` | `python3 -m dynamo.trtllm` |
+| SGLang | `nvcr.io/nvidia/ai-dynamo/sglang-runtime:1.1.0` | `python3 -m dynamo.sglang` |
 
 ---
 

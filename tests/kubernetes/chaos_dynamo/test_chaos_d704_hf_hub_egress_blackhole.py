@@ -22,6 +22,7 @@ import orjson
 import pytest
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from dev.versions import DYNAMO_VERSION
 from tests.kubernetes.chaos_common.marks import cilium_on_kind_required
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 
@@ -76,7 +77,7 @@ async def _run_d704_assertion(faults, kubectl) -> None:
                             "containers": [
                                 {
                                     "name": "main",
-                                    "image": "nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0",
+                                    "image": f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{DYNAMO_VERSION}",
                                     "args": ["--model", "Qwen/Qwen3-0.6B"],
                                 }
                             ]

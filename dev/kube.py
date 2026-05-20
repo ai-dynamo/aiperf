@@ -429,9 +429,9 @@ Environment variables:
   MAX_MODEL_LEN      Max context length (default: 4096)
   GPU_MEM_UTIL       GPU memory utilization (default: 0.5)
   HF_TOKEN           Hugging Face token (for gated models)
-  DYNAMO_IMAGE       Dynamo image (default: nvcr.io/.../vllm-runtime:0.9.0)
+  DYNAMO_IMAGE       Dynamo image (default: nvcr.io/.../vllm-runtime:1.1.0)
   DYNAMO_MODE        agg|disagg|disagg-1gpu (default: agg)
-  DYNAMO_VERSION     Dynamo operator version (default: 0.9.0)
+  DYNAMO_VERSION     Dynamo operator version (default: 1.1.0)
   PLATFORM           Override platform detection (arch|debian|fedora|linux|mac)
   ARCH               Override Linux binary arch (amd64|arm64)
 
@@ -2222,12 +2222,36 @@ def cmd_install_dynamo() -> str:
 
     ngc_base = "https://helm.ngc.nvidia.com/nvidia/ai-dynamo/charts"
 
-    log_info("Fetching Dynamo CRDs chart...")
-    _helm_install(
-        "dynamo-crds", f"{ngc_base}/dynamo-crds-{DYNAMO_VERSION}.tgz", "default"
+    # v1.x bundles CRDs into the platform chart at
+    # charts/dynamo-operator/crds/; the separate dynamo-crds chart was
+    # retired after v0.9.1. If a stale dynamo-crds release from an older
+    # install is still present, uninstall it so the platform chart can own
+    # the CRDs cleanly.
+    r = sh(
+        "helm",
+        "status",
+        "dynamo-crds",
+        "--kube-context",
+        _kubectl_context(),
+        "-n",
+        "default",
+        capture=True,
+        check=False,
     )
+    if r.returncode == 0:
+        log_info("Removing stale dynamo-crds Helm release (retired in v1.x)")
+        sh(
+            "helm",
+            "uninstall",
+            "dynamo-crds",
+            "--kube-context",
+            _kubectl_context(),
+            "-n",
+            "default",
+            check=False,
+        )
 
-    log_info("Fetching Dynamo platform chart...")
+    log_info("Fetching Dynamo platform chart (CRDs bundled in v1.x)...")
     _helm_install(
         "dynamo-platform",
         f"{ngc_base}/dynamo-platform-{DYNAMO_VERSION}.tgz",
