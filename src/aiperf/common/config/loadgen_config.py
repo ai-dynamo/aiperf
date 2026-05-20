@@ -391,6 +391,23 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
+            "For Weka trace replay, AIPerf looks at all parent and subagent request "
+            "intervals within one root trace, compresses periods where no request is "
+            "active anywhere, and derives turn delays from the compressed per-trace "
+            "timeline. Defaults to None (no per-trace idle-gap compression).",
+        ),
+        CLIParameter(
+            name=("--trace-idle-gap-cap-seconds",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     warmup_request_count: Annotated[
         int | None,
         Field(

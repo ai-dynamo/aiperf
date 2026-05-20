@@ -29,6 +29,7 @@ def _mk_user_config(model_names=None):
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
     uc.loadgen.inter_turn_delay_cap_seconds = None
+    uc.loadgen.trace_idle_gap_cap_seconds = None
     uc.input.synthesis.max_isl = None
     uc.input.synthesis.max_osl = None
     uc.input.max_context_length = None
@@ -340,6 +341,7 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
         model_map_per_trace={
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
+        trace_idle_timing_by_trace={},
     )
 
     # Parallel path: drive _process_task in-process to get reconstruction
@@ -445,6 +447,7 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
         model_map_per_trace={
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
+        trace_idle_timing_by_trace={},
     )
     parallel_results = _drive_parallel_inproc(
         serial_loader, parent_plans, child_plans, data
@@ -607,6 +610,7 @@ def test_directory_with_multiple_traces_parallel_path_byte_exact(tmp_path):
         model_map_per_trace={
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
+        trace_idle_timing_by_trace={},
     )
 
     parallel_results = _drive_parallel_inproc(

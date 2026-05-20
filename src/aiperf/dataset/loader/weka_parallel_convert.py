@@ -90,6 +90,10 @@ class _WekaNormalRequestPayload(TypedDict):
     think_time: float | None
     # Only present in parent normals (not in child requests):
     capped_output_length: NotRequired[int]
+    # Present when --trace-idle-gap-cap-seconds has rewritten the per-trace
+    # timeline before workers compute turns.
+    effective_t: NotRequired[float]
+    effective_delay_ms: NotRequired[float | None]
 
 
 class _WekaSubagentMarkerPayload(TypedDict):
@@ -108,6 +112,7 @@ class _WekaSubagentMarkerPayload(TypedDict):
     system_tokens: int
     child_session_ids: list[str]
     sa_end_seconds: float
+    effective_sa_end_seconds: NotRequired[float]
 
 
 class _WekaParentPayload(TypedDict):
@@ -342,13 +347,17 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 seed=seed,
             )
 
-        t_ms = req["t"] * 1000.0
-        if k == 0:
-            delay_ms: float | None = None
-        elif task.think_time_only and req.get("think_time") is not None:
-            delay_ms = req["think_time"] * 1000.0
+        if "effective_t" in req:
+            t_ms = req["effective_t"] * 1000.0
+            delay_ms = req.get("effective_delay_ms")
         else:
-            delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
+            t_ms = req["t"] * 1000.0
+            if k == 0:
+                delay_ms = None
+            elif task.think_time_only and req.get("think_time") is not None:
+                delay_ms = req["think_time"] * 1000.0
+            else:
+                delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
 
@@ -382,7 +391,9 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         defaultdict(list)
     )
     group_order: list[tuple[int, int | None]] = []
-    outer_to_t: dict[int, float] = {oi: req["t"] for oi, req in normals}
+    outer_to_t: dict[int, float] = {
+        oi: req.get("effective_t", req["t"]) for oi, req in normals
+    }
     dropped_agent_ids: set[str] = set()
     for sa_outer_idx, sa_entry in parent["subagents"]:
         preceding = max(
@@ -397,7 +408,10 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         for oi, pos in sorted(outer_to_turn_pos.items()):
             if oi <= sa_outer_idx:
                 continue
-            if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= sa_entry["sa_end_seconds"]:
+            sa_end_seconds = sa_entry.get(
+                "effective_sa_end_seconds", sa_entry["sa_end_seconds"]
+            )
+            if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= sa_end_seconds:
                 join_turn = pos
                 break
 
@@ -462,13 +476,17 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     curr_in_tokens=creq["input_length"],
                     seed=seed,
                 )
-            t_ms = creq["t"] * 1000.0
-            if k == 0:
-                child_delay_ms: float | None = None
-            elif task.think_time_only and creq.get("think_time") is not None:
-                child_delay_ms = creq["think_time"] * 1000.0
+            if "effective_t" in creq:
+                t_ms = creq["effective_t"] * 1000.0
+                child_delay_ms = creq.get("effective_delay_ms")
             else:
-                child_delay_ms = t_ms - creqs[k - 1]["t"] * 1000.0
+                t_ms = creq["t"] * 1000.0
+                if k == 0:
+                    child_delay_ms = None
+                elif task.think_time_only and creq.get("think_time") is not None:
+                    child_delay_ms = creq["think_time"] * 1000.0
+                else:
+                    child_delay_ms = t_ms - creqs[k - 1]["t"] * 1000.0
             if child_delay_ms is not None:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 

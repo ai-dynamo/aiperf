@@ -41,6 +41,26 @@ _NormalRequestT = WekaNormalRequest | WekaStreamingRequest
 _JOIN_EPSILON_SECONDS = 1e-6
 
 
+def _subagent_request_absolute_t(
+    entry: WekaSubagentEntry, req: WekaNormalRequest
+) -> float:
+    """Return a subagent inner request timestamp in root-trace coordinates.
+
+    Current Weka captures store inner request ``t`` as an absolute timestamp,
+    while older synthetic/unit fixtures used subagent-relative values. Treat a
+    child timestamp before the spawn marker as relative so both shapes land on
+    the same root-trace timeline.
+    """
+    if req.t + _JOIN_EPSILON_SECONDS < entry.t:
+        return entry.t + req.t
+    return req.t
+
+
+def _request_end_seconds(start_seconds: float, api_time: float | None) -> float:
+    """Request interval end in seconds; missing/negative durations become zero."""
+    return start_seconds + max(api_time or 0.0, 0.0)
+
+
 def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     """Recorded end time of a subagent, in seconds.
 
@@ -51,7 +71,10 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     if entry.duration_ms is not None:
         return entry.t + entry.duration_ms / 1000.0
     if entry.requests:
-        return max(ir.t + (ir.api_time or 0.0) for ir in entry.requests)
+        return max(
+            _request_end_seconds(_subagent_request_absolute_t(entry, ir), ir.api_time)
+            for ir in entry.requests
+        )
     return entry.t
 
 
@@ -101,6 +124,83 @@ def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float:
     if delay_ms > cap_ms:
         return cap_ms
     return delay_ms
+
+
+@dataclass(frozen=True)
+class _RequestTiming:
+    timestamp_seconds: float
+    delay_ms: float | None
+
+
+@dataclass(frozen=True)
+class _IdleGap:
+    raw_start: float
+    raw_end: float
+    shift_before: float
+    cap_seconds: float
+    excess_seconds: float
+
+
+@dataclass
+class _TraceIdleTiming:
+    parent_by_outer_idx: dict[int, _RequestTiming]
+    child_by_request_id: dict[int, _RequestTiming]
+    subagent_end_by_outer_idx: dict[int, float]
+
+
+class _IdleGapTimeWarp:
+    """Compress idle gaps in one trace and map raw seconds to adjusted seconds."""
+
+    def __init__(self, intervals: list[tuple[float, float]], cap_seconds: float):
+        self._gaps: list[_IdleGap] = []
+        valid_intervals = sorted(
+            (min(start, end), max(start, end)) for start, end in intervals
+        )
+        if not valid_intervals:
+            return
+
+        _, active_end = valid_intervals[0]
+        cumulative_shift = 0.0
+        for start, end in valid_intervals[1:]:
+            if start <= active_end:
+                active_end = max(active_end, end)
+                continue
+
+            gap_seconds = start - active_end
+            if gap_seconds > cap_seconds:
+                excess = gap_seconds - cap_seconds
+                self._gaps.append(
+                    _IdleGap(
+                        raw_start=active_end,
+                        raw_end=start,
+                        shift_before=cumulative_shift,
+                        cap_seconds=cap_seconds,
+                        excess_seconds=excess,
+                    )
+                )
+                cumulative_shift += excess
+            active_end = end
+
+    def map(self, t_seconds: float) -> float:
+        """Map a raw timestamp to the per-trace idle-gap-capped timeline.
+
+        Each long idle gap ``[a, b]`` is compressed by keeping its first
+        ``cap_seconds`` intact and collapsing the remainder to the cap boundary.
+        Requests at or after ``b`` shift left by the collapsed excess. Non-request
+        events inside the collapsed tail, such as subagent end markers, map to
+        the same boundary so joins cannot wait past the next shifted request.
+        """
+        shift = 0.0
+        for gap in self._gaps:
+            if t_seconds < gap.raw_start:
+                return t_seconds - gap.shift_before
+            if t_seconds < gap.raw_end:
+                local = t_seconds - gap.raw_start
+                if local <= gap.cap_seconds:
+                    return t_seconds - gap.shift_before
+                return gap.raw_start - gap.shift_before + gap.cap_seconds
+            shift = gap.shift_before + gap.excess_seconds
+        return t_seconds - shift
 
 
 @dataclass
@@ -157,6 +257,69 @@ def _expand_subagent_to_child_plans(
             )
         )
     return plans
+
+
+def _build_trace_idle_timing(
+    *,
+    plan: _ParentPlan,
+    child_plans: list[_ChildPlan],
+    cap_seconds: float,
+) -> _TraceIdleTiming:
+    """Build per-turn timing after capping idle gaps inside one root trace.
+
+    The cap is per root trace, not global across the dataset. We first build a
+    single interval timeline from parent and subagent requests, merge overlaps,
+    and compress only periods where no request is active anywhere. Then parent
+    and child conversation delays are derived from that adjusted timeline.
+
+    Example with ``cap_seconds=60``:
+      - main request ends at t=10
+      - subagents are active until t=100
+      - next main request starts at t=220
+    The true idle gap is 120s (100 -> 220), so every event at/after t=220
+    shifts left by 60s. The parent delay from its previous turn remains the
+    full adjusted wall-clock delta; it is not independently capped to 60s.
+    """
+    intervals: list[tuple[float, float]] = []
+    for _, req in plan.normals:
+        start = req.t
+        intervals.append((start, _request_end_seconds(start, req.api_time)))
+
+    child_plans_for_trace = [
+        cp for cp in child_plans if cp.parent_trace_id == plan.trace_id
+    ]
+    for cp in child_plans_for_trace:
+        for req in cp.stream_requests:
+            start = _subagent_request_absolute_t(cp.entry, req)
+            intervals.append((start, _request_end_seconds(start, req.api_time)))
+
+    warp = _IdleGapTimeWarp(intervals, cap_seconds)
+    parent_by_outer_idx: dict[int, _RequestTiming] = {}
+    prev_t: float | None = None
+    for outer_idx, req in plan.normals:
+        t = warp.map(req.t)
+        delay_ms = None if prev_t is None else (t - prev_t) * 1000.0
+        parent_by_outer_idx[outer_idx] = _RequestTiming(t, delay_ms)
+        prev_t = t
+
+    child_by_request_id: dict[int, _RequestTiming] = {}
+    for cp in child_plans_for_trace:
+        prev_child_t: float | None = None
+        for req in cp.stream_requests:
+            t = warp.map(_subagent_request_absolute_t(cp.entry, req))
+            delay_ms = None if prev_child_t is None else (t - prev_child_t) * 1000.0
+            child_by_request_id[id(req)] = _RequestTiming(t, delay_ms)
+            prev_child_t = t
+
+    subagent_end_by_outer_idx = {
+        outer_idx: warp.map(_sa_end_seconds(entry))
+        for outer_idx, entry in plan.subagents
+    }
+    return _TraceIdleTiming(
+        parent_by_outer_idx=parent_by_outer_idx,
+        child_by_request_id=child_by_request_id,
+        subagent_end_by_outer_idx=subagent_end_by_outer_idx,
+    )
 
 
 class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
@@ -458,6 +621,55 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             return max_osl
         return req.output_length
 
+    def _trace_idle_gap_cap_seconds(self) -> float | None:
+        """Optional per-trace idle-gap cap; robust to MagicMock test configs."""
+        value = getattr(self.user_config.loadgen, "trace_idle_gap_cap_seconds", None)
+        if isinstance(value, int | float):
+            return float(value)
+        return None
+
+    def _build_reconstruction_plans(
+        self, data: dict[str, list[WekaTrace]]
+    ) -> tuple[list[_ParentPlan], list[_ChildPlan]]:
+        parent_plans: list[_ParentPlan] = []
+        child_plans: list[_ChildPlan] = []
+        for trace_id, wekas in data.items():
+            trace = wekas[0]
+            trace_bs = self._block_size_for_trace(trace)
+            normals: list[tuple[int, _NormalRequestT]] = []
+            subagents: list[tuple[int, WekaSubagentEntry]] = []
+            for idx, req in enumerate(trace.requests):
+                if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
+                    if self._request_passes_filters(req):
+                        normals.append((idx, req))
+                else:  # WekaSubagentEntry
+                    sa_index = len(subagents)
+                    subagents.append((idx, req))
+                    child_plans.extend(
+                        _expand_subagent_to_child_plans(
+                            trace_id, sa_index, req, trace_bs
+                        )
+                    )
+            parent_plans.append(
+                _ParentPlan(trace_id, normals, subagents, block_size=trace_bs)
+            )
+        return parent_plans, child_plans
+
+    def _build_trace_idle_timing_by_trace(
+        self, parent_plans: list[_ParentPlan], child_plans: list[_ChildPlan]
+    ) -> dict[str, _TraceIdleTiming]:
+        trace_idle_gap_cap_seconds = self._trace_idle_gap_cap_seconds()
+        if trace_idle_gap_cap_seconds is None:
+            return {}
+        return {
+            plan.trace_id: _build_trace_idle_timing(
+                plan=plan,
+                child_plans=child_plans,
+                cap_seconds=trace_idle_gap_cap_seconds,
+            )
+            for plan in parent_plans
+        }
+
     def _build_model_map(self, trace: WekaTrace) -> dict[str, str]:
         """Map trace-side model names to ``endpoint.model_names``.
 
@@ -552,8 +764,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         """
         self._delay_cap_tracker.reset()
 
-        parent_plans: list[_ParentPlan] = []
-        child_plans: list[_ChildPlan] = []
         # Track subagents whose branch was dropped during the second pass;
         # their child conversations must also be pruned.
         dropped_per_trace: dict[str, set[str]] = {}
@@ -562,27 +772,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         if max_ctx is not None:
             data = self._filter_traces_by_max_context(data, max_ctx)
 
-        for trace_id, wekas in data.items():
-            trace = wekas[0]
-            trace_bs = self._block_size_for_trace(trace)
-            normals: list[tuple[int, _NormalRequestT]] = []
-            subagents: list[tuple[int, WekaSubagentEntry]] = []
-            for idx, req in enumerate(trace.requests):
-                if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
-                    if not self._request_passes_filters(req):
-                        continue
-                    normals.append((idx, req))
-                else:  # WekaSubagentEntry
-                    sa_index = len(subagents)
-                    subagents.append((idx, req))
-                    child_plans.extend(
-                        _expand_subagent_to_child_plans(
-                            trace_id, sa_index, req, trace_bs
-                        )
-                    )
-            parent_plans.append(
-                _ParentPlan(trace_id, normals, subagents, block_size=trace_bs)
-            )
+        parent_plans, child_plans = self._build_reconstruction_plans(data)
 
         # Per-trace model rewrite map. Built once here, applied in both the
         # serial and parallel reconstruction paths so workers don't need
@@ -597,6 +787,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         ignore_delays = self.user_config.input.ignore_trace_delays
         think_time_only = self.user_config.input.use_think_time_only
         cap_seconds = self.user_config.loadgen.inter_turn_delay_cap_seconds
+        trace_idle_timing_by_trace = self._build_trace_idle_timing_by_trace(
+            parent_plans, child_plans
+        )
 
         _t0 = _time.monotonic()
         _t1 = _time.monotonic()
@@ -622,6 +815,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     configured_workers=configured_workers,
                     t_start=_t1,
                     model_map_per_trace=model_map_per_trace,
+                    trace_idle_timing_by_trace=trace_idle_timing_by_trace,
                 )
             else:
                 conversations = self._reconstruct_serial(
@@ -634,6 +828,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     cap_seconds=cap_seconds,
                     t_start=_t1,
                     model_map_per_trace=model_map_per_trace,
+                    trace_idle_timing_by_trace=trace_idle_timing_by_trace,
                 )
         finally:
             # Don't hold trace content past this call. The caller may process
@@ -673,6 +868,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         cap_seconds: float | None,
         t_start: float,
         model_map_per_trace: dict[str, dict[str, str]],
+        trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
     ) -> list[Conversation]:
         """In-process serial reconstruction."""
         import time as _time
@@ -712,6 +908,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             # endpoint accumulates across turns at request time, with
             # ``reset_context`` flagging non-monotonic LCP cuts.
             trace = data[plan.trace_id][0]
+            trace_idle_timing = trace_idle_timing_by_trace.get(plan.trace_id)
             conv = Conversation(
                 session_id=plan.trace_id,
                 context_mode=self._resolved_context_mode(),
@@ -749,13 +946,18 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
 
                 # Turn.timestamp/delay are in milliseconds; weka traces record seconds.
-                t_ms = req.t * 1000.0
-                if k == 0:
-                    delay_ms: float | None = None
-                elif think_time_only and req.think_time is not None:
-                    delay_ms = req.think_time * 1000.0
+                if trace_idle_timing is not None:
+                    timing = trace_idle_timing.parent_by_outer_idx[outer_idx]
+                    t_ms = timing.timestamp_seconds * 1000.0
+                    delay_ms = timing.delay_ms
                 else:
-                    delay_ms = t_ms - plan.normals[k - 1][1].t * 1000.0
+                    t_ms = req.t * 1000.0
+                    if k == 0:
+                        delay_ms = None
+                    elif think_time_only and req.think_time is not None:
+                        delay_ms = req.think_time * 1000.0
+                    else:
+                        delay_ms = t_ms - plan.normals[k - 1][1].t * 1000.0
                 if delay_ms is not None:
                     delay_ms = self._delay_cap_tracker.clamp(delay_ms)
                 delta = recon.turn_delta()
@@ -790,9 +992,15 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             )
             group_order: list[tuple[int, int | None]] = []
             dropped_sa_agent_ids: set[str] = set()
-            outer_to_t: dict[int, float] = {
-                outer_idx: req.t for outer_idx, req in plan.normals
-            }
+            if trace_idle_timing is not None:
+                outer_to_t: dict[int, float] = {
+                    outer_idx: trace_idle_timing.parent_by_outer_idx[
+                        outer_idx
+                    ].timestamp_seconds
+                    for outer_idx, _ in plan.normals
+                }
+            else:
+                outer_to_t = {outer_idx: req.t for outer_idx, req in plan.normals}
 
             for sa_outer_idx, sa_entry in plan.subagents:
                 preceding = max(
@@ -807,7 +1015,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     dropped_sa_agent_ids.add(sa_entry.agent_id)
                     continue
 
-                sa_end_t = _sa_end_seconds(sa_entry)
+                if trace_idle_timing is not None:
+                    sa_end_t = trace_idle_timing.subagent_end_by_outer_idx[sa_outer_idx]
+                else:
+                    sa_end_t = _sa_end_seconds(sa_entry)
                 join_turn: int | None = None
                 for oi, pos in sorted(outer_to_turn_pos.items()):
                     if oi <= sa_outer_idx:
@@ -912,13 +1123,19 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_in_tokens=creq.input_length,
                         seed=seed,
                     )
-                t_ms = creq.t * 1000.0
-                if k == 0:
-                    child_delay_ms: float | None = None
-                elif think_time_only and creq.think_time is not None:
-                    child_delay_ms = creq.think_time * 1000.0
+                trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
+                if trace_idle_timing is not None:
+                    timing = trace_idle_timing.child_by_request_id[id(creq)]
+                    t_ms = timing.timestamp_seconds * 1000.0
+                    child_delay_ms = timing.delay_ms
                 else:
-                    child_delay_ms = t_ms - cp.stream_requests[k - 1].t * 1000.0
+                    t_ms = creq.t * 1000.0
+                    if k == 0:
+                        child_delay_ms = None
+                    elif think_time_only and creq.think_time is not None:
+                        child_delay_ms = creq.think_time * 1000.0
+                    else:
+                        child_delay_ms = t_ms - cp.stream_requests[k - 1].t * 1000.0
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
@@ -936,6 +1153,141 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         return conversations
 
+    def _build_parallel_reconstruction_tasks(
+        self,
+        *,
+        parent_plans: list[_ParentPlan],
+        child_plans: list[_ChildPlan],
+        data: dict[str, list[WekaTrace]],
+        ignore_delays: bool,
+        think_time_only: bool,
+        cap_seconds: float | None,
+        model_map_per_trace: dict[str, dict[str, str]],
+        trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+    ):
+        from aiperf.dataset.loader.weka_parallel_convert import (
+            _WekaNormalRequestPayload,
+            _WekaTraceTask,
+        )
+
+        children_by_trace: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
+        for cp in child_plans:
+            trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
+            requests_dicts: list[_WekaNormalRequestPayload] = []
+            for creq in cp.stream_requests:
+                req_payload: _WekaNormalRequestPayload = {
+                    "hash_ids": list(creq.hash_ids),
+                    "input_length": creq.input_length,
+                    "output_length": creq.output_length,
+                    "model": creq.model,
+                    "t": creq.t,
+                    "think_time": getattr(creq, "think_time", None),
+                }
+                if trace_idle_timing is not None:
+                    timing = trace_idle_timing.child_by_request_id[id(creq)]
+                    req_payload["effective_t"] = timing.timestamp_seconds
+                    req_payload["effective_delay_ms"] = timing.delay_ms
+                requests_dicts.append(req_payload)
+            children_by_trace[cp.parent_trace_id].append(
+                {
+                    "session_id": cp.session_id,
+                    "parent_trace_id": cp.parent_trace_id,
+                    "subagent_index": cp.subagent_index,
+                    "agent_id": cp.entry.agent_id,
+                    "tool_tokens": cp.entry.tool_tokens,
+                    "system_tokens": cp.entry.system_tokens,
+                    "requests": requests_dicts,
+                }
+            )
+            sids_by_subagent[(cp.parent_trace_id, cp.subagent_index)].append(
+                cp.session_id
+            )
+
+        tasks: list[_WekaTraceTask] = []
+        for plan in parent_plans:
+            trace = data[plan.trace_id][0]
+            tasks.append(
+                _WekaTraceTask(
+                    trace_id=plan.trace_id,
+                    parent={
+                        "normals": self._parallel_parent_normals(
+                            plan, trace_idle_timing_by_trace
+                        ),
+                        "subagents": self._parallel_subagents(
+                            plan, sids_by_subagent, trace_idle_timing_by_trace
+                        ),
+                        "tool_tokens": trace.tool_tokens,
+                        "system_tokens": trace.system_tokens,
+                    },
+                    children=children_by_trace.get(plan.trace_id, []),
+                    cap_seconds=cap_seconds,
+                    ignore_delays=ignore_delays,
+                    think_time_only=think_time_only,
+                    model_map=model_map_per_trace.get(plan.trace_id, {}),
+                    emit_assistant_segments=not self._use_live_assistant,
+                    block_size=plan.block_size,
+                )
+            )
+        return tasks
+
+    def _parallel_parent_normals(
+        self,
+        plan: _ParentPlan,
+        trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+    ):
+        from aiperf.dataset.loader.weka_parallel_convert import (
+            _WekaNormalRequestPayload,
+        )
+
+        trace_idle_timing = trace_idle_timing_by_trace.get(plan.trace_id)
+        normals_dicts: list[tuple[int, _WekaNormalRequestPayload]] = []
+        for outer_idx, req in plan.normals:
+            req_payload: _WekaNormalRequestPayload = {
+                "hash_ids": list(req.hash_ids),
+                "input_length": req.input_length,
+                "output_length": req.output_length,
+                "model": req.model,
+                "t": req.t,
+                "think_time": getattr(req, "think_time", None),
+                "capped_output_length": self._cap_output(req),
+            }
+            if trace_idle_timing is not None:
+                timing = trace_idle_timing.parent_by_outer_idx[outer_idx]
+                req_payload["effective_t"] = timing.timestamp_seconds
+                req_payload["effective_delay_ms"] = timing.delay_ms
+            normals_dicts.append((outer_idx, req_payload))
+        return normals_dicts
+
+    def _parallel_subagents(
+        self,
+        plan: _ParentPlan,
+        sids_by_subagent: dict[tuple[str, int], list[str]],
+        trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+    ):
+        from aiperf.dataset.loader.weka_parallel_convert import (
+            _WekaSubagentMarkerPayload,
+        )
+
+        trace_idle_timing = trace_idle_timing_by_trace.get(plan.trace_id)
+        subagents_dicts: list[tuple[int, _WekaSubagentMarkerPayload]] = []
+        for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
+            sa_payload: _WekaSubagentMarkerPayload = {
+                "agent_id": sa.agent_id,
+                "tool_tokens": sa.tool_tokens,
+                "system_tokens": sa.system_tokens,
+                "child_session_ids": sids_by_subagent.get(
+                    (plan.trace_id, sa_index), []
+                ),
+                "sa_end_seconds": _sa_end_seconds(sa),
+            }
+            if trace_idle_timing is not None:
+                sa_payload["effective_sa_end_seconds"] = (
+                    trace_idle_timing.subagent_end_by_outer_idx[outer_idx]
+                )
+            subagents_dicts.append((outer_idx, sa_payload))
+        return subagents_dicts
+
     def _reconstruct_parallel(
         self,
         *,
@@ -948,6 +1300,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         configured_workers: int,
         t_start: float,
         model_map_per_trace: dict[str, dict[str, str]],
+        trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
     ) -> list[Conversation]:
         """Per-trace parallel reconstruction across a multiprocessing Pool.
 
@@ -970,97 +1323,19 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             TurnPrerequisite,
         )
         from aiperf.dataset.loader.weka_parallel_convert import (
-            _WekaChildPayload,
-            _WekaNormalRequestPayload,
-            _WekaSubagentMarkerPayload,
-            _WekaTraceTask,
             run_parallel_weka_reconstruction,
         )
 
-        # Partition child plans by parent trace_id.
-        children_by_trace: dict[str, list[_WekaChildPayload]] = defaultdict(list)
-        # Per-subagent stream SIDs (parent process owns stream packing; the
-        # worker just echoes the SIDs back when building the SPAWN branch).
-        sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
-        for cp in child_plans:
-            requests_dicts: list[_WekaNormalRequestPayload] = [
-                {
-                    "hash_ids": list(creq.hash_ids),
-                    "input_length": creq.input_length,
-                    "output_length": creq.output_length,
-                    "model": creq.model,
-                    "t": creq.t,
-                    "think_time": getattr(creq, "think_time", None),
-                }
-                for creq in cp.stream_requests
-            ]
-            children_by_trace[cp.parent_trace_id].append(
-                {
-                    "session_id": cp.session_id,
-                    "parent_trace_id": cp.parent_trace_id,
-                    "subagent_index": cp.subagent_index,
-                    "agent_id": cp.entry.agent_id,
-                    "tool_tokens": cp.entry.tool_tokens,
-                    "system_tokens": cp.entry.system_tokens,
-                    "requests": requests_dicts,
-                }
-            )
-            sids_by_subagent[(cp.parent_trace_id, cp.subagent_index)].append(
-                cp.session_id
-            )
-
-        tasks: list[_WekaTraceTask] = []
-        for plan in parent_plans:
-            trace = data[plan.trace_id][0]
-            normals_dicts: list[tuple[int, _WekaNormalRequestPayload]] = [
-                (
-                    outer_idx,
-                    {
-                        "hash_ids": list(req.hash_ids),
-                        "input_length": req.input_length,
-                        "output_length": req.output_length,
-                        "model": req.model,
-                        "t": req.t,
-                        "think_time": getattr(req, "think_time", None),
-                        "capped_output_length": self._cap_output(req),
-                    },
-                )
-                for outer_idx, req in plan.normals
-            ]
-            subagents_dicts: list[tuple[int, _WekaSubagentMarkerPayload]] = []
-            for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
-                subagents_dicts.append(
-                    (
-                        outer_idx,
-                        {
-                            "agent_id": sa.agent_id,
-                            "tool_tokens": sa.tool_tokens,
-                            "system_tokens": sa.system_tokens,
-                            "child_session_ids": sids_by_subagent.get(
-                                (plan.trace_id, sa_index), []
-                            ),
-                            "sa_end_seconds": _sa_end_seconds(sa),
-                        },
-                    )
-                )
-            tasks.append(
-                _WekaTraceTask(
-                    trace_id=plan.trace_id,
-                    parent={
-                        "normals": normals_dicts,
-                        "subagents": subagents_dicts,
-                        "tool_tokens": trace.tool_tokens,
-                        "system_tokens": trace.system_tokens,
-                    },
-                    children=children_by_trace.get(plan.trace_id, []),
-                    cap_seconds=cap_seconds,
-                    ignore_delays=ignore_delays,
-                    think_time_only=think_time_only,
-                    model_map=model_map_per_trace.get(plan.trace_id, {}),
-                    emit_assistant_segments=not self._use_live_assistant,
-                    block_size=plan.block_size,
-                )
-            )
+        tasks = self._build_parallel_reconstruction_tasks(
+            parent_plans=parent_plans,
+            child_plans=child_plans,
+            data=data,
+            ignore_delays=ignore_delays,
+            think_time_only=think_time_only,
+            cap_seconds=cap_seconds,
+            model_map_per_trace=model_map_per_trace,
+            trace_idle_timing_by_trace=trace_idle_timing_by_trace,
+        )
 
         n_plans = len(tasks)
         if configured_workers > 0:

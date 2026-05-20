@@ -818,6 +818,11 @@ The maximum number of requests to send. If not set, will be automatically determ
 
 Hard ceiling (seconds) for inter-turn delays in trace replay. Applies to all trace formats that emit per-turn delays (weka, mooncake, bailian, burstgpt, multi_turn, dag_jsonl) and to both think-time-only and full-delta delay sources. Defaults to None (no clamp). Set to 60.0 to match the InferenceX AgentX RFC.
 
+#### `--trace-idle-gap-cap-seconds` `<float>`
+
+Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request intervals within one root trace, compresses periods where no request is active anywhere, and derives turn delays from the compressed per-trace timeline. Defaults to None (no per-trace idle-gap compression).
+<br/>_Constraints: ≥ 0.0_
+
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
 The maximum number of warmup requests to send before benchmarking. If not set and no --warmup-duration is set, then no warmup phase will be used.
