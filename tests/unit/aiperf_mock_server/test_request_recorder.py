@@ -667,3 +667,80 @@ class TestBuildSummaryVocab:
         )
         ep = summary["per_endpoint"]["/v1/embeddings"]
         assert ep["vocab_distribution"] is None
+
+
+class TestPrintSummaryVocab:
+    def _vd(self, shape: list[int] | None = None) -> dict:
+        if shape is None:
+            shape = [10] + [0] * 79
+        return {
+            "vocab_size": 1000,
+            "vocab_size_source": "tokenizer",
+            "unique_ids": 5,
+            "coverage_pct": 0.5,
+            "total_tokens": sum(shape),
+            "top_10_concentration_pct": 99.0,
+            "entropy_bits": 1.2,
+            "max_entropy_bits": 9.97,
+            "top_tokens": [
+                {"id": 1, "text": " the", "count": 6},
+                {"id": 2, "text": " a", "count": 2},
+            ],
+            "shape_80": shape,
+            "frequencies": {},
+        }
+
+    def _summary(self, vd: dict | None) -> dict:
+        return {
+            "total_requests": 4,
+            "per_endpoint": {
+                "/v1/chat/completions": {
+                    "count": 4,
+                    "streamed_count": 0,
+                    "ignore_eos_count": 0,
+                    "reasoning_effort_counts": None,
+                    "isl": {
+                        "min": 10.0,
+                        "max": 40.0,
+                        "mean": 25.0,
+                        "stdev": 12.91,
+                        "p50": 25.0,
+                        "p90": 38.0,
+                        "p95": 39.0,
+                        "p99": 39.8,
+                        "unique_values": 4,
+                        "histogram": {
+                            "bin_edges": [10.0, 25.0, 40.0],
+                            "counts": [2, 2],
+                        },
+                    },
+                    "requested_osl": None,
+                    "min_tokens": None,
+                    "vocab_distribution": vd,
+                },
+            },
+        }
+
+    def test_vocab_block_prints_after_histograms(self, capsys) -> None:
+        _print_summary(self._summary(self._vd()))
+        out = capsys.readouterr().out
+        idx_isl_hist = out.index("ISL histogram")
+        idx_vocab_headline = out.index("Vocab  used")
+        idx_shape = out.index("vocab shape")
+        assert idx_isl_hist < idx_vocab_headline < idx_shape
+
+    def test_no_vocab_lines_when_distribution_is_none(self, capsys) -> None:
+        _print_summary(self._summary(None))
+        out = capsys.readouterr().out
+        assert "Vocab  used" not in out
+        assert "vocab shape" not in out
+
+    def test_blank_lines_between_blocks(self, capsys) -> None:
+        _print_summary(self._summary(self._vd()))
+        out = capsys.readouterr().out
+        lines = out.splitlines()
+        # Find the index of the endpoint header.
+        ep_idx = next(i for i, ln in enumerate(lines) if "/v1/chat/completions" in ln)
+        # Confirm blank-line separators are present in the per-endpoint body.
+        post = lines[ep_idx + 1 :]
+        assert "" in post  # at least one blank-line separator present

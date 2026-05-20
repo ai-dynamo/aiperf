@@ -174,6 +174,11 @@ class RequestRecorder:
         if self._file is not None:
             self._file.close()
             self._file = None
+        decode_fn: Callable[[int], str] | None
+        if self._tokenizer is not None:
+            decode_fn = lambda token_id: self._tokenizer.decode([token_id])  # noqa: E731
+        else:
+            decode_fn = None
         summary = _build_summary(
             total=self._total,
             isls=self._isls,
@@ -182,6 +187,10 @@ class RequestRecorder:
             streamed=self._streamed,
             ignore_eos=self._ignore_eos,
             reasoning_efforts=self._reasoning_efforts,
+            vocab_counts=self._vocab_counts,
+            vocab_size=self._vocab_size,
+            vocab_size_source=self._vocab_size_source,
+            decode_fn=decode_fn,
         )
         Path(self.path + ".summary.json").write_bytes(
             orjson.dumps(summary, option=orjson.OPT_INDENT_2)
@@ -441,10 +450,17 @@ def _print_summary(summary: dict[str, Any]) -> None:
                 continue
             hist = s["histogram"]
             n = sum(hist["counts"])
+            print("")  # blank line before each histogram block
             for line in _render_histogram(label, hist, n, s["unique_values"]):
+                print(line)
+        vd = stats.get("vocab_distribution")
+        if vd is not None:
+            print("")  # blank line before vocab block
+            for line in _render_vocab_lines(vd):
                 print(line)
         mn = stats["min_tokens"]
         if mn is not None:
+            print("")  # blank line before misc lines
             print(f"    min_tokens  mean {mn['mean']:7.1f}   p50 {mn['p50']:5.0f}")
         if stats["ignore_eos_count"]:
             print(f"    ignore_eos=true: {stats['ignore_eos_count']}")
