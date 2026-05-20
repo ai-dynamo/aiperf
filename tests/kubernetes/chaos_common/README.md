@@ -131,6 +131,68 @@ design — better than a silent false positive.
 
 ## Running the unified chaos suite
 
-**TODO (Phase 5):** placeholder for now — Phase 5 fills this section in. See
-`tests/kubernetes/chaos_common/FEATURES.md` once Phase 5 lands for the
-full chaos-suite invocation matrix and per-D-test recipes.
+The suite has three runnable layers; each layer requires progressively more
+infrastructure. Pick the lowest layer that exercises your change.
+
+### Adapter unit tests (no cluster needed)
+
+The injector adapters under `chaos_common/test_*_injector.py` use the
+echo-only `faults` fixture from this package's `conftest.py` — they assert
+the API contract (dispatch by prefix, LIFO restore, idempotent
+`AppliedFault.restore`) without touching a real cluster.
+
+```bash
+uv run pytest tests/kubernetes/chaos_common/ -n auto
+```
+
+These run on every PR via `run-kubernetes-tests.yml` (no opt-in marker).
+
+### D-series scenarios (Kind cluster required)
+
+The dynamo-side D-series under `chaos_dynamo/test_chaos_d*.py` overrides
+the `faults` fixture with a real registry against a live cluster + dynamo
+deployment. Every test carries `@pytest.mark.k8s_slow` so a default
+`pytest` invocation skips the whole directory.
+
+```bash
+uv run pytest tests/kubernetes/chaos_dynamo/ -v -m k8s_slow \
+    --k8s-reuse-cluster --k8s-skip-build -n auto
+```
+
+`--k8s-reuse-cluster` and `--k8s-skip-build` are inherited from
+`tests/kubernetes/conftest.py` and let local iteration skip the
+~3-minute Kind bring-up plus image-build cycle.
+
+A single scenario, no marker filter:
+
+```bash
+uv run pytest tests/kubernetes/chaos_dynamo/test_chaos_d101_operator_kill.py -v
+```
+
+### D704 specifically (Cilium-enforcing CNI required)
+
+`test_chaos_d704_hf_hub_egress_blackhole` injects a NetworkPolicy egress
+deny against the Hugging Face Hub. Default Kind CNI (kindnet) silently
+ignores NetworkPolicy, so the test ships with `@cilium_on_kind_required`
+which expands to `xfail(strict=True)` unless `KIND_HAS_CILIUM=1` is set.
+
+```bash
+KIND_HAS_CILIUM=1 uv run pytest \
+    tests/kubernetes/chaos_dynamo/test_chaos_d704_*.py -v
+```
+
+See the "Cilium-on-kind for D704" section above for the bring-up recipe.
+
+### Full suite (CI shape)
+
+The `k8s-chaos.yml` workflow exercises the same three directories the unified
+plan covers; `chaos_common/` runs without `k8s_slow`, the other two require it:
+
+```bash
+uv run pytest tests/kubernetes/chaos_common/ -n auto
+uv run pytest tests/kubernetes/chaos/ tests/kubernetes/chaos_dynamo/ \
+    -m k8s_slow -n auto
+```
+
+See `tests/kubernetes/chaos_common/FEATURES.md` for the per-`fault_id`
+shipped/Wave-1+/deferred matrix.
