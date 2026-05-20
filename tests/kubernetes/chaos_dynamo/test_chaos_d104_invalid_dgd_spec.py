@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import orjson
 import pytest
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
+from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
@@ -22,53 +24,104 @@ async def test_d104_invalid_dgd_replicas_negative(
 
     Targets: webhook validation + reconciler error path.
 
-    The scaffold lays out the full happy-path assertion sequence so the
-    body can be enabled once a real cluster + dynamo-operator are wired
-    into CI. ``wait_for_dgd_state`` is imported from the package conftest
-    as a plain async helper (not a fixture); it takes ``kubectl`` as its
-    first positional argument.
+    The assertion body is materialized in :py:func:`_run_d104_assertion` so the
+    outer test stays a one-line ``pytest.skip`` + helper call; flip the skip to
+    enable the test once a real cluster with the dynamo CRDs is wired into CI.
     """
-    # 1. Build an invalid DGD manifest:
-    #    apiVersion: nvidia.com/v1beta1
-    #    kind: DynamoGraphDeployment
-    #    metadata: {name: d104-test, namespace: dynamo-server}
-    #    spec:
-    #      components:
-    #        - name: Frontend
-    #          type: frontend
-    #          replicas: -1   # <-- INVALID
-    #          podTemplate:
-    #            spec:
-    #              containers:
-    #                - name: main
-    #                  image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:v0.9.0
-    #
-    # 2. await faults.inject(
-    #        "crd.apply_invalid",
-    #        target={"ns": "dynamo-server", "name": "d104-test"},
-    #        manifest=<the above dict>,
-    #    )
-    #
-    # 3. from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
-    #    await wait_for_dgd_state(
-    #        kubectl, "d104-test", "dynamo-server", "failed", timeout=60,
-    #    )
-    #
-    # 4. result = await kubectl.run(
-    #        "get", "dynamographdeployment", "d104-test",
-    #        "-n", "dynamo-server", "-o", "json", check=True,
-    #    )
-    #    cr = orjson.loads(result.stdout)
-    #
-    # 5. Assertions:
-    #    - cr["status"]["state"] == "failed"
-    #    - ready = next(c for c in cr["status"]["conditions"] if c["type"] == "Ready")
-    #    - ready["status"] == "False"
-    #    - "replicas" in (ready.get("reason", "") + ready.get("message", "")).lower()
-    #      or "validation" in (...)
-    #
-    # 6. Cleanup: ``crd.apply_invalid``'s registered restore deletes the CR;
-    #    the InjectorRegistry's LIFO teardown in the ``faults`` fixture
-    #    handles it on test exit, no explicit ``finally`` needed.
+    pytest.skip(
+        "scaffold landed; assertion body materialized but awaiting cluster with dynamo CRDs"
+    )
+    await _run_d104_assertion(faults, kubectl)
 
-    pytest.skip("scaffold landed; assertion-body pending real-cluster validation")
+
+async def _run_d104_assertion(
+    faults: InjectorRegistry,
+    kubectl: KubectlClient,
+) -> None:
+    """Full D104 assertion body; one-line unskip flip to run.
+
+    Applies a ``DynamoGraphDeployment`` with ``replicas=-1`` via the
+    ``crd.apply_invalid`` injector, then asserts the operator drives the CR
+    to ``status.state=failed`` with ``Ready=False`` and a reason or message
+    that names the invalid field. The ``faults.inject`` context manager
+    handles teardown on exit; the ``finally`` block is a belt-and-braces
+    delete in case the injector restore is bypassed.
+    """
+    name = "d104-test"
+    ns = "dynamo-server"
+    manifest = {
+        "apiVersion": "nvidia.com/v1beta1",
+        "kind": "DynamoGraphDeployment",
+        "metadata": {"name": name, "namespace": ns},
+        "spec": {
+            "components": [
+                {
+                    "name": "Frontend",
+                    "type": "frontend",
+                    "replicas": -1,  # INVALID
+                    "podTemplate": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": "main",
+                                    "image": "nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0",
+                                }
+                            ]
+                        }
+                    },
+                }
+            ]
+        },
+    }
+
+    try:
+        async with faults.inject(
+            "crd.apply_invalid",
+            target={"ns": ns, "name": name},
+            manifest=manifest,
+        ):
+            await wait_for_dgd_state(kubectl, name, ns, "failed", timeout=60)
+
+            result = await kubectl.run(
+                "get",
+                "dynamographdeployment",
+                name,
+                "-n",
+                ns,
+                "-o",
+                "json",
+                check=True,
+            )
+            dgd = orjson.loads(result.stdout)
+
+            assert dgd["status"]["state"] == "failed", (
+                f"expected state=failed, got {dgd['status']['state']!r}"
+            )
+
+            conditions = dgd["status"].get("conditions", [])
+            ready_condition = next(
+                (c for c in conditions if c.get("type") == "Ready"), None
+            )
+            assert ready_condition is not None, "no Ready condition in status"
+            assert ready_condition["status"] == "False", (
+                f"expected Ready=False, got Ready={ready_condition['status']!r}"
+            )
+
+            reason = ready_condition.get("reason", "")
+            message = ready_condition.get("message", "")
+            haystack = f"{reason} {message}".lower()
+            assert "replicas" in haystack or "validation" in haystack, (
+                "expected reason/message to mention replicas or validation, "
+                f"got reason={reason!r} message={message!r}"
+            )
+    finally:
+        await kubectl.run(
+            "delete",
+            "dynamographdeployment",
+            name,
+            "-n",
+            ns,
+            "--wait=false",
+            "--ignore-not-found",
+            check=False,
+        )

@@ -18,10 +18,12 @@ loudly (see ``tests/kubernetes/chaos_common/README.md``).
 
 from __future__ import annotations
 
+import orjson
 import pytest
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_common.marks import cilium_on_kind_required
+from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 
 pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
 logger = AIPerfLogger(__name__)
@@ -37,26 +39,112 @@ async def test_d704_hf_hub_egress_blackhole(faults, kubectl):
     With Cilium the test must PASS or the strict xfail flips to a loud
     failure (see ``chaos_common/README.md`` "Verifying the flip").
     """
-    # 1. Apply a NetworkPolicy denying all egress (allow_cluster_egress=True for intra-cluster):
-    #    async with faults.inject(
-    #        "cluster.network_policy.deny_egress",
-    #        target={"ns": "dynamo-server"},
-    #        name="d704-blackhole",
-    #        allow_cluster_egress=True,  # cluster traffic OK; only external blocked
-    #    ):
-    # 2. Apply a fresh DGD that references an HF Hub model not yet cached anywhere:
-    #    DynamoConfig(model_name="Qwen/Qwen3-0.6B", ...) (default; lands in /tmp/HF cache miss).
-    # 3. await wait_for_dgd_state(kubectl, "d704-test", "dynamo-server", "failed", timeout=300).
-    #    (wait_for_dgd_state is a plain async helper in chaos_dynamo/conftest.py; import at
-    #    module level when this scaffold is materialized.)
-    # 4. Inspect kubectl get pods -l ... -o json for the worker pod's status -- should show
-    #    container terminated with non-zero exit code, log mentions weight download failure
-    #    (HF Hub, DNS, NetworkPolicy, or connection refused).
-    # 5. Parse status.conditions; assert Ready=False with reason naming weight/network failure.
-    # 6. finally (handled by faults context): NetworkPolicy deleted.
-    del faults, kubectl  # scaffold; consumed once assertions land.
-
     pytest.skip(
-        "scaffold landed; full assertion requires Cilium-equipped cluster + fresh "
-        "DGD with cache-miss model. Will be exercised in real-cluster CI."
+        "scaffold landed; awaiting Cilium-equipped cluster + fresh DGD with "
+        "cache-miss model"
     )
+    await _run_d704_assertion(faults, kubectl)
+
+
+async def _run_d704_assertion(faults, kubectl) -> None:
+    """Full D704 assertion body; one-line unskip flip to run.
+
+    Materialized separately so the public test stays a thin gated entrypoint:
+    deleting the ``pytest.skip`` above is the only edit needed to exercise
+    the path against a Cilium-equipped cluster. Keeps the assertion shape
+    diff-reviewable without entangling it with the gating contract.
+    """
+    name = "d704-test"
+    ns = "dynamo-server"
+    policy_name = "d704-blackhole"
+
+    # Qwen3-0.6B is the project default; a brand-new cluster has no cache, so
+    # the worker must reach out to HF Hub during fetch_model and that egress
+    # is the leg the NetworkPolicy severs.
+    dgd_manifest = {
+        "apiVersion": "nvidia.com/v1beta1",
+        "kind": "DynamoGraphDeployment",
+        "metadata": {"name": name, "namespace": ns},
+        "spec": {
+            "components": [
+                {
+                    "name": "Frontend",
+                    "type": "frontend",
+                    "replicas": 1,
+                    "podTemplate": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": "main",
+                                    "image": "nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0",
+                                    "args": ["--model", "Qwen/Qwen3-0.6B"],
+                                }
+                            ]
+                        }
+                    },
+                }
+            ]
+        },
+    }
+
+    try:
+        async with faults.inject(
+            "cluster.network_policy.deny_egress",
+            target={"ns": ns},
+            name=policy_name,
+            allow_cluster_egress=True,
+        ):
+            await kubectl.apply(manifest=orjson.dumps(dgd_manifest).decode())
+
+            await wait_for_dgd_state(kubectl, name, ns, "failed", timeout=300)
+
+            result = await kubectl.run(
+                "get",
+                "dynamographdeployment",
+                name,
+                "-n",
+                ns,
+                "-o",
+                "json",
+                check=True,
+            )
+            dgd = orjson.loads(result.stdout)
+            assert dgd["status"]["state"] == "failed"
+
+            conditions = dgd["status"].get("conditions", [])
+            ready_condition = next(
+                (c for c in conditions if c.get("type") == "Ready"), None
+            )
+            assert ready_condition is not None, "no Ready condition in status"
+            assert ready_condition["status"] == "False"
+
+            reason = ready_condition.get("reason", "").lower()
+            message = ready_condition.get("message", "").lower()
+            haystack = reason + " " + message
+            keywords = (
+                "weight",
+                "hub",
+                "huggingface",
+                "network",
+                "egress",
+                "dns",
+                "connect",
+                "download",
+            )
+            assert any(kw in haystack for kw in keywords), (
+                f"expected reason/message to name network/weight failure; "
+                f"got reason={reason!r} message={message!r}"
+            )
+    finally:
+        # NetworkPolicy is cleaned up by the faults.inject context's restore;
+        # the DGD is ours to delete.
+        await kubectl.run(
+            "delete",
+            "dynamographdeployment",
+            name,
+            "-n",
+            ns,
+            "--wait=false",
+            "--ignore-not-found",
+            check=False,
+        )
