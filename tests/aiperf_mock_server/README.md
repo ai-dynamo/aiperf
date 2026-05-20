@@ -574,7 +574,7 @@ flowchart LR
 
 **Summary** — `<PATH>.summary.json` and stdout, per endpoint:
 
-```
+```text
 Request distribution (100 requests)
 ──────────────────────────────────────────────
   Definitions
