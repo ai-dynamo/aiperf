@@ -60,7 +60,7 @@ async def _run_streaming(cmd: list[str], error_msg: str, prefix: str = "HELM") -
 
 
 async def _dynamo_operator_is_running(kubectl: KubectlClient) -> bool:
-    """Check if the Dynamo operator pod is Running."""
+    """Check if the Dynamo operator pod is Running and Ready."""
     result = await kubectl.run(
         "get",
         "pods",
@@ -71,11 +71,13 @@ async def _dynamo_operator_is_running(kubectl: KubectlClient) -> bool:
         "--no-headers",
         check=False,
     )
-    return (
-        result.returncode == 0
-        and bool(result.stdout.strip())
-        and "Running" in result.stdout
-    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    for line in result.stdout.strip().splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == "Running" and parts[1].startswith("1/1"):
+            return True
+    return False
 
 
 async def _uninstall_bad_dynamo_releases(kubectl: KubectlClient) -> None:
@@ -110,6 +112,33 @@ async def _uninstall_bad_dynamo_releases(kubectl: KubectlClient) -> None:
                 ["helm", "uninstall", release, *helm_ctx, "-n", namespace],
                 f"Failed to uninstall {release}",
             )
+
+
+async def _remove_stale_dynamo_crds_release(kubectl: KubectlClient) -> None:
+    """Remove the retired standalone CRD chart release before v1.x installs."""
+    helm_ctx: list[str] = []
+    if kubectl.context:
+        helm_ctx = ["--kube-context", kubectl.context]
+
+    proc = await asyncio.create_subprocess_exec(
+        "helm",
+        "status",
+        "dynamo-crds",
+        *helm_ctx,
+        "-n",
+        "default",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    if proc.returncode != 0:
+        return
+
+    logger.info("Removing stale dynamo-crds Helm release (retired in v1.x)")
+    await _run_streaming(
+        ["helm", "uninstall", "dynamo-crds", *helm_ctx, "-n", "default"],
+        "Failed to uninstall stale Dynamo CRDs release",
+    )
 
 
 async def _patch_dynamo_discovery_rbac(kubectl: KubectlClient, namespace: str) -> None:
@@ -206,8 +235,9 @@ async def dynamo_operator(
     if kubectl.context:
         helm_ctx = ["--kube-context", kubectl.context]
 
-    # Fetch and install CRDs (skip if already present)
-    if not crd_exists:
+    # v1.x bundles CRDs into the platform chart; the standalone dynamo-crds
+    # chart was retired after v0.9.1 and 404s for v1.x versions.
+    if dynamo_version.startswith("0.") and not crd_exists:
         await _run_streaming(
             ["helm", "fetch", f"{ngc_base}/{crds_tgz}"],
             "Failed to fetch Dynamo CRDs chart",
@@ -229,6 +259,8 @@ async def dynamo_operator(
             )
         finally:
             Path(crds_tgz).unlink(missing_ok=True)
+    elif not dynamo_version.startswith("0."):
+        await _remove_stale_dynamo_crds_release(kubectl)
 
     # --gpu-local-keygen: create the MPI SSH secret locally instead of via the
     # Helm pre-install hook (which pulls bitnamisecure/git + alpine/k8s images
@@ -369,7 +401,12 @@ def dynamo_config(gpu_settings: GPUTestSettings) -> DynamoConfig:
         common_overrides["image"] = s.dynamo_image
 
     if mode == DynamoMode.DISAGGREGATED_1GPU:
-        return DynamoConfig.single_gpu_disagg(**common_overrides)
+        return DynamoConfig.single_gpu_disagg(
+            **common_overrides,
+            max_model_len=s.max_model_len,
+            gpu_memory_utilization=s.mem_util,
+            runtime_class_name=s.runtime_class,
+        )
 
     return DynamoConfig(
         **common_overrides,

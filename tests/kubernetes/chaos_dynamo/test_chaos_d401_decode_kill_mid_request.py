@@ -76,8 +76,6 @@ async def test_d401_kill_decode_mid_request(
     5. Assert the budget. The kubelet recreates the worker pod from the
        Deployment template; ``pod.kill`` itself is restore-free.
     """
-    pytest.skip("scaffold landed; assertion-body pending real-cluster validation")
-
     request_body = {
         "model": "default",
         "messages": [
@@ -103,7 +101,7 @@ async def test_d401_kill_decode_mid_request(
             async with (
                 aiohttp.ClientSession(timeout=timeout) as session,
                 session.post(
-                    f"{dynamo_endpoint_url}/v1/chat/completions",
+                    f"{dynamo_endpoint_url}/chat/completions",
                     json=request_body,
                 ) as resp,
             ):

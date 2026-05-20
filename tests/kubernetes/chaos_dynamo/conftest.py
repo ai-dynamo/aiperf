@@ -47,11 +47,11 @@ import pytest_asyncio
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 
-# Re-exported dynamo fixtures. pytest discovers fixtures by attribute lookup
-# on conftest modules; importing them here makes ``dynamo_operator`` etc.
-# available to every test file in this package. The noqa comments on the
-# fixture imports are load-bearing — ruff cannot see that pytest uses the
-# names dynamically.
+# Re-exported GPU/Dynamo fixtures. pytest discovers fixtures by attribute lookup
+# on conftest modules; importing them here makes ``kubectl``,
+# ``dynamo_operator`` etc. available to every test file in this package. The
+# noqa comments on the fixture imports are load-bearing — ruff cannot see that
+# pytest uses the names dynamically.
 from tests.kubernetes.chaos.toxiproxy import (
     TOXIPROXY_ADMIN_PORT,
     ToxiproxyError,
@@ -66,9 +66,9 @@ from tests.kubernetes.chaos_common.injectors.process import ProcessInjector
 from tests.kubernetes.chaos_common.injectors.store import StoreInjector
 from tests.kubernetes.chaos_common.injectors.workload import WorkloadInjector
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
+from tests.kubernetes.gpu.conftest import kubectl  # noqa: F401
 from tests.kubernetes.gpu.dynamo.conftest import (
     dynamo_config,  # noqa: F401
-    dynamo_endpoint_url,  # noqa: F401
     dynamo_operator,  # noqa: F401
     dynamo_server,  # noqa: F401
 )
@@ -86,6 +86,49 @@ logger = AIPerfLogger(__name__)
 # honored from rootdir/conftest.py and from conftest files of top-level
 # test packages, so keeping this here is load-bearing.
 pytest_plugins = ["tests.kubernetes.gpu.conftest"]
+
+
+# ============================================================================
+# Host-reachable Dynamo endpoint fixture
+# ============================================================================
+
+
+@pytest_asyncio.fixture(scope="package", loop_scope="package")
+async def dynamo_endpoint_url(
+    kubectl: KubectlClient,
+    dynamo_deployment_namespace: str,
+    dynamo_server: Any,  # noqa: ARG001 - fixture dependency ensures deployment is ready
+) -> AsyncIterator[str]:
+    """Expose the in-cluster Dynamo frontend through a local port-forward.
+
+    The GPU suite returns a cluster-DNS URL because AIPerf benchmark pods call
+    Dynamo from inside Kubernetes. D-series chaos tests issue ``aiohttp`` calls
+    from the pytest host, so they need a host-reachable URL.
+    """
+    service_res = await kubectl.run(
+        "get",
+        "service",
+        "-n",
+        dynamo_deployment_namespace,
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
+        check=True,
+    )
+    frontend_services = [
+        name for name in service_res.stdout.split() if name.endswith("-frontend")
+    ]
+    if not frontend_services:
+        raise RuntimeError(
+            f"dynamo_endpoint_url: no frontend service in {dynamo_deployment_namespace!r}"
+        )
+
+    service_ref = f"service/{frontend_services[0]}"
+    async with kubectl.port_forward(
+        service_ref,
+        8000,
+        namespace=dynamo_deployment_namespace,
+    ) as local_port:
+        yield f"http://127.0.0.1:{local_port}/v1"
 
 
 # ============================================================================
@@ -448,7 +491,10 @@ async def scrape_frontend_metrics(
         # cheap (one kubectl call) and keeps this helper working across both.
         pods = await kubectl.get_pods(namespace)
         for candidate in pods:
-            if deployment_name in candidate.name and candidate.is_ready:
+            is_frontend = (
+                deployment_name in candidate.name or "-frontend-" in candidate.name
+            )
+            if is_frontend and candidate.is_ready:
                 pod = candidate.name
                 break
     if not pod:
@@ -479,10 +525,9 @@ async def scrape_frontend_metrics(
 def _parse_prometheus_text(text: str) -> dict[str, float]:
     """Parse Prometheus text exposition format into a flat name -> value map.
 
-    Histogram + summary lines (``foo_bucket{le="..."}``) collapse to the metric
-    NAME without labels, with the LAST observed value winning. Sufficient for
-    presence / monotonic-increase assertions; tests that need label-keyed
-    series should parse ``text`` themselves.
+    Labelled samples collapse to the metric NAME and are summed across label
+    combinations. Sufficient for presence / monotonic-increase assertions;
+    tests that need label-keyed series should parse ``text`` themselves.
     """
     out: dict[str, float] = {}
     for raw_line in text.splitlines():
@@ -514,9 +559,11 @@ def _parse_prometheus_text(text: str) -> dict[str, float]:
         # optional trailing timestamp is ignored.
         value_tok = rest.split(None, 1)[0] if rest else ""
         try:
-            out[name] = float(value_tok)
+            value = float(value_tok)
         except ValueError:
             logger.debug(lambda line=line: f"prom parse: non-numeric value in {line!r}")
+            continue
+        out[name] = out.get(name, 0.0) + value
     return out
 
 
@@ -553,6 +600,7 @@ __all__: list[str] = [
     "dynamo_operator",
     "dynamo_server",
     "dynamo_toxiproxy",
+    "kubectl",
     "faults",
     "scrape_frontend_metrics",
     "wait_for_dgd_state",

@@ -16,12 +16,24 @@ import pytest
 import yaml
 from pytest import param
 
+from tests.kubernetes.chaos_dynamo.test_chaos_d301_nixl_reset_peer import (
+    _nixl_route_skip_reason,
+)
+from tests.kubernetes.chaos_dynamo.test_chaos_d801_etcd_kill_registration import (
+    _find_decode_component,
+)
+from tests.kubernetes.chaos_dynamo.test_chaos_d802_etcd_pause import (
+    _d802_static_skip_reason,
+)
+from tests.kubernetes.gpu.conftest import GPUTestSettings
 from tests.kubernetes.gpu.dynamo import helpers as _dynamo_helpers
+from tests.kubernetes.gpu.dynamo.conftest import dynamo_config as _dynamo_config_fixture
 from tests.kubernetes.gpu.dynamo.helpers import (
     MAIN_CONTAINER_NAME,
     DynamoBackend,
     DynamoDeployer,
     DynamoMode,
+    is_dynamo_webhook_warmup_error,
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
@@ -73,6 +85,105 @@ def _find_component(crd: dict, name: str) -> dict:
     return matches[0]
 
 
+class TestDynamoD301Preconditions:
+    """D301 static preconditions avoid expensive cluster setup for invalid topology."""
+
+    def test_default_single_gpu_disagg_skips_without_toxiproxy_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AIPERF_DYNAMO_NIXL_CHAOS", raising=False)
+        config = _dynamo_helpers.DynamoConfig.single_gpu_disagg()
+
+        reason = _nixl_route_skip_reason(config)
+
+        assert reason is not None
+        assert "VLLM_NIXL_SIDE_CHANNEL_HOST" in reason
+        assert "toxiproxy.chaos-toxiproxy.svc" in reason
+
+    def test_opt_in_allows_external_topology_assertions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_DYNAMO_NIXL_CHAOS", "1")
+        config = _dynamo_helpers.DynamoConfig.single_gpu_disagg()
+
+        assert _nixl_route_skip_reason(config) is None
+
+    def test_toxiproxy_route_allows_runtime_cluster_assertions(self) -> None:
+        config = _dynamo_helpers.DynamoConfig.single_gpu_disagg(
+            extra_envs=[
+                {
+                    "name": "VLLM_NIXL_SIDE_CHANNEL_HOST",
+                    "value": "toxiproxy.chaos-toxiproxy.svc",
+                }
+            ]
+        )
+
+        assert _nixl_route_skip_reason(config) is None
+
+
+class TestDynamoD801Helpers:
+    """D801 helper compatibility across Dynamo CRD schema versions."""
+
+    def test_find_decode_component_supports_v1alpha1_services_map(self) -> None:
+        dgd = {
+            "spec": {
+                "services": {
+                    "Frontend": {"componentType": "frontend"},
+                    "VllmDecodeWorker": {
+                        "componentType": "worker",
+                        "subComponentType": "decode",
+                        "replicas": 1,
+                    },
+                }
+            }
+        }
+        assert _find_decode_component(dgd) == {
+            "componentType": "worker",
+            "subComponentType": "decode",
+            "replicas": 1,
+        }
+
+
+class TestDynamoD802Preconditions:
+    """D802 static preconditions encode Dynamo v1.1.0's no-etcd default."""
+
+    def test_v1_1_default_skips_without_opt_in(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AIPERF_DYNAMO_ETCD_CHAOS", raising=False)
+
+        reason = _d802_static_skip_reason("1.1.0")
+
+        assert reason is not None
+        assert "global.etcd.install=false" in reason
+        assert "AIPERF_DYNAMO_ETCD_CHAOS=1" in reason
+
+    def test_opt_in_allows_service_precondition_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_DYNAMO_ETCD_CHAOS", "1")
+
+        assert _d802_static_skip_reason("1.1.0") is None
+
+
+class TestDynamoWebhookWarmup:
+    """Detect transient admission-webhook startup failures."""
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            'failed calling webhook "mdynamographdeployment.kb.io": connect: connection refused',
+            'failed calling webhook "vdynamographdeployment.kb.io": no endpoints available for service',
+        ],
+    )
+    def test_webhook_warmup_errors_are_retryable(self, message: str) -> None:
+        assert is_dynamo_webhook_warmup_error(RuntimeError(message))
+
+    def test_non_webhook_errors_are_not_retryable(self) -> None:
+        err = RuntimeError("strict decoding error: unknown field spec.components")
+        assert not is_dynamo_webhook_warmup_error(err)
+
+
 class TestDynamoConfigDefaults:
     """The default api_version + opt-in v1beta1."""
 
@@ -87,6 +198,14 @@ class TestDynamoConfigDefaults:
     def test_explicit_v1alpha1_preserved(self) -> None:
         config = _dynamo_helpers.DynamoConfig(api_version="v1alpha1")
         assert config.api_version == "v1alpha1"
+
+    def test_single_gpu_disagg_fixture_preserves_gpu_settings_overrides(self) -> None:
+        settings = GPUTestSettings(mem_util=0.05, max_model_len=2048)
+
+        config = _dynamo_config_fixture.__wrapped__(settings)
+
+        assert config.gpu_memory_utilization == 0.05
+        assert config.max_model_len == 2048
 
 
 class TestV1Beta1ManifestShape:

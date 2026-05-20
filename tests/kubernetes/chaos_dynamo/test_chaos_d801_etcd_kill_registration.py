@@ -66,9 +66,6 @@ async def test_d801_etcd_kill_during_registration_race(
     mid-boot" window is non-deterministic. Accepts the first PASS per plan
     section 4 risk note.
     """
-    pytest.skip(
-        "scaffold landed; awaiting Dynamo deployment with mutable decode-worker replicas"
-    )
     await _run_d801_assertion(
         faults, kubectl, dynamo_deployment_namespace, dynamo_endpoint_url
     )
@@ -189,12 +186,25 @@ async def _resolve_dgd_name(kubectl: Any, namespace: str) -> str:
 
 
 def _find_decode_component(dgd: dict[str, Any]) -> dict[str, Any] | None:
-    """Locate the decode-role component in a v1beta1 DGD spec."""
-    components = dgd.get("spec", {}).get("components", [])
-    return next(
-        (c for c in components if c.get("type") == "decode"),
-        None,
-    )
+    """Locate the decode-role component in either shipped DGD spec shape."""
+    spec = dgd.get("spec", {})
+    components = spec.get("components", [])
+    match = next((c for c in components if c.get("type") == "decode"), None)
+    if match is not None:
+        return match
+
+    services = spec.get("services", {})
+    if isinstance(services, dict):
+        return next(
+            (
+                service
+                for service in services.values()
+                if service.get("subComponentType") == "decode"
+                or service.get("componentType") == "decode"
+            ),
+            None,
+        )
+    return None
 
 
 async def _scale_decode(
@@ -219,12 +229,25 @@ async def _scale_decode(
         check=True,
     )
     dgd = orjson.loads(res.stdout)
-    components = dgd.get("spec", {}).get("components", [])
-    for component in components:
-        if component.get("type") == "decode":
-            component["replicas"] = replicas
-            break
-    patch = orjson.dumps({"spec": {"components": components}}).decode()
+    spec = dgd.get("spec", {})
+    components = spec.get("components")
+    if isinstance(components, list):
+        for component in components:
+            if component.get("type") == "decode":
+                component["replicas"] = replicas
+                break
+        patch_data = {"spec": {"components": components}}
+    else:
+        services = spec.get("services", {})
+        for service in services.values():
+            if (
+                service.get("subComponentType") == "decode"
+                or service.get("componentType") == "decode"
+            ):
+                service["replicas"] = replicas
+                break
+        patch_data = {"spec": {"services": services}}
+    patch = orjson.dumps(patch_data).decode()
     await kubectl.run(
         "patch",
         "dynamographdeployment",
@@ -406,7 +429,7 @@ async def _probe_traffic(dynamo_endpoint_url: str) -> tuple[bool, str]:
         async with (
             aiohttp.ClientSession(timeout=timeout) as session,
             session.post(
-                f"{dynamo_endpoint_url}/v1/chat/completions", json=body
+                f"{dynamo_endpoint_url.rstrip('/')}/chat/completions", json=body
             ) as resp,
         ):
             if resp.status == 200:

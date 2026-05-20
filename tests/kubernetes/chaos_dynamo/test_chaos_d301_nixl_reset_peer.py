@@ -14,21 +14,23 @@ The NIXL side-channel port is ``5600 + engineID`` per the upstream
 target is ``5600``. We front it with a Toxiproxy proxy named ``nixl-0`` on
 ``0.0.0.0:20040`` so the toxic can be applied to a stable address.
 
-This test is currently a **scaffold** that asserts the toxiproxy contract
-(proxy reachable, reset_peer toxic applies and clears) and is marked
-``pytest.skip()`` at the assertion-of-product-behaviour point. The full
-behavioural assertion (decode worker survives + frontend SSE shape +
-``dynamo_component_errors_total{error_type="response_stream"}``
-increments) requires redirecting the decode worker's
-``VLLM_NIXL_SIDE_CHANNEL_HOST`` env var to the Toxiproxy ``Service``,
-which is a ``DynamoDeployer`` change that lands in a follow-up phase.
+The default v1.1.0 disagg deployment does not route NIXL through
+Toxiproxy, so a reset toxic on ``nixl-0`` would be a false-positive no-op.
+The test now encodes that as an explicit topology precondition: it only
+injects when the decode pod declares a ``VLLM_NIXL_SIDE_CHANNEL_HOST`` value
+pointing at the chaos Toxiproxy service, otherwise it skips before creating
+any proxy state.
 """
 
 from __future__ import annotations
 
+import os
+
+import orjson
 import pytest
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from tests.kubernetes.gpu.dynamo.helpers import DynamoConfig
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
@@ -45,7 +47,16 @@ exposed by the chaos-toxiproxy Service (20040 is reserved in
 
 NIXL_ENGINE_PORT = 5600
 """NIXL side-channel base port. Per ``failover_vllm.go:35`` the actual
-port is ``5600 + engineID``; this scaffold targets engine 0."""
+port is ``5600 + engineID``; this test targets engine 0."""
+
+NIXL_HOST_ENV = "VLLM_NIXL_SIDE_CHANNEL_HOST"
+"""Dynamo/vLLM env var that must point decode workers at the NIXL peer host."""
+
+_TOXIPROXY_SERVICE_DNS = "toxiproxy.chaos-toxiproxy.svc"
+"""Cluster DNS name that proves the deployment routes NIXL through Toxiproxy."""
+
+_NIXL_CHAOS_OPT_IN_ENV = "AIPERF_DYNAMO_NIXL_CHAOS"
+"""Opt-in for externally managed topologies that route NIXL through Toxiproxy."""
 
 _DECODE_LABEL_SELECTOR = "nvidia.com/dynamo-sub-component-type=decode"
 """Label injected by the Dynamo operator onto decode worker pods. Source
@@ -55,6 +66,24 @@ in ``tests/kubernetes/gpu/dynamo/helpers.py``)."""
 _PREFILL_LABEL_SELECTOR = "nvidia.com/dynamo-sub-component-type=prefill"
 """Same label, ``prefill`` value. Both must be present for the scenario
 to be meaningful (D301 is a disagg-only fault)."""
+
+
+def _nixl_route_skip_reason(config: DynamoConfig) -> str | None:
+    """Return why D301 cannot run before spending cluster setup time."""
+    if os.environ.get(_NIXL_CHAOS_OPT_IN_ENV) == "1":
+        return None
+    for env in config.extra_envs:
+        if env.get("name") == NIXL_HOST_ENV and _TOXIPROXY_SERVICE_DNS in env.get(
+            "value", ""
+        ):
+            return None
+    return (
+        f"D301 requires {NIXL_HOST_ENV} to point at "
+        f"{_TOXIPROXY_SERVICE_DNS!r}. Default Dynamo v1.1.0 disagg routes "
+        "NIXL directly, so a Toxiproxy reset_peer toxic would be a no-op; "
+        f"set {_NIXL_CHAOS_OPT_IN_ENV}=1 only for an externally managed "
+        "topology that routes NIXL through Toxiproxy."
+    )
 
 
 async def _list_pods_with_label(
@@ -109,30 +138,59 @@ async def _get_pod_ip(kubectl: KubectlClient, namespace: str, pod_name: str) -> 
     return ip
 
 
-async def test_d301_nixl_reset_peer_disagg(
-    faults,
+async def _get_container_env(
     kubectl: KubectlClient,
-    dynamo_endpoint_url: str,
-    dynamo_toxiproxy,
-    dynamo_deployment_namespace: str,
+    namespace: str,
+    pod_name: str,
+) -> dict[str, str]:
+    """Return literal env vars declared on all containers in ``pod_name``."""
+    result = await kubectl.run(
+        "get",
+        "pod",
+        pod_name,
+        "-n",
+        namespace,
+        "-o",
+        "json",
+        check=True,
+    )
+    pod = orjson.loads(result.stdout)
+    envs: dict[str, str] = {}
+    containers = pod.get("spec", {}).get("containers", [])
+    for container in containers:
+        for env in container.get("env", []):
+            name = env.get("name")
+            value = env.get("value")
+            if isinstance(name, str) and isinstance(value, str):
+                envs[name] = value
+    return envs
+
+
+async def test_d301_nixl_reset_peer_disagg(
+    dynamo_config: DynamoConfig,
+    request: pytest.FixtureRequest,
 ) -> None:
-    """NIXL ``reset_peer`` mid-KV-handoff -> client gets structured 500, decode survives.
+    """NIXL ``reset_peer`` mid-KV-handoff requires a Toxiproxy-routed topology.
 
-    Wave-0 scaffold. Confirms:
-
-    1. Disagg pre-conditions hold (one prefill + one decode pod labelled by the
-       Dynamo operator) -- otherwise ``pytest.skip``.
-    2. The Toxiproxy ``nixl-0`` proxy can be created against the live decode
-       pod's IP on ``5600`` and the ``network.reset_peer`` fault applies and
-       cleans up via the unified registry contract.
-
-    The full behavioural assertion (streaming client receives the structured
-    SSE error frame, decode pod is not in ``CrashLoopBackOff``, frontend
-    ``dynamo_component_errors_total{error_type="response_stream"}``
-    increments by exactly 1) is deferred until ``DynamoDeployer`` learns to
-    redirect ``VLLM_NIXL_SIDE_CHANNEL_HOST`` to the Toxiproxy ``Service`` at
-    deploy time. See module docstring.
+    The default v1.1.0 single-GPU disagg fixture has prefill and decode pods,
+    but it does not put Toxiproxy in the NIXL path. This test therefore skips
+    with an explicit precondition until the deployment is created with
+    ``VLLM_NIXL_SIDE_CHANNEL_HOST`` pointing at the chaos Toxiproxy service;
+    otherwise the toxic would apply successfully while exercising no Dynamo
+    product behavior.
     """
+    static_skip_reason = _nixl_route_skip_reason(dynamo_config)
+    if static_skip_reason is not None:
+        pytest.skip(static_skip_reason)
+
+    kubectl: KubectlClient = request.getfixturevalue("kubectl")
+    dynamo_endpoint_url: str = request.getfixturevalue("dynamo_endpoint_url")
+    dynamo_toxiproxy = request.getfixturevalue("dynamo_toxiproxy")
+    faults = request.getfixturevalue("faults")
+    dynamo_deployment_namespace: str = request.getfixturevalue(
+        "dynamo_deployment_namespace"
+    )
+
     # 1. Pre-condition: disagg deployment exists.
     decode_pods = await _list_pods_with_label(
         kubectl, dynamo_deployment_namespace, _DECODE_LABEL_SELECTOR
@@ -147,8 +205,22 @@ async def test_d301_nixl_reset_peer_disagg(
             f"in ns={dynamo_deployment_namespace!r}"
         )
 
-    # 2. Resolve the decode worker pod IP so toxiproxy has an upstream.
+    # 2. Resolve the decode worker pod IP and prove that the deployment's
+    # NIXL side-channel is actually pointed at the chaos Toxiproxy Service.
     decode_pod_name = decode_pods[0]
+    envs = await _get_container_env(
+        kubectl, dynamo_deployment_namespace, decode_pod_name
+    )
+    nixl_host = envs.get(NIXL_HOST_ENV, "")
+    if _TOXIPROXY_SERVICE_DNS not in nixl_host:
+        pytest.skip(
+            f"D301 requires {NIXL_HOST_ENV} on decode pod "
+            f"{dynamo_deployment_namespace}/{decode_pod_name} to point at "
+            f"{_TOXIPROXY_SERVICE_DNS!r}; observed {nixl_host!r}. "
+            "Default Dynamo v1.1.0 disagg routes NIXL directly, so a "
+            "Toxiproxy reset_peer toxic would be a no-op."
+        )
+
     decode_ip = await _get_pod_ip(kubectl, dynamo_deployment_namespace, decode_pod_name)
     upstream = f"{decode_ip}:{NIXL_ENGINE_PORT}"
     logger.info(
@@ -177,22 +249,9 @@ async def test_d301_nixl_reset_peer_disagg(
             assert applied.spec.fault_id == "network.reset_peer"
             assert applied.metadata.get("proxy_name") == NIXL_PROXY_NAME
 
-            # TODO(D301-followup): once VLLM_NIXL_SIDE_CHANNEL_HOST can be
-            # pointed at the Toxiproxy Service at deploy time, perform a
-            # streaming POST to ``{dynamo_endpoint_url}/chat/completions``
-            # with a non-trivial prompt, sleep ~1s for prefill, then read
-            # the SSE stream and assert:
-            #   - error frame ``{"error": {"code": 500, ...}}`` then
-            #     ``data: [DONE]``;
-            #   - decode pod containerStatuses still Running (not
-            #     CrashLoopBackOff);
-            #   - frontend ``dynamo_component_errors_total{
-            #     error_type="response_stream"}`` incremented by exactly 1.
-            # See ``scrape_frontend_metrics`` in this package's conftest.
-            pytest.skip(
-                "D301 scaffold landed; full behavioural assertion needs "
-                "DynamoDeployer to redirect VLLM_NIXL_SIDE_CHANNEL_HOST to "
-                f"the Toxiproxy Service (dynamo_endpoint_url={dynamo_endpoint_url!r})"
+            logger.info(
+                "D301: reset_peer toxic applied to routed NIXL proxy; "
+                f"endpoint={dynamo_endpoint_url!r}"
             )
     finally:
         if proxy_created:

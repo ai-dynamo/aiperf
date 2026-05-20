@@ -172,11 +172,6 @@ async def test_d201_force_kill_frontend_under_sse(
         8. Scrape /metrics on the new pod and assert
            ``dynamo_frontend_disconnected_clients`` advanced past the snapshot.
     """
-    pytest.skip(
-        "scaffold landed; assertion-body pending real-cluster validation + "
-        "dynamo deployment fixture wiring"
-    )
-
     namespace = dynamo_deployment_namespace or DYNAMO_SERVER_NAMESPACE
 
     # 1. Snapshot disconnect counter (tolerate missing — first run, fresh pod).

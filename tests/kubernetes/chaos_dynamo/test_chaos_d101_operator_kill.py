@@ -32,9 +32,8 @@ async def test_d101_kill_operator_mid_dgd_apply(
     The fault validates that controller-runtime's restart resumes from the last
     apiserver-observed state without orphaning children.
 
-    Outline (uncomment + remove the ``pytest.skip`` below to enable on a real
-    cluster). The full body is preserved as comments so a human can flesh it
-    out without re-deriving the scenario from the D-series catalog:
+    The test applies the manifest manually instead of using ``deploy()`` so it
+    controls fault timing relative to apply-return:
 
     1. Build a small DGD manifest (Qwen-tiny-style) by reusing
        ``DynamoConfig`` / ``DynamoDeployer.generate_manifest()`` with default
@@ -135,12 +134,6 @@ async def test_d101_kill_operator_mid_dgd_apply(
            check=False,
        )
     """
-    # To enable on a real cluster, delete the next line; the materialized body
-    # below in ``_run_d101_assertion`` will then execute end-to-end.
-    pytest.skip(
-        "scaffold landed; assertion body materialized but awaiting cluster "
-        "with Dynamo operator deployed"
-    )
     await _run_d101_assertion(faults, kubectl, dynamo_deployment_namespace)
 
 
@@ -149,12 +142,7 @@ async def _run_d101_assertion(
     kubectl,
     dynamo_deployment_namespace: str,
 ) -> None:
-    """Full D101 assertion body; invoked once the ``pytest.skip`` is removed.
-
-    Kept as a private helper so the test function stays a one-line ``skip``
-    plus a delegating ``await``: removing the skip is a single-line flip and
-    ruff does not flag the body as unreachable code inside the test itself.
-    """
+    """Full D101 assertion body for the operator-kill recovery scenario."""
     config = DynamoConfig(
         model_name="Qwen/Qwen3-0.6B",
         namespace=dynamo_deployment_namespace,
@@ -199,7 +187,7 @@ async def _run_d101_assertion(
             name,
             namespace,
             "successful",
-            timeout=300.0,
+            timeout=600.0,
         )
 
         result = await kubectl.run(

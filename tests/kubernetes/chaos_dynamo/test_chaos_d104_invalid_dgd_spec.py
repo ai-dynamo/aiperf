@@ -1,55 +1,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""D104 -- invalid DGD spec surfaces as status.state=failed with Ready=False."""
+"""D104 -- invalid DGD spec is rejected with an actionable validation error."""
 
 from __future__ import annotations
 
 import orjson
 import pytest
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from dev.versions import DYNAMO_VERSION
-from tests.kubernetes.chaos_common.registry import InjectorRegistry
-from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
-logger = AIPerfLogger(__name__)
 
 
 async def test_d104_invalid_dgd_replicas_negative(
-    faults: InjectorRegistry,
     kubectl: KubectlClient,
+    dynamo_operator,  # noqa: ANN001 - fixture ensures the DGD CRD/webhook exists
 ) -> None:
-    """Apply DGD with replicas=-1; assert status.state=failed within 60s.
+    """Apply DGD with replicas=-1; assert admission rejects the invalid spec.
 
-    Targets: webhook validation + reconciler error path.
-
-    The assertion body is materialized in :py:func:`_run_d104_assertion` so the
-    outer test stays a one-line ``pytest.skip`` + helper call; flip the skip to
-    enable the test once a real cluster with the dynamo CRDs is wired into CI.
-    """
-    pytest.skip(
-        "scaffold landed; assertion body materialized but awaiting cluster with dynamo CRDs"
-    )
-    await _run_d104_assertion(faults, kubectl)
-
-
-async def _run_d104_assertion(
-    faults: InjectorRegistry,
-    kubectl: KubectlClient,
-) -> None:
-    """Full D104 assertion body; one-line unskip flip to run.
-
-    Applies a ``DynamoGraphDeployment`` with ``replicas=-1`` via the
-    ``crd.apply_invalid`` injector, then asserts the operator drives the CR
-    to ``status.state=failed`` with ``Ready=False`` and a reason or message
-    that names the invalid field. The ``faults.inject`` context manager
-    handles teardown on exit; the ``finally`` block is a belt-and-braces
-    delete in case the injector restore is bypassed.
+    The v1alpha1 CRD now rejects negative replicas at apiserver admission time,
+    before a CR exists for the operator to drive into ``status.state=failed``.
+    This keeps D104 runnable against its intended validation signal without
+    polling for a resource the apiserver correctly never creates.
     """
     name = "d104-test"
-    ns = "dynamo-server"
+    ns = "d104-invalid"
     manifest = {
         "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
@@ -69,52 +45,39 @@ async def _run_d104_assertion(
         },
     }
 
+    await kubectl.create_namespace(ns)
     try:
-        async with faults.inject(
-            "crd.apply_invalid",
-            target={"ns": ns, "name": name},
-            manifest=manifest,
-        ):
-            await wait_for_dgd_state(kubectl, name, ns, "failed", timeout=60)
+        try:
+            await kubectl.apply(orjson.dumps(manifest).decode(), namespace=ns)
+        except RuntimeError as exc:
+            message = str(exc).lower()
+        else:
+            pytest.fail("expected replicas=-1 manifest to fail admission")
 
-            result = await kubectl.run(
-                "get",
-                "dynamographdeployment",
-                name,
-                "-n",
-                ns,
-                "-o",
-                "json",
-                check=True,
-            )
-            dgd = orjson.loads(result.stdout)
+        assert "replicas" in message, (
+            f"expected admission error to mention replicas, got {message!r}"
+        )
+        assert "greater than or equal to 0" in message or "minimum" in message, (
+            "expected admission error to name the non-negative constraint, "
+            f"got {message!r}"
+        )
 
-            assert dgd["status"]["state"] == "failed", (
-                f"expected state=failed, got {dgd['status']['state']!r}"
-            )
-
-            conditions = dgd["status"].get("conditions", [])
-            ready_condition = next(
-                (c for c in conditions if c.get("type") == "Ready"), None
-            )
-            assert ready_condition is not None, "no Ready condition in status"
-            assert ready_condition["status"] == "False", (
-                f"expected Ready=False, got Ready={ready_condition['status']!r}"
-            )
-
-            reason = ready_condition.get("reason", "")
-            message = ready_condition.get("message", "")
-            haystack = f"{reason} {message}".lower()
-            assert "replicas" in haystack or "validation" in haystack, (
-                "expected reason/message to mention replicas or validation, "
-                f"got reason={reason!r} message={message!r}"
-            )
-    finally:
-        await kubectl.run(
-            "delete",
+        get_result = await kubectl.run(
+            "get",
             "dynamographdeployment",
             name,
             "-n",
+            ns,
+            check=False,
+        )
+        assert get_result.returncode != 0, (
+            "invalid DGD should be rejected at admission, not created for "
+            "operator reconciliation"
+        )
+    finally:
+        await kubectl.run(
+            "delete",
+            "namespace",
             ns,
             "--wait=false",
             "--ignore-not-found",

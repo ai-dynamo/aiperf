@@ -48,16 +48,11 @@ STEADY_STATE_SECS = 5
 REQUEST_INTERVAL_SECS = 0.5
 """Inter-request pause inside a single worker loop."""
 
-# Metric names are placeholders -- the dynamo frontend's actual counter
-# identifiers may differ. ``scrape_frontend_metrics`` returns a flat
-# ``{name: value}`` dict (see conftest._parse_prometheus_text), so the
-# assertion just looks them up with ``.get(..., 0.0)``; real-cluster
-# validation will pin these to whatever the frontend actually exports.
-COMPLETED_METRIC = "dynamo_frontend_requests_completed_total"
-"""Placeholder: monotonically increasing counter of fully served requests."""
+COMPLETED_METRIC = "dynamo_frontend_requests_total"
+"""Monotonically increasing frontend request counter exported by Dynamo v1.1.0."""
 
 ERRORS_METRIC = "dynamo_frontend_requests_errors_total"
-"""Placeholder: monotonically increasing counter of request-side errors."""
+"""Optional request-error counter; client-side errors are also counted below."""
 
 ERROR_RATE_DURING_OUTAGE_THRESHOLD = 0.20
 """Frontend may degrade but must keep serving: <20% errors during the outage."""
@@ -80,7 +75,6 @@ async def test_d803_nats_kill_mid_traffic(
     Materialized body lives in :py:func:`_run_d803_assertion` -- flip the
     ``pytest.skip`` below to run it on a real cluster.
     """
-    pytest.skip("scaffold landed; awaiting Dynamo deployment serving SSE traffic")
     await _run_d803_assertion(
         faults, kubectl, dynamo_endpoint_url, dynamo_deployment_namespace
     )
@@ -175,10 +169,14 @@ async def _run_d803_assertion(
         )
 
         # 6. Frontend must have stayed up during the outage.
-        completed_during = _metric_delta(
-            metrics_during, metrics_before, COMPLETED_METRIC
+        completed_during = max(
+            _metric_delta(metrics_during, metrics_before, COMPLETED_METRIC),
+            float(request_counter["completed"]),
         )
-        errors_during = _metric_delta(metrics_during, metrics_before, ERRORS_METRIC)
+        errors_during = max(
+            _metric_delta(metrics_during, metrics_before, ERRORS_METRIC),
+            float(request_counter["errors"]),
+        )
         assert completed_during > 0, (
             f"D803: frontend stopped serving during NATS outage "
             f"(completed_during={completed_during}, errors_during={errors_during}, "

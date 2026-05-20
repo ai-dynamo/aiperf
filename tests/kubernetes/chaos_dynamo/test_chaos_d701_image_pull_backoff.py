@@ -16,10 +16,9 @@ Scenario (D-series catalog, section D7xx):
   ``status.state`` to ``"failed"`` within 120 s of the pull failure
   becoming visible.
 
-Scaffold-grade: the assertion body is gated behind a ``pytest.skip`` until
-the test runs against a live Dynamo cluster. The full setup -- manifest,
-fault injection, polling loops -- is in place so a follow-up branch can
-delete the ``skip`` and exercise the path end-to-end.
+The test owns a short-lived namespace and applies a minimal DGD directly so
+failures point at the Dynamo operator's image-pull status propagation rather
+than at shared deployment fixture state.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ import orjson
 import pytest
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from tests.kubernetes.chaos_common.registry import InjectorRegistry
 from tests.kubernetes.chaos_dynamo.conftest import wait_for_dgd_state
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
@@ -39,7 +37,8 @@ logger = AIPerfLogger(__name__)
 
 
 _DGD_NAME = "d701-test"
-_DGD_NAMESPACE = "dynamo-server"
+_DGD_NAMESPACE = "d701-image-pull"
+_DGD_LABEL = "nvidia.com/dynamo-graph-deployment-name"
 _BOGUS_IMAGE = "nonexistent.example.com/dynamo:nope"
 _PULL_REASONS = ("ImagePullBackOff", "ErrImagePull")
 _POD_REASON_TIMEOUT_S = 60.0
@@ -47,8 +46,8 @@ _DGD_FAILED_TIMEOUT_S = 120.0
 
 
 async def test_d701_imagepullbackoff_surfaces_failed_state(
-    faults: InjectorRegistry,
     kubectl: KubectlClient,
+    dynamo_operator,  # noqa: ANN001 - fixture ensures the DGD operator is installed
 ) -> None:
     """Bogus container image -> kubelet ImagePullBackOff -> CR ``state=failed``.
 
@@ -59,12 +58,10 @@ async def test_d701_imagepullbackoff_surfaces_failed_state(
     instead of staring at indefinite Pending.
 
     Args:
-        faults: D-series fault registry; ``crd.apply_invalid`` is wired to
-            apply the supplied DGD manifest and delete the CR on restore.
         kubectl: Package-scoped :py:class:`KubectlClient` for pod polling
             and status reads.
+        dynamo_operator: Fixture that installs the Dynamo CRD and operator.
     """
-    pytest.skip("scaffold landed; assertion-body pending real-cluster validation")
 
     manifest = {
         "apiVersion": "nvidia.com/v1alpha1",
@@ -86,15 +83,21 @@ async def test_d701_imagepullbackoff_surfaces_failed_state(
         },
     }
 
-    async with faults.inject(
-        "crd.apply_invalid",
-        target={"ns": _DGD_NAMESPACE, "name": _DGD_NAME},
-        manifest=manifest,
-    ):
+    await kubectl.run(
+        "delete",
+        "namespace",
+        _DGD_NAMESPACE,
+        "--wait=true",
+        "--ignore-not-found",
+        check=False,
+    )
+    await kubectl.create_namespace(_DGD_NAMESPACE)
+    try:
+        await kubectl.apply(orjson.dumps(manifest).decode(), namespace=_DGD_NAMESPACE)
         pull_pod = await _wait_for_image_pull_failure(
             kubectl,
             namespace=_DGD_NAMESPACE,
-            label_selector=f"nvidia.com/dynamographdeployment={_DGD_NAME}",
+            label_selector=f"{_DGD_LABEL}={_DGD_NAME}",
             timeout=_POD_REASON_TIMEOUT_S,
         )
         assert pull_pod, (
@@ -128,6 +131,15 @@ async def test_d701_imagepullbackoff_surfaces_failed_state(
             "D701: DGD reached state=failed but status did not mention the "
             "image-pull cause; an opaque failure is not actionable. "
             f"Observed status: {status_text!r}"
+        )
+    finally:
+        await kubectl.run(
+            "delete",
+            "namespace",
+            _DGD_NAMESPACE,
+            "--wait=false",
+            "--ignore-not-found",
+            check=False,
         )
 
 

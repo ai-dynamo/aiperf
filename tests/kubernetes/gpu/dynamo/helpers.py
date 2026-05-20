@@ -56,6 +56,23 @@ _POD_UID_ENV = {
 # Conservative default for single-GPU KVBM (pinned memory).
 _KVBM_1GPU_DEFAULT_GB = 1
 
+_DYNAMO_WEBHOOK_WARMUP_NEEDLES = (
+    "failed calling webhook",
+    "dynamographdeployment",
+)
+_DYNAMO_WEBHOOK_TRANSIENT_NEEDLES = (
+    "connect: connection refused",
+    "no endpoints available for service",
+)
+
+
+def is_dynamo_webhook_warmup_error(exc: Exception) -> bool:
+    """Return True for transient Dynamo admission-webhook startup errors."""
+    message = str(exc).lower()
+    return all(needle in message for needle in _DYNAMO_WEBHOOK_WARMUP_NEEDLES) and any(
+        needle in message for needle in _DYNAMO_WEBHOOK_TRANSIENT_NEEDLES
+    )
+
 
 # ============================================================================
 # Backend enum
@@ -704,10 +721,29 @@ class DynamoDeployer:
         logger.debug(
             lambda manifest=manifest: f"[DYNAMO] Applying manifest:\n{manifest}"
         )
-        output = await self.kubectl.apply(manifest)
+        output = await self._apply_manifest_with_webhook_retry(manifest)
         self._deployed = True
 
         logger.info(f"[DYNAMO] kubectl apply output:\n{output.rstrip()}")
+
+    async def _apply_manifest_with_webhook_retry(self, manifest: str) -> str:
+        """Apply the manifest, tolerating Dynamo webhook warmup races."""
+        last_error: RuntimeError | None = None
+        for attempt in range(1, 7):
+            try:
+                return await self.kubectl.apply(manifest)
+            except RuntimeError as exc:
+                if not is_dynamo_webhook_warmup_error(exc):
+                    raise
+                last_error = exc
+                logger.info(
+                    lambda a=attempt, exc=exc: (
+                        f"[DYNAMO] admission webhook not ready on apply attempt {a}/6: {exc}"
+                    )
+                )
+                await asyncio.sleep(min(float(attempt), 5.0))
+        assert last_error is not None
+        raise last_error
 
     async def wait_for_ready(
         self,
