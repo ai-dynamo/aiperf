@@ -55,7 +55,7 @@ The file is a single JSON object with a top-level `data` array. Each element rep
 |-------|------|----------|-------------|
 | `data` | array | Yes | Top-level array of session objects |
 | `data[].session_id` | string | Yes | Unique identifier for the session |
-| `data[].payloads` | array | Yes | Ordered list of per-turn API request payloads |
+| `data[].payloads` | array | Yes (non-empty) | Ordered list of per-turn API request payloads |
 
 Each object inside `payloads` is sent directly to the server without modification. The loader does not inspect or validate payload contents.
 
@@ -77,7 +77,7 @@ aiperf profile \
 
 Raw payloads work with any endpoint type. The default `chat` endpoint provides structured response parsing (token counts, finish reasons). Use `--endpoint-type raw` only for non-standard APIs where no built-in endpoint matches.
 
-`--custom-dataset-type inputs_json` is required when replaying AIPerf-generated `inputs.json` files because AIPerf writes them with pretty-printed formatting (multi-line JSON), which the line-based auto-detection cannot parse. Always specify the dataset type explicitly for reliability.
+Auto-detection recognizes `inputs.json` files by parsing the full file and matching on the top-level `data` array containing objects with `payloads` keys, so `--custom-dataset-type inputs_json` is optional. Specify it explicitly for reliability -- it skips the auto-detection probe and avoids ambiguity if the file is later edited.
 
 ---
 
@@ -143,7 +143,7 @@ Choose `inputs_json` when you have a structured file with named sessions (especi
 
 ## Tips
 
-- **Always use `--custom-dataset-type inputs_json`** when replaying AIPerf-generated files. Auto-detection uses line-based JSON parsing, which fails on pretty-printed (multi-line) JSON files.
+- **Prefer `--custom-dataset-type inputs_json`** when replaying AIPerf-generated files. Auto-detection works (the loader parses the full file and matches on `data` + `payloads` keys), but specifying the type explicitly skips the probe and avoids ambiguity if the file is later edited.
 - **Payloads are sent verbatim**: The loader does not add, remove, or modify any fields.
 - **Turns within a session run sequentially**: Turn 0, then turn 1, etc. Different sessions run concurrently up to `--concurrency`.
 - **Check the artifact directory**: After any AIPerf run, look for `inputs.json` -- this is the file you can feed back for replay.

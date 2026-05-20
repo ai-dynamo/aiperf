@@ -52,22 +52,18 @@ aiperf profile \
 ```
 
 **Sample Output (Successful Run):**
+
+> Output below is illustrative — the exact format of `INFO`/`NOTICE` lines and the progress display depends on the UI mode you select (`--ui simple` vs the default Textual dashboard). Real `Phase ... started/complete` lines are emitted by `src/aiperf/timing/phase/runner.py` at NOTICE level.
+
 ```
-INFO     Starting AIPerf System
-INFO     Using Request_Rate strategy
-INFO     AIPerf System is WARMING UP
-
+NOTICE   Phase warmup started | target: 50 requests
 Warming Up: 50/50 |████████████████████████| 100% [00:05<00:00]
-
-INFO     Warmup completed, starting profiling phase
-INFO     AIPerf System is PROFILING
-
+NOTICE   Phase warmup complete | completed=50, cancelled=0, errors=0 | elapsed=5.23s
+NOTICE   Phase profiling started | target: 500 requests
 Profiling: 500/500 |████████████████████████| 100% [00:50<00:00]
-
-INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-rate10/
-
-JSON Export: artifacts/your-model-chat-rate10/profile_export_aiperf.json
+NOTICE   Phase profiling complete | completed=500, cancelled=0, errors=0 | elapsed=50.12s
+INFO     Results saved to: artifacts/your-model-openai-chat-request_rate10.0/
+JSON Export: artifacts/your-model-openai-chat-request_rate10.0/profile_export_aiperf.json
 ```
 
 This sends 50 warmup requests before the 500 profiling requests begin. Warmup metrics are discarded.
@@ -121,21 +117,14 @@ aiperf profile \
 
 **Sample Output (Successful Run):**
 ```
-INFO     Starting AIPerf System
-INFO     AIPerf System is WARMING UP
-INFO     Warmup concurrency: 20 (profiling will use: 100)
-
+NOTICE   Phase warmup started | target: 50 requests
 Warming Up: 50/50 |████████████████████████| 100% [00:12<00:00]
-
-INFO     Warmup completed, starting profiling phase
-INFO     AIPerf System is PROFILING
-
+NOTICE   Phase warmup complete | completed=50, cancelled=0, errors=0 | elapsed=12.04s
+NOTICE   Phase profiling started | target: 500 requests
 Profiling: 500/500 |████████████████████████| 100% [01:15<00:00]
-
-INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-concurrency100/
-
-JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
+NOTICE   Phase profiling complete | completed=500, cancelled=0, errors=0 | elapsed=75.31s
+INFO     Results saved to: artifacts/your-model-openai-chat-concurrency100/
+JSON Export: artifacts/your-model-openai-chat-concurrency100/profile_export_aiperf.json
 ```
 
 Warmup runs at 20 concurrent requests, then profiling runs at 100.
@@ -156,21 +145,14 @@ aiperf profile \
 
 **Sample Output (Successful Run):**
 ```
-INFO     Starting AIPerf System
-INFO     AIPerf System is WARMING UP
-INFO     Warmup rate: 10.0 req/s (profiling will use: 50.0 req/s)
-
+NOTICE   Phase warmup started | target: 30.0s duration
 Warming Up: [00:30] - Running for 30 seconds...
-
-INFO     Warmup completed, starting profiling phase
-INFO     AIPerf System is PROFILING
-
+NOTICE   Phase warmup complete | completed=298, cancelled=0, errors=0 | elapsed=30.04s
+NOTICE   Phase profiling started | target: 120.0s duration
 Profiling: [02:00] - Running for 120 seconds...
-
-INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-rate50/
-
-JSON Export: artifacts/your-model-chat-rate50/profile_export_aiperf.json
+NOTICE   Phase profiling complete | completed=5980, cancelled=0, errors=0 | elapsed=120.07s
+INFO     Results saved to: artifacts/your-model-openai-chat-request_rate50.0/
+JSON Export: artifacts/your-model-openai-chat-request_rate50.0/profile_export_aiperf.json
 ```
 
 Warmup sends at 10 QPS, then profiling runs at 50 QPS.
@@ -193,21 +175,14 @@ aiperf profile \
 
 **Sample Output (Successful Run):**
 ```
-INFO     Starting AIPerf System
-INFO     AIPerf System is WARMING UP
-INFO     Warmup pattern: constant (profiling will use: gamma with smoothness 2.0)
-
+NOTICE   Phase warmup started | target: 30.0s duration
 Warming Up: [00:30] - Running for 30 seconds...
-
-INFO     Warmup completed, starting profiling phase
-INFO     AIPerf System is PROFILING
-
+NOTICE   Phase warmup complete | completed=596, cancelled=0, errors=0 | elapsed=30.05s
+NOTICE   Phase profiling started | target: 120.0s duration
 Profiling: [02:00] - Running for 120 seconds...
-
-INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-rate20/
-
-JSON Export: artifacts/your-model-chat-rate20/profile_export_aiperf.json
+NOTICE   Phase profiling complete | completed=2387, cancelled=0, errors=0 | elapsed=120.09s
+INFO     Results saved to: artifacts/your-model-openai-chat-request_rate20.0/
+JSON Export: artifacts/your-model-openai-chat-request_rate20.0/profile_export_aiperf.json
 ```
 
 Warmup uses predictable constant arrivals; profiling uses gamma arrivals with reduced variance (smoothness > 1 = smoother than Poisson).
@@ -232,22 +207,14 @@ aiperf profile \
 
 **Sample Output (Successful Run):**
 ```
-INFO     Starting AIPerf System
-INFO     AIPerf System is WARMING UP
-INFO     Warmup ramping from 1 to 50 over 10 seconds
-
+NOTICE   Phase warmup started | target: 200 requests
 Warming Up: 200/200 |████████████████████████| 100% [00:15<00:00]
-
-INFO     Warmup completed, starting profiling phase
-INFO     AIPerf System is PROFILING
-INFO     Profiling ramping from 1 to 100 over 30 seconds
-
+NOTICE   Phase warmup complete | completed=200, cancelled=0, errors=0 | elapsed=15.18s
+NOTICE   Phase profiling started | target: 120.0s duration
 Profiling: [02:00] - Running for 120 seconds...
-
-INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-concurrency100/
-
-JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
+NOTICE   Phase profiling complete | completed=11423, cancelled=0, errors=0 | elapsed=120.04s
+INFO     Results saved to: artifacts/your-model-openai-chat-concurrency100/
+JSON Export: artifacts/your-model-openai-chat-concurrency100/profile_export_aiperf.json
 ```
 
 **Timeline:**
@@ -375,15 +342,15 @@ aiperf profile \
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--warmup-request-count` | int | None | Stop warmup after this many requests |
-| `--num-warmup-sessions` | int | None | Stop warmup after this many sessions complete |
+| `--warmup-request-count` | int | None | Stop warmup after this many requests (alias: `--num-warmup-requests`, GenAI-Perf compat) |
+| `--num-warmup-sessions` | int | None | Stop **starting new** warmup sessions after this many; in-flight sessions complete their remaining turns |
 | `--warmup-duration` | float | None | Stop warmup after this many seconds |
 
 ### Load Settings (inherit from profiling if not set)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--warmup-concurrency` | int | `--concurrency` | Session concurrency during warmup |
+| `--warmup-concurrency` | int | `--concurrency` | Concurrency during warmup |
 | `--warmup-prefill-concurrency` | int | `--prefill-concurrency` | Prefill concurrency during warmup |
 | `--warmup-request-rate` | float | `--request-rate` | Request rate during warmup |
 | `--warmup-arrival-pattern` | str | `--arrival-pattern` | Arrival pattern during warmup |
@@ -401,6 +368,7 @@ aiperf profile \
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--warmup-grace-period` | float | ∞ | Max seconds to wait for warmup responses after stop condition. Requires `--warmup-duration`. |
+| `--profile-run-disable-warmup-after-first` | bool | True | Multi-run only (`--num-profile-runs > 1`): when True (default), only the first run includes warmup; subsequent runs measure pure steady-state. Pass `--no-profile-run-disable-warmup-after-first` to include warmup on every run. |
 
 ## Troubleshooting
 

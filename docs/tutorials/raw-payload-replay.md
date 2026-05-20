@@ -19,6 +19,13 @@ This is useful when you:
 - **Are testing non-standard APIs** where AIPerf's built-in endpoint formatters do not apply
 - **Want to benchmark with pre-built payloads** exported from another tool or logging pipeline
 
+| Property | Value |
+|----------|-------|
+| Default sampling | Sequential |
+| Multi-turn support | Yes (directory mode) |
+| Context mode | `message_array_with_responses` |
+| Timing control | No |
+
 ---
 
 ## Input Modes
@@ -155,7 +162,7 @@ For non-standard APIs where no built-in endpoint matches, use `--endpoint-type r
 | `--endpoint-type` | No | `chat` | Any endpoint type works; `raw` available for non-standard APIs |
 | `--custom-dataset-type` | No | Auto-detected | Set to `raw_payload` to force this loader |
 | `--streaming` | No | `false` | Enable streaming responses |
-| `--url` | No | `localhost:8000` | Server base URL (endpoint type appends the API path) |
+| `--url` | No | `localhost:8000` | Server base URL(s); repeat for load balancing (endpoint type appends the API path) |
 | `--concurrency` | No | -- | Number of concurrent users |
 | `--dataset-sampling-strategy` | No | `sequential` | `sequential`, `random`, or `shuffle` |
 
