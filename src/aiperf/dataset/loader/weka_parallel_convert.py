@@ -35,6 +35,8 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset._mp_context import get_loader_mp_context
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
 
+_JOIN_EPSILON_SECONDS = 1e-6
+
 
 class _WekaParentTurnDict(TypedDict):
     """One reconstructed turn (parent or child) shipped from worker -> orchestrator."""
@@ -49,7 +51,7 @@ class _WekaParentTurnDict(TypedDict):
 
 
 class _WekaBranchDict(TypedDict):
-    """Subagent SPAWN branch metadata for one (preceding, following) anchor pair."""
+    """Subagent SPAWN branch metadata for one tiered join bucket."""
 
     branch_id: str
     child_session_ids: list[str]
@@ -88,6 +90,10 @@ class _WekaNormalRequestPayload(TypedDict):
     think_time: float | None
     # Only present in parent normals (not in child requests):
     capped_output_length: NotRequired[int]
+    # Present when --trace-idle-gap-cap-seconds has rewritten the per-trace
+    # timeline before workers compute turns.
+    effective_t: NotRequired[float]
+    effective_delay_ms: NotRequired[float | None]
 
 
 class _WekaSubagentMarkerPayload(TypedDict):
@@ -97,9 +103,8 @@ class _WekaSubagentMarkerPayload(TypedDict):
     ``child_session_ids`` enumerates the per-stream child SIDs the worker must
     register on the SPAWN branch (legacy single-stream subagents emit one
     SID; multi-stream subagents emit ``:s0`` / ``:s1`` / ...).
-    ``sa_end_seconds`` is the subagent's recorded end time, used by the
-    worker to reclassify a branch as ``is_background`` when the subagent
-    ran past the following parent turn.
+    ``sa_end_seconds`` is the subagent's recorded end time, used by the worker
+    to select the first later parent turn that should join this child.
     """
 
     agent_id: str
@@ -107,6 +112,7 @@ class _WekaSubagentMarkerPayload(TypedDict):
     system_tokens: int
     child_session_ids: list[str]
     sa_end_seconds: float
+    effective_sa_end_seconds: NotRequired[float]
 
 
 class _WekaParentPayload(TypedDict):
@@ -341,13 +347,17 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 seed=seed,
             )
 
-        t_ms = req["t"] * 1000.0
-        if k == 0:
-            delay_ms: float | None = None
-        elif task.think_time_only and req.get("think_time") is not None:
-            delay_ms = req["think_time"] * 1000.0
+        if "effective_t" in req:
+            t_ms = req["effective_t"] * 1000.0
+            delay_ms = req.get("effective_delay_ms")
         else:
-            delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
+            t_ms = req["t"] * 1000.0
+            if k == 0:
+                delay_ms = None
+            elif task.think_time_only and req.get("think_time") is not None:
+                delay_ms = req["think_time"] * 1000.0
+            else:
+                delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
 
@@ -364,56 +374,98 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         )
         outer_to_turn_pos[outer_idx] = len(parent_turns) - 1
 
-    # Subagent grouping: anchor pair (preceding parent turn pos, following parent turn pos).
-    groups: dict[tuple[int | None, int | None], list[_WekaSubagentMarkerPayload]] = (
+    # Subagent grouping: spawning parent turn plus computed join turn. This
+    # mirrors the serial loader and preserves tiered joins for mixed-duration
+    # sibling subagents.
+    #
+    # Examples:
+    #   parent[0] t=0
+    #   subagent A ends t=6
+    #   subagent B ends t=12.5
+    #   subagent C ends t=24
+    #   parent[1] t=6
+    #   parent[2] t=20
+    #
+    #   A joins parent[1] because parent[1].t >= A.end.
+    #   B joins parent[2] because parent[1].t < B.end <= parent[2].t.
+    #   C is background because no later parent turn reaches C.end.
+    #
+    # Additional examples:
+    #   Shared join group:
+    #     parent[0] t=0
+    #     subagent A ends t=4
+    #     subagent B ends t=5
+    #     parent[1] t=6
+    #     => A and B share group (parent[0], parent[1]); parent[1]
+    #        waits for both.
+    #
+    #   Tiered siblings:
+    #     parent[0] t=0
+    #     subagent A ends t=4
+    #     subagent B ends t=9
+    #     parent[1] t=6
+    #     parent[2] t=12
+    #     => A gates parent[1]; B keeps running through parent[1] and
+    #        gates parent[2].
+    #
+    #   No spawning parent:
+    #     subagent A marker t=1 appears before the first retained
+    #     parent turn
+    #     parent[0] t=5
+    #     => A is dropped because no parent turn can spawn it.
+    #
+    #   Equality joins:
+    #     parent[0] t=0
+    #     subagent A ends t=10
+    #     parent[1] t=10
+    #     => A joins parent[1] within _JOIN_EPSILON_SECONDS.
+    groups: dict[tuple[int, int | None], list[_WekaSubagentMarkerPayload]] = (
         defaultdict(list)
     )
-    group_order: list[tuple[int | None, int | None]] = []
-    group_following_outer: dict[tuple[int | None, int | None], int | None] = {}
-    outer_to_t: dict[int, float] = {oi: req["t"] for oi, req in normals}
+    group_order: list[tuple[int, int | None]] = []
+    outer_to_t: dict[int, float] = {
+        oi: req.get("effective_t", req["t"]) for oi, req in normals
+    }
     dropped_agent_ids: set[str] = set()
     for sa_outer_idx, sa_entry in parent["subagents"]:
         preceding = max(
             (pos for oi, pos in outer_to_turn_pos.items() if oi < sa_outer_idx),
             default=None,
         )
-        following = min(
-            (pos for oi, pos in outer_to_turn_pos.items() if oi > sa_outer_idx),
-            default=None,
-        )
         if preceding is None:
             dropped_agent_ids.add(sa_entry["agent_id"])
             continue
-        following_outer_idx = min(
-            (oi for oi in outer_to_t if oi > sa_outer_idx),
-            default=None,
-        )
-        key = (preceding, following)
+
+        join_turn: int | None = None
+        for oi, pos in sorted(outer_to_turn_pos.items()):
+            if oi <= sa_outer_idx:
+                continue
+            sa_end_seconds = sa_entry.get(
+                "effective_sa_end_seconds", sa_entry["sa_end_seconds"]
+            )
+            if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= sa_end_seconds:
+                join_turn = pos
+                break
+
+        key = (preceding, join_turn)
         if key not in groups:
             group_order.append(key)
-            group_following_outer[key] = following_outer_idx
         groups[key].append(sa_entry)
 
     branches: list[_WekaBranchDict] = []
-    for preceding, following in group_order:
-        entries = groups[(preceding, following)]
+    for preceding, join_turn in group_order:
+        entries = groups[(preceding, join_turn)]
         child_sids: list[str] = []
         for e in entries:
             child_sids.extend(e["child_session_ids"])
-        is_background = following is None
-        if not is_background:
-            following_outer_idx = group_following_outer[(preceding, following)]
-            following_t = outer_to_t[following_outer_idx]
-            sa_end_t = max(e["sa_end_seconds"] for e in entries)
-            if sa_end_t > following_t:
-                is_background = True
+        is_background = join_turn is None
         branches.append(
             {
                 "branch_id": f"{task.trace_id}:spawn:{entries[0]['agent_id']}",
                 "child_session_ids": child_sids,
                 "is_background": is_background,
                 "preceding_turn": preceding,
-                "following_turn": None if is_background else following,
+                "following_turn": join_turn,
             }
         )
 
@@ -456,13 +508,17 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     curr_in_tokens=creq["input_length"],
                     seed=seed,
                 )
-            t_ms = creq["t"] * 1000.0
-            if k == 0:
-                child_delay_ms: float | None = None
-            elif task.think_time_only and creq.get("think_time") is not None:
-                child_delay_ms = creq["think_time"] * 1000.0
+            if "effective_t" in creq:
+                t_ms = creq["effective_t"] * 1000.0
+                child_delay_ms = creq.get("effective_delay_ms")
             else:
-                child_delay_ms = t_ms - creqs[k - 1]["t"] * 1000.0
+                t_ms = creq["t"] * 1000.0
+                if k == 0:
+                    child_delay_ms = None
+                elif task.think_time_only and creq.get("think_time") is not None:
+                    child_delay_ms = creq["think_time"] * 1000.0
+                else:
+                    child_delay_ms = t_ms - creqs[k - 1]["t"] * 1000.0
             if child_delay_ms is not None:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 

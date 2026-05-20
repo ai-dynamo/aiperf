@@ -21,9 +21,10 @@ def _user_config(
     use_think_time_only: bool = True,
     ignore_trace_delays: bool = False,
     synthesis_max_isl: int | None = None,
-    loader: str | None = "semianalysis_cc_traces_weka_no_subagents",
+    loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
     benchmark_duration: float | None = 900.0,
-    inter_turn_delay_cap_seconds: float | None = 60.0,
+    inter_turn_delay_cap_seconds: float | None = None,
+    trace_idle_gap_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
@@ -40,11 +41,13 @@ def _user_config(
     cfg.input.detected_loader = loader
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
+    cfg.loadgen.trace_idle_gap_cap_seconds = trace_idle_gap_cap_seconds
     cfg.input.prompt.cache_bust.target = cache_bust_target
     # Default: explicit-set flags off, so auto-injection paths are exercised
     # unless a test overrides them.
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = False
     cfg.input.prompt.cache_bust._target_explicitly_set = False
     return cfg
 
@@ -102,11 +105,14 @@ def test_absent_ignore_eos_injects_and_logs(caplog: pytest.LogCaptureFixture) ->
     assert any("ignore_eos" in r.message for r in caplog.records)
 
 
-def test_use_think_time_only_false_explicit_raises() -> None:
+def test_use_think_time_only_false_explicit_does_not_raise() -> None:
+    """AgentX MVP no longer locks --use-think-time-only; trace_idle_gap_cap_seconds
+    supersedes think-time-based delays in the weka loader."""
     cfg = _user_config(use_think_time_only=False, extra_inputs={"ignore_eos": True})
     cfg.input._use_think_time_only_explicitly_set = True
-    with pytest.raises(ScenarioLockError):
-        validate_scenario(cfg)
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
 
 
 def test_synthesis_max_isl_set_raises() -> None:
@@ -144,26 +150,38 @@ def test_random_seed_unset_auto_injected_and_logged(
     assert any("random_seed" in r.message for r in caplog.records)
 
 
-def test_inter_turn_delay_cap_explicit_other_value_raises() -> None:
+def test_inter_turn_delay_cap_explicit_other_value_does_not_raise() -> None:
+    """AgentX MVP no longer locks --inter-turn-delay-cap-seconds;
+    trace_idle_gap_cap_seconds supersedes the per-turn cap in the weka loader."""
     cfg = _user_config(
         inter_turn_delay_cap_seconds=30.0, extra_inputs={"ignore_eos": True}
     )
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = True
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
+
+
+def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
+    cfg = _user_config(
+        trace_idle_gap_cap_seconds=30.0, extra_inputs={"ignore_eos": True}
+    )
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = True
     with pytest.raises(ScenarioLockError):
         validate_scenario(cfg)
 
 
-def test_inter_turn_delay_cap_unset_auto_filled(
+def test_trace_idle_gap_cap_unset_auto_filled(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     cfg = _user_config(
-        inter_turn_delay_cap_seconds=None, extra_inputs={"ignore_eos": True}
+        trace_idle_gap_cap_seconds=None, extra_inputs={"ignore_eos": True}
     )
-    cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = False
     with caplog.at_level("INFO"):
         outcome = validate_scenario(cfg)
     assert outcome.violations == []
-    assert cfg.loadgen.inter_turn_delay_cap_seconds == 60.0
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
 
 
 def test_unsafe_override_converts_errors_to_warnings(
@@ -260,12 +278,14 @@ class _ReadOnlyTimingModeConfig:
         self.input.ignore_trace_delays = False
         self.input.random_seed = 42
         self.input.synthesis.max_isl = None
-        self.input.detected_loader = "semianalysis_cc_traces_weka_no_subagents"
+        self.input.detected_loader = "semianalysis_cc_traces_weka_with_subagents"
         self.input._use_think_time_only_explicitly_set = False
         self.loadgen = MagicMock()
         self.loadgen.benchmark_duration = 900.0
-        self.loadgen.inter_turn_delay_cap_seconds = 60.0
+        self.loadgen.inter_turn_delay_cap_seconds = None
         self.loadgen._inter_turn_delay_cap_explicitly_set = False
+        self.loadgen.trace_idle_gap_cap_seconds = 60.0
+        self.loadgen._trace_idle_gap_cap_explicitly_set = False
         self.prompt = MagicMock()
         self.input.prompt.cache_bust.target = CacheBustTarget.FIRST_TURN_PREFIX
 

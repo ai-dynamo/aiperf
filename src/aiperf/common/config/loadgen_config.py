@@ -19,6 +19,7 @@ class LoadGeneratorConfig(BaseConfig):
     """A configuration class for defining top-level load generator settings."""
 
     _inter_turn_delay_cap_explicitly_set: bool = False
+    _trace_idle_gap_cap_explicitly_set: bool = False
 
     @model_validator(mode="after")
     def _record_explicit_set_flags(self) -> Self:
@@ -31,6 +32,9 @@ class LoadGeneratorConfig(BaseConfig):
         """
         self._inter_turn_delay_cap_explicitly_set = (
             "inter_turn_delay_cap_seconds" in self.model_fields_set
+        )
+        self._trace_idle_gap_cap_explicitly_set = (
+            "trace_idle_gap_cap_seconds" in self.model_fields_set
         )
         return self
 
@@ -387,6 +391,27 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--inter-turn-delay-cap-seconds",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
+            "For Weka trace replay, AIPerf looks at all parent and subagent request "
+            "submission timestamps within one root trace, compresses long gaps between "
+            "consecutive request submissions, and derives turn delays from the "
+            "compressed per-trace timeline. Original request api_time values are not "
+            "used to decide these idle gaps. When set for Weka, this takes precedence over "
+            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
+            "delays are not separately capped. Defaults to None (no per-trace "
+            "idle-gap compression).",
+        ),
+        CLIParameter(
+            name=("--trace-idle-gap-cap-seconds",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None

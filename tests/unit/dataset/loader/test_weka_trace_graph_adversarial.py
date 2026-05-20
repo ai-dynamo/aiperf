@@ -22,6 +22,7 @@ def _mk_user_config(*, max_isl=None, max_osl=None, start=None, end=None):
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
     uc.loadgen.inter_turn_delay_cap_seconds = None
+    uc.loadgen.trace_idle_gap_cap_seconds = None
     uc.input.synthesis.max_isl = max_isl
     uc.input.synthesis.max_osl = max_osl
     uc.input.max_context_length = None

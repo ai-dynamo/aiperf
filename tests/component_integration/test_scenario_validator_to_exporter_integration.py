@@ -65,9 +65,10 @@ def _user_config(
     use_think_time_only: bool = True,
     ignore_trace_delays: bool = False,
     synthesis_max_isl: int | None = None,
-    loader: str | None = "semianalysis_cc_traces_weka_no_subagents",
+    loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
     benchmark_duration: float | None = 900.0,
-    inter_turn_delay_cap_seconds: float | None = 60.0,
+    inter_turn_delay_cap_seconds: float | None = None,
+    trace_idle_gap_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget | None = None,
@@ -89,8 +90,10 @@ def _user_config(
     cfg.input.detected_loader = loader
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
+    cfg.loadgen.trace_idle_gap_cap_seconds = trace_idle_gap_cap_seconds
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = False
     # Scenario lock requires cache_bust.target=FIRST_TURN_PREFIX. Default to it
     # so tests targeting OTHER invariants don't trip the cache-bust check.
     cfg.input.prompt.cache_bust.target = (
@@ -316,23 +319,23 @@ def test_validator_auto_injects_ignore_eos_when_absent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5: inter_turn_delay_cap_seconds=None + not explicitly set ->
+# Test 5: trace_idle_gap_cap_seconds=None + not explicitly set ->
 # validator auto-sets it to the spec's locked 60.0.
 # ---------------------------------------------------------------------------
 
 
-def test_validator_auto_sets_inter_turn_delay_cap_when_unset() -> None:
+def test_validator_auto_sets_trace_idle_gap_cap_when_unset() -> None:
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
-        inter_turn_delay_cap_seconds=None,
+        trace_idle_gap_cap_seconds=None,
     )
-    cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.loadgen._trace_idle_gap_cap_explicitly_set = False
 
     outcome = validate_scenario(cfg)
 
     assert outcome.violations == []
     assert outcome.submission_valid is True
-    assert cfg.loadgen.inter_turn_delay_cap_seconds == 60.0
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
 
 
 # ---------------------------------------------------------------------------

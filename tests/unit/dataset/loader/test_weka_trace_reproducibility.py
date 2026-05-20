@@ -43,6 +43,7 @@ RUNNER = textwrap.dedent("""
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
     uc.loadgen.inter_turn_delay_cap_seconds = None
+    uc.loadgen.trace_idle_gap_cap_seconds = None
     uc.input.synthesis.max_isl = None
     uc.input.synthesis.max_osl = None
     uc.input.max_context_length = None
