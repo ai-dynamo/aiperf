@@ -812,6 +812,11 @@
     ],
     [
       "C901",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
+    ],
+    [
+      "C901",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
     ],
@@ -1229,6 +1234,11 @@
       "PLR0912",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "PLR0912",

@@ -373,6 +373,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/agentic_code_gen/reporting/comparison.py",
       "render_comparison_text"
     ],

@@ -67,6 +67,14 @@ class ConversationBranchInfo(AIPerfBaseModel):
         "Ignored for SPAWN-mode branches (SPAWN parents always continue; use "
         "``DagSpawn.join_at`` to control suspension).",
     )
+    subagent_type: str | None = Field(
+        default=None,
+        description="Optional SPAWN-only sub-agent classification used by DAG "
+        "benchmark bucket metrics and future routing policies. Free-form so "
+        "loaders can pass through whatever the upstream recorder tagged the "
+        "agent as (e.g. 'Explore', 'Codex Subagent', user-defined task types). "
+        "Must be None when mode=FORK (FORK children inherit the parent's role).",
+    )
 
     @field_validator("dispatch_timing")
     @classmethod
@@ -79,5 +87,19 @@ class ConversationBranchInfo(AIPerfBaseModel):
                 "(background pre-session sub-agent dispatch). FORK children "
                 "inherit the parent's context and must dispatch after the "
                 "parent turn - drop dispatch_timing or change mode to SPAWN."
+            )
+        return v
+
+    @field_validator("subagent_type")
+    @classmethod
+    def _validate_subagent_type_requires_spawn(
+        cls, v: str | None, info: ValidationInfo
+    ) -> str | None:
+        if v is not None and info.data.get("mode") == ConversationBranchMode.FORK:
+            raise ValueError(
+                "subagent_type is a SPAWN-only classification (used for "
+                "agentic-benchmark bucket metrics). FORK children inherit the "
+                "parent's role; they have no subagent_type. Drop the field or "
+                "change mode to SPAWN."
             )
         return v
