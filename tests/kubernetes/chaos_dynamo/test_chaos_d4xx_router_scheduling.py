@@ -18,6 +18,7 @@ import pytest
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
 from tests.kubernetes.chaos_dynamo.conftest import scrape_frontend_metrics
+from tests.kubernetes.chaos_dynamo.metrics_helpers import metric_delta
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
@@ -241,8 +242,8 @@ async def test_d402_rapid_decode_topology_churn(
     assert metrics_after, (
         "D402: frontend /metrics scrape returned no samples after churn"
     )
-    completed_delta = _metric_delta(metrics_after, metrics_before, _COMPLETED_METRIC)
-    errors_delta = _metric_delta(metrics_after, metrics_before, _ERRORS_METRIC)
+    completed_delta = metric_delta(metrics_after, metrics_before, _COMPLETED_METRIC)
+    errors_delta = metric_delta(metrics_after, metrics_before, _ERRORS_METRIC)
     assert completed_delta > 0, (
         f"D402: frontend served client traffic but {_COMPLETED_METRIC!r} did not "
         f"increase after topology churn (replacement={replacement!r}, "
@@ -384,10 +385,6 @@ def _pod_is_ready(item: dict[str, Any]) -> bool:
         and condition.get("status") == "True"
         for condition in conditions
     )
-
-
-def _metric_delta(after: dict[str, float], before: dict[str, float], key: str) -> float:
-    return after.get(key, 0.0) - before.get(key, 0.0)
 
 
 # D403
@@ -1026,10 +1023,8 @@ async def test_d407_frozen_metrics_do_not_wedge_routing(
         before=metrics_before,
         case="D407",
     )
-    errors_delta = _d407_d417_metric_delta(
-        metrics_after, metrics_before, _d407_d417_ERRORS_METRIC
-    )
-    completed_delta = _d407_d417_metric_delta(
+    errors_delta = metric_delta(metrics_after, metrics_before, _d407_d417_ERRORS_METRIC)
+    completed_delta = metric_delta(
         metrics_after, metrics_before, _d407_d417_COMPLETED_METRIC
     )
     assert errors_delta <= completed_delta, (
@@ -1420,12 +1415,6 @@ def _select_metric(metrics: dict[str, Any], candidates: tuple[str, ...]) -> str 
     return None
 
 
-def _d407_d417_metric_delta(
-    after: dict[str, Any], before: dict[str, Any], key: str
-) -> float:
-    return float(after.get(key, 0.0)) - float(before.get(key, 0.0))
-
-
 async def _wait_for_metric_delta(
     kubectl: KubectlClient,
     namespace: str,
@@ -1439,7 +1428,7 @@ async def _wait_for_metric_delta(
     last_metrics: dict[str, float] = {}
     while time.monotonic() < deadline:
         last_metrics = await scrape_frontend_metrics(kubectl, namespace)
-        if _d407_d417_metric_delta(last_metrics, before, metric_name) > 0:
+        if metric_delta(last_metrics, before, metric_name) > 0:
             return last_metrics
         await asyncio.sleep(1.0)
     pytest.fail(

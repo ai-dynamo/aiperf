@@ -24,6 +24,7 @@ import pytest
 from aiperf.common.aiperf_logger import AIPerfLogger
 from dev.versions import DYNAMO_VERSION
 from tests.kubernetes.chaos_dynamo.conftest import scrape_frontend_metrics
+from tests.kubernetes.chaos_dynamo.metrics_helpers import metric_delta
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 pytestmark = [pytest.mark.k8s_slow]
@@ -662,11 +663,11 @@ async def _run_d803_assertion(
 
         # 6. Frontend must have stayed up during the outage.
         completed_during = max(
-            _D803_metric_delta(metrics_during, metrics_before, D803_COMPLETED_METRIC),
+            metric_delta(metrics_during, metrics_before, D803_COMPLETED_METRIC),
             float(request_counter["completed"]),
         )
         errors_during = max(
-            _D803_metric_delta(metrics_during, metrics_before, ERRORS_METRIC),
+            metric_delta(metrics_during, metrics_before, ERRORS_METRIC),
             float(request_counter["errors"]),
         )
         assert completed_during > 0, (
@@ -683,12 +684,10 @@ async def _run_d803_assertion(
         )
 
         # 7. Recovery must be clean once NATS is back.
-        completed_recovery = _D803_metric_delta(
+        completed_recovery = metric_delta(
             metrics_after, metrics_during, D803_COMPLETED_METRIC
         )
-        errors_recovery = _D803_metric_delta(
-            metrics_after, metrics_during, ERRORS_METRIC
-        )
+        errors_recovery = metric_delta(metrics_after, metrics_during, ERRORS_METRIC)
         if completed_recovery > 0:
             error_rate_recovery = errors_recovery / completed_recovery
             assert error_rate_recovery < ERROR_RATE_RECOVERY_THRESHOLD, (
@@ -714,18 +713,6 @@ async def _run_d803_assertion(
         for w in workers:
             with contextlib.suppress(asyncio.CancelledError):
                 await w
-
-
-def _D803_metric_delta(
-    after: dict[str, float], before: dict[str, float], key: str
-) -> float:
-    """Return the increment in a counter metric between two scrapes.
-
-    Missing keys default to 0.0 so a metric that never appears on the
-    frontend (e.g. placeholder name mismatch) reads as no change rather
-    than raising ``KeyError`` mid-assertion.
-    """
-    return after.get(key, 0.0) - before.get(key, 0.0)
 
 
 # D804
@@ -894,13 +881,21 @@ async def _run_slow_close_assertion(
         if metrics_during is not None:
             completed_during = max(
                 completed_during,
-                _D804_metric_delta(
-                    metrics_during, metrics_before, D804_COMPLETED_METRIC
+                metric_delta(
+                    metrics_during,
+                    metrics_before,
+                    D804_COMPLETED_METRIC,
+                    floor_at_zero=True,
                 ),
             )
         completed_after = max(
             float(request_counter["completed"]),
-            _D804_metric_delta(metrics_after, metrics_before, D804_COMPLETED_METRIC),
+            metric_delta(
+                metrics_after,
+                metrics_before,
+                D804_COMPLETED_METRIC,
+                floor_at_zero=True,
+            ),
         )
         assert completed_during > 0 or completed_after > 0, (
             "D804: frontend traffic neither continued during NATS slow-close nor "
@@ -1128,13 +1123,6 @@ def _router_overhead_keys(metrics: dict[str, float]) -> list[str]:
     return sorted(
         key for key in metrics if key.startswith(ROUTER_OVERHEAD_METRIC_PREFIX)
     )
-
-
-def _D804_metric_delta(
-    after: dict[str, float], before: dict[str, float], key: str
-) -> float:
-    """Return the non-negative increment in a counter between two scrapes."""
-    return max(after.get(key, 0.0) - before.get(key, 0.0), 0.0)
 
 
 # D805

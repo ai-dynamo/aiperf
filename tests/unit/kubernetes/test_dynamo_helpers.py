@@ -29,6 +29,7 @@ from tests.kubernetes.chaos_dynamo.frontend_request_helpers import (
     chat_completion_url,
     chat_payload,
 )
+from tests.kubernetes.chaos_dynamo.metrics_helpers import metric_delta
 from tests.kubernetes.chaos_dynamo.rbac_helpers import (
     RbacOwner,
     rbac_revoke_target,
@@ -78,6 +79,26 @@ DynamoConfig.single_gpu_disagg = _single_gpu_disagg_beta  # type: ignore[attr-de
 def kubectl() -> KubectlClient:
     """Create a kubectl client (not used for real calls in these tests)."""
     return KubectlClient()
+
+
+class TestDynamoMetricHelpers:
+    """Shared metric helpers preserve Dynamo chaos counter semantics."""
+
+    def test_metric_delta_defaults_missing_values_to_zero(self) -> None:
+        assert metric_delta({"requests": 3.0}, {}, "errors") == 0.0
+        assert metric_delta({}, {"errors": 2.0}, "errors") == -2.0
+
+    def test_metric_delta_returns_after_minus_before(self) -> None:
+        assert metric_delta({"requests": 9.5}, {"requests": 4.0}, "requests") == 5.5
+
+    def test_metric_delta_can_floor_negative_values_at_zero(self) -> None:
+        assert metric_delta({"requests": 1.0}, {"requests": 4.0}, "requests") == -3.0
+        assert (
+            metric_delta(
+                {"requests": 1.0}, {"requests": 4.0}, "requests", floor_at_zero=True
+            )
+            == 0.0
+        )
 
 
 class TestDynamoFrontendRequestHelpers:
