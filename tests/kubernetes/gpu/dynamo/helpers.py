@@ -19,6 +19,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Literal
 
 import yaml
 
@@ -32,6 +33,19 @@ logger = AIPerfLogger(__name__)
 _FRONTEND_PORT = 8000
 _HEALTH_PORT = 9090
 _NGC_IMAGE_BASE = "nvcr.io/nvidia/ai-dynamo"
+
+# v1beta1 main-container name. Source of truth:
+# deploy/operator/api/v1beta1/dynamocomponentdeployment_types.go:46 in the
+# dynamo repo. The Dynamo operator injects its image/command/env/probes/resource
+# defaults only into the container with this name.
+MAIN_CONTAINER_NAME = "main"
+
+# Component-type labels (Source: deploy/operator/internal/consts/consts.go:59-60).
+_DYNAMO_COMPONENT_TYPE_LABEL = "nvidia.com/dynamo-component-type"
+_DYNAMO_SUB_COMPONENT_TYPE_LABEL = "nvidia.com/dynamo-sub-component-type"
+
+# Kubernetes GPU resource name.
+_GPU_RESOURCE_NAME = "nvidia.com/gpu"
 
 # Downward API env var the Dynamo runtime expects but the operator may not inject.
 _POD_UID_ENV = {
@@ -188,6 +202,12 @@ class DynamoConfig:
     connectors: list[str] = field(default_factory=list)
     """KV cache transfer connectors for prefill workers (e.g. kvbm, nixl)."""
 
+    api_version: Literal["v1alpha1", "v1beta1"] = "v1beta1"
+    """DynamoGraphDeployment CRD apiVersion. v1beta1 is the new default and emits
+    `spec.components` as a list with native `corev1.PodTemplateSpec` per component
+    (main container is named ``"main"``). v1alpha1 retains the legacy
+    `spec.services` map + `extraPodSpec.mainContainer` shape."""
+
     @property
     def effective_image(self) -> str:
         """Resolve the container image (explicit or backend default)."""
@@ -236,9 +256,12 @@ class DynamoConfig:
 class DynamoDeployer:
     """Deploys and manages a Dynamo inference graph on Kubernetes.
 
-    Uses the DynamoGraphDeployment CRD (nvidia.com/v1alpha1) to deploy
-    inference graphs via the Dynamo operator.  Supports both vLLM and
-    TRT-LLM backends.
+    Uses the DynamoGraphDeployment CRD to deploy inference graphs via the
+    Dynamo operator. Supports both vLLM and TRT-LLM backends. Manifest shape
+    depends on ``config.api_version``: ``v1beta1`` (default) emits the
+    list-based ``spec.components`` shape with native ``corev1.PodTemplateSpec``;
+    ``v1alpha1`` emits the legacy ``spec.services`` map with
+    ``extraPodSpec.mainContainer``.
     """
 
     def __init__(self, kubectl: KubectlClient, config: DynamoConfig) -> None:
@@ -375,8 +398,24 @@ class DynamoDeployer:
     def generate_manifest(self) -> str:
         """Generate DynamoGraphDeployment CRD manifest.
 
+        Dispatches on ``self.config.api_version``. v1beta1 emits the new
+        list-based ``spec.components`` shape with native ``corev1.PodTemplateSpec``;
+        v1alpha1 emits the legacy ``spec.services`` map with the
+        ``extraPodSpec.mainContainer`` escape hatch.
+
         Returns:
-            YAML manifest string.
+            YAML manifest string (Namespace + DynamoGraphDeployment).
+        """
+        if self.config.api_version == "v1alpha1":
+            return self._generate_v1alpha1_manifest()
+        return self._generate_v1beta1_manifest()
+
+    def _generate_v1alpha1_manifest(self) -> str:
+        """Generate the legacy v1alpha1 DynamoGraphDeployment manifest.
+
+        Uses ``spec.services`` (map keyed by ComponentName) and the
+        ``extraPodSpec.mainContainer`` escape hatch. Retained for regression
+        testing and for clusters still pinned to the alpha API.
         """
         c = self.config
         deploy_name = self._deployment_name()
@@ -441,6 +480,190 @@ class DynamoDeployer:
             },
             {
                 "apiVersion": "nvidia.com/v1alpha1",
+                "kind": "DynamoGraphDeployment",
+                "metadata": {
+                    "name": deploy_name,
+                    "namespace": c.namespace,
+                },
+                "spec": spec,
+            },
+        ]
+
+        return "\n---\n".join(
+            yaml.dump(doc, default_flow_style=False) for doc in documents
+        )
+
+    def _build_v1beta1_component(
+        self,
+        *,
+        name: str,
+        component_type: str,
+        replicas: int,
+        container: dict,
+        labels: dict[str, str] | None = None,
+    ) -> dict:
+        """Assemble a single v1beta1 ``spec.components[]`` entry.
+
+        Pod-level fields (``runtimeClassName``, ``tolerations``, ``nodeSelector``,
+        ``imagePullSecrets``) live on ``podTemplate.spec`` per the
+        ``corev1.PodTemplateSpec`` contract. Component-type labels go on
+        ``podTemplate.metadata.labels`` so chaos tests can label-select.
+        """
+        c = self.config
+
+        # Guarantee the inference container is named "main" so the operator
+        # merges its defaults onto the right entry.
+        container["name"] = MAIN_CONTAINER_NAME
+
+        pod_spec: dict = {"containers": [container]}
+        if c.runtime_class_name:
+            pod_spec["runtimeClassName"] = c.runtime_class_name
+        if c.tolerations:
+            pod_spec["tolerations"] = list(c.tolerations)
+        if c.node_selector:
+            pod_spec["nodeSelector"] = dict(c.node_selector)
+        if c.image_pull_secrets:
+            pod_spec["imagePullSecrets"] = [
+                {"name": ref} for ref in c.image_pull_secrets
+            ]
+
+        pod_meta: dict = {}
+        component_labels = {
+            _DYNAMO_COMPONENT_TYPE_LABEL: component_type,
+        }
+        if labels:
+            component_labels.update(labels)
+        pod_meta["labels"] = component_labels
+
+        pod_template: dict = {"metadata": pod_meta, "spec": pod_spec}
+
+        component: dict = {
+            "name": name,
+            "type": component_type,
+            "replicas": replicas,
+            "podTemplate": pod_template,
+        }
+        return component
+
+    def _build_v1beta1_worker_container(
+        self, *, is_prefill: bool = False, is_decode: bool = False
+    ) -> dict:
+        """Build the ``"main"`` container spec for a worker component (v1beta1)."""
+        c = self.config
+
+        container: dict = {
+            "image": c.effective_image,
+            "workingDir": c.backend.worker_working_dir,
+            "command": c.backend.worker_command,
+            "args": self._build_worker_args(is_prefill=is_prefill, is_decode=is_decode),
+        }
+
+        worker_envs = [_POD_UID_ENV, *self._build_worker_envs(is_prefill=is_prefill)]
+        container["env"] = worker_envs
+
+        container.update(self._build_probes())
+
+        if c.gpu_count > 0:
+            container["resources"] = {
+                "limits": {_GPU_RESOURCE_NAME: str(c.gpu_count)},
+            }
+
+        if c.pvc_name:
+            container["volumeMounts"] = [
+                {"name": c.pvc_name, "mountPath": c.model_mount_path}
+            ]
+
+        return container
+
+    def _generate_v1beta1_manifest(self) -> str:
+        """Generate the v1beta1 DynamoGraphDeployment manifest.
+
+        Emits ``spec.components`` as a list. Each entry has a stable ``name`` and
+        a first-class ``type`` (``frontend | prefill | decode | worker``); the
+        v1alpha1 ``componentType=worker`` + ``subComponentType=prefill|decode``
+        pattern collapses to ``type: prefill`` / ``type: decode`` directly per
+        the source-of-truth spec at
+        ``deploy/operator/api/v1beta1/common.go`` in the dynamo repo.
+        """
+        c = self.config
+        deploy_name = self._deployment_name()
+
+        # Frontend component
+        frontend_container: dict = {
+            "image": c.effective_image,
+            "env": [_POD_UID_ENV],
+        }
+        if c.router_mode:
+            frontend_container["env"].append(
+                {"name": "DYN_ROUTER_MODE", "value": c.router_mode}
+            )
+        if c.pvc_name:
+            frontend_container["volumeMounts"] = [
+                {"name": c.pvc_name, "mountPath": c.model_mount_path}
+            ]
+
+        components: list[dict] = [
+            self._build_v1beta1_component(
+                name="Frontend",
+                component_type="frontend",
+                replicas=c.frontend_replicas,
+                container=frontend_container,
+            )
+        ]
+
+        decode_name = self._worker_service_key("decode")
+        prefill_name = self._worker_service_key("prefill")
+
+        if c.mode.is_disaggregated:
+            # Disaggregated: decode is first-class "decode", prefill is "prefill".
+            decode_container = self._build_v1beta1_worker_container(is_decode=True)
+            decode_labels = {_DYNAMO_SUB_COMPONENT_TYPE_LABEL: "decode"}
+            components.append(
+                self._build_v1beta1_component(
+                    name=decode_name,
+                    component_type="decode",
+                    replicas=c.decode_replicas,
+                    container=decode_container,
+                    labels=decode_labels,
+                )
+            )
+
+            prefill_container = self._build_v1beta1_worker_container(is_prefill=True)
+            prefill_labels = {_DYNAMO_SUB_COMPONENT_TYPE_LABEL: "prefill"}
+            components.append(
+                self._build_v1beta1_component(
+                    name=prefill_name,
+                    component_type="prefill",
+                    replicas=c.prefill_replicas,
+                    container=prefill_container,
+                    labels=prefill_labels,
+                )
+            )
+        else:
+            # Aggregated / agg-router: single worker component of type "worker".
+            worker_container = self._build_v1beta1_worker_container(is_decode=True)
+            components.append(
+                self._build_v1beta1_component(
+                    name=decode_name,
+                    component_type="worker",
+                    replicas=c.decode_replicas,
+                    container=worker_container,
+                )
+            )
+
+        spec: dict = {"components": components}
+
+        if c.extra_envs:
+            spec["env"] = c.extra_envs
+
+        documents = [
+            {
+                "apiVersion": "v1",
+                "kind": "Namespace",
+                "metadata": {"name": c.namespace},
+            },
+            {
+                "apiVersion": "nvidia.com/v1beta1",
                 "kind": "DynamoGraphDeployment",
                 "metadata": {
                     "name": deploy_name,

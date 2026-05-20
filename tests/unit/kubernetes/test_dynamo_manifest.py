@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for Dynamo manifest generation (no cluster required)."""
+"""Unit tests for legacy v1alpha1 Dynamo manifest generation (no cluster required).
+
+These tests pin to ``api_version="v1alpha1"`` because they assert the legacy
+``spec.services`` map + ``extraPodSpec.mainContainer`` shape. The current default
+is v1beta1; new shape coverage lives in ``test_dynamo_helpers.py``.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +13,32 @@ import pytest
 import yaml
 from pytest import param
 
+from tests.kubernetes.gpu.dynamo import helpers as _dynamo_helpers
 from tests.kubernetes.gpu.dynamo.helpers import (
     DynamoBackend,
-    DynamoConfig,
     DynamoDeployer,
     DynamoMode,
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
+
+
+def DynamoConfig(**kwargs: object) -> _dynamo_helpers.DynamoConfig:
+    """Shim: construct a ``DynamoConfig`` pinned to ``api_version="v1alpha1"``.
+
+    These tests assert the legacy v1alpha1 manifest shape, so we override the
+    new ``v1beta1`` default unless an individual test passes its own value.
+    """
+    kwargs.setdefault("api_version", "v1alpha1")
+    return _dynamo_helpers.DynamoConfig(**kwargs)  # type: ignore[arg-type]
+
+
+def _single_gpu_disagg_alpha(**overrides: object) -> _dynamo_helpers.DynamoConfig:
+    """``DynamoConfig.single_gpu_disagg`` with the v1alpha1 manifest shape."""
+    overrides.setdefault("api_version", "v1alpha1")
+    return _dynamo_helpers.DynamoConfig.single_gpu_disagg(**overrides)
+
+
+DynamoConfig.single_gpu_disagg = _single_gpu_disagg_alpha  # type: ignore[attr-defined]
 
 
 @pytest.fixture
