@@ -16,7 +16,7 @@ import pytest
 import yaml
 from pytest import param
 
-from tests.kubernetes.chaos_dynamo.test_chaos_d301_nixl_reset_peer import (
+from tests.kubernetes.chaos_dynamo.test_chaos_d3xx_nixl_kvbm import (
     _nixl_route_skip_reason,
 )
 from tests.kubernetes.chaos_dynamo.test_chaos_d801_etcd_kill_registration import (
