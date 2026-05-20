@@ -173,28 +173,32 @@ jobs:
             #   - Scheduled (cron) — always uses bare nightly naming:
             #       WHEEL_VERSION = <base>.dev<YYYYMMDD>
             #       STAGE_SUBPATH = nightly/<YYYYMMDD>
-            #       CONTAINER_TAG = nightly-<YYYYMMDD>-<sha7>
+            #       CONTAINER_TAG = <YYYYMMDD>-<sha7>
             #   - Manual (workflow_dispatch) with manual_artifacts=true (default):
             #       WHEEL_VERSION = <base>.dev<YYYYMMDD>+manual.<run_id>
             #         (PEP 440 local-version suffix so each manual build is
             #          independently addressable; non-local scheduled wheel
             #          stays the default for `pip install aiperf-nightly`)
             #       STAGE_SUBPATH = nightly-manual/<YYYYMMDD>/<run_id>
-            #       CONTAINER_TAG = nightly-manual-<YYYYMMDD>-<sha7>-<run_id>
+            #       CONTAINER_TAG = manual-<YYYYMMDD>-<sha7>-<run_id>
             #   - Manual with manual_artifacts=false — fall back to the bare
             #     nightly naming so the run deliberately overwrites scheduled
             #     artifact locations (for emergency re-publishes etc.).
+            # The container tag intentionally omits a leading "nightly-" — the
+            # NGC staging repo is already named "aiperf-nightly", so prefixing
+            # the tag would be redundant. RELEASE_TYPE (forwarded to GitLab)
+            # carries the nightly-vs-ondemand signal instead.
             # github.run_id is stable across re-attempts of the same run, so
             # an attempt-2 rerun produces the same identifiers (combined with
             # the version-info.txt restore above).
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${MANUAL_ARTIFACTS:-true}" = "true" ]; then
               WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+manual.${GITHUB_RUN_ID}"
               STAGE_SUBPATH="nightly-manual/${TIMESTAMP}/${GITHUB_RUN_ID}"
-              CONTAINER_TAG="nightly-manual-${TIMESTAMP}-${SHORT_SHA}-${GITHUB_RUN_ID}"
+              CONTAINER_TAG="manual-${TIMESTAMP}-${SHORT_SHA}-${GITHUB_RUN_ID}"
             else
               WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
               STAGE_SUBPATH="nightly/${TIMESTAMP}"
-              CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
+              CONTAINER_TAG="${TIMESTAMP}-${SHORT_SHA}"
             fi
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
@@ -835,6 +839,8 @@ jobs:
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
+    outputs:
+      container_image: ${{ steps.copy.outputs.container_image }}
     env:
       CRANE_VERSION: v0.20.2
       CRANE_SHA256: ''
@@ -870,6 +876,7 @@ jobs:
             --username "${NGC_USERNAME}" --password-stdin
 
       - name: Copy multi-arch images ECR → NGC staging
+        id: copy
         env:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
@@ -882,18 +889,20 @@ jobs:
           # NGC destination repo is `aiperf-nightly` to mirror the PyPI
           # naming (`aiperf` canonical dist / `aiperf-nightly` nightly dist).
           # ECR source side stays `aiperf` — only the staging target renames.
+          CONTAINER_IMAGE="${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
           for ARCH in amd64 arm64; do
             crane copy \
               "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
               "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-${ARCH}"
           done
 
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}" 2>/dev/null || true
+          crane delete "${CONTAINER_IMAGE}" 2>/dev/null || true
           crane index append \
             --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-amd64" \
             --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
+            --tag      "${CONTAINER_IMAGE}"
+          echo "Container staged: ${CONTAINER_IMAGE}"
+          echo "container_image=${CONTAINER_IMAGE}" >> "${GITHUB_OUTPUT}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
@@ -997,6 +1006,7 @@ jobs:
           WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
+          CONTAINER_IMAGE:        ${{ needs.stage-nightly-container.outputs.container_image }}
           RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
           TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
           STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
@@ -1034,6 +1044,7 @@ jobs:
             --form "variables[WHEEL_FILENAME]=${WHEEL_FILENAME}" \
             --form "variables[NIGHTLY_WHEEL_FILENAME]=${NIGHTLY_WHEEL_FILENAME}" \
             --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
+            --form "variables[CONTAINER_IMAGE]=${CONTAINER_IMAGE}" \
             --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
