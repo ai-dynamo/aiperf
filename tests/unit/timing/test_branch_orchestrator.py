@@ -758,3 +758,130 @@ async def test_on_child_leaf_reached_short_circuits_when_cleaning_up():
     await orch.on_child_leaf_reached("c")
     # children_completed should NOT increment during teardown.
     assert orch.stats.children_completed == 0
+
+
+# ============================================================================
+# WARMUP credit-phase spawn-skip regression tests
+# ============================================================================
+#
+# Some timing strategies (e.g. AgenticReplayStrategy) refuse to advance child
+# continuation turns during the WARMUP credit phase. Without a guard,
+# BranchOrchestrator.intercept would still spawn children on a WARMUP credit
+# return; those children never reach is_final_turn, on_child_leaf_reached
+# never fires, _descendant_counts leaks > 0, has_pending_branch_work() stays
+# True forever, and all_credits_returned_event is wedged -- the PhaseRunner
+# would wait indefinitely.
+#
+# Originally reported and fixed by Cam Quilici against the
+# inferencex-agentx-mvp scenario at conc=16 on H100 + b200-nb (branch
+# commit a0022539e).
+
+
+def _make_warmup_orchestrator_with_branches(
+    branch_ids: list[str],
+) -> tuple[BranchOrchestrator, MagicMock, AsyncMock]:
+    """Build a BranchOrchestrator whose conversation source declares the given
+    branch_ids on turn 0. Returns (orch, conversation_source, dispatch_first_turn)
+    so callers can assert on spawn calls."""
+    cs = MagicMock()
+    parent_meta = MagicMock()
+    parent_meta.branches = [
+        MagicMock(
+            branch_id=bid,
+            child_conversation_ids=[f"{bid}-child"],
+            dispatch_timing="post",
+            mode=ConversationBranchMode.FORK,
+        )
+        for bid in branch_ids
+    ]
+    parent_meta.turns = [MagicMock(branch_ids=branch_ids)]
+    cs.get_metadata = MagicMock(return_value=parent_meta)
+    cs.start_branch_child = MagicMock(
+        side_effect=lambda **kwargs: MagicMock(
+            x_correlation_id=f"child-{kwargs['child_conversation_id']}"
+        )
+    )
+
+    issuer = MagicMock()
+    dispatch = AsyncMock(return_value=True)
+    issuer.dispatch_first_turn = dispatch
+
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    return orch, cs, dispatch
+
+
+@pytest.mark.asyncio
+async def test_intercept_skips_spawn_during_warmup() -> None:
+    """A WARMUP-phase credit return with declared branches MUST NOT spawn
+    children. Strategies that refuse to advance child continuation turns
+    during warmup would otherwise leave _descendant_counts leaking > 0
+    forever and wedge all_credits_returned_event."""
+    from aiperf.common.enums import CreditPhase
+
+    orch, cs, dispatch_first_turn = _make_warmup_orchestrator_with_branches(["root:0"])
+    warmup_credit = MagicMock(
+        x_correlation_id="root",
+        conversation_id="conv1",
+        turn_index=0,
+        agent_depth=0,
+        phase=CreditPhase.WARMUP,
+    )
+
+    result = await orch.intercept(warmup_credit)
+
+    assert result is False, "warmup intercept must not gate the parent"
+    cs.start_branch_child.assert_not_called()
+    dispatch_first_turn.assert_not_awaited()
+    assert orch.stats.children_spawned == 0
+
+
+@pytest.mark.asyncio
+async def test_intercept_spawns_during_profiling() -> None:
+    """Symmetric positive case: PROFILING-phase credits with declared
+    branches MUST still spawn children. The warmup short-circuit must
+    not regress the normal DAG dispatch path."""
+    from aiperf.common.enums import CreditPhase
+
+    orch, cs, dispatch_first_turn = _make_warmup_orchestrator_with_branches(["root:0"])
+    credit = MagicMock(
+        x_correlation_id="root",
+        conversation_id="conv1",
+        turn_index=0,
+        agent_depth=0,
+        phase=CreditPhase.PROFILING,
+    )
+
+    result = await orch.intercept(credit)
+
+    assert result is False, "pure spawn with no gate returns False"
+    assert cs.start_branch_child.call_count == 1
+    assert dispatch_first_turn.await_count == 1
+    assert orch.stats.children_spawned == 1
+
+
+@pytest.mark.asyncio
+async def test_intercept_warmup_skip_does_not_leak_descendant_counts() -> None:
+    """Direct assertion of the wedge-mechanism the fix prevents: after a
+    warmup credit return, _descendant_counts MUST remain empty and
+    has_pending_branch_work() MUST be False. Pre-fix this would leak: the
+    parent would be registered with N descendants, no child would ever
+    leaf-reach (strategy refuses warmup continuation), and the predicate
+    would stay True forever."""
+    from aiperf.common.enums import CreditPhase
+
+    orch, _cs, _dispatch = _make_warmup_orchestrator_with_branches(["root:0", "root:1"])
+    warmup_credit = MagicMock(
+        x_correlation_id="root",
+        conversation_id="conv1",
+        turn_index=0,
+        agent_depth=0,
+        phase=CreditPhase.WARMUP,
+    )
+
+    await orch.intercept(warmup_credit)
+
+    assert orch._descendant_counts == {}, (
+        "warmup must not leak descendant tracking — children would never "
+        "leaf-reach and has_pending_branch_work would wedge forever"
+    )
+    assert orch.has_pending_branch_work() is False

@@ -84,6 +84,35 @@ class SampledSession:
             branch_mode=self.branch_mode,
         )
 
+    def build_turn_at_index(self, turn_index: int) -> TurnToSend:
+        """Build a TurnToSend for an arbitrary turn within this session.
+
+        Used by strategies that resume a session at turn k_i (e.g.
+        ``AgenticReplayStrategy`` warmup) or that skip ahead without
+        dispatching the leading turns. The full message history for turn
+        k_i is expected to be present in
+        ``metadata.turns[turn_index].raw_messages`` (populated by the
+        loader for the relevant scenario, e.g. ``WekaTraceLoader``).
+
+        Raises ``IndexError`` if ``turn_index`` is out of range.
+        """
+        if turn_index < 0 or turn_index >= len(self.metadata.turns):
+            raise IndexError(
+                f"turn_index {turn_index} out of range for conversation "
+                f"{self.conversation_id} with {len(self.metadata.turns)} turns"
+            )
+        meta = self.metadata.turns[turn_index]
+        return TurnToSend(
+            conversation_id=self.conversation_id,
+            x_correlation_id=self.x_correlation_id,
+            turn_index=turn_index,
+            num_turns=len(self.metadata.turns),
+            agent_depth=self.agent_depth,
+            parent_correlation_id=self.parent_correlation_id,
+            has_forks=meta.has_forks if meta is not None else False,
+            branch_mode=self.branch_mode,
+        )
+
 
 class ConversationSource:
     """Samples conversations from dataset to create session instances.

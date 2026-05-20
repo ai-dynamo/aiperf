@@ -12,7 +12,7 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import ConversationBranchMode, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.timing._branch_orchestrator_drain import BranchOrchestratorDrainMixin
@@ -181,6 +181,15 @@ class BranchOrchestrator(
         """
         if self._cleaning_up:
             return False
+
+        # Warmup is one-shot per trajectory; some strategies (e.g.
+        # AgenticReplayStrategy) refuse to advance child continuation turns
+        # during warmup. Spawning here leaks ``_descendant_counts`` (children
+        # never reach is_final_turn) and wedges
+        # ``all_credits_returned_event``. DAG dispatch runs in PROFILING.
+        if credit.phase == CreditPhase.WARMUP:
+            return False
+
         parent_corr = credit.x_correlation_id
         async with self._parent_locks[parent_corr]:
             branch_ids = self.get_branch_ids(credit)
