@@ -78,7 +78,11 @@ Embeddings endpoints return metrics focused on request latency and throughput. N
 
 ### Profile with Custom Input File
 
-Create a JSONL embeddings input file:
+Create a JSONL embeddings input file and run AIPerf against it. The two
+steps are combined into a single bash block so the test-docs CI actually
+exercises the `aiperf profile` invocation — the runner extracts the first
+bash block after the tag, so a split would leave the profile command
+unrun.
 
 <!-- aiperf-run-vllm-embeddings-openai-endpoint-server -->
 ```bash
@@ -89,10 +93,7 @@ cat <<EOF > inputs.jsonl
 {"texts": ["Define deep learning."]}
 {"texts": ["What are transformers in AI?"]}
 EOF
-```
 
-Run AIPerf using the custom input file:
-```bash
 aiperf profile \
     --model BAAI/bge-small-en-v1.5 \
     --endpoint-type embeddings \

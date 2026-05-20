@@ -46,6 +46,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -236,14 +237,27 @@ def derive_suggestions(
 
     Returns (suggestions, matched_count, unmatched_count).
     """
-    by_bash: dict[str, Command] = {_canonicalize_bash(c.command): c for c in commands}
+    # Multiple markdown blocks can canonicalize to the same bash content
+    # (e.g. a tutorial example duplicated across two pages). Track every
+    # Command per key so a single log entry maps to all matching blocks
+    # instead of silently dropping all but one.
+    by_bash: dict[str, list[Command]] = defaultdict(list)
+    for c in commands:
+        by_bash[_canonicalize_bash(c.command)].append(c)
+    for cmds in by_bash.values():
+        if len(cmds) > 1:
+            log.info(
+                "Bash content shared by %d markdown blocks (suggestions will list each): %s",
+                len(cmds),
+                ", ".join(f"{c.file_path}:{c.start_line}" for c in cmds),
+            )
 
     matched = 0
     unmatched = 0
     suggestions: list[Suggestion] = []
     for r in runs:
-        cmd = by_bash.get(r.bash_content)
-        if cmd is None:
+        cmds = by_bash.get(r.bash_content, [])
+        if not cmds:
             unmatched += 1
             log.debug("No markdown match for test %d in %s", r.test_index, r.job_name)
             continue
@@ -252,39 +266,43 @@ def derive_suggestions(
             # A 1-second-fail test gives us no useful timing; skip.
             continue
 
-        current = cmd.weight
-        observed = r.actual_seconds
-        suggested = _round_to(int(observed * SAFETY_MARGIN))
+        # When several markdown blocks share canonicalized bash, the run's
+        # runtime applies to all of them — they need the same weight, so
+        # emit one Suggestion per Command pointing at each markdown location.
+        for cmd in cmds:
+            current = cmd.weight
+            observed = r.actual_seconds
+            suggested = _round_to(int(observed * SAFETY_MARGIN))
 
-        is_default = current == DEFAULT_WEIGHT
-        ratio = observed / max(current, 1)
-        reason: str | None = None
-        if is_default and observed >= default_threshold:
-            reason = "default underweight"
-        elif ratio > threshold and abs(observed - current) > 60:
-            reason = "underweight"
-        elif current > 100 and observed * 2 < current:
-            reason = "overweighted"
+            is_default = current == DEFAULT_WEIGHT
+            ratio = observed / max(current, 1)
+            reason: str | None = None
+            if is_default and observed >= default_threshold:
+                reason = "default underweight"
+            elif ratio > threshold and abs(observed - current) > 60:
+                reason = "underweight"
+            elif current > 100 and observed * 2 < current:
+                reason = "overweighted"
 
-        if reason is None:
-            continue
+            if reason is None:
+                continue
 
-        anchor = (
-            f"{run_url}/job/{r.job_id}#step:3:{r.passed_line_index}"
-            if r.passed_line_index
-            else None
-        )
-        suggestions.append(
-            Suggestion(
-                file_path=str(Path(cmd.file_path).resolve().relative_to(REPO_ROOT)),
-                start_line=cmd.start_line,
-                current_weight=current,
-                observed_seconds=observed,
-                suggested_weight=suggested,
-                reason=reason,
-                job_log_url=anchor,
+            anchor = (
+                f"{run_url}/job/{r.job_id}#step:3:{r.passed_line_index}"
+                if r.passed_line_index
+                else None
             )
-        )
+            suggestions.append(
+                Suggestion(
+                    file_path=str(Path(cmd.file_path).resolve().relative_to(REPO_ROOT)),
+                    start_line=cmd.start_line,
+                    current_weight=current,
+                    observed_seconds=observed,
+                    suggested_weight=suggested,
+                    reason=reason,
+                    job_log_url=anchor,
+                )
+            )
 
     return suggestions, matched, unmatched
 
