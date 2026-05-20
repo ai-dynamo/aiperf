@@ -3295,8 +3295,10 @@ def cmd_trtllm_logs(
 # Dynamo deployment (DynamoGraphDeployment CRD via Dynamo operator)
 # ---------------------------------------------------------------------------
 
-_DYNAMO_HEALTH_PORT = 9090
-_DYNAMO_METRICS_PORT = 8081  # DYN_SYSTEM_PORT: worker /metrics endpoint
+_DYNAMO_HEALTH_PORT = 9090  # v1.1.0: /live and /metrics share port; matches operator-injected `system` named port
+_DYNAMO_METRICS_PORT = (
+    9090  # DYN_SYSTEM_PORT env: must match container port `system` (operator default)
+)
 _DYNAMO_1GPU_KVBM_CPU_CACHE_GB = (
     1  # conservative default for single-GPU (pinned memory)
 )
@@ -3428,14 +3430,32 @@ def _generate_dynamo_manifest(
     services: dict = {"Frontend": frontend, "VllmDecodeWorker": decode_worker}
 
     if mode in ("disagg", "disagg-1gpu"):
+        # v1.1.0+ disagg workers: --is-{prefill,decode}-worker is gone; the
+        # role goes through --disaggregation-mode and NixlConnector must be
+        # configured explicitly via --kv-transfer-config (no longer the
+        # implicit default). KVBM CPU-cache offload still uses --connector
+        # kvbm, so we drop "nixl" from the connectors list and keep the rest.
+        kv_transfer = [
+            "--kv-transfer-config",
+            '{"kv_connector":"NixlConnector","kv_role":"kv_both"}',
+        ]
         decode_worker["subComponentType"] = "decode"
         decode_worker["extraPodSpec"]["mainContainer"]["args"] = [
             *worker_args,
-            "--is-decode-worker",
+            "--disaggregation-mode",
+            "decode",
+            *kv_transfer,
         ]
 
-        prefill_args = [*worker_args, "--is-prefill-worker"]
+        prefill_args = [
+            *worker_args,
+            "--disaggregation-mode",
+            "prefill",
+            *kv_transfer,
+        ]
         for connector in connectors or []:
+            if connector == "nixl":
+                continue  # handled by --kv-transfer-config above
             prefill_args.extend(["--connector", connector])
 
         prefill_envs: list[dict] = [pod_uid_env, metrics_port_env]

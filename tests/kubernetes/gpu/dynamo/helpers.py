@@ -290,12 +290,25 @@ class DynamoDeployer:
         if c.enforce_eager:
             args.append("--enforce-eager")
 
-        if is_prefill:
-            args.append("--is-prefill-worker")
-            if c.connectors:
-                args.extend(["--connector", *c.connectors])
-        elif is_decode and c.mode.is_disaggregated:
-            args.append("--is-decode-worker")
+        # v1.1.0+ disagg workers: --is-{prefill,decode}-worker is gone; the
+        # role goes through --disaggregation-mode and the KV transport now
+        # requires an explicit --kv-transfer-config (NixlConnector is no
+        # longer the implicit default). KVBM CPU-cache offload still uses
+        # --connector kvbm, so we strip "nixl" from the list (handled by
+        # --kv-transfer-config) and keep everything else.
+        if is_prefill or (is_decode and c.mode.is_disaggregated):
+            role = "prefill" if is_prefill else "decode"
+            args.extend(["--disaggregation-mode", role])
+            args.extend(
+                [
+                    "--kv-transfer-config",
+                    '{"kv_connector":"NixlConnector","kv_role":"kv_both"}',
+                ]
+            )
+            if is_prefill and c.connectors:
+                legacy_connectors = [x for x in c.connectors if x != "nixl"]
+                if legacy_connectors:
+                    args.extend(["--connector", *legacy_connectors])
 
         args.extend(c.extra_worker_args)
         return args
