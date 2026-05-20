@@ -28,7 +28,7 @@ logger = AIPerfLogger(__name__)
 
 
 @cilium_on_kind_required
-async def test_d704_hf_hub_egress_blackhole(faults, kubectl, wait_for_dgd_state):
+async def test_d704_hf_hub_egress_blackhole(faults, kubectl):
     """Block egress; assert worker fails weight-download cleanly, DGD reports failure.
 
     Requires a NetworkPolicy-aware CNI (Cilium or Calico). The
@@ -46,13 +46,15 @@ async def test_d704_hf_hub_egress_blackhole(faults, kubectl, wait_for_dgd_state)
     #    ):
     # 2. Apply a fresh DGD that references an HF Hub model not yet cached anywhere:
     #    DynamoConfig(model_name="Qwen/Qwen3-0.6B", ...) (default; lands in /tmp/HF cache miss).
-    # 3. wait_for_dgd_state("d704-test", "dynamo-server", "failed", timeout=300).
+    # 3. await wait_for_dgd_state(kubectl, "d704-test", "dynamo-server", "failed", timeout=300).
+    #    (wait_for_dgd_state is a plain async helper in chaos_dynamo/conftest.py; import at
+    #    module level when this scaffold is materialized.)
     # 4. Inspect kubectl get pods -l ... -o json for the worker pod's status -- should show
     #    container terminated with non-zero exit code, log mentions weight download failure
     #    (HF Hub, DNS, NetworkPolicy, or connection refused).
     # 5. Parse status.conditions; assert Ready=False with reason naming weight/network failure.
     # 6. finally (handled by faults context): NetworkPolicy deleted.
-    del faults, kubectl, wait_for_dgd_state  # scaffold; consumed once assertions land.
+    del faults, kubectl  # scaffold; consumed once assertions land.
 
     pytest.skip(
         "scaffold landed; full assertion requires Cilium-equipped cluster + fresh "
