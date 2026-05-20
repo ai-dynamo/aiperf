@@ -1258,7 +1258,7 @@ async def test_d207_streaming_error_frame_after_decode_kill(
 
 # D209
 
-_FRONTEND_PROXY = "d209-frontend-first-byte"
+_D209_FRONTEND_PROXY = "d209-frontend-first-byte"
 _FRONTEND_PROXY_PORT = 20011
 _LATENCY_MS = 1200
 _FIRST_BYTE_TIMEOUT_S = 12.0
@@ -1295,7 +1295,7 @@ async def _configure_frontend_proxy(request: pytest.FixtureRequest) -> None:
     dynamo_toxiproxy = request.getfixturevalue("dynamo_toxiproxy")
     try:
         await dynamo_toxiproxy.add_proxy(
-            name=_FRONTEND_PROXY,
+            name=_D209_FRONTEND_PROXY,
             listen=f"0.0.0.0:{_FRONTEND_PROXY_PORT}",
             upstream=f"{service}.{namespace}.svc.cluster.local:8000",
         )
@@ -1304,7 +1304,7 @@ async def _configure_frontend_proxy(request: pytest.FixtureRequest) -> None:
             f"D209 requires the frontend Toxiproxy port; proxy setup failed: {exc}"
         )
     await dynamo_toxiproxy.add_toxic(
-        _FRONTEND_PROXY,
+        _D209_FRONTEND_PROXY,
         "latency",
         {"latency": _LATENCY_MS, "jitter": 0},
         stream="downstream",
@@ -1362,7 +1362,7 @@ async def test_d209_sse_first_byte_latency_under_frontend_throttling(
 
 # D210
 
-_FRONTEND_PROXY = "d210-frontend-slicer"
+_D210_FRONTEND_PROXY = "d210-frontend-slicer"
 _FRONTEND_PROXY_PORT = 20011
 
 
@@ -1412,12 +1412,12 @@ async def _configure_sliced_frontend_proxy(request: pytest.FixtureRequest) -> No
     dynamo_toxiproxy = request.getfixturevalue("dynamo_toxiproxy")
     try:
         await dynamo_toxiproxy.add_proxy(
-            name=_FRONTEND_PROXY,
+            name=_D210_FRONTEND_PROXY,
             listen=f"0.0.0.0:{_FRONTEND_PROXY_PORT}",
             upstream=f"{service}.{namespace}.svc.cluster.local:8000",
         )
         await dynamo_toxiproxy.add_toxic(
-            _FRONTEND_PROXY,
+            _D210_FRONTEND_PROXY,
             "slicer",
             {"average_size": 7, "size_variation": 2, "delay": 2},
             stream="downstream",

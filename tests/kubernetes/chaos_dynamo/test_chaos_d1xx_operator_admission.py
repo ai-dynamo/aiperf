@@ -257,8 +257,8 @@ async def _run_d101_assertion(
 # D102
 
 
-_DGD_NAME = "dynamo-agg"
-_DGD_NAMESPACE = "d102-double-delete"
+_D102_DGD_NAME = "dynamo-agg"
+_D102_DGD_NAMESPACE = "d102-double-delete"
 _DGD_ESTABLISHED_TIMEOUT_S = 60.0
 _DGD_DELETE_TIMEOUT_S = 90.0
 
@@ -276,26 +276,26 @@ async def test_d102_rapid_double_delete_dgd_is_idempotent(
     """
     config = DynamoConfig(
         model_name="Qwen/Qwen3-0.6B",
-        namespace=_DGD_NAMESPACE,
+        namespace=_D102_DGD_NAMESPACE,
         api_version="v1alpha1",
     )
     deployer = DynamoDeployer(kubectl, config)
 
-    await kubectl.create_namespace(_DGD_NAMESPACE)
+    await kubectl.create_namespace(_D102_DGD_NAMESPACE)
     try:
         await kubectl.apply(deployer.generate_manifest())
         established = await _wait_for_dgd_established(
             kubectl,
-            name=_DGD_NAME,
-            namespace=_DGD_NAMESPACE,
+            name=_D102_DGD_NAME,
+            namespace=_D102_DGD_NAMESPACE,
             timeout=_DGD_ESTABLISHED_TIMEOUT_S,
         )
         assert established, await _dgd_observed_status_text(
             kubectl,
-            name=_DGD_NAME,
-            namespace=_DGD_NAMESPACE,
+            name=_D102_DGD_NAME,
+            namespace=_D102_DGD_NAMESPACE,
             prefix=(
-                f"D102: DGD {_DGD_NAMESPACE}/{_DGD_NAME} never became readable "
+                f"D102: DGD {_D102_DGD_NAMESPACE}/{_D102_DGD_NAME} never became readable "
                 f"within {_DGD_ESTABLISHED_TIMEOUT_S}s after apply"
             ),
         )
@@ -303,9 +303,9 @@ async def test_d102_rapid_double_delete_dgd_is_idempotent(
         first_delete = await kubectl.run(
             "delete",
             "dynamographdeployment",
-            _DGD_NAME,
+            _D102_DGD_NAME,
             "-n",
-            _DGD_NAMESPACE,
+            _D102_DGD_NAMESPACE,
             "--wait=false",
             check=False,
         )
@@ -317,9 +317,9 @@ async def test_d102_rapid_double_delete_dgd_is_idempotent(
         second_delete = await kubectl.run(
             "delete",
             "dynamographdeployment",
-            _DGD_NAME,
+            _D102_DGD_NAME,
             "-n",
-            _DGD_NAMESPACE,
+            _D102_DGD_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -331,16 +331,16 @@ async def test_d102_rapid_double_delete_dgd_is_idempotent(
 
         disappeared = await _wait_for_dgd_absent(
             kubectl,
-            name=_DGD_NAME,
-            namespace=_DGD_NAMESPACE,
+            name=_D102_DGD_NAME,
+            namespace=_D102_DGD_NAMESPACE,
             timeout=_DGD_DELETE_TIMEOUT_S,
         )
         assert disappeared, await _dgd_observed_status_text(
             kubectl,
-            name=_DGD_NAME,
-            namespace=_DGD_NAMESPACE,
+            name=_D102_DGD_NAME,
+            namespace=_D102_DGD_NAMESPACE,
             prefix=(
-                f"D102: DGD {_DGD_NAMESPACE}/{_DGD_NAME} still existed "
+                f"D102: DGD {_D102_DGD_NAMESPACE}/{_D102_DGD_NAME} still existed "
                 f"{_DGD_DELETE_TIMEOUT_S}s after rapid double-delete"
             ),
         )
@@ -348,7 +348,7 @@ async def test_d102_rapid_double_delete_dgd_is_idempotent(
         await kubectl.run(
             "delete",
             "namespace",
-            _DGD_NAMESPACE,
+            _D102_DGD_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -528,7 +528,7 @@ async def test_d104_invalid_dgd_replicas_negative(
 # D105
 
 
-_DGD_NAMESPACE = "d105-recreate-same-name"
+_D105_DGD_NAMESPACE = "d105-recreate-same-name"
 _ABSENT_TIMEOUT_S = 5.0
 _SUCCESS_TIMEOUT_S = 600.0
 
@@ -547,7 +547,7 @@ async def test_d105_recreate_same_dgd_name_reconciles_successfully(
     predecessor.
     """
     config = DynamoConfig.single_gpu_disagg(
-        namespace=_DGD_NAMESPACE,
+        namespace=_D105_DGD_NAMESPACE,
         api_version="v1alpha1",
     )
     deployer = DynamoDeployer(kubectl, config)
@@ -555,12 +555,12 @@ async def test_d105_recreate_same_dgd_name_reconciles_successfully(
     name = deployer._deployment_name()
 
     try:
-        await kubectl.apply(manifest, namespace=_DGD_NAMESPACE)
+        await kubectl.apply(manifest, namespace=_D105_DGD_NAMESPACE)
         try:
             await wait_for_dgd_state(
                 kubectl,
                 name,
-                _DGD_NAMESPACE,
+                _D105_DGD_NAMESPACE,
                 "successful",
                 timeout=_SUCCESS_TIMEOUT_S,
             )
@@ -568,38 +568,38 @@ async def test_d105_recreate_same_dgd_name_reconciles_successfully(
             status = await _dgd_status_snapshot(kubectl, name=name)
             pytest.skip(
                 "D105 requires the cluster to start a minimal Dynamo workload; "
-                f"baseline DGD {_DGD_NAMESPACE}/{name} did not reach "
+                f"baseline DGD {_D105_DGD_NAMESPACE}/{name} did not reach "
                 f"state='successful' within {_SUCCESS_TIMEOUT_S}s. "
                 f"Status: {status!r}. Error: {exc}"
             )
 
         first_dgd = await _read_dgd_json(kubectl, name=name)
         first_uid = first_dgd["metadata"]["uid"]
-        logger.info(f"D105: baseline DGD {_DGD_NAMESPACE}/{name} uid={first_uid}")
+        logger.info(f"D105: baseline DGD {_D105_DGD_NAMESPACE}/{name} uid={first_uid}")
 
         await kubectl.run(
             "delete",
             "dynamographdeployment",
             name,
             "-n",
-            _DGD_NAMESPACE,
+            _D105_DGD_NAMESPACE,
             "--wait=false",
             check=True,
         )
         await _d105_wait_for_dgd_absent(kubectl, name=name, timeout=_ABSENT_TIMEOUT_S)
 
-        await kubectl.apply(manifest, namespace=_DGD_NAMESPACE)
+        await kubectl.apply(manifest, namespace=_D105_DGD_NAMESPACE)
         second_dgd = await _read_dgd_json(kubectl, name=name)
         second_uid = second_dgd["metadata"]["uid"]
         assert second_uid != first_uid, (
             f"D105 expected a fresh same-name DGD after deletion, but "
-            f"{_DGD_NAMESPACE}/{name} still has uid={second_uid!r}"
+            f"{_D105_DGD_NAMESPACE}/{name} still has uid={second_uid!r}"
         )
 
         observed_state = await wait_for_dgd_state(
             kubectl,
             name,
-            _DGD_NAMESPACE,
+            _D105_DGD_NAMESPACE,
             "successful",
             timeout=_SUCCESS_TIMEOUT_S,
         )
@@ -616,7 +616,7 @@ async def test_d105_recreate_same_dgd_name_reconciles_successfully(
         await kubectl.run(
             "delete",
             "namespace",
-            _DGD_NAMESPACE,
+            _D105_DGD_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -637,7 +637,7 @@ async def _d105_wait_for_dgd_absent(
             "dynamographdeployment",
             name,
             "-n",
-            _DGD_NAMESPACE,
+            _D105_DGD_NAMESPACE,
             "-o",
             "jsonpath={.metadata.uid}",
             check=False,
@@ -648,7 +648,7 @@ async def _d105_wait_for_dgd_absent(
 
     status = await _dgd_status_snapshot(kubectl, name=name)
     raise AssertionError(
-        f"D105 expected {_DGD_NAMESPACE}/{name} to be deleted within "
+        f"D105 expected {_D105_DGD_NAMESPACE}/{name} to be deleted within "
         f"{timeout}s before same-name re-create; last status: {status!r}"
     )
 
@@ -660,7 +660,7 @@ async def _read_dgd_json(kubectl: KubectlClient, *, name: str) -> dict[str, Any]
         "dynamographdeployment",
         name,
         "-n",
-        _DGD_NAMESPACE,
+        _D105_DGD_NAMESPACE,
         "-o",
         "json",
         check=True,
@@ -675,7 +675,7 @@ async def _dgd_status_snapshot(kubectl: KubectlClient, *, name: str) -> str:
         "dynamographdeployment",
         name,
         "-n",
-        _DGD_NAMESPACE,
+        _D105_DGD_NAMESPACE,
         "-o",
         "jsonpath={.status}{' finalizers='}{.metadata.finalizers}",
         check=False,
@@ -687,16 +687,16 @@ async def _dgd_status_snapshot(kubectl: KubectlClient, *, name: str) -> str:
 
 # D106
 
-_DGD_NAME = "d106-test"
-_DGD_NAMESPACE = "d106-webhook-down"
-_WEBHOOK_KIND = "validatingwebhookconfigurations"
+_D106_DGD_NAME = "d106-test"
+_D106_DGD_NAMESPACE = "d106-webhook-down"
+_D106_WEBHOOK_KIND = "validatingwebhookconfigurations"
 _WEBHOOK_GROUP = "nvidia.com"
-_DGD_RESOURCE = "dynamographdeployment"
+_D106_DGD_RESOURCE = "dynamographdeployment"
 _DGD_LABELS = (
     "nvidia.com/dynamo-graph-deployment-name",
     "nvidia.com/dynamographdeployment",
 )
-_CHILD_KINDS = (
+_D106_CHILD_KINDS = (
     "deployment",
     "service",
     "configmap",
@@ -735,7 +735,7 @@ async def test_d106_webhook_down_blocks_dgd_or_leaves_no_children(
     if target is None:
         pytest.skip("D106: no DGD validating webhook service was found")
 
-    await kubectl.create_namespace(_DGD_NAMESPACE)
+    await kubectl.create_namespace(_D106_DGD_NAMESPACE)
     apply_succeeded = False
     try:
         await _scale_deployment(kubectl, target, replicas=0)
@@ -743,7 +743,7 @@ async def test_d106_webhook_down_blocks_dgd_or_leaves_no_children(
 
         manifest = _dgd_manifest(kubectl)
         try:
-            await kubectl.apply(manifest, namespace=_DGD_NAMESPACE)
+            await kubectl.apply(manifest, namespace=_D106_DGD_NAMESPACE)
         except RuntimeError as exc:
             message = str(exc).lower()
             assert any(
@@ -768,8 +768,8 @@ async def test_d106_webhook_down_blocks_dgd_or_leaves_no_children(
             await asyncio.sleep(_NO_CHILD_GRACE_S)
             children = await _list_dgd_children(
                 kubectl,
-                namespace=_DGD_NAMESPACE,
-                name=_DGD_NAME,
+                namespace=_D106_DGD_NAMESPACE,
+                name=_D106_DGD_NAME,
             )
             assert not children, (
                 "D106: DGD was admitted while webhook deployment "
@@ -792,10 +792,10 @@ async def test_d106_webhook_down_blocks_dgd_or_leaves_no_children(
         if apply_succeeded:
             await kubectl.run(
                 "delete",
-                _DGD_RESOURCE,
-                _DGD_NAME,
+                _D106_DGD_RESOURCE,
+                _D106_DGD_NAME,
                 "-n",
-                _DGD_NAMESPACE,
+                _D106_DGD_NAMESPACE,
                 "--wait=false",
                 "--ignore-not-found",
                 check=False,
@@ -803,7 +803,7 @@ async def test_d106_webhook_down_blocks_dgd_or_leaves_no_children(
         await kubectl.run(
             "delete",
             "namespace",
-            _DGD_NAMESPACE,
+            _D106_DGD_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -868,7 +868,7 @@ async def _find_dgd_webhook_deployment(
 
 
 async def _dgd_webhook_services(kubectl: KubectlClient) -> list[tuple[str, str]]:
-    result = await kubectl.run("get", _WEBHOOK_KIND, "-o", "json", check=False)
+    result = await kubectl.run("get", _D106_WEBHOOK_KIND, "-o", "json", check=False)
     if result.returncode != 0 or not result.stdout.strip():
         return []
 
@@ -980,9 +980,9 @@ async def _wait_for_deployment_replicas(
 
 def _dgd_manifest(kubectl: KubectlClient) -> str:
     config = DynamoConfig(
-        name=_DGD_NAME,
+        name=_D106_DGD_NAME,
         model_name="Qwen/Qwen3-0.6B",
-        namespace=_DGD_NAMESPACE,
+        namespace=_D106_DGD_NAMESPACE,
         api_version="v1alpha1",
     )
     return DynamoDeployer(kubectl, config).generate_manifest()
@@ -995,7 +995,7 @@ async def _list_dgd_children(
     name: str,
 ) -> list[str]:
     children: list[str] = []
-    for kind in _CHILD_KINDS:
+    for kind in _D106_CHILD_KINDS:
         for label in _DGD_LABELS:
             result = await kubectl.run(
                 "get",
@@ -3325,7 +3325,7 @@ async def _child_names(
 
 _OPERATOR_NAMESPACE = "dynamo-system"
 _OPERATOR_SELECTOR = "app.kubernetes.io/name=dynamo-operator"
-_NAMESPACE = "d116-patch-operator-down"
+_D116_NAMESPACE = "d116-patch-operator-down"
 _SUCCESS_TIMEOUT_S = 600.0
 
 
@@ -3337,19 +3337,19 @@ async def test_d116_patch_while_operator_down_reconciles_latest_generation(
     deployment = await _single_operator_deployment(kubectl)
     config = DynamoConfig(
         model_name="Qwen/Qwen3-0.6B",
-        namespace=_NAMESPACE,
+        namespace=_D116_NAMESPACE,
         api_version="v1alpha1",
     )
     deployer = DynamoDeployer(kubectl, config)
     name = deployer._deployment_name()
 
     try:
-        await kubectl.apply(deployer.generate_manifest(), namespace=_NAMESPACE)
+        await kubectl.apply(deployer.generate_manifest(), namespace=_D116_NAMESPACE)
         try:
             await wait_for_dgd_state(
                 kubectl,
                 name,
-                _NAMESPACE,
+                _D116_NAMESPACE,
                 "successful",
                 timeout=_SUCCESS_TIMEOUT_S,
             )
@@ -3370,7 +3370,7 @@ async def test_d116_patch_while_operator_down_reconciles_latest_generation(
                 "dynamographdeployment",
                 name,
                 "-n",
-                _NAMESPACE,
+                _D116_NAMESPACE,
                 "--type=merge",
                 f"-p={orjson.dumps(patch).decode()}",
                 check=True,
@@ -3387,7 +3387,7 @@ async def test_d116_patch_while_operator_down_reconciles_latest_generation(
         await wait_for_dgd_state(
             kubectl,
             name,
-            _NAMESPACE,
+            _D116_NAMESPACE,
             "successful",
             timeout=_SUCCESS_TIMEOUT_S,
         )
@@ -3402,7 +3402,7 @@ async def test_d116_patch_while_operator_down_reconciles_latest_generation(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D116_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -3489,7 +3489,7 @@ async def _read_dgd(kubectl: KubectlClient, name: str) -> dict[str, Any]:
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D116_NAMESPACE,
         "-o",
         "json",
         check=True,
@@ -3503,7 +3503,7 @@ async def _status_snapshot(kubectl: KubectlClient, name: str) -> str:
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D116_NAMESPACE,
         "-o",
         "jsonpath={.status}",
         check=False,
@@ -3513,7 +3513,7 @@ async def _status_snapshot(kubectl: KubectlClient, name: str) -> str:
 
 # D117
 
-_NAMESPACE = "d117-rapid-spec-patch"
+_D117_NAMESPACE = "d117-rapid-spec-patch"
 _SUCCESS_TIMEOUT_S = 600.0
 
 
@@ -3524,19 +3524,19 @@ async def test_d117_rapid_spec_patches_converge_on_final_spec(
     """Patch frontend replicas several times and assert final observedGeneration."""
     config = DynamoConfig(
         model_name="Qwen/Qwen3-0.6B",
-        namespace=_NAMESPACE,
+        namespace=_D117_NAMESPACE,
         api_version="v1alpha1",
     )
     deployer = DynamoDeployer(kubectl, config)
     name = deployer._deployment_name()
 
     try:
-        await kubectl.apply(deployer.generate_manifest(), namespace=_NAMESPACE)
+        await kubectl.apply(deployer.generate_manifest(), namespace=_D117_NAMESPACE)
         try:
             await wait_for_dgd_state(
                 kubectl,
                 name,
-                _NAMESPACE,
+                _D117_NAMESPACE,
                 "successful",
                 timeout=_SUCCESS_TIMEOUT_S,
             )
@@ -3559,7 +3559,7 @@ async def test_d117_rapid_spec_patches_converge_on_final_spec(
         await wait_for_dgd_state(
             kubectl,
             name,
-            _NAMESPACE,
+            _D117_NAMESPACE,
             "successful",
             timeout=_SUCCESS_TIMEOUT_S,
         )
@@ -3573,7 +3573,7 @@ async def test_d117_rapid_spec_patches_converge_on_final_spec(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D117_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -3592,7 +3592,7 @@ async def _patch_frontend_replicas(
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D117_NAMESPACE,
         "--type=merge",
         f"-p={orjson.dumps(patch).decode()}",
         check=True,
@@ -3605,7 +3605,7 @@ async def _d117_read_dgd(kubectl: KubectlClient, name: str) -> dict[str, Any]:
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D117_NAMESPACE,
         "-o",
         "json",
         check=True,
@@ -3619,7 +3619,7 @@ async def _d117_status_snapshot(kubectl: KubectlClient, name: str) -> str:
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D117_NAMESPACE,
         "-o",
         "jsonpath={.status}",
         check=False,
@@ -3629,10 +3629,10 @@ async def _d117_status_snapshot(kubectl: KubectlClient, name: str) -> str:
 
 # D118
 
-_NAMESPACE = "d118-webhook-fail-closed"
+_D118_NAMESPACE = "d118-webhook-fail-closed"
 _WEBHOOK_GROUP = "nvidia.com"
-_DGD_RESOURCE = "dynamographdeployment"
-_DGD_NAME = "dynamo-agg"
+_D118_DGD_RESOURCE = "dynamographdeployment"
+_D118_DGD_NAME = "dynamo-agg"
 
 
 @dataclass(frozen=True)
@@ -3653,7 +3653,7 @@ async def test_d118_webhook_unavailable_with_fail_policy_fail_rejects_dgd(
 ) -> None:
     """Set failurePolicy=Fail, stop webhook pods, and assert admission rejects."""
     target = await _find_webhook_target(kubectl, case_id="D118")
-    await kubectl.create_namespace(_NAMESPACE)
+    await kubectl.create_namespace(_D118_NAMESPACE)
     try:
         await _patch_failure_policy(kubectl, target, policy="Fail")
         await _d118_scale_deployment(kubectl, target, replicas=0)
@@ -3661,10 +3661,10 @@ async def test_d118_webhook_unavailable_with_fail_policy_fail_rejects_dgd(
 
         manifest = DynamoDeployer(
             kubectl,
-            DynamoConfig(namespace=_NAMESPACE, api_version="v1alpha1"),
+            DynamoConfig(namespace=_D118_NAMESPACE, api_version="v1alpha1"),
         ).generate_manifest()
         try:
-            await kubectl.apply(manifest, namespace=_NAMESPACE)
+            await kubectl.apply(manifest, namespace=_D118_NAMESPACE)
         except RuntimeError as exc:
             message = str(exc).lower()
         else:
@@ -3688,10 +3688,10 @@ async def test_d118_webhook_unavailable_with_fail_policy_fail_rejects_dgd(
         ), f"D118 expected webhook availability error, got {message!r}"
         get_result = await kubectl.run(
             "get",
-            _DGD_RESOURCE,
-            _DGD_NAME,
+            _D118_DGD_RESOURCE,
+            _D118_DGD_NAME,
             "-n",
-            _NAMESPACE,
+            _D118_NAMESPACE,
             check=False,
         )
         assert get_result.returncode != 0, (
@@ -3712,7 +3712,7 @@ async def test_d118_webhook_unavailable_with_fail_policy_fail_rejects_dgd(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D118_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -3935,8 +3935,8 @@ async def _d118_get_json(
 
 # D119
 
-_NAMESPACE = "d119-webhook-fail-open"
-_NAME = "d119-invalid"
+_D119_NAMESPACE = "d119-webhook-fail-open"
+_D119_NAME = "d119-invalid"
 _WEBHOOK_GROUP = "nvidia.com"
 
 
@@ -3958,7 +3958,7 @@ async def test_d119_fail_open_invalid_spec_is_admitted_but_not_successful(
 ) -> None:
     """Set failurePolicy=Ignore and assert a webhook-only invalid spec is not run."""
     target = await _d119_find_webhook_target(kubectl)
-    await kubectl.create_namespace(_NAMESPACE)
+    await kubectl.create_namespace(_D119_NAMESPACE)
     try:
         await _d119_patch_failure_policy(kubectl, target, policy="Ignore")
         await _d119_scale_deployment(kubectl, target, replicas=0)
@@ -3967,7 +3967,7 @@ async def test_d119_fail_open_invalid_spec_is_admitted_but_not_successful(
         try:
             await kubectl.apply(
                 orjson.dumps(_invalid_but_schema_valid_manifest()).decode(),
-                namespace=_NAMESPACE,
+                namespace=_D119_NAMESPACE,
             )
         except RuntimeError as exc:
             message = str(exc).lower()
@@ -3980,7 +3980,7 @@ async def test_d119_fail_open_invalid_spec_is_admitted_but_not_successful(
             pytest.fail(f"D119 fail-open apply failed unexpectedly: {message!r}")
 
         dgd = await _d119_read_dgd(kubectl)
-        assert dgd["metadata"]["name"] == _NAME
+        assert dgd["metadata"]["name"] == _D119_NAME
         state = await _observe_state(kubectl, timeout=45.0)
         assert state != "successful", (
             "D119: fail-open admitted a webhook-invalid DGD and the operator "
@@ -4001,7 +4001,7 @@ async def test_d119_fail_open_invalid_spec_is_admitted_but_not_successful(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D119_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -4012,7 +4012,7 @@ def _invalid_but_schema_valid_manifest() -> dict[str, Any]:
     return {
         "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _NAME, "namespace": _NAMESPACE},
+        "metadata": {"name": _D119_NAME, "namespace": _D119_NAMESPACE},
         "spec": {
             "services": {
                 "Frontend": {
@@ -4046,9 +4046,9 @@ async def _observe_state(kubectl: KubectlClient, *, timeout: float) -> str | Non
         result = await kubectl.run(
             "get",
             "dynamographdeployment",
-            _NAME,
+            _D119_NAME,
             "-n",
-            _NAMESPACE,
+            _D119_NAMESPACE,
             "-o",
             "jsonpath={.status.state}",
             check=False,
@@ -4065,9 +4065,9 @@ async def _d119_read_dgd(kubectl: KubectlClient) -> dict[str, Any]:
     result = await kubectl.run(
         "get",
         "dynamographdeployment",
-        _NAME,
+        _D119_NAME,
         "-n",
-        _NAMESPACE,
+        _D119_NAMESPACE,
         "-o",
         "json",
         check=True,
@@ -4291,8 +4291,8 @@ async def _d119_get_json(
 
 # D120
 
-_NAMESPACE = "d120-unserved-version"
-_NAME = "d120-unserved"
+_D120_NAMESPACE = "d120-unserved-version"
+_D120_NAME = "d120-unserved"
 _UNSERVED_VERSION = "v99alpha99"
 
 
@@ -4307,11 +4307,11 @@ async def test_d120_unserved_dgd_api_version_is_rejected(
             f"D120 requires {_UNSERVED_VERSION!r} to be unserved; served={served_versions!r}"
         )
 
-    await kubectl.create_namespace(_NAMESPACE)
+    await kubectl.create_namespace(_D120_NAMESPACE)
     try:
         try:
             await kubectl.apply(
-                orjson.dumps(_manifest()).decode(), namespace=_NAMESPACE
+                orjson.dumps(_manifest()).decode(), namespace=_D120_NAMESPACE
             )
         except RuntimeError as exc:
             message = str(exc).lower()
@@ -4333,9 +4333,9 @@ async def test_d120_unserved_dgd_api_version_is_rejected(
         result = await kubectl.run(
             "get",
             "dynamographdeployment",
-            _NAME,
+            _D120_NAME,
             "-n",
-            _NAMESPACE,
+            _D120_NAMESPACE,
             check=False,
         )
         assert result.returncode != 0, "D120: unserved-version DGD was persisted"
@@ -4343,7 +4343,7 @@ async def test_d120_unserved_dgd_api_version_is_rejected(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D120_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -4371,15 +4371,15 @@ def _manifest() -> dict[str, object]:
     return {
         "apiVersion": f"nvidia.com/{_UNSERVED_VERSION}",
         "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _NAME, "namespace": _NAMESPACE},
+        "metadata": {"name": _D120_NAME, "namespace": _D120_NAMESPACE},
         "spec": {"services": {}},
     }
 
 
 # D121
 
-_NAMESPACE = "d121-unknown-spec-field"
-_NAME = "d121-unknown-field"
+_D121_NAMESPACE = "d121-unknown-spec-field"
+_D121_NAME = "d121-unknown-field"
 _UNKNOWN_FIELD = "definitelyUnknownD121Field"
 
 
@@ -4388,11 +4388,11 @@ async def test_d121_unknown_dgd_spec_field_is_rejected(
     dynamo_operator,  # noqa: ANN001 - fixture ensures CRD/webhook exist
 ) -> None:
     """Apply a DGD with an unknown spec key and assert strict admission failure."""
-    await kubectl.create_namespace(_NAMESPACE)
+    await kubectl.create_namespace(_D121_NAMESPACE)
     try:
         try:
             await kubectl.apply(
-                orjson.dumps(_d121_manifest()).decode(), namespace=_NAMESPACE
+                orjson.dumps(_d121_manifest()).decode(), namespace=_D121_NAMESPACE
             )
         except RuntimeError as exc:
             message = str(exc).lower()
@@ -4406,9 +4406,9 @@ async def test_d121_unknown_dgd_spec_field_is_rejected(
         result = await kubectl.run(
             "get",
             "dynamographdeployment",
-            _NAME,
+            _D121_NAME,
             "-n",
-            _NAMESPACE,
+            _D121_NAMESPACE,
             check=False,
         )
         assert result.returncode != 0, "D121: DGD with unknown spec field was persisted"
@@ -4416,7 +4416,7 @@ async def test_d121_unknown_dgd_spec_field_is_rejected(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D121_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -4427,7 +4427,7 @@ def _d121_manifest() -> dict[str, object]:
     return {
         "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
-        "metadata": {"name": _NAME, "namespace": _NAMESPACE},
+        "metadata": {"name": _D121_NAME, "namespace": _D121_NAMESPACE},
         "spec": {
             _UNKNOWN_FIELD: True,
             "services": {
@@ -4447,7 +4447,7 @@ def _d121_manifest() -> dict[str, object]:
 
 # D122
 
-_NAMESPACE = "d122-invalid-component"
+_D122_NAMESPACE = "d122-invalid-component"
 
 
 def _service(component_type: str) -> dict[str, Any]:
@@ -4493,12 +4493,12 @@ async def test_d122_invalid_component_type_or_key_rejected(
     expected_terms: tuple[str, ...],
 ) -> None:
     """Apply invalid component definitions and assert they do not persist."""
-    await kubectl.create_namespace(_NAMESPACE)
+    await kubectl.create_namespace(_D122_NAMESPACE)
     try:
         try:
             await kubectl.apply(
                 orjson.dumps(_d122_manifest(name=name, services=services)).decode(),
-                namespace=_NAMESPACE,
+                namespace=_D122_NAMESPACE,
             )
         except RuntimeError as exc:
             message = str(exc).lower()
@@ -4514,11 +4514,11 @@ async def test_d122_invalid_component_type_or_key_rejected(
             "dynamographdeployment",
             name,
             "-n",
-            _NAMESPACE,
+            _D122_NAMESPACE,
             check=False,
         )
         assert result.returncode != 0, (
-            f"D122: invalid DGD {_NAMESPACE}/{name} persisted"
+            f"D122: invalid DGD {_D122_NAMESPACE}/{name} persisted"
         )
     finally:
         await kubectl.run(
@@ -4526,7 +4526,7 @@ async def test_d122_invalid_component_type_or_key_rejected(
             "dynamographdeployment",
             name,
             "-n",
-            _NAMESPACE,
+            _D122_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -4534,7 +4534,7 @@ async def test_d122_invalid_component_type_or_key_rejected(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D122_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -4545,14 +4545,14 @@ def _d122_manifest(*, name: str, services: dict[str, Any]) -> dict[str, Any]:
     return {
         "apiVersion": "nvidia.com/v1alpha1",
         "kind": "DynamoGraphDeployment",
-        "metadata": {"name": name, "namespace": _NAMESPACE},
+        "metadata": {"name": name, "namespace": _D122_NAMESPACE},
         "spec": {"services": services},
     }
 
 
 # D123
 
-_NAMESPACE = "d123-status-condition-freshness"
+_D123_NAMESPACE = "d123-status-condition-freshness"
 _SUCCESS_TIMEOUT_S = 600.0
 
 
@@ -4563,19 +4563,19 @@ async def test_d123_status_conditions_fresh_after_spec_patch(
     """Patch a successful DGD and assert status conditions match latest generation."""
     config = DynamoConfig(
         model_name="Qwen/Qwen3-0.6B",
-        namespace=_NAMESPACE,
+        namespace=_D123_NAMESPACE,
         api_version="v1alpha1",
     )
     deployer = DynamoDeployer(kubectl, config)
     name = deployer._deployment_name()
 
     try:
-        await kubectl.apply(deployer.generate_manifest(), namespace=_NAMESPACE)
+        await kubectl.apply(deployer.generate_manifest(), namespace=_D123_NAMESPACE)
         try:
             await wait_for_dgd_state(
                 kubectl,
                 name,
-                _NAMESPACE,
+                _D123_NAMESPACE,
                 "successful",
                 timeout=_SUCCESS_TIMEOUT_S,
             )
@@ -4593,7 +4593,7 @@ async def test_d123_status_conditions_fresh_after_spec_patch(
         await wait_for_dgd_state(
             kubectl,
             name,
-            _NAMESPACE,
+            _D123_NAMESPACE,
             "successful",
             timeout=_SUCCESS_TIMEOUT_S,
         )
@@ -4623,7 +4623,7 @@ async def test_d123_status_conditions_fresh_after_spec_patch(
         await kubectl.run(
             "delete",
             "namespace",
-            _NAMESPACE,
+            _D123_NAMESPACE,
             "--wait=false",
             "--ignore-not-found",
             check=False,
@@ -4642,7 +4642,7 @@ async def _d123_patch_frontend_replicas(
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D123_NAMESPACE,
         "--type=merge",
         f"-p={orjson.dumps(patch).decode()}",
         check=True,
@@ -4655,7 +4655,7 @@ async def _d123_read_dgd(kubectl: KubectlClient, name: str) -> dict[str, Any]:
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D123_NAMESPACE,
         "-o",
         "json",
         check=True,
@@ -4669,7 +4669,7 @@ async def _d123_status_snapshot(kubectl: KubectlClient, name: str) -> str:
         "dynamographdeployment",
         name,
         "-n",
-        _NAMESPACE,
+        _D123_NAMESPACE,
         "-o",
         "jsonpath={.status}",
         check=False,
@@ -5135,9 +5135,9 @@ async def _wait_namespace_absent(
 
 _OPERATOR_NAMESPACE = "dynamo-system"
 _OPERATOR_SELECTOR = "app.kubernetes.io/name=dynamo-operator"
-_WEBHOOK_KIND = "validatingwebhookconfiguration"
+_D128_D130_WEBHOOK_KIND = "validatingwebhookconfiguration"
 _WEBHOOK_GROUP = "nvidia.com"
-_DGD_RESOURCE = "dynamographdeployments"
+_D128_D130_DGD_RESOURCE = "dynamographdeployments"
 _BAD_CA_BUNDLE = base64.b64encode(b"d128-not-a-serving-ca").decode()
 _D128_NAMESPACE = "d128-webhook-bad-ca"
 _D129_NAMESPACE = "d129-webhook-timeout-budget"
@@ -5359,7 +5359,9 @@ async def test_d130_leader_election_lease_disruption_recovers(
 
 
 async def _unique_dgd_webhook(kubectl: KubectlClient, *, case: str) -> _WebhookTarget:
-    result = await kubectl.run("get", _WEBHOOK_KIND, "-o", "json", check=False)
+    result = await kubectl.run(
+        "get", _D128_D130_WEBHOOK_KIND, "-o", "json", check=False
+    )
     if result.returncode != 0 or not result.stdout.strip():
         pytest.skip(
             f"{case} requires permission to inspect validating webhook configs; "
@@ -5404,7 +5406,7 @@ def _d128_d130_webhook_validates_dgd(rules: list[dict[str, Any]]) -> bool:
         groups = rule.get("apiGroups") or []
         resources = rule.get("resources") or []
         if _WEBHOOK_GROUP in groups and any(
-            str(resource).startswith(_DGD_RESOURCE) for resource in resources
+            str(resource).startswith(_D128_D130_DGD_RESOURCE) for resource in resources
         ):
             return True
     return False
@@ -5486,7 +5488,7 @@ async def _patch_webhook_field(
     ]
     await kubectl.run(
         "patch",
-        _WEBHOOK_KIND,
+        _D128_D130_WEBHOOK_KIND,
         webhook.config_name,
         "--type=json",
         f"-p={orjson.dumps(patch).decode()}",
@@ -5508,7 +5510,7 @@ async def _remove_webhook_field(
     ]
     await kubectl.run(
         "patch",
-        _WEBHOOK_KIND,
+        _D128_D130_WEBHOOK_KIND,
         webhook.config_name,
         "--type=json",
         f"-p={orjson.dumps(patch).decode()}",
