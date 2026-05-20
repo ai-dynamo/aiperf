@@ -584,6 +584,7 @@ Request distribution (100 requests)
     entropy: token-id diversity; higher means broader prompt vocabulary use.
     top decoded tokens: most frequent token IDs decoded for sanity checks; tokens are not words.
     vocab shape: log-scaled 80-bucket view across token-id space.
+    vocab shape stats: mean/percentiles of prompt-token counts per bucket, including empty buckets.
 
   /v1/chat/completions  n=100
     ISL    mean  1010.5   p50   998   p99  1819
@@ -599,10 +600,14 @@ Request distribution (100 requests)
        ... (10 rows total)
        210-  230   6 ████░░░░░░░░░░░░░░░░
 
+
     Vocab  used 5234/151936 (3.4%)  top-10 cover 47%  entropy 8.2/17.2 bits
       top decoded tokens: " the" 3201, " a" 2890, " of" 2455, " to" 2103, " and" 1987
 
     vocab shape  (80 buckets over id 0..151935, log-y)
+
+      bucket tokens mean  1275.0   p50    14   p90  2455   p95  2890   p99  3201
+
     ▇▇▇▅▅▄▄▃▃▃▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ▁ ▁ ▁  ▁  ▁  ▁         ▁       ▁    ▁       ▁
     0                            38K                          76K                       114K                152K
 
@@ -632,7 +637,7 @@ Example quantile block:
 }
 ```
 
-The optional `vocab_distribution` block (per endpoint) characterises sampling across the tokenizer's vocabulary: coverage of distinct ids, top-N concentration, Shannon entropy with the uniform-sampling ceiling for comparison, an 80-bucket sparkline across the full id space, and the full `token_id -> count` frequency table for offline analysis. The block is `null` when no requests reached the endpoint.
+The optional `vocab_distribution` block (per endpoint) characterises sampling across the tokenizer's vocabulary: coverage of distinct ids, top-N concentration, Shannon entropy with the uniform-sampling ceiling for comparison, an 80-bucket sparkline across the full id space, per-bucket shape statistics, and the full `token_id -> count` frequency table for offline analysis. The block is `null` when no requests reached the endpoint.
 
 ```json
 "vocab_distribution": {
@@ -649,6 +654,10 @@ The optional `vocab_distribution` block (per endpoint) characterises sampling ac
     {"id": 318, "text": " a",   "count": 2890}
   ],
   "shape_80": [3201, 412, 311, 0, 47, "..."],
+  "shape_80_stats": {
+    "min": 0.0, "max": 3201.0, "mean": 1275.0, "stdev": 840.22,
+    "p50": 14.0, "p90": 2455.0, "p95": 2890.0, "p99": 3201.0
+  },
   "frequencies": {"264": 3201, "318": 2890, "...": 0}
 }
 ```

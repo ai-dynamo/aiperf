@@ -735,6 +735,15 @@ class TestVocabDistribution:
         assert len(vd["shape_80"]) == 80
         assert sum(vd["shape_80"]) == 80
 
+    def test_shape_80_stats_include_bucket_quantiles(self) -> None:
+        vd = _vocab_distribution(Counter({0: 10, 1: 20}), 160, "tokenizer", _id_to_text)
+        assert vd is not None
+        stats = vd["shape_80_stats"]
+        assert stats["min"] == 0.0
+        assert stats["max"] == 30.0
+        assert stats["mean"] == pytest.approx(30 / 80)
+        assert stats["p50"] == 0.0
+
     def test_frequencies_full_table_with_string_keys(self) -> None:
         counts = Counter({1: 5, 2: 3, 99: 1})
         vd = _vocab_distribution(counts, 100, "tokenizer", _id_to_text)
@@ -842,20 +851,32 @@ class TestRenderVocabShape:
         lines = _render_vocab_lines(self._make_vd(vocab_size=151936))
         assert lines[3] == "    vocab shape  (80 buckets over id 0..151935, log-y)"
 
+    def test_blank_lines_around_shape_stats(self) -> None:
+        lines = _render_vocab_lines(self._make_vd())
+        assert lines[4] == ""
+        assert lines[6] == ""
+
+    def test_shape_stats_line(self) -> None:
+        lines = _render_vocab_lines(self._make_vd(shape_80=[1] * 80))
+        assert lines[5] == (
+            "      bucket tokens mean     1.0   p50     1"
+            "   p90     1   p95     1   p99     1"
+        )
+
     def test_sparkline_is_80_chars(self) -> None:
         lines = _render_vocab_lines(
             self._make_vd(
                 shape_80=[10, 5, 2, 1] + [0] * 76,
             )
         )
-        # lines[4] is the sparkline, indented 4 spaces.
-        sparkline = lines[4][4:]
+        # lines[7] is the sparkline, indented 4 spaces.
+        sparkline = lines[7][4:]
         assert len(sparkline) == 80
 
     def test_zero_bucket_renders_as_space(self) -> None:
         shape = [10] + [0] * 79
         lines = _render_vocab_lines(self._make_vd(shape_80=shape))
-        sparkline = lines[4][4:]
+        sparkline = lines[7][4:]
         # First bucket is the tallest (█); the rest are zero (space).
         assert sparkline[0] == "█"
         assert sparkline[1:] == " " * 79
@@ -866,7 +887,7 @@ class TestRenderVocabShape:
         # block characters.
         shape = [1000] + [1] * 79
         lines = _render_vocab_lines(self._make_vd(shape_80=shape))
-        sparkline = lines[4][4:]
+        sparkline = lines[7][4:]
         assert sparkline[0] == "█"
         # The small buckets must render as non-space (i.e. a visible block).
         # log1p(1)/log1p(1000) ≈ 0.10, which maps to idx 0 (▁) under our
@@ -877,10 +898,10 @@ class TestRenderVocabShape:
 
     def test_axis_tick_line(self) -> None:
         lines = _render_vocab_lines(self._make_vd(vocab_size=151936))
-        # lines[5] is the axis tick line. The leftmost label '0' starts at
+        # lines[8] is the axis tick line. The leftmost label '0' starts at
         # column 4 (after the indent); the rightmost ('152K') ends at column
         # 4 + 80 = 84.
-        ticks = lines[5]
+        ticks = lines[8]
         assert ticks.startswith("    0")
         assert ticks.rstrip().endswith("152K")
         # Includes the three middle ticks at 25%/50%/75% positions.
@@ -1002,6 +1023,7 @@ class TestPrintSummaryVocab:
         assert "Definitions" in out
         assert "entropy: token-id diversity" in out
         assert "top decoded tokens: most frequent token IDs" in out
+        assert "vocab shape stats: mean/percentiles" in out
 
     def test_blank_lines_between_blocks(self, capsys) -> None:
         _print_summary(self._summary(self._vd()))
@@ -1009,6 +1031,8 @@ class TestPrintSummaryVocab:
         lines = out.splitlines()
         isl_hist_idx = next(i for i, ln in enumerate(lines) if "ISL histogram" in ln)
         vocab_idx = next(i for i, ln in enumerate(lines) if "Vocab  used" in ln)
-        # The line immediately before each block start should be blank.
+        # The line immediately before each block start should be blank, and
+        # vocab gets an extra visual gap after rendered histograms.
         assert lines[isl_hist_idx - 1] == ""
         assert lines[vocab_idx - 1] == ""
+        assert lines[vocab_idx - 2] == ""

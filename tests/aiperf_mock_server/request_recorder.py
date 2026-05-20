@@ -608,6 +608,9 @@ def _vocab_distribution(
         entropy_bits -= p * math.log2(p)
     max_entropy_bits = math.log2(vocab_size) if vocab_size > 1 else 0.0
 
+    shape_80 = _compute_shape_80(counts, vocab_size)
+    shape_stats = _quantiles(shape_80)
+
     return {
         "vocab_size": int(vocab_size),
         "vocab_size_source": source,
@@ -618,7 +621,8 @@ def _vocab_distribution(
         "entropy_bits": round(entropy_bits, 4),
         "max_entropy_bits": round(max_entropy_bits, 4),
         "top_tokens": top_tokens,
-        "shape_80": _compute_shape_80(counts, vocab_size),
+        "shape_80": shape_80,
+        "shape_80_stats": shape_stats,
         "frequencies": {str(tid): int(c) for tid, c in counts.items()},
     }
 
@@ -742,6 +746,7 @@ def _print_summary(summary: dict[str, Any]) -> None:
                     f"    {label}    mean {s['mean']:7.1f}"
                     f"   p50 {s['p50']:5.0f}   p99 {s['p99']:5.0f}"
                 )
+        rendered_histogram = False
         for label, s in (("ISL", stats["isl"]), ("OSL", stats["requested_osl"])):
             if s is None or s.get("histogram") is None:
                 continue
@@ -750,9 +755,12 @@ def _print_summary(summary: dict[str, Any]) -> None:
             print("")  # blank line before each histogram block
             for line in _render_histogram(label, hist, n, s["unique_values"]):
                 print(line)
+            rendered_histogram = True
         vd = stats.get("vocab_distribution")
         if vd is not None:
             print("")  # blank line before vocab block
+            if rendered_histogram:
+                print("")  # extra visual gap after histogram blocks
             for line in _render_vocab_lines(vd):
                 print(line)
         mn = stats["min_tokens"]
@@ -783,6 +791,7 @@ def _render_description_box() -> list[str]:
         "    entropy: token-id diversity; higher means broader prompt vocabulary use.",
         "    top decoded tokens: most frequent token IDs decoded for sanity checks; tokens are not words.",
         "    vocab shape: log-scaled 80-bucket view across token-id space.",
+        "    vocab shape stats: mean/percentiles of prompt-token counts per bucket, including empty buckets.",
     ]
 
 
@@ -809,14 +818,28 @@ def _format_tick(value: int) -> str:
     return f"{round(value / 1000)}K"
 
 
+def _format_shape_stats_line(stats: dict[str, Any]) -> str:
+    """Format the per-bucket vocab-shape stats line."""
+    return (
+        f"      bucket tokens mean {stats['mean']:7.1f}"
+        f"   p50 {stats['p50']:5.0f}"
+        f"   p90 {stats['p90']:5.0f}"
+        f"   p95 {stats['p95']:5.0f}"
+        f"   p99 {stats['p99']:5.0f}"
+    )
+
+
 def _render_vocab_lines(vd: dict[str, Any]) -> list[str]:
-    """Return the 6-line stdout block for one endpoint's vocab_distribution.
+    """Return the 7-line stdout block for one endpoint's vocab_distribution.
 
     Layout (4-space indent on top-level rows, 6-space indent on token details):
         ``    Vocab  used N/V (P%)  top-10 cover X%  entropy E/M bits``
         ``      top decoded tokens: "tok1" c1, "tok2" c2, ...``
         ``    ``
         ``    vocab shape  (80 buckets over id 0..V-1, log-y)``
+        ``    ``
+        ``      bucket tokens mean M  p50 P50  p90 P90  p95 P95  p99 P99``
+        ``    ``
         ``    [80-char sparkline]``
         ``    0 ... K_q1 ... K_q2 ... K_q3 ... K_max``
     """
@@ -832,6 +855,7 @@ def _render_vocab_lines(vd: dict[str, Any]) -> list[str]:
     )
 
     shape = vd["shape_80"]
+    shape_stats = vd.get("shape_80_stats") or _quantiles(shape) or _quantiles([0])
     max_count = max(shape) if shape else 0
     if max_count <= 0:
         sparkline = " " * 80
@@ -870,6 +894,9 @@ def _render_vocab_lines(vd: dict[str, Any]) -> list[str]:
         top_line,
         "",
         shape_header,
+        "",
+        _format_shape_stats_line(shape_stats),
+        "",
         "    " + sparkline,
         "    " + "".join(tick_line).rstrip(),
     ]

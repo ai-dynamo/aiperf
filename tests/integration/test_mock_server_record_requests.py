@@ -172,6 +172,10 @@ class TestRecordRequests:
         assert 0.0 <= chat_vd["coverage_pct"] <= 100.0
         assert len(chat_vd["shape_80"]) == 80
         assert sum(chat_vd["shape_80"]) == chat_vd["total_tokens"]
+        assert chat_vd["shape_80_stats"]["mean"] == pytest.approx(
+            chat_vd["total_tokens"] / 80
+        )
+        assert chat_vd["shape_80_stats"]["p50"] >= 0.0
         assert 1 <= len(chat_vd["top_tokens"]) <= 10
         for entry in chat_vd["top_tokens"]:
             assert isinstance(entry["id"], int)
