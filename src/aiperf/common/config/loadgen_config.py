@@ -400,7 +400,10 @@ class LoadGeneratorConfig(BaseConfig):
             "For Weka trace replay, AIPerf looks at all parent and subagent request "
             "intervals within one root trace, compresses periods where no request is "
             "active anywhere, and derives turn delays from the compressed per-trace "
-            "timeline. Defaults to None (no per-trace idle-gap compression).",
+            "timeline. When set for Weka, this takes precedence over "
+            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
+            "delays are not separately capped. Defaults to None (no per-trace "
+            "idle-gap compression).",
         ),
         CLIParameter(
             name=("--trace-idle-gap-cap-seconds",),

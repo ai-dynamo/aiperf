@@ -787,9 +787,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         ignore_delays = self.user_config.input.ignore_trace_delays
         think_time_only = self.user_config.input.use_think_time_only
         cap_seconds = self.user_config.loadgen.inter_turn_delay_cap_seconds
+        trace_idle_gap_cap_seconds = self._trace_idle_gap_cap_seconds()
         trace_idle_timing_by_trace = self._build_trace_idle_timing_by_trace(
             parent_plans, child_plans
         )
+        turn_cap_seconds = (
+            None if trace_idle_gap_cap_seconds is not None else cap_seconds
+        )
+        self._delay_cap_tracker.cap_seconds = turn_cap_seconds
 
         _t0 = _time.monotonic()
         _t1 = _time.monotonic()
@@ -811,7 +816,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     data=data,
                     ignore_delays=ignore_delays,
                     think_time_only=think_time_only,
-                    cap_seconds=cap_seconds,
+                    cap_seconds=turn_cap_seconds,
                     configured_workers=configured_workers,
                     t_start=_t1,
                     model_map_per_trace=model_map_per_trace,
@@ -825,7 +830,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     dropped_per_trace=dropped_per_trace,
                     ignore_delays=ignore_delays,
                     think_time_only=think_time_only,
-                    cap_seconds=cap_seconds,
+                    cap_seconds=turn_cap_seconds,
                     t_start=_t1,
                     model_map_per_trace=model_map_per_trace,
                     trace_idle_timing_by_trace=trace_idle_timing_by_trace,
