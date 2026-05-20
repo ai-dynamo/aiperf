@@ -775,6 +775,16 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             # turn whose timestamp is at or after that subagent's recorded end.
             # This preserves tiered joins: short children can gate the next main
             # turn while longer siblings gate a later turn or run background.
+            #
+            # Example, all three subagents appear after parent turn 0 in JSON:
+            #   parent[0] t=0
+            #   subagent A ends t=6, subagent B ends t=12.5, subagent C ends t=24
+            #   parent[1] t=6
+            #   parent[2] t=20
+            # We emit three branches from parent[0]:
+            #   A -> SPAWN_JOIN on parent[1]
+            #   B -> SPAWN_JOIN on parent[2]
+            #   C -> background branch, because no later parent turn reaches t=24
             groups: dict[tuple[int, int | None], list[WekaSubagentEntry]] = defaultdict(
                 list
             )
