@@ -2239,6 +2239,8 @@ def cmd_install_dynamo() -> str:
         "grove.enabled=false",
         "--set",
         "kai-scheduler.enabled=false",
+        "--set",
+        "dynamo-operator.controllerManager.kubeRbacProxy.image.repository=registry.k8s.io/kubebuilder/kube-rbac-proxy",
     )
 
     # Wait for operator deployment
