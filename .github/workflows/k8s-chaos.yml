@@ -1,0 +1,186 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Unified chaos / fault-injection suite (Wave-5 follow-up).
+#
+# Runs the three chaos directories the unified plan covers:
+#   - tests/kubernetes/chaos_common/  (adapter unit tests, no cluster needed)
+#   - tests/kubernetes/chaos/         (23 legacy AIPerf scenarios, k8s_slow)
+#   - tests/kubernetes/chaos_dynamo/  (Wave-0 D-series, k8s_slow)
+#
+# Modeled on run-chaos-tests.yml for cluster bring-up; ships as a separate
+# workflow because the unified suite covers a superset (the dynamo D-series).
+# Wave-5 follow-up to integrate with the existing k8s test matrix: a future
+# pass should reconcile run-chaos-tests.yml and this file into a single
+# matrix invocation, but they ship side-by-side for now so the legacy chaos
+# suite keeps its existing trigger semantics.
+#
+# Triggers:
+#   - workflow_dispatch (manual)
+#   - push to main
+#   - nightly cron at 08:00 UTC (one hour after run-chaos-tests.yml)
+#
+# Chaos fixtures require shareProcessNamespace on controller pods so
+# `kubectl exec ... kill` can reach sibling containers; this is enabled
+# here via AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true and is NOT the
+# production default. D704 requires a NetworkPolicy-enforcing CNI; CI
+# does NOT set KIND_HAS_CILIUM, so D704 xfail-skips by design — see
+# tests/kubernetes/chaos_common/README.md "Cilium-on-kind for D704".
+name: "Run Unified Chaos Tests"
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+      - '.gitignore'
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      pytest_args:
+        description: "Extra pytest args (e.g. `-k test_d101` or `--k8s-reuse-cluster`)"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  chaos-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      AIPERF_K8S_SHARE_PROCESS_NAMESPACE: "true"
+
+    steps:
+    - name: Free disk space
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+        sudo apt-get -y clean
+        docker system prune -af || true
+        df -h
+
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Cache uv downloads
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-py3.12-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+        restore-keys: |
+          uv-${{ runner.os }}-py3.12-
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v4
+
+    - name: Install helm
+      uses: azure/setup-helm@v4
+      with:
+        version: "latest"
+
+    - name: Install kind
+      uses: helm/kind-action@v1
+      with:
+        install_only: true
+
+    - name: Install dependencies
+      run: make first-time-setup PYTHON_VERSION=3.12
+
+    - name: Report pre-test disk and tool versions
+      shell: bash
+      run: |
+        df -h
+        docker version || true
+        kind version || true
+        kubectl version --client || true
+        helm version || true
+
+    - name: Run unified chaos tests
+      id: pytest
+      shell: bash
+      run: |
+        set -o pipefail
+        # chaos_common/ is hermetic (echo-only fixture); no -m filter.
+        # chaos/ + chaos_dynamo/ require -m k8s_slow.
+        uv run pytest -m k8s_slow -n auto \
+          tests/kubernetes/chaos_common/ \
+          tests/kubernetes/chaos/ \
+          tests/kubernetes/chaos_dynamo/ \
+          -v --tb=long \
+          ${{ inputs.pytest_args }}
+      timeout-minutes: 160
+
+    - name: Collect cluster diagnostics on failure
+      if: failure()
+      shell: bash
+      run: |
+        mkdir -p ./k8s-chaos-logs
+        kind export logs ./k8s-chaos-logs/kind --name aiperf || true
+        kubectl get all -A > ./k8s-chaos-logs/all-resources.txt || true
+        kubectl get events -A --sort-by=.lastTimestamp > ./k8s-chaos-logs/events.txt || true
+        kubectl describe nodes > ./k8s-chaos-logs/describe-nodes.txt || true
+        kubectl describe pods -A > ./k8s-chaos-logs/describe-pods.txt || true
+        kubectl get aiperfjobs -A -o yaml > ./k8s-chaos-logs/aiperfjobs.yaml 2>&1 || true
+        kubectl get jobsets -A -o yaml > ./k8s-chaos-logs/jobsets.yaml 2>&1 || true
+        kubectl get pods -A -o yaml > ./k8s-chaos-logs/pods.yaml 2>&1 || true
+        for ns in $(kubectl get ns -o name | cut -d/ -f2); do
+          kubectl logs -n "$ns" --all-containers --prefix --tail=-1 -l '' > "./k8s-chaos-logs/logs-$ns.txt" 2>&1 || true
+        done
+        docker ps -a > ./k8s-chaos-logs/docker-ps.txt 2>&1 || true
+        docker images > ./k8s-chaos-logs/docker-images.txt 2>&1 || true
+        df -h > ./k8s-chaos-logs/disk-usage.txt 2>&1 || true
+        free -h > ./k8s-chaos-logs/memory.txt 2>&1 || true
+        dmesg | tail -500 > ./k8s-chaos-logs/dmesg.txt 2>&1 || true
+
+    - name: Upload cluster diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: k8s-chaos-unified-logs-${{ github.run_id }}
+        path: k8s-chaos-logs/
+        retention-days: 7
+
+    - name: Write job summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Unified chaos tests"
+          echo ""
+          if [[ "${{ steps.pytest.outcome }}" == "success" ]]; then
+            echo "Result: **passed**"
+          else
+            echo "Result: **${{ steps.pytest.outcome }}**"
+            echo ""
+            echo "Diagnostics artifact: \`k8s-chaos-unified-logs-${{ github.run_id }}\` (7 day retention)"
+          fi
+          echo ""
+          echo "- Runner: \`ubuntu-latest\`"
+          echo "- Python: \`3.12\`"
+          echo "- Marker: \`k8s_slow\` (plus the unmarked chaos_common adapter tests)"
+          echo "- AIPERF_K8S_SHARE_PROCESS_NAMESPACE: \`true\`"
+          echo "- KIND_HAS_CILIUM: unset (D704 expected xfail-skipped)"
+          echo ""
+          echo "Wave-5 follow-up: this workflow ships side-by-side with"
+          echo "\`run-chaos-tests.yml\` until the two are reconciled into a"
+          echo "single matrix invocation."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Teardown Kind cluster
+      if: always()
+      run: kind delete cluster --name aiperf || true
