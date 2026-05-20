@@ -48,6 +48,11 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
         InputsFile structures (``data`` key holding a list).
         """
         if data is not None:
+            # Type-dispatch plugins feed arbitrary first-record shapes here;
+            # guard against non-dict inputs (list, string, scalar) so
+            # auto-detection falls through cleanly instead of AttributeError.
+            if not isinstance(data, dict):
+                return False
             if not isinstance(data.get("messages"), list):
                 return False
             if "conversation_id" in data:

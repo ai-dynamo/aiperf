@@ -68,10 +68,20 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
         """
         path = Path(self.filename)
         content = orjson.loads(path.read_bytes())
+        if "data" not in content:
+            raise ValueError(f"{path}: missing required top-level key 'data'")
         data_list = content["data"]
 
         result: dict[str, list[InputsJsonSession]] = {}
         for idx, entry in enumerate(data_list):
+            if "session_id" not in entry:
+                raise ValueError(
+                    f"{path}: entry[{idx}] missing required key 'session_id'"
+                )
+            if "payloads" not in entry:
+                raise ValueError(
+                    f"{path}: entry[{idx}] missing required key 'payloads'"
+                )
             session = InputsJsonSession(
                 session_id=entry["session_id"],
                 payloads=entry["payloads"],

@@ -6,6 +6,10 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.base_loader import BaseFileLoader, BaseLoader
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.hash_ids_synthesis import (
+    HashIdsPromptRequest,
+    HashIdsPromptSynthesisMixin,
+)
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
     BailianTrace,
@@ -27,6 +31,8 @@ __all__ = [
     "BaseLoader",
     "BasePublicDatasetLoader",
     "BaseTraceDatasetLoader",
+    "HashIdsPromptRequest",
+    "HashIdsPromptSynthesisMixin",
     "MediaConversionMixin",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",

@@ -408,6 +408,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/loader/parallel_convert.py",
+      "parallel_convert"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
