@@ -627,14 +627,15 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
     assert turns[2].delay == 13000.0  # think_time=None -> falls back to (25-12)*1000
 
 
-def test_trace_idle_gap_cap_is_per_trace_and_includes_subagent_activity(tmp_path):
-    """Idle-gap capping uses one parent+subagent timeline per root trace.
+def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
+    """Idle-gap capping uses parent+subagent request starts per root trace.
 
-    Trace A has a parent request at t=0, a subagent active until t=100, and a
-    later parent request at t=220. With a 60s idle-gap cap, only the 120s gap
-    from t=100 -> t=220 is compressed, so the second parent request shifts to
-    t=160. Trace B has activity inside Trace A's idle gap; if the transform were
-    global across traces, Trace A would shift differently. It must not.
+    Trace A has request starts at t=0, t=20, and t=220. With a 60s idle-gap cap,
+    the 200s request-start gap from t=20 -> t=220 is compressed by 140s, so the
+    second parent request shifts to t=80. The subagent's original api_time is not
+    used for this compression. Trace B has its own request-start gap; if the
+    transform were global across traces, both traces would shift differently.
+    They must not.
     """
 
     def normal(
@@ -734,14 +735,14 @@ def test_trace_idle_gap_cap_is_per_trace_and_includes_subagent_activity(tmp_path
 
     trace_a_turns = conv_by_id["trace_idle_a"].turns
     assert trace_a_turns[0].timestamp == 0.0
-    assert trace_a_turns[1].timestamp == 160_000.0
+    assert trace_a_turns[1].timestamp == 80_000.0
     # The trace-wide idle-gap cap takes precedence over the old per-turn cap,
-    # so this stays 160s rather than being independently clamped to 60s.
-    assert trace_a_turns[1].delay == 160_000.0
+    # so this stays 80s rather than being independently clamped to 60s.
+    assert trace_a_turns[1].delay == 80_000.0
     assert conv_by_id["trace_idle_a::sa:agent_idle"].turns[0].timestamp == 20_000.0
 
-    # Trace B is compressed against its own requests only: [150,151] -> [211,212]
-    # after a 69s idle gap is capped to 60s.
+    # Trace B is compressed against its own request starts only: 150 -> 220
+    # becomes 150 -> 210 after the 70s start gap is capped to 60s.
     trace_b_turns = conv_by_id["trace_idle_b"].turns
     assert trace_b_turns[0].timestamp == 150_000.0
-    assert trace_b_turns[1].timestamp == 211_000.0
+    assert trace_b_turns[1].timestamp == 210_000.0

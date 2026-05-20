@@ -149,29 +149,23 @@ class _TraceIdleTiming:
 
 
 class _IdleGapTimeWarp:
-    """Compress idle gaps in one trace and map raw seconds to adjusted seconds."""
+    """Compress request-start gaps in one trace and map raw seconds to adjusted seconds."""
 
-    def __init__(self, intervals: list[tuple[float, float]], cap_seconds: float):
+    def __init__(self, request_starts: list[float], cap_seconds: float):
         self._gaps: list[_IdleGap] = []
-        valid_intervals = sorted(
-            (min(start, end), max(start, end)) for start, end in intervals
-        )
-        if not valid_intervals:
+        sorted_starts = sorted(request_starts)
+        if not sorted_starts:
             return
 
-        _, active_end = valid_intervals[0]
+        prev_start = sorted_starts[0]
         cumulative_shift = 0.0
-        for start, end in valid_intervals[1:]:
-            if start <= active_end:
-                active_end = max(active_end, end)
-                continue
-
-            gap_seconds = start - active_end
+        for start in sorted_starts[1:]:
+            gap_seconds = start - prev_start
             if gap_seconds > cap_seconds:
                 excess = gap_seconds - cap_seconds
                 self._gaps.append(
                     _IdleGap(
-                        raw_start=active_end,
+                        raw_start=prev_start,
                         raw_end=start,
                         shift_before=cumulative_shift,
                         cap_seconds=cap_seconds,
@@ -179,16 +173,17 @@ class _IdleGapTimeWarp:
                     )
                 )
                 cumulative_shift += excess
-            active_end = end
+            prev_start = start
 
     def map(self, t_seconds: float) -> float:
         """Map a raw timestamp to the per-trace idle-gap-capped timeline.
 
-        Each long idle gap ``[a, b]`` is compressed by keeping its first
-        ``cap_seconds`` intact and collapsing the remainder to the cap boundary.
-        Requests at or after ``b`` shift left by the collapsed excess. Non-request
-        events inside the collapsed tail, such as subagent end markers, map to
-        the same boundary so joins cannot wait past the next shifted request.
+        Each long request-start gap ``[a, b]`` is compressed by keeping the first
+        ``cap_seconds`` after request ``a`` intact and collapsing the remainder
+        to the cap boundary. Requests at or after ``b`` shift left by the
+        collapsed excess. Non-request events inside the collapsed tail, such as
+        subagent end markers, map to the same boundary so joins cannot wait past
+        the next shifted request.
         """
         shift = 0.0
         for gap in self._gaps:
@@ -265,35 +260,34 @@ def _build_trace_idle_timing(
     child_plans: list[_ChildPlan],
     cap_seconds: float,
 ) -> _TraceIdleTiming:
-    """Build per-turn timing after capping idle gaps inside one root trace.
+    """Build per-turn timing after capping request-start gaps in one root trace.
 
-    The cap is per root trace, not global across the dataset. We first build a
-    single interval timeline from parent and subagent requests, merge overlaps,
-    and compress only periods where no request is active anywhere. Then parent
-    and child conversation delays are derived from that adjusted timeline.
+    The cap is per root trace, not global across the dataset. We collect every
+    request submission timestamp from the parent and all subagents, compress
+    any gap between consecutive starts above ``cap_seconds``, then derive parent
+    and child conversation delays from that adjusted timeline.
 
     Example with ``cap_seconds=60``:
-      - main request ends at t=10
-      - subagents are active until t=100
+      - main request starts at t=0
+      - subagent request starts at t=20 and originally takes 80s
       - next main request starts at t=220
-    The true idle gap is 120s (100 -> 220), so every event at/after t=220
-    shifts left by 60s. The parent delay from its previous turn remains the
-    full adjusted wall-clock delta; it is not independently capped to 60s.
+    The capped gap is based on request starts only: 20 -> 220 is 200s, so the
+    next main request shifts left by 140s to t=80. The original subagent
+    latency still matters for join placement, but it does not prevent this idle
+    gap from being compressed.
     """
-    intervals: list[tuple[float, float]] = []
+    request_starts: list[float] = []
     for _, req in plan.normals:
-        start = req.t
-        intervals.append((start, _request_end_seconds(start, req.api_time)))
+        request_starts.append(req.t)
 
     child_plans_for_trace = [
         cp for cp in child_plans if cp.parent_trace_id == plan.trace_id
     ]
     for cp in child_plans_for_trace:
         for req in cp.stream_requests:
-            start = _subagent_request_absolute_t(cp.entry, req)
-            intervals.append((start, _request_end_seconds(start, req.api_time)))
+            request_starts.append(_subagent_request_absolute_t(cp.entry, req))
 
-    warp = _IdleGapTimeWarp(intervals, cap_seconds)
+    warp = _IdleGapTimeWarp(request_starts, cap_seconds)
     parent_by_outer_idx: dict[int, _RequestTiming] = {}
     prev_t: float | None = None
     for outer_idx, req in plan.normals:

@@ -398,9 +398,10 @@ class LoadGeneratorConfig(BaseConfig):
             ge=0.0,
             description="Hard ceiling (seconds) for idle gaps within each individual trace. "
             "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "intervals within one root trace, compresses periods where no request is "
-            "active anywhere, and derives turn delays from the compressed per-trace "
-            "timeline. When set for Weka, this takes precedence over "
+            "submission timestamps within one root trace, compresses long gaps between "
+            "consecutive request submissions, and derives turn delays from the "
+            "compressed per-trace timeline. Original request api_time values are not "
+            "used to decide these idle gaps. When set for Weka, this takes precedence over "
             "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
             "delays are not separately capped. Defaults to None (no per-trace "
             "idle-gap compression).",
