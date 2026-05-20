@@ -19,11 +19,9 @@ from pytest import param
 from tests.kubernetes.chaos_dynamo.test_chaos_d3xx_nixl_kvbm import (
     _nixl_route_skip_reason,
 )
-from tests.kubernetes.chaos_dynamo.test_chaos_d801_etcd_kill_registration import (
-    _find_decode_component,
-)
-from tests.kubernetes.chaos_dynamo.test_chaos_d802_etcd_pause import (
+from tests.kubernetes.chaos_dynamo.test_chaos_d8xx_store_discovery import (
     _d802_static_skip_reason,
+    _find_decode_component,
 )
 from tests.kubernetes.gpu.conftest import GPUTestSettings
 from tests.kubernetes.gpu.dynamo import helpers as _dynamo_helpers
