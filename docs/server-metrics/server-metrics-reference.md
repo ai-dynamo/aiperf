@@ -185,11 +185,11 @@ When scraping multiple server instances, each series includes an `endpoint_url` 
 
 ## Detailed Metric Definitions
 
-## Dynamo Frontend
+### Dynamo Frontend
 
 The Dynamo frontend is the HTTP entry point that receives client requests and routes them to backend workers. These metrics provide user-facing visibility into request processing.
 
-### Request Flow
+#### Request Flow
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -206,25 +206,36 @@ The Dynamo frontend is the HTTP entry point that receives client requests and ro
 - `status`: `success`, `error`
 - `error_type`: empty string for success, or `validation`, `not_found`, `overload`, `cancelled`, `response_timeout`, `internal`, `not_implemented`
 
-### Latency
+#### Latency
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `dynamo_frontend_request_duration_seconds` | histogram | seconds | `model` | `0.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 130.0, 260.0, 510.0, +Inf` | **End-to-end request latency** from HTTP handler entry to response completion. Key metric for SLA compliance. Use `stats.p99_estimate` for tail latency. |
-| `dynamo_frontend_time_to_first_token_seconds` | histogram | seconds | `model` | `0.0, 0.0022, 0.0047, 0.01, 0.022, 0.047, 0.1, 0.22, 0.47, 1.0, 2.2, 4.7, 10.0, 22.0, 48.0, 100.0, 220.0, 480.0, +Inf` | **Time to first token (TTFT)** - latency until first token is generated. Critical for perceived responsiveness. |
-| `dynamo_frontend_inter_token_latency_seconds` | histogram | seconds | `model` | `0.0, 0.0019, 0.0035, 0.0067, 0.013, 0.024, 0.045, 0.084, 0.16, 0.3, 0.56, 1.1, 2.0, +Inf` | **Inter-token latency (ITL)** - time between consecutive tokens. Lower is better for streaming UX. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `dynamo_frontend_request_duration_seconds` | histogram | seconds | `model` | **End-to-end request latency** from HTTP handler entry to response completion. Key metric for SLA compliance. Use `stats.p99_estimate` for tail latency. |
+| `dynamo_frontend_time_to_first_token_seconds` | histogram | seconds | `model` | **Time to first token (TTFT)** - latency until first token is generated. Critical for perceived responsiveness. |
+| `dynamo_frontend_inter_token_latency_seconds` | histogram | seconds | `model` | **Inter-token latency (ITL)** - time between consecutive tokens. Lower is better for streaming UX. |
 
-### Tokens
+**Histogram buckets:**
+- `dynamo_frontend_request_duration_seconds`: `0.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 130.0, 260.0, 510.0, +Inf`
+- `dynamo_frontend_time_to_first_token_seconds`: `0.0, 0.0022, 0.0047, 0.01, 0.022, 0.047, 0.1, 0.22, 0.47, 1.0, 2.2, 4.7, 10.0, 22.0, 48.0, 100.0, 220.0, 480.0, +Inf`
+- `dynamo_frontend_inter_token_latency_seconds`: `0.0, 0.0019, 0.0035, 0.0067, 0.013, 0.024, 0.045, 0.084, 0.16, 0.3, 0.56, 1.1, 2.0, +Inf`
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `dynamo_frontend_output_tokens` | counter | tokens | `model` | — | Total output tokens generated. `stats.rate` = output token throughput (tokens/s). |
-| `dynamo_frontend_cached_tokens` | histogram | tokens | `model` | Same as `dynamo_frontend_input_sequence_tokens` | Cached tokens (prefix cache hits) per request. |
-| `dynamo_frontend_tokenizer_latency_ms` | histogram | milliseconds | `operation` | `0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, +Inf` | Tokenizer latency. `operation`: `tokenize`, `detokenize`. |
-| `dynamo_frontend_input_sequence_tokens` | histogram | tokens | `model` | `0.0, 100.0, 210.0, 430.0, 870.0, 1800.0, 3600.0, 7400.0, 15000.0, 31000.0, 63000.0, 130000.0, +Inf` | **Input sequence length distribution**. `stats.avg` = mean prompt length, `stats.p99_estimate` = longest prompts. |
-| `dynamo_frontend_output_sequence_tokens` | histogram | tokens | `model` | `0.0, 100.0, 210.0, 430.0, 880.0, 1800.0, 3700.0, 7600.0, 16000.0, 32000.0, +Inf` | **Output sequence length distribution**. `stats.avg` = mean response length. |
+#### Tokens
 
-### Model Configuration (Static Gauges)
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `dynamo_frontend_output_tokens` | counter | tokens | `model` | Total output tokens generated. `stats.rate` = output token throughput (tokens/s). |
+| `dynamo_frontend_cached_tokens` | histogram | tokens | `model` | Cached tokens (prefix cache hits) per request. |
+| `dynamo_frontend_tokenizer_latency_ms` | histogram | milliseconds | `operation` | Tokenizer latency. `operation`: `tokenize`, `detokenize`. |
+| `dynamo_frontend_input_sequence_tokens` | histogram | tokens | `model` | **Input sequence length distribution**. `stats.avg` = mean prompt length, `stats.p99_estimate` = longest prompts. |
+| `dynamo_frontend_output_sequence_tokens` | histogram | tokens | `model` | **Output sequence length distribution**. `stats.avg` = mean response length. |
+
+**Histogram buckets:**
+- `dynamo_frontend_cached_tokens`: Same as `dynamo_frontend_input_sequence_tokens`
+- `dynamo_frontend_tokenizer_latency_ms`: `0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, +Inf`
+- `dynamo_frontend_input_sequence_tokens`: `0.0, 100.0, 210.0, 430.0, 870.0, 1800.0, 3600.0, 7400.0, 15000.0, 31000.0, 63000.0, 130000.0, +Inf`
+- `dynamo_frontend_output_sequence_tokens`: `0.0, 100.0, 210.0, 430.0, 880.0, 1800.0, 3700.0, 7600.0, 16000.0, 32000.0, +Inf`
+
+#### Model Configuration (Static Gauges)
 
 These are constant values that don't change during the benchmark. Only `stats.avg` is meaningful.
 
@@ -241,25 +252,30 @@ These are constant values that don't change during the benchmark. Only `stats.av
 | `dynamo_frontend_model_cancellation` | counter | `endpoint`, `model`, `request_type` | Request cancellations. |
 | `dynamo_frontend_model_rejection` | counter | `endpoint`, `model` | Requests rejected due to resource exhaustion. |
 
-### Frontend Pipeline, Routing, and Worker Load
+#### Frontend Pipeline, Routing, and Worker Load
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `dynamo_frontend_stage_requests` | gauge | requests | `phase`, `stage` | — | Requests currently in a frontend pipeline stage. `stage`: `preprocess`, `route`, `dispatch`; `phase`: empty string, `prefill`, `decode`, or `aggregated`. |
-| `dynamo_frontend_stage_duration_seconds` | histogram | seconds | `stage` | `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, +Inf` | Pipeline stage duration. |
-| `dynamo_frontend_tokenize_seconds` | histogram | seconds | — | `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf` | Tokenization time in the preprocessor. |
-| `dynamo_frontend_template_seconds` | histogram | seconds | — | `0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, +Inf` | Chat-template application time in the preprocessor. |
-| `dynamo_frontend_detokenize_total_us` | counter | microseconds | — | — | Cumulative detokenization time. |
-| `dynamo_frontend_detokenize_token_count` | counter | tokens | — | — | Tokens detokenized. |
-| `dynamo_frontend_worker_active_decode_blocks` | gauge | blocks | `dp_rank`, `worker_id`, `worker_type` | — | Active KV-cache decode blocks per worker. |
-| `dynamo_frontend_worker_active_prefill_tokens` | gauge | tokens | `dp_rank`, `worker_id`, `worker_type` | — | Active prefill tokens queued per worker. |
-| `dynamo_frontend_worker_last_time_to_first_token_seconds` | gauge | seconds | `dp_rank`, `worker_id`, `worker_type` | — | Last observed TTFT for a worker. |
-| `dynamo_frontend_worker_last_input_sequence_tokens` | gauge | tokens | `dp_rank`, `worker_id`, `worker_type` | — | Input-token count from the same request as the last observed worker TTFT. |
-| `dynamo_frontend_worker_last_inter_token_latency_seconds` | gauge | seconds | `dp_rank`, `worker_id`, `worker_type` | — | Last observed ITL for a worker. |
-| `dynamo_frontend_router_queue_pending_requests` | gauge | requests | `worker_type` | — | Requests pending in the router scheduler queue. |
-| `dynamo_frontend_router_queue_pending_isl_tokens` | gauge | tokens | `worker_type` | — | Sum of input-sequence tokens for pending router scheduler requests. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `dynamo_frontend_stage_requests` | gauge | requests | `phase`, `stage` | Requests currently in a frontend pipeline stage. `stage`: `preprocess`, `route`, `dispatch`; `phase`: empty string, `prefill`, `decode`, or `aggregated`. |
+| `dynamo_frontend_stage_duration_seconds` | histogram | seconds | `stage` | Pipeline stage duration. |
+| `dynamo_frontend_tokenize_seconds` | histogram | seconds | — | Tokenization time in the preprocessor. |
+| `dynamo_frontend_template_seconds` | histogram | seconds | — | Chat-template application time in the preprocessor. |
+| `dynamo_frontend_detokenize_total_us` | counter | microseconds | — | Cumulative detokenization time. |
+| `dynamo_frontend_detokenize_token_count` | counter | tokens | — | Tokens detokenized. |
+| `dynamo_frontend_worker_active_decode_blocks` | gauge | blocks | `dp_rank`, `worker_id`, `worker_type` | Active KV-cache decode blocks per worker. |
+| `dynamo_frontend_worker_active_prefill_tokens` | gauge | tokens | `dp_rank`, `worker_id`, `worker_type` | Active prefill tokens queued per worker. |
+| `dynamo_frontend_worker_last_time_to_first_token_seconds` | gauge | seconds | `dp_rank`, `worker_id`, `worker_type` | Last observed TTFT for a worker. |
+| `dynamo_frontend_worker_last_input_sequence_tokens` | gauge | tokens | `dp_rank`, `worker_id`, `worker_type` | Input-token count from the same request as the last observed worker TTFT. |
+| `dynamo_frontend_worker_last_inter_token_latency_seconds` | gauge | seconds | `dp_rank`, `worker_id`, `worker_type` | Last observed ITL for a worker. |
+| `dynamo_frontend_router_queue_pending_requests` | gauge | requests | `worker_type` | Requests pending in the router scheduler queue. |
+| `dynamo_frontend_router_queue_pending_isl_tokens` | gauge | tokens | `worker_type` | Sum of input-sequence tokens for pending router scheduler requests. |
 
-### Tokio Runtime and Event Loop Metrics
+**Histogram buckets:**
+- `dynamo_frontend_stage_duration_seconds`: `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, +Inf`
+- `dynamo_frontend_tokenize_seconds`: `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf`
+- `dynamo_frontend_template_seconds`: `0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, +Inf`
+
+#### Tokio Runtime and Event Loop Metrics
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -278,32 +294,48 @@ These are constant values that don't change during the benchmark. Only `stats.av
 | `dynamo_frontend_event_loop_delay_seconds` | histogram | seconds | — | Event-loop delay canary. |
 | `dynamo_frontend_event_loop_stall` | counter | stalls | — | Event-loop stalls over the configured threshold. |
 
-### Router Request and Overhead Metrics
+#### Router Request and Overhead Metrics
 
 Router request metrics are component-scoped and therefore also carry `dynamo_namespace`, `dynamo_component`, optional `dynamo_endpoint`, `worker_id`, and `router_id` labels.
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `dynamo_component_router_requests` | counter | requests | hierarchy labels + `router_id` | — | Requests processed by the router. |
-| `dynamo_component_router_time_to_first_token_seconds` | histogram | seconds | hierarchy labels + `router_id` | Same as `dynamo_frontend_time_to_first_token_seconds` | Time to first token observed at the router. |
-| `dynamo_component_router_inter_token_latency_seconds` | histogram | seconds | hierarchy labels + `router_id` | Same as `dynamo_frontend_inter_token_latency_seconds` | Average inter-token latency observed at the router. |
-| `dynamo_component_router_input_sequence_tokens` | histogram | tokens | hierarchy labels + `router_id` | Same as `dynamo_frontend_input_sequence_tokens` | Input sequence length observed at the router. |
-| `dynamo_component_router_output_sequence_tokens` | histogram | tokens | hierarchy labels + `router_id` | Same as `dynamo_frontend_output_sequence_tokens` | Output sequence length observed at the router. |
-| `dynamo_component_router_kv_hit_rate` | histogram | ratio | hierarchy labels + `router_id` | `0.0, 0.05, 0.1, ... 1.0, +Inf` | Predicted KV cache hit rate at routing time. |
-| `dynamo_component_router_kv_transfer_estimated_latency_seconds` | histogram | seconds | hierarchy labels + `router_id` | `0.0, 0.0019, 0.0037, 0.0072, 0.014, 0.027, 0.052, 0.1, 0.19, 0.37, 0.72, 1.4, 2.7, 5.2, 10.0, +Inf` | Upper-bound estimate of KV transfer latency in disaggregated serving. |
-| `dynamo_component_router_shared_cache_hit_rate` | histogram | ratio | hierarchy labels + `router_id` | `0.0, 0.05, 0.1, ... 1.0, +Inf` | Fraction of request blocks found in shared KV cache. |
-| `dynamo_component_router_shared_cache_beyond_blocks` | histogram | blocks | hierarchy labels + `router_id` | `1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, +Inf` | Shared cache blocks beyond device overlap for the selected worker. |
-| `dynamo_component_router_remote_indexer_query_failures` | counter | errors | hierarchy labels + `router_id` | — | Remote indexer overlap queries that failed. |
-| `dynamo_component_router_remote_indexer_write_failures` | counter | errors | hierarchy labels + `router_id` | — | Remote indexer routing-decision writes that failed. |
-| `dynamo_router_overhead_block_hashing_ms` | histogram | milliseconds | `router_id` | exponential `0.001 * 2^n`, 15 buckets | Time spent computing block hashes. |
-| `dynamo_router_overhead_indexer_find_matches_ms` | histogram | milliseconds | `router_id` | exponential `0.01 * 3^n`, 17 buckets | Time spent in indexer `find_matches`. |
-| `dynamo_router_overhead_seq_hashing_ms` | histogram | milliseconds | `router_id` | exponential `0.001 * 2^n`, 15 buckets | Time spent computing sequence hashes. |
-| `dynamo_router_overhead_scheduling_ms` | histogram | milliseconds | `router_id` | exponential `0.01 * 3^n`, 17 buckets | Time spent in scheduler worker selection. |
-| `dynamo_router_overhead_total_ms` | histogram | milliseconds | `router_id` | exponential `0.01 * 3^n`, 17 buckets | Total routing overhead per request. |
-| `dynamo_router_overhead_shared_cache_query_ms` | histogram | milliseconds | `router_id` | exponential `0.01 * 3^n`, 17 buckets | Time spent querying shared KV cache. |
-| `dynamo_router_shared_cache_errors` | counter | errors | `router_id` | — | Shared cache query errors. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `dynamo_component_router_requests` | counter | requests | hierarchy labels + `router_id` | Requests processed by the router. |
+| `dynamo_component_router_time_to_first_token_seconds` | histogram | seconds | hierarchy labels + `router_id` | Time to first token observed at the router. |
+| `dynamo_component_router_inter_token_latency_seconds` | histogram | seconds | hierarchy labels + `router_id` | Average inter-token latency observed at the router. |
+| `dynamo_component_router_input_sequence_tokens` | histogram | tokens | hierarchy labels + `router_id` | Input sequence length observed at the router. |
+| `dynamo_component_router_output_sequence_tokens` | histogram | tokens | hierarchy labels + `router_id` | Output sequence length observed at the router. |
+| `dynamo_component_router_kv_hit_rate` | histogram | ratio | hierarchy labels + `router_id` | Predicted KV cache hit rate at routing time. |
+| `dynamo_component_router_kv_transfer_estimated_latency_seconds` | histogram | seconds | hierarchy labels + `router_id` | Upper-bound estimate of KV transfer latency in disaggregated serving. |
+| `dynamo_component_router_shared_cache_hit_rate` | histogram | ratio | hierarchy labels + `router_id` | Fraction of request blocks found in shared KV cache. |
+| `dynamo_component_router_shared_cache_beyond_blocks` | histogram | blocks | hierarchy labels + `router_id` | Shared cache blocks beyond device overlap for the selected worker. |
+| `dynamo_component_router_remote_indexer_query_failures` | counter | errors | hierarchy labels + `router_id` | Remote indexer overlap queries that failed. |
+| `dynamo_component_router_remote_indexer_write_failures` | counter | errors | hierarchy labels + `router_id` | Remote indexer routing-decision writes that failed. |
+| `dynamo_router_overhead_block_hashing_ms` | histogram | milliseconds | `router_id` | Time spent computing block hashes. |
+| `dynamo_router_overhead_indexer_find_matches_ms` | histogram | milliseconds | `router_id` | Time spent in indexer `find_matches`. |
+| `dynamo_router_overhead_seq_hashing_ms` | histogram | milliseconds | `router_id` | Time spent computing sequence hashes. |
+| `dynamo_router_overhead_scheduling_ms` | histogram | milliseconds | `router_id` | Time spent in scheduler worker selection. |
+| `dynamo_router_overhead_total_ms` | histogram | milliseconds | `router_id` | Total routing overhead per request. |
+| `dynamo_router_overhead_shared_cache_query_ms` | histogram | milliseconds | `router_id` | Time spent querying shared KV cache. |
+| `dynamo_router_shared_cache_errors` | counter | errors | `router_id` | Shared cache query errors. |
 
-### KV Publisher Metrics
+**Histogram buckets:**
+- `dynamo_component_router_time_to_first_token_seconds`: Same as `dynamo_frontend_time_to_first_token_seconds`
+- `dynamo_component_router_inter_token_latency_seconds`: Same as `dynamo_frontend_inter_token_latency_seconds`
+- `dynamo_component_router_input_sequence_tokens`: Same as `dynamo_frontend_input_sequence_tokens`
+- `dynamo_component_router_output_sequence_tokens`: Same as `dynamo_frontend_output_sequence_tokens`
+- `dynamo_component_router_kv_hit_rate`: `0.0, 0.05, 0.1, ... 1.0, +Inf`
+- `dynamo_component_router_kv_transfer_estimated_latency_seconds`: `0.0, 0.0019, 0.0037, 0.0072, 0.014, 0.027, 0.052, 0.1, 0.19, 0.37, 0.72, 1.4, 2.7, 5.2, 10.0, +Inf`
+- `dynamo_component_router_shared_cache_hit_rate`: `0.0, 0.05, 0.1, ... 1.0, +Inf`
+- `dynamo_component_router_shared_cache_beyond_blocks`: `1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, +Inf`
+- `dynamo_router_overhead_block_hashing_ms`: exponential `0.001 * 2^n`, 15 buckets
+- `dynamo_router_overhead_indexer_find_matches_ms`: exponential `0.01 * 3^n`, 17 buckets
+- `dynamo_router_overhead_seq_hashing_ms`: exponential `0.001 * 2^n`, 15 buckets
+- `dynamo_router_overhead_scheduling_ms`: exponential `0.01 * 3^n`, 17 buckets
+- `dynamo_router_overhead_total_ms`: exponential `0.01 * 3^n`, 17 buckets
+- `dynamo_router_overhead_shared_cache_query_ms`: exponential `0.01 * 3^n`, 17 buckets
+
+#### KV Publisher Metrics
 
 These component-scoped metrics track Dynamo's KV-event publisher and relay path.
 
@@ -317,11 +349,11 @@ These component-scoped metrics track Dynamo's KV-event publisher and relay path.
 
 ---
 
-## Dynamo Component
+### Dynamo Component
 
 Dynamo component metrics come from worker, router, and backend processes. Metrics created through Dynamo's hierarchy usually carry `dynamo_namespace`, `dynamo_component`, optional `dynamo_endpoint`, and `worker_id` labels; endpoint handlers may also add engine labels such as `model`.
 
-### Work Handler Request Processing
+#### Work Handler Request Processing
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -329,27 +361,32 @@ Dynamo component metrics come from worker, router, and backend processes. Metric
 | `dynamo_component_inflight_requests` | gauge | requests | hierarchy labels plus engine labels | Requests currently being processed by the work handler. |
 | `dynamo_component_errors` | counter | errors | hierarchy labels plus engine labels, `error_type` | Work-handler errors. `error_type`: `deserialization`, `invalid_message`, `response_stream`, `generate`, `publish_response`, `publish_final`. |
 | `dynamo_component_cancellation` | counter | requests | hierarchy labels plus engine labels | Requests cancelled by the work handler. |
+| `dynamo_component_request_duration_seconds` | histogram | seconds | hierarchy labels plus engine labels | Worker-level request processing time. Compare to frontend duration to measure routing overhead. |
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `dynamo_component_request_duration_seconds` | histogram | seconds | hierarchy labels plus engine labels | `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0, +Inf` | Worker-level request processing time. Compare to frontend duration to measure routing overhead. |
+**Histogram buckets:**
+- `dynamo_component_request_duration_seconds`: `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0, +Inf`
 
-### Work Handler Data Transfer, Queue, and Pool Saturation
+#### Work Handler Data Transfer, Queue, and Pool Saturation
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
 | `dynamo_component_request_bytes` | counter | bytes | hierarchy labels plus engine labels | Total bytes received in requests. `stats.rate` = inbound bandwidth. |
 | `dynamo_component_response_bytes` | counter | bytes | hierarchy labels plus engine labels | Total bytes sent in responses. `stats.rate` = outbound bandwidth. |
-| `dynamo_work_handler_network_transit_seconds` | histogram | seconds | — | `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf` | Frontend-to-backend network transit time. |
-| `dynamo_work_handler_time_to_first_response_seconds` | histogram | seconds | — | `0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, +Inf` | Backend processing time from payload handling to first response. |
-| `dynamo_work_handler_queue_depth` | gauge | requests | — | — | Items in the bounded work queue awaiting dispatcher pickup. |
-| `dynamo_work_handler_queue_capacity` | gauge | requests | — | — | Configured capacity of the bounded work queue. |
-| `dynamo_work_handler_enqueue_rejected` | counter | requests | — | — | Times enqueuing failed because the dispatcher channel was closed. |
-| `dynamo_work_handler_permit_wait_seconds` | histogram | seconds | — | `0.0001, 0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, +Inf` | Time spent waiting for a worker-pool permit. |
-| `dynamo_work_handler_pool_active_tasks` | gauge | tasks | — | — | Active worker-pool tasks holding permits. |
-| `dynamo_work_handler_pool_capacity` | gauge | tasks | — | — | Configured worker-pool capacity. |
+| `dynamo_work_handler_network_transit_seconds` | histogram | seconds | — | Frontend-to-backend network transit time. |
+| `dynamo_work_handler_time_to_first_response_seconds` | histogram | seconds | — | Backend processing time from payload handling to first response. |
+| `dynamo_work_handler_queue_depth` | gauge | requests | — | Items in the bounded work queue awaiting dispatcher pickup. |
+| `dynamo_work_handler_queue_capacity` | gauge | requests | — | Configured capacity of the bounded work queue. |
+| `dynamo_work_handler_enqueue_rejected` | counter | requests | — | Times enqueuing failed because the dispatcher channel was closed. |
+| `dynamo_work_handler_permit_wait_seconds` | histogram | seconds | — | Time spent waiting for a worker-pool permit. |
+| `dynamo_work_handler_pool_active_tasks` | gauge | tasks | — | Active worker-pool tasks holding permits. |
+| `dynamo_work_handler_pool_capacity` | gauge | tasks | — | Configured worker-pool capacity. |
 
-### Backend KV Cache and Model Info
+**Histogram buckets:**
+- `dynamo_work_handler_network_transit_seconds`: `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf`
+- `dynamo_work_handler_time_to_first_response_seconds`: `0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, +Inf`
+- `dynamo_work_handler_permit_wait_seconds`: `0.0001, 0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, +Inf`
+
+#### Backend KV Cache and Model Info
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -363,7 +400,7 @@ Dynamo component metrics come from worker, router, and backend processes. Metric
 | `dynamo_component_embedding_cache_current_bytes` | gauge | bytes | `dynamo_component`, `model` | Current multimodal embedding-cache memory usage. |
 | `dynamo_component_embedding_cache_entries` | gauge | entries | `dynamo_component`, `model` | Current number of multimodal embedding-cache entries. |
 
-### Transport and NATS Messaging
+#### Transport and NATS Messaging
 
 Dynamo's current in-code NATS metric is a transport error counter. Older `dynamo_component_nats_client_*` and `dynamo_component_nats_service_*` families were not verified in current upstream code and are not documented as current.
 
@@ -373,18 +410,23 @@ Dynamo's current in-code NATS metric is a transport error counter. Older `dynamo
 | `dynamo_transport_tcp_bytes_sent` | counter | bytes | — | Bytes sent by the TCP request client. |
 | `dynamo_transport_tcp_bytes_received` | counter | bytes | — | Bytes received by the TCP request client. |
 | `dynamo_transport_tcp_errors` | counter | errors | — | TCP request send failures or timeouts. |
-| `dynamo_request_plane_queue_seconds` | histogram | seconds | — | `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf` | Time from `generate()` entry to `send_request()`. |
-| `dynamo_request_plane_send_seconds` | histogram | seconds | — | `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf` | Time for `send_request()` to complete. |
-| `dynamo_request_plane_roundtrip_ttft_seconds` | histogram | seconds | — | `0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, +Inf` | Time from `send_request()` to first response item. |
+| `dynamo_request_plane_queue_seconds` | histogram | seconds | — | Time from `generate()` entry to `send_request()`. |
+| `dynamo_request_plane_send_seconds` | histogram | seconds | — | Time for `send_request()` to complete. |
+| `dynamo_request_plane_roundtrip_ttft_seconds` | histogram | seconds | — | Time from `send_request()` to first response item. |
 | `dynamo_request_plane_inflight_requests` | gauge | requests | — | Currently in-flight requests at `AddressedPushRouter`. |
+
+**Histogram buckets:**
+- `dynamo_request_plane_queue_seconds`: `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf`
+- `dynamo_request_plane_send_seconds`: `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf`
+- `dynamo_request_plane_roundtrip_ttft_seconds`: `0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, +Inf`
 
 ---
 
-## vLLM
+### vLLM
 
 vLLM is a high-performance inference engine. These metrics provide deep visibility into model execution, cache usage, and request processing phases. Current vLLM v1 Prometheus metrics use `model_name` and `engine` labels unless noted otherwise.
 
-### Cache & Memory
+#### Cache & Memory
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -399,7 +441,7 @@ vLLM is a high-performance inference engine. These metrics provide deep visibili
 | `vllm:num_preemptions` | counter | preemptions | `model_name`, `engine` | Cumulative number of preemptions from the engine. Non-zero indicates capacity pressure. |
 | `vllm:corrupted_requests` | counter | requests | `model_name`, `engine` | Requests with NaNs in logits. Only emitted when `VLLM_COMPUTE_NANS_IN_LOGITS` is enabled. |
 
-### Queue & Engine State
+#### Queue & Engine State
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -408,7 +450,7 @@ vLLM is a high-performance inference engine. These metrics provide deep visibili
 | `vllm:num_requests_waiting_by_reason` | gauge | requests | `model_name`, `engine`, `reason` | Waiting requests split by reason. `capacity` means waiting for scheduling capacity; `deferred` means deferred by transient constraints such as LoRA budget, KV transfer, or blocked status. |
 | `vllm:engine_sleep_state` | gauge | — | `model_name`, `engine`, `sleep_state` | Engine sleep state. `sleep_state` values are `awake`, `weights_offloaded`, and `discard_all`; the active state is reported as 1. |
 
-### Token Throughput
+#### Token Throughput
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -419,41 +461,62 @@ vLLM is a high-performance inference engine. These metrics provide deep visibili
 
 **Common `finished_reason` values:** `stop`, `length`, `abort`, `error`, `repetition`
 
-### Request-Level Latency Breakdown
+#### Request-Level Latency Breakdown
 
 These histograms show where time is spent for each request. Together they decompose the end-to-end latency.
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `vllm:e2e_request_latency_seconds` | histogram | seconds | `model_name`, `engine` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Histogram of e2e request latency in seconds. |
-| `vllm:request_queue_time_seconds` | histogram | seconds | `model_name`, `engine` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Histogram of time spent in **WAITING** phase for request. |
-| `vllm:request_prefill_time_seconds` | histogram | seconds | `model_name`, `engine` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Histogram of time spent in **PREFILL** phase for request. |
-| `vllm:request_decode_time_seconds` | histogram | seconds | `model_name`, `engine` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Histogram of time spent in **DECODE** phase for request. |
-| `vllm:request_inference_time_seconds` | histogram | seconds | `model_name`, `engine` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Histogram of time spent in **RUNNING** phase for request. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `vllm:e2e_request_latency_seconds` | histogram | seconds | `model_name`, `engine` | Histogram of e2e request latency in seconds. |
+| `vllm:request_queue_time_seconds` | histogram | seconds | `model_name`, `engine` | Histogram of time spent in **WAITING** phase for request. |
+| `vllm:request_prefill_time_seconds` | histogram | seconds | `model_name`, `engine` | Histogram of time spent in **PREFILL** phase for request. |
+| `vllm:request_decode_time_seconds` | histogram | seconds | `model_name`, `engine` | Histogram of time spent in **DECODE** phase for request. |
+| `vllm:request_inference_time_seconds` | histogram | seconds | `model_name`, `engine` | Histogram of time spent in **RUNNING** phase for request. |
 
-### Token-Level Latency
+**Histogram buckets:**
+- `vllm:e2e_request_latency_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `vllm:request_queue_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `vllm:request_prefill_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `vllm:request_decode_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `vllm:request_inference_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `vllm:time_to_first_token_seconds` | histogram | seconds | `model_name`, `engine` | `0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, 160.0, 640.0, 2560.0, +Inf` | **TTFT** - histogram of time to first token in seconds. |
-| `vllm:inter_token_latency_seconds` | histogram | seconds | `model_name`, `engine` | `0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, +Inf` | **ITL** - histogram of inter-token latency in seconds. |
-| `vllm:request_time_per_output_token_seconds` | histogram | seconds | `model_name`, `engine` | `0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, +Inf` | Histogram of time_per_output_token_seconds per request. |
+#### Token-Level Latency
 
-### Request Parameters
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `vllm:time_to_first_token_seconds` | histogram | seconds | `model_name`, `engine` | **TTFT** - histogram of time to first token in seconds. |
+| `vllm:inter_token_latency_seconds` | histogram | seconds | `model_name`, `engine` | **ITL** - histogram of inter-token latency in seconds. |
+| `vllm:request_time_per_output_token_seconds` | histogram | seconds | `model_name`, `engine` | Histogram of time_per_output_token_seconds per request. |
+
+**Histogram buckets:**
+- `vllm:time_to_first_token_seconds`: `0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, 160.0, 640.0, 2560.0, +Inf`
+- `vllm:inter_token_latency_seconds`: `0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, +Inf`
+- `vllm:request_time_per_output_token_seconds`: `0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, +Inf`
+
+#### Request Parameters
 
 These histograms show the distribution of request parameters processed by vLLM.
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `vllm:request_prompt_tokens` | histogram | tokens | `model_name`, `engine` | `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf` | Number of prefill tokens processed per request. Bucket maximum is derived from the configured model length. |
-| `vllm:request_generation_tokens` | histogram | tokens | `model_name`, `engine` | `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf` | Number of generation tokens processed per request. Bucket maximum is derived from the configured model length. |
-| `vllm:request_max_num_generation_tokens` | histogram | tokens | `model_name`, `engine` | `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf` | Histogram of maximum number of requested generation tokens. |
-| `vllm:request_params_max_tokens` | histogram | tokens | `model_name`, `engine` | `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf` | Histogram of the `max_tokens` request parameter. |
-| `vllm:request_params_n` | histogram | — | `model_name`, `engine` | `1, 2, 5, 10, 20, +Inf` | Histogram of the `n` request parameter. |
-| `vllm:iteration_tokens_total` | histogram | tokens | `model_name`, `engine` | `1, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, +Inf` | Histogram of number of tokens per engine step. |
-| `vllm:request_prefill_kv_computed_tokens` | histogram | tokens | `model_name`, `engine` | `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf` | Histogram of new KV tokens computed during prefill, excluding cached tokens. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `vllm:request_prompt_tokens` | histogram | tokens | `model_name`, `engine` | Number of prefill tokens processed per request. Bucket maximum is derived from the configured model length. |
+| `vllm:request_generation_tokens` | histogram | tokens | `model_name`, `engine` | Number of generation tokens processed per request. Bucket maximum is derived from the configured model length. |
+| `vllm:request_max_num_generation_tokens` | histogram | tokens | `model_name`, `engine` | Histogram of maximum number of requested generation tokens. |
+| `vllm:request_params_max_tokens` | histogram | tokens | `model_name`, `engine` | Histogram of the `max_tokens` request parameter. |
+| `vllm:request_params_n` | histogram | — | `model_name`, `engine` | Histogram of the `n` request parameter. |
+| `vllm:iteration_tokens_total` | histogram | tokens | `model_name`, `engine` | Histogram of number of tokens per engine step. |
+| `vllm:request_prefill_kv_computed_tokens` | histogram | tokens | `model_name`, `engine` | Histogram of new KV tokens computed during prefill, excluding cached tokens. |
 
-### Speculative Decoding
+**Histogram buckets:**
+- `vllm:request_prompt_tokens`: `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf`
+- `vllm:request_generation_tokens`: `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf`
+- `vllm:request_max_num_generation_tokens`: `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf`
+- `vllm:request_params_max_tokens`: `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf`
+- `vllm:request_params_n`: `1, 2, 5, 10, 20, +Inf`
+- `vllm:iteration_tokens_total`: `1, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, +Inf`
+- `vllm:request_prefill_kv_computed_tokens`: `1, 2, 5, 10, 20, 50, ... up to max_model_len, +Inf`
+
+#### Speculative Decoding
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -462,21 +525,27 @@ These histograms show the distribution of request parameters processed by vLLM.
 | `vllm:spec_decode_num_accepted_tokens` | counter | tokens | `model_name`, `engine` | Number of accepted tokens. |
 | `vllm:spec_decode_num_accepted_tokens_per_pos` | counter | tokens | `model_name`, `engine`, `position` | Accepted tokens per draft position. |
 
-### Optional KV and Performance Metrics
+#### Optional KV and Performance Metrics
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `vllm:kv_block_lifetime_seconds` | histogram | seconds | `model_name`, `engine` | `0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1200, 1800, +Inf` | KV cache block lifetime from allocation to eviction. Only emitted when KV cache metrics are enabled. |
-| `vllm:kv_block_idle_before_evict_seconds` | histogram | seconds | `model_name`, `engine` | same as above | Idle time before KV cache block eviction. Only emitted when KV cache metrics are enabled. |
-| `vllm:kv_block_reuse_gap_seconds` | histogram | seconds | `model_name`, `engine` | same as above | Time gaps between consecutive KV cache block accesses. Only emitted when KV cache metrics are enabled. |
-| `vllm:kv_offload_size` | histogram | bytes | `model_name`, `engine`, `transfer_type` | `1000000, 5000000, 10000000, 20000000, 40000000, 60000000, 80000000, 100000000, 150000000, 200000000, +Inf` | KV offload transfer size, in bytes. |
-| `vllm:kv_offload_total_bytes` | counter | bytes | `model_name`, `engine`, `transfer_type` | — | Number of bytes offloaded by KV connector. |
-| `vllm:kv_offload_total_time` | counter | seconds | `model_name`, `engine`, `transfer_type` | — | Total time measured by all KV offloading operations. |
-| `vllm:estimated_flops_per_gpu_total` | counter | operations | `model_name`, `engine` | — | Estimated number of floating point operations per GPU for Model Flops Utilization calculations. Available via `--enable-mfu-metrics`. |
-| `vllm:estimated_read_bytes_per_gpu_total` | counter | bytes | `model_name`, `engine` | — | Estimated number of bytes read from memory per GPU for Model Flops Utilization calculations. Available via `--enable-mfu-metrics`. |
-| `vllm:estimated_write_bytes_per_gpu_total` | counter | bytes | `model_name`, `engine` | — | Estimated number of bytes written to memory per GPU for Model Flops Utilization calculations. Available via `--enable-mfu-metrics`. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `vllm:kv_block_lifetime_seconds` | histogram | seconds | `model_name`, `engine` | KV cache block lifetime from allocation to eviction. Only emitted when KV cache metrics are enabled. |
+| `vllm:kv_block_idle_before_evict_seconds` | histogram | seconds | `model_name`, `engine` | Idle time before KV cache block eviction. Only emitted when KV cache metrics are enabled. |
+| `vllm:kv_block_reuse_gap_seconds` | histogram | seconds | `model_name`, `engine` | Time gaps between consecutive KV cache block accesses. Only emitted when KV cache metrics are enabled. |
+| `vllm:kv_offload_size` | histogram | bytes | `model_name`, `engine`, `transfer_type` | KV offload transfer size, in bytes. |
+| `vllm:kv_offload_total_bytes` | counter | bytes | `model_name`, `engine`, `transfer_type` | Number of bytes offloaded by KV connector. |
+| `vllm:kv_offload_total_time` | counter | seconds | `model_name`, `engine`, `transfer_type` | Total time measured by all KV offloading operations. |
+| `vllm:estimated_flops_per_gpu_total` | counter | operations | `model_name`, `engine` | Estimated number of floating point operations per GPU for Model Flops Utilization calculations. Available via `--enable-mfu-metrics`. |
+| `vllm:estimated_read_bytes_per_gpu_total` | counter | bytes | `model_name`, `engine` | Estimated number of bytes read from memory per GPU for Model Flops Utilization calculations. Available via `--enable-mfu-metrics`. |
+| `vllm:estimated_write_bytes_per_gpu_total` | counter | bytes | `model_name`, `engine` | Estimated number of bytes written to memory per GPU for Model Flops Utilization calculations. Available via `--enable-mfu-metrics`. |
 
-### Configuration Info
+**Histogram buckets:**
+- `vllm:kv_block_lifetime_seconds`: `0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1200, 1800, +Inf`
+- `vllm:kv_block_idle_before_evict_seconds`: same as above
+- `vllm:kv_block_reuse_gap_seconds`: same as above
+- `vllm:kv_offload_size`: `1000000, 5000000, 10000000, 20000000, 40000000, 60000000, 80000000, 100000000, 150000000, 200000000, +Inf`
+
+#### Configuration Info
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -492,31 +561,37 @@ These histograms show the distribution of request parameters processed by vLLM.
 
 ---
 
-## SGLang
+### SGLang
 
 SGLang is a fast inference engine with RadixAttention for efficient prefix caching. These metrics provide visibility into SGLang's scheduling, execution, token accounting, disaggregated inference, speculative decoding, and optional cache features.
 
 Unless noted otherwise, scheduler metrics use labels `model_name`, `engine_type`, `tp_rank`, `pp_rank`, and `moe_ep_rank`. `dp_rank` is added when data parallel rank is present, `priority` is added when priority scheduling is enabled, and user-configured `extra_metric_labels` may add more labels.
 
-### Throughput, Tokens & Requests
+#### Throughput, Tokens & Requests
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
 | `sglang:gen_throughput` | gauge | tokens/s | scheduler labels | Generation throughput in tokens per second. |
-| `sglang:realtime_tokens` | counter | tokens | scheduler labels + `mode` | — | Tokens processed on each log interval. `mode`: `prefill_compute`, `prefill_cache`, `decode`. |
-| `sglang:dp_cooperation_realtime_tokens` | counter | tokens | scheduler labels + `mode`, `num_prefill_ranks` | — | Token counts with DP cooperation labels. |
-| `sglang:prompt_tokens` | counter | tokens | `model_name`, `engine_type` | — | Number of prefill tokens processed. |
-| `sglang:generation_tokens` | counter | tokens | `model_name`, `engine_type` | — | Number of generation tokens processed. |
-| `sglang:cached_tokens` | counter | tokens | `model_name`, `engine_type`, `cache_source` | — | Cached prompt tokens split by source. `cache_source` values include `device`, `host`, `storage_<backend>`, and `total`. |
-| `sglang:prompt_tokens_histogram` | histogram | tokens | `model_name`, `engine_type` | `100, 300, 500, 700, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12500, 15000, 17500, 20000, 22500, 25000, 27500, 30000, 35000, 40000, 60000, 80000, 100000, 200000, 300000, 400000, 600000, 800000, 1000000, 1100000, +Inf` | Prompt token length distribution. Buckets can be overridden by server args. |
-| `sglang:uncached_prompt_tokens_histogram` | histogram | tokens | `model_name`, `engine_type` | Same as `sglang:prompt_tokens_histogram` | Uncached prompt token length distribution. |
-| `sglang:generation_tokens_histogram` | histogram | tokens | `model_name`, `engine_type` | Same as `sglang:prompt_tokens_histogram` by default | Generation token length distribution. Buckets can be overridden by server args. |
-| `sglang:num_requests` | counter | requests | `model_name`, `engine_type` | — | Number of requests processed. |
-| `sglang:num_aborted_requests` | counter | requests | `model_name`, `engine_type` | — | Number of requests aborted. |
-| `sglang:num_so_requests` | counter | requests | `model_name`, `engine_type` | — | Number of structured-output requests processed. |
-| `sglang:get_loads_duration_seconds` | histogram | seconds | `model_name`, `engine_type` | `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf` | Time spent serving `/v1/loads` requests. |
+| `sglang:realtime_tokens` | counter | tokens | scheduler labels + `mode` | Tokens processed on each log interval. `mode`: `prefill_compute`, `prefill_cache`, `decode`. |
+| `sglang:dp_cooperation_realtime_tokens` | counter | tokens | scheduler labels + `mode`, `num_prefill_ranks` | Token counts with DP cooperation labels. |
+| `sglang:prompt_tokens` | counter | tokens | `model_name`, `engine_type` | Number of prefill tokens processed. |
+| `sglang:generation_tokens` | counter | tokens | `model_name`, `engine_type` | Number of generation tokens processed. |
+| `sglang:cached_tokens` | counter | tokens | `model_name`, `engine_type`, `cache_source` | Cached prompt tokens split by source. `cache_source` values include `device`, `host`, `storage_<backend>`, and `total`. |
+| `sglang:prompt_tokens_histogram` | histogram | tokens | `model_name`, `engine_type` | Prompt token length distribution. Buckets can be overridden by server args. |
+| `sglang:uncached_prompt_tokens_histogram` | histogram | tokens | `model_name`, `engine_type` | Uncached prompt token length distribution. |
+| `sglang:generation_tokens_histogram` | histogram | tokens | `model_name`, `engine_type` | Generation token length distribution. Buckets can be overridden by server args. |
+| `sglang:num_requests` | counter | requests | `model_name`, `engine_type` | Number of requests processed. |
+| `sglang:num_aborted_requests` | counter | requests | `model_name`, `engine_type` | Number of requests aborted. |
+| `sglang:num_so_requests` | counter | requests | `model_name`, `engine_type` | Number of structured-output requests processed. |
+| `sglang:get_loads_duration_seconds` | histogram | seconds | `model_name`, `engine_type` | Time spent serving `/v1/loads` requests. |
 
-### Queue, Cache & Memory State
+**Histogram buckets:**
+- `sglang:prompt_tokens_histogram`: `100, 300, 500, 700, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12500, 15000, 17500, 20000, 22500, 25000, 27500, 30000, 35000, 40000, 60000, 80000, 100000, 200000, 300000, 400000, 600000, 800000, 1000000, 1100000, +Inf`
+- `sglang:uncached_prompt_tokens_histogram`: Same as `sglang:prompt_tokens_histogram`
+- `sglang:generation_tokens_histogram`: Same as `sglang:prompt_tokens_histogram` by default
+- `sglang:get_loads_duration_seconds`: `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, +Inf`
+
+#### Queue, Cache & Memory State
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -545,15 +620,22 @@ Unless noted otherwise, scheduler metrics use labels `model_name`, `engine_type`
 | `sglang:num_retracted_output_tokens` | counter | tokens | scheduler labels | Total retracted output tokens. |
 | `sglang:num_paused_reqs` | gauge | requests | scheduler labels | Requests paused by async weight sync. |
 
-### Request Latency Breakdown
+#### Request Latency Breakdown
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `sglang:time_to_first_token_seconds` | histogram | seconds | `model_name`, `engine_type` | `0.1, 0.2, 0.4, 0.6, 0.8, 1, 2, 4, 6, 8, 10, 20, 40, 60, 80, 100, 200, 400, +Inf` | Time to first token. Buckets can be overridden by server args. |
-| `sglang:inter_token_latency_seconds` | histogram | seconds | `model_name`, `engine_type` | `0.002, 0.004, 0.006, 0.008, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040, 0.060, 0.080, 0.100, 0.200, 0.400, 0.600, 0.800, 1.000, 2.000, 4.000, 6.000, 8.000, +Inf` | Inter-token latency. Buckets can be overridden by server args. |
-| `sglang:e2e_request_latency_seconds` | histogram | seconds | `model_name`, `engine_type` | `0.1, 0.2, 0.4, 0.6, 0.8, 1, 2, 4, 6, 8, 10, 20, 40, 60, 80, 100, 200, 400, 600, 1200, 1800, 2400, +Inf` | End-to-end request latency. Buckets can be overridden by server args. |
-| `sglang:queue_time_seconds` | histogram | seconds | scheduler labels | `0.0, 0.001, 0.005, 0.010, 0.050, 0.100, 0.200, 0.500, 1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1600, 1800, 2000, 2500, 3000, +Inf` | Time spent in the waiting queue before execution starts. |
-| `sglang:per_stage_req_latency_seconds` | histogram | seconds | scheduler labels + `stage` | *(see below)* | Per-stage latency breakdown. `stage` label identifies the phase. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `sglang:time_to_first_token_seconds` | histogram | seconds | `model_name`, `engine_type` | Time to first token. Buckets can be overridden by server args. |
+| `sglang:inter_token_latency_seconds` | histogram | seconds | `model_name`, `engine_type` | Inter-token latency. Buckets can be overridden by server args. |
+| `sglang:e2e_request_latency_seconds` | histogram | seconds | `model_name`, `engine_type` | End-to-end request latency. Buckets can be overridden by server args. |
+| `sglang:queue_time_seconds` | histogram | seconds | scheduler labels | Time spent in the waiting queue before execution starts. |
+| `sglang:per_stage_req_latency_seconds` | histogram | seconds | scheduler labels + `stage` | Per-stage latency breakdown. `stage` label identifies the phase. |
+
+**Histogram buckets:**
+- `sglang:time_to_first_token_seconds`: `0.1, 0.2, 0.4, 0.6, 0.8, 1, 2, 4, 6, 8, 10, 20, 40, 60, 80, 100, 200, 400, +Inf`
+- `sglang:inter_token_latency_seconds`: `0.002, 0.004, 0.006, 0.008, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040, 0.060, 0.080, 0.100, 0.200, 0.400, 0.600, 0.800, 1.000, 2.000, 4.000, 6.000, 8.000, +Inf`
+- `sglang:e2e_request_latency_seconds`: `0.1, 0.2, 0.4, 0.6, 0.8, 1, 2, 4, 6, 8, 10, 20, 40, 60, 80, 100, 200, 400, 600, 1200, 1800, 2400, +Inf`
+- `sglang:queue_time_seconds`: `0.0, 0.001, 0.005, 0.010, 0.050, 0.100, 0.200, 0.500, 1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1600, 1800, 2000, 2500, 3000, +Inf`
+- `sglang:per_stage_req_latency_seconds`: *(see below)*
 
 **Histogram buckets for `sglang:per_stage_req_latency_seconds`:**
 ```
@@ -575,27 +657,34 @@ Unless noted otherwise, scheduler metrics use labels `model_name`, `engine_type`
 | `decode_transferred` | Decode-side transferred request processing before queue entry |
 | `fake_output` | Fake-output/prebuilt decode stage |
 
-### Disaggregated Inference Queues and KV Transfer
+#### Disaggregated Inference Queues and KV Transfer
 
 For disaggregated prefill/decode deployments where prefill and decode run on separate instances.
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `sglang:num_prefill_bootstrap_queue_reqs` | gauge | requests | scheduler labels | — | Requests in the prefill bootstrap queue. |
-| `sglang:num_prefill_inflight_queue_reqs` | gauge | requests | scheduler labels | — | Requests in the prefill inflight queue. |
-| `sglang:num_decode_prealloc_queue_reqs` | gauge | requests | scheduler labels | — | Requests in the decode preallocation queue. |
-| `sglang:num_decode_transfer_queue_reqs` | gauge | requests | scheduler labels | — | Requests in the decode transfer queue. |
-| `sglang:pending_prealloc_token_usage` | gauge | ratio | scheduler labels | — | Token usage for pending preallocated tokens. |
-| `sglang:kv_transfer_latency_ms` | histogram | milliseconds | scheduler labels | `1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, +Inf` | KV cache transfer latency. |
-| `sglang:kv_transfer_speed_gb_s` | histogram | GB/s | scheduler labels | `0.1, 0.5, 1, 5, 10, 25, 50, 100, 200, 400, +Inf` | KV cache transfer throughput. |
-| `sglang:kv_transfer_total_mb` | histogram | megabytes | scheduler labels | `1, 5, 10, 50, 100, 500, 1000, 5000, 10000, +Inf` | KV cache transfer size. |
-| `sglang:kv_transfer_alloc_ms` | histogram | milliseconds | scheduler labels | `1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, +Inf` | Time waiting for KV cache allocation. |
-| `sglang:kv_transfer_bootstrap_ms` | histogram | milliseconds | scheduler labels | `1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, +Inf` | KV transfer bootstrap time. |
-| `sglang:num_bootstrap_failed_reqs` | counter | requests | scheduler labels | — | Number of bootstrap-failed requests. |
-| `sglang:num_transfer_failed_reqs` | counter | requests | scheduler labels | — | Number of transfer-failed requests. |
-| `sglang:num_prefill_retries` | counter | requests | scheduler labels | — | Total number of prefill retries. |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `sglang:num_prefill_bootstrap_queue_reqs` | gauge | requests | scheduler labels | Requests in the prefill bootstrap queue. |
+| `sglang:num_prefill_inflight_queue_reqs` | gauge | requests | scheduler labels | Requests in the prefill inflight queue. |
+| `sglang:num_decode_prealloc_queue_reqs` | gauge | requests | scheduler labels | Requests in the decode preallocation queue. |
+| `sglang:num_decode_transfer_queue_reqs` | gauge | requests | scheduler labels | Requests in the decode transfer queue. |
+| `sglang:pending_prealloc_token_usage` | gauge | ratio | scheduler labels | Token usage for pending preallocated tokens. |
+| `sglang:kv_transfer_latency_ms` | histogram | milliseconds | scheduler labels | KV cache transfer latency. |
+| `sglang:kv_transfer_speed_gb_s` | histogram | GB/s | scheduler labels | KV cache transfer throughput. |
+| `sglang:kv_transfer_total_mb` | histogram | megabytes | scheduler labels | KV cache transfer size. |
+| `sglang:kv_transfer_alloc_ms` | histogram | milliseconds | scheduler labels | Time waiting for KV cache allocation. |
+| `sglang:kv_transfer_bootstrap_ms` | histogram | milliseconds | scheduler labels | KV transfer bootstrap time. |
+| `sglang:num_bootstrap_failed_reqs` | counter | requests | scheduler labels | Number of bootstrap-failed requests. |
+| `sglang:num_transfer_failed_reqs` | counter | requests | scheduler labels | Number of transfer-failed requests. |
+| `sglang:num_prefill_retries` | counter | requests | scheduler labels | Total number of prefill retries. |
 
-### Speculative Decoding
+**Histogram buckets:**
+- `sglang:kv_transfer_latency_ms`: `1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, +Inf`
+- `sglang:kv_transfer_speed_gb_s`: `0.1, 0.5, 1, 5, 10, 25, 50, 100, 200, 400, +Inf`
+- `sglang:kv_transfer_total_mb`: `1, 5, 10, 50, 100, 500, 1000, 5000, 10000, +Inf`
+- `sglang:kv_transfer_alloc_ms`: `1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, +Inf`
+- `sglang:kv_transfer_bootstrap_ms`: `1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, +Inf`
+
+#### Speculative Decoding
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -603,7 +692,7 @@ For disaggregated prefill/decode deployments where prefill and decode run on sep
 | `sglang:spec_accept_length` | gauge | tokens | scheduler labels | Mean acceptance length of speculative decoding (accepted drafts plus bonus token per forward). |
 | `sglang:spec_verify_calls` | counter | calls | `model_name`, `engine_type` | Number of speculative decoding verification calls. |
 
-### Execution, CUDA Graph, and Estimated Performance
+#### Execution, CUDA Graph, and Estimated Performance
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -621,7 +710,7 @@ For disaggregated prefill/decode deployments where prefill and decode run on sep
 | `sglang:estimated_read_bytes_per_gpu` | counter | bytes | scheduler labels | Estimated bytes read from memory per GPU; requires `--enable-mfu-metrics`. |
 | `sglang:estimated_write_bytes_per_gpu` | counter | bytes | scheduler labels | Estimated bytes written to memory per GPU; requires `--enable-mfu-metrics`. |
 
-### Optional Feature Metrics
+#### Optional Feature Metrics
 
 These metric families are emitted only when the corresponding feature is enabled.
 
@@ -659,7 +748,7 @@ These metric families are emitted only when the corresponding feature is enabled
 | `sglang:load_back_duration_seconds` | histogram | seconds | scheduler labels | Time to load memory back from CPU to GPU. |
 | `sglang:load_back_tokens` | counter | tokens | scheduler labels | Tokens loaded back from CPU to GPU. |
 
-### System Configuration
+#### System Configuration
 
 These are constant gauges emitted once at startup.
 
@@ -685,7 +774,7 @@ These are constant gauges emitted once at startup.
 
 ---
 
-## TensorRT-LLM
+### TensorRT-LLM
 
 TensorRT-LLM (trtllm) is NVIDIA's high-performance inference engine optimized for NVIDIA GPUs. These metrics cover request latency, token accounting, queue/load state, KV cache behavior, memory usage, and optional speculative decoding stats. Dynamo-TRTLLM does not rename the engine's native `trtllm_` metrics, but it can emit additional Python-side metrics with the same `trtllm_` prefix so they pass the same prefix filters.
 
@@ -694,19 +783,28 @@ TensorRT-LLM (trtllm) is NVIDIA's high-performance inference engine optimized fo
 
 AIPerf records Prometheus family names as exposed by the server, with Prometheus counter samples grouped under the counter family name without the sample's trailing `_total` suffix. For example, upstream `trtllm_request_success_total` samples appear under `trtllm_request_success` in AIPerf outputs.
 
-### Request Latency
+#### Request Latency
 
-| Metric | Type | Unit | Labels | Histogram Buckets | Description |
-|--------|------|------|--------|-------------------|-------------|
-| `trtllm_e2e_request_latency_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | End-to-end request latency in seconds. |
-| `trtllm_request_queue_time_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Time spent in the waiting phase before scheduling. |
-| `trtllm_time_to_first_token_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, 160.0, 640.0, 2560.0, +Inf` | Time to first token in seconds. |
-| `trtllm_time_per_output_token_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, +Inf` | Time per output token in seconds. |
-| `trtllm_request_prefill_time_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 640.0, 2560.0, +Inf` | Prefill/context phase duration (`first_token_time - first_scheduled_time`). |
-| `trtllm_request_decode_time_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Decode/generation phase duration (`last_token_time - first_token_time`). |
-| `trtllm_request_inference_time_seconds` | histogram | seconds | `engine_type`, `model_name` | `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf` | Total inference duration (`last_token_time - first_scheduled_time`). |
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `trtllm_e2e_request_latency_seconds` | histogram | seconds | `engine_type`, `model_name` | End-to-end request latency in seconds. |
+| `trtllm_request_queue_time_seconds` | histogram | seconds | `engine_type`, `model_name` | Time spent in the waiting phase before scheduling. |
+| `trtllm_time_to_first_token_seconds` | histogram | seconds | `engine_type`, `model_name` | Time to first token in seconds. |
+| `trtllm_time_per_output_token_seconds` | histogram | seconds | `engine_type`, `model_name` | Time per output token in seconds. |
+| `trtllm_request_prefill_time_seconds` | histogram | seconds | `engine_type`, `model_name` | Prefill/context phase duration (`first_token_time - first_scheduled_time`). |
+| `trtllm_request_decode_time_seconds` | histogram | seconds | `engine_type`, `model_name` | Decode/generation phase duration (`last_token_time - first_token_time`). |
+| `trtllm_request_inference_time_seconds` | histogram | seconds | `engine_type`, `model_name` | Total inference duration (`last_token_time - first_scheduled_time`). |
 
-### Request Completion and Tokens
+**Histogram buckets:**
+- `trtllm_e2e_request_latency_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `trtllm_request_queue_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `trtllm_time_to_first_token_seconds`: `0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, 160.0, 640.0, 2560.0, +Inf`
+- `trtllm_time_per_output_token_seconds`: `0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0, 80.0, +Inf`
+- `trtllm_request_prefill_time_seconds`: `0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 640.0, 2560.0, +Inf`
+- `trtllm_request_decode_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+- `trtllm_request_inference_time_seconds`: `0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0, +Inf`
+
+#### Request Completion and Tokens
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -719,7 +817,7 @@ AIPerf records Prometheus family names as exposed by the server, with Prometheus
 - `model_name`: Model identifier (e.g., `Qwen/Qwen3-0.6B`).
 - `finished_reason`: `stop`, `length`, `timeout`, or `cancelled`. Upstream code does not emit `error` as a `finished_reason` value for `trtllm_request_success`.
 
-### Queue, Batch, and Memory State
+#### Queue, Batch, and Memory State
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -741,7 +839,7 @@ AIPerf records Prometheus family names as exposed by the server, with Prometheus
 | `trtllm_total_context_tokens` | gauge | tokens | `engine_type`, `model_name` | Total context tokens in the current iteration stats. |
 | `trtllm_avg_decoded_tokens_per_iter` | gauge | tokens | `engine_type`, `model_name` | Average decoded tokens per iteration. |
 
-### KV Cache Metrics
+#### KV Cache Metrics
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -764,7 +862,7 @@ AIPerf records Prometheus family names as exposed by the server, with Prometheus
 | `trtllm_kv_cache_used_blocks` | gauge | blocks | `engine_type`, `model_name` | Number of used KV cache blocks. |
 | `trtllm_kv_cache_tokens_per_block` | gauge | tokens | `engine_type`, `model_name` | Number of tokens per KV cache block. |
 
-### Speculative Decoding and Config Info
+#### Speculative Decoding and Config Info
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -777,7 +875,7 @@ AIPerf records Prometheus family names as exposed by the server, with Prometheus
 | `trtllm_speculative_config_info` | gauge | — | `engine_type`, `model_name`, `spec_enabled`, `spec_method`, `spec_num_tokens`, `spec_draft_model` | Static speculative-decoding configuration as labels, value `1`; emitted only when speculative config exists. |
 | `trtllm_kv_cache_config_info` | gauge | — | `engine_type`, `model_name`, `page_size`, `enable_block_reuse`, `enable_partial_reuse`, `free_gpu_memory_fraction`, `cache_dtype` | Static KV cache configuration as labels, value `1`; emitted only when KV cache config exists. |
 
-### Dynamo-TRTLLM Additional Metrics
+#### Dynamo-TRTLLM Additional Metrics
 
 These are emitted by Dynamo's TRT-LLM worker integration in addition to the engine-native TensorRT-LLM metrics above. They intentionally use the `trtllm_` prefix.
 
@@ -793,11 +891,11 @@ These are emitted by Dynamo's TRT-LLM worker integration in addition to the engi
 
 ---
 
-## Triton Inference Server
+### Triton Inference Server
 
 Triton Inference Server exposes Prometheus text metrics on a dedicated metrics service, by default `http://localhost:8002/metrics`. The endpoint is enabled unless `tritonserver --allow-metrics=false` is set; `--allow-gpu-metrics=false` and `--allow-cpu-metrics=false` disable only those metric groups. Use `--metrics-port`, `--metrics-address`, and `--metrics-interval-ms` to change where interval metrics are served and how often they refresh.
 
-### Request Counts and Queue State
+#### Request Counts and Queue State
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -807,7 +905,7 @@ Triton Inference Server exposes Prometheus text metrics on a dedicated metrics s
 | `nv_inference_exec_count` | counter | executions | `model`, `version` | Backend batch executions. `nv_inference_count / nv_inference_exec_count` approximates average batch size. |
 | `nv_inference_pending_request_count` | gauge | requests | `model`, `version` | Requests received by Triton core but not yet executing in a backend. Use as Triton's queue-depth signal. |
 
-### Latency Counters and Optional Histograms
+#### Latency Counters and Optional Histograms
 
 By default, Triton exposes cumulative latency counters in microseconds. AIPerf reports `stats.total` for the benchmark-window increase and `stats.rate` as microseconds accumulated per second. Optional histogram and summary latency families are controlled with `--metrics-config`; AIPerf exports histograms but skips Prometheus summary metrics. Model-level metrics use `model` and `version` labels, and can also include `model_namespace`, model tag labels prefixed with `_`, and `gpu_uuid` when configured by Triton.
 
@@ -820,7 +918,7 @@ By default, Triton exposes cumulative latency counters in microseconds. AIPerf r
 | `nv_inference_compute_output_duration_us` | counter | microseconds | `model`, `version` | Cumulative backend output-processing time, excluding cached requests. |
 | `nv_inference_first_response_histogram_ms` | histogram | milliseconds | `model`, `version` | Optional first-response latency histogram. Enable with `--metrics-config histogram_latencies=true`; default buckets are `100, 500, 2000, 5000, +Inf` unless overridden per model. |
 
-### GPU, CPU, Pinned Memory, and Response Cache
+#### GPU, CPU, Pinned Memory, and Response Cache
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
@@ -845,7 +943,7 @@ Response-cache metrics are emitted only when Triton's response cache is enabled.
 | `nv_cache_hit_duration_per_model` | counter | microseconds | `model`, `version` | Cumulative cache-hit lookup duration. |
 | `nv_cache_miss_duration_per_model` | counter | microseconds | `model`, `version` | Cumulative cache-miss lookup/insert duration. |
 
-### TensorRT-LLM Triton Backend Custom Metrics
+#### TensorRT-LLM Triton Backend Custom Metrics
 
 When TensorRT-LLM runs as a Triton backend, the backend can expose additional custom families using the `nv_trt_llm_*` and `nv_llm_*` prefixes.
 
@@ -863,11 +961,11 @@ When TensorRT-LLM runs as a Triton backend, the backend can expose additional cu
 
 ---
 
-## KVBM (KV Block Manager)
+### KVBM (KV Block Manager)
 
 **Note:** These metrics are only available with Dynamo deployments using the KV Block Manager feature for advanced KV cache management.
 
-### Block Transfer Operations
+#### Block Transfer Operations
 
 All metrics are counters tracking cumulative block movement operations.
 
@@ -894,7 +992,7 @@ All metrics are counters tracking cumulative block movement operations.
 - **d2o**: Device → Object storage
 - **o2d**: Object storage → Device
 
-### Logical Pool Metrics
+#### Logical Pool Metrics
 
 Dynamo's logical KVBM pool collector also exports pool-scoped counters and gauges. These carry a `pool` label and may include external deployment labels such as `instance_id`.
 
