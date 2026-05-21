@@ -694,10 +694,10 @@ def _parse_aiperf_telemetry(artifact_dir: Path) -> dict[str, Any]:
         return {}
 
     data = json.loads(json_path.read_text())
-    telemetry = data.get("telemetry")
+    telemetry = data.get("telemetry_data")
     if not telemetry:
         print(
-            f"[run] warning: aiperf JSON has no telemetry section at {json_path}",
+            f"[run] warning: aiperf JSON has no telemetry_data section at {json_path}",
             file=sys.stderr,
         )
         return {}
