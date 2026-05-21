@@ -112,7 +112,11 @@ class RequestRecorder:
             # at summary time.
             self._vocab_size = None
             self._vocab_size_source = "observed"
-        self._file = open(self.path, "wb")  # noqa: SIM115 — lifetime is the recorder's open/close pair
+        # Append-binary so a restart accumulates instead of truncating prior
+        # runs at the same path. Per-record flush below keeps the on-disk file
+        # in sync with in-process state, so SIGKILL / OOM only loses the
+        # in-flight record, not the buffered tail.
+        self._file = open(self.path, "ab")  # noqa: SIM115 — lifetime is the recorder's open/close pair
         logger.info(
             "Request recorder writing to %s (tokenizer=%s)",
             self.path,
@@ -241,6 +245,7 @@ class RequestRecorder:
             )
         )
         self._file.write(b"\n")
+        self._file.flush()
 
     def close(self) -> None:
         if self._file is not None:
