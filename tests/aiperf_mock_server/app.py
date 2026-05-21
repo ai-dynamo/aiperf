@@ -153,10 +153,15 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        await shutdown_scheduler()
-        if recorder is not None:
-            set_global_recorder(None)
-            recorder.close()
+        # Recorder cleanup must run even when `shutdown_scheduler()` raises —
+        # otherwise the `--record-requests` summary.json is never written,
+        # which is the whole reason the user enabled the mode.
+        try:
+            await shutdown_scheduler()
+        finally:
+            if recorder is not None:
+                set_global_recorder(None)
+                recorder.close()
 
 
 app = FastAPI(title="AIPerf Mock Server", version="2.0.0", lifespan=lifespan)
