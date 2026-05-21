@@ -313,24 +313,10 @@ def _encode_chat_prompt_ids(
     inner = _unwrap_tokenizer(tokenizer)
     apply_chat_template = getattr(inner, "apply_chat_template", None)
     if callable(apply_chat_template):
-        try:
-            result = apply_chat_template(
-                messages,
-                add_generation_prompt=add_generation_prompt,
-                tokenize=True,
-                return_dict=False,
-            )
-        except TypeError:
-            result = apply_chat_template(
-                conversation=messages,
-                add_generation_prompt=add_generation_prompt,
-                tokenize=True,
-                return_dict=False,
-            )
-        except ValueError as exc:
-            if "chat template" not in str(exc).lower():
-                raise
-        else:
+        result = _call_chat_template(
+            apply_chat_template, messages, add_generation_prompt
+        )
+        if result is not None:
             if isinstance(result, str):
                 return (
                     _encode_without_special_tokens(tokenizer, result),
@@ -343,6 +329,43 @@ def _encode_chat_prompt_ids(
         _encode_without_special_tokens(tokenizer, rendered),
         "chat_template_fallback",
     )
+
+
+def _call_chat_template(
+    apply_chat_template: Callable[..., Any],
+    messages: list[dict[str, Any]],
+    add_generation_prompt: bool,
+) -> Any | None:
+    """Invoke a tokenizer's ``apply_chat_template``, retrying with the
+    ``conversation=`` kwarg on TypeError (older HF where the parameter was
+    keyword-only). Returns ``None`` when the tokenizer reports no chat
+    template defined; other ``ValueError`` types propagate so callers see
+    real failures.
+
+    Pulled out of `_encode_chat_prompt_ids` so the result is handled outside
+    the try/except: with ``else:``, an exception handler that rebinds
+    ``result`` would not trigger ``else``, and the rebound value would be
+    silently dropped.
+    """
+    kwargs: dict[str, Any] = {
+        "add_generation_prompt": add_generation_prompt,
+        "tokenize": True,
+        "return_dict": False,
+    }
+    try:
+        return apply_chat_template(messages, **kwargs)
+    except TypeError:
+        pass
+    except ValueError as exc:
+        if "chat template" not in str(exc).lower():
+            raise
+        return None
+    try:
+        return apply_chat_template(conversation=messages, **kwargs)
+    except ValueError as exc:
+        if "chat template" not in str(exc).lower():
+            raise
+        return None
 
 
 def _encode_completion_prompt_ids(tokenizer: Any, prompt: Any) -> tuple[list[int], str]:

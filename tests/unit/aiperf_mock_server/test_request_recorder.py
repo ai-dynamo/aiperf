@@ -354,6 +354,42 @@ class _CountingTokenizer(_FakeTokenizer):
         return list(range(max(1, len(text.split()))))
 
 
+class _KeywordOnlyChatTemplateTokenizer(_FakeTokenizer):
+    """Mirrors older HF where `apply_chat_template`'s first parameter was
+    keyword-only: positional calls raise TypeError, the `conversation=` form
+    succeeds. Exercises the retry branch in `_encode_chat_prompt_ids`.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(vocab_size=1000, encodings={})
+        self.positional_call_count: int = 0
+        self.kwarg_calls: list[dict[str, object]] = []
+
+    def apply_chat_template(
+        self,
+        *args: object,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
+        conversation: list[dict] | None = None,
+    ) -> list[int]:
+        if args:
+            self.positional_call_count += 1
+            raise TypeError(
+                "apply_chat_template() does not accept positional arguments"
+            )
+        assert conversation is not None
+        self.kwarg_calls.append(
+            {
+                "conversation": conversation,
+                "add_generation_prompt": add_generation_prompt,
+                "tokenize": tokenize,
+                "return_dict": return_dict,
+            }
+        )
+        return [501, len(conversation), 502]
+
+
 def _make_recorder(tmp_path, tokenizer: _FakeTokenizer) -> RequestRecorder:
     path = tmp_path / "rec.jsonl"
     r = RequestRecorder(
@@ -454,6 +490,56 @@ class TestRecorderTokenIdTracking:
         assert call["tokenize"] is True
         assert r._vocab_counts["/v1/chat/completions"] == Counter(
             {101: 1, 3: 1, 201: 1}
+        )
+        row = _read_jsonl(r.path)[0]
+        assert row["isl"] == 3
+        assert row["tokenization_mode"] == "chat_template"
+        r._file.close()
+
+    def test_record_request_chat_typerror_retry_uses_conversation_kwarg(
+        self, tmp_path
+    ) -> None:
+        """When `apply_chat_template` rejects positional `messages` with a
+        TypeError, the recorder must retry with `conversation=` AND use the
+        retry's token IDs — not silently fall through to the ChatML fallback
+        (regression test for the try/except/else bug)."""
+        tok = _KeywordOnlyChatTemplateTokenizer()
+        r = _make_recorder(tmp_path, tok)
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                Message(role="system", content="policy"),
+                Message(role="user", content="hello"),
+            ],
+        )
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={"max_tokens": 8},
+        )
+        r._file.flush()
+
+        # Positional call must have been attempted (and rejected), then retry
+        # must have been invoked via the conversation= kwarg.
+        assert tok.positional_call_count == 1
+        assert len(tok.kwarg_calls) == 1
+        assert [m["role"] for m in tok.kwarg_calls[0]["conversation"]] == [
+            "system",
+            "user",
+        ]
+        assert tok.kwarg_calls[0]["add_generation_prompt"] is True
+        assert tok.kwarg_calls[0]["tokenize"] is True
+
+        # Critical: the recorded row must reflect the RETRY's tokens
+        # ([501, 2, 502]), not the ChatML fallback's tokenization of the
+        # rendered string. This is what the bug got wrong.
+        assert r._vocab_counts["/v1/chat/completions"] == Counter(
+            {501: 1, 2: 1, 502: 1}
         )
         row = _read_jsonl(r.path)[0]
         assert row["isl"] == 3
