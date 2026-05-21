@@ -590,6 +590,33 @@ def main() -> int:
                 f"uuid={entry['gpu_uuid']} "
                 f"delta_j={entry['energy_delta_j']:.2f}"
             )
+
+        print()
+        print("=== AIPerf-reported (DCGM) ===")
+        print(f"Endpoint               : {args.dcgm_url}")
+        if not aiperf_reported:
+            print(
+                "(no aiperf telemetry collected — "
+                "check dcgm-exporter availability and aiperf logs)"
+            )
+        else:
+            print("Per-GPU (gpu_power_usage W, energy_consumption MJ):")
+            for gpu_uuid, gpu_data in aiperf_reported.items():
+                power_stats = gpu_data.get("gpu_power_usage") or {}
+                energy_stats = gpu_data.get("energy_consumption") or {}
+                power_avg = _fmt_stat(power_stats.get("avg"))
+                power_p99 = _fmt_stat(power_stats.get("p99"))
+                energy_sum = _fmt_stat(energy_stats.get("sum", energy_stats.get("avg")))
+                idx = gpu_data.get("gpu_index")
+                idx_str = f"{idx:>2}" if isinstance(idx, int) else " ?"
+                print(
+                    f"  gpu={idx_str} "
+                    f"uuid={gpu_uuid} "
+                    f"power_avg={power_avg} "
+                    f"power_p99={power_p99} "
+                    f"energy={energy_sum}"
+                )
+
         print(f"Artifacts: {output_dir}")
         return bench_rc
 
@@ -637,6 +664,13 @@ def _per_gpu_delta(
             }
         )
     return out
+
+
+def _fmt_stat(value: Any) -> str:
+    """Format a stat value for console output; falls back to 'n/a' if non-numeric."""
+    if isinstance(value, (int, float)):
+        return f"{value:.2f}"
+    return "n/a"
 
 
 def _parse_aiperf_telemetry(artifact_dir: Path) -> dict[str, Any]:
