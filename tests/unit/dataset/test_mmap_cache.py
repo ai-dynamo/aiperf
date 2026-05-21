@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -214,14 +215,16 @@ class TestLookupAndPopulate:
         assert hit.manifest.cache_key == "abc123"
         assert hit.manifest.num_conversations == 1
 
-    def test_populate_includes_inputs_json_when_provided(self, tmp_path: Path) -> None:
+    def test_populate_ignores_inputs_json_when_provided(self, tmp_path: Path) -> None:
         cache_root = mmap_cache.cache_dir()
-        _populate_entry(cache_root, cache_key="withjson", inputs_json=b'{"data": []}')
+        entry_dir = _populate_entry(
+            cache_root, cache_key="withjson", inputs_json=b'{"data": []}'
+        )
         hit = mmap_cache.lookup("withjson", compressed=False)
         assert hit is not None
-        assert hit.inputs_json_path is not None
-        assert hit.inputs_json_path.read_bytes() == b'{"data": []}'
-        assert hit.manifest.has_inputs_json is True
+        assert hit.inputs_json_path is None
+        assert hit.manifest.has_inputs_json is False
+        assert not (entry_dir / mmap_cache.INPUTS_JSON_FILENAME).exists()
 
     def test_lookup_corrupt_manifest_returns_none(self, tmp_path: Path) -> None:
         cache_root = mmap_cache.cache_dir()
@@ -253,7 +256,9 @@ class TestLookupAndPopulate:
         # Same key requested as compressed -> MISS.
         assert mmap_cache.lookup("uncomp", compressed=True) is None
 
-    def test_restore_copies_to_run_dir(self, tmp_path: Path) -> None:
+    def test_restore_hardlinks_to_run_dir(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         cache_root = mmap_cache.cache_dir()
         _populate_entry(cache_root, cache_key="restore")
         hit = mmap_cache.lookup("restore", compressed=False)
@@ -261,9 +266,66 @@ class TestLookupAndPopulate:
         run_dir = tmp_path / "run_mmap"
         run_data = run_dir / "dataset.dat"
         run_index = run_dir / "index.dat"
-        mmap_cache.restore_to_run_dir(hit, run_data, run_index)
+        with caplog.at_level("INFO", logger="aiperf.dataset.mmap_cache"):
+            mmap_cache.restore_to_run_dir(hit, run_data, run_index)
         assert run_data.read_bytes() == b"DATA"
         assert run_index.read_bytes() == b"IDX"
+        assert os.stat(run_data).st_ino == os.stat(hit.data_path).st_ino
+        assert os.stat(run_index).st_ino == os.stat(hit.index_path).st_ino
+        assert "Restored mmap cache file dataset.dat via hardlink" in caplog.text
+        assert "Restored mmap cache file index.dat via hardlink" in caplog.text
+        assert "Restored mmap cache files in" in caplog.text
+
+    def test_restore_falls_back_to_copy_when_hardlink_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache_root = mmap_cache.cache_dir()
+        _populate_entry(cache_root, cache_key="restore-copy")
+        hit = mmap_cache.lookup("restore-copy", compressed=False)
+        assert hit is not None
+        run_dir = tmp_path / "run_mmap"
+        run_data = run_dir / "dataset.dat"
+        run_index = run_dir / "index.dat"
+
+        def raise_cross_device(_src: Path, _dst: Path) -> None:
+            raise OSError("cross-device link")
+
+        monkeypatch.setattr(mmap_cache.os, "link", raise_cross_device)
+
+        mmap_cache.restore_to_run_dir(hit, run_data, run_index)
+
+        assert run_data.read_bytes() == b"DATA"
+        assert run_index.read_bytes() == b"IDX"
+        assert os.stat(run_data).st_ino != os.stat(hit.data_path).st_ino
+        assert os.stat(run_index).st_ino != os.stat(hit.index_path).st_ino
+
+    @pytest.mark.asyncio
+    async def test_cleanup_unlinks_run_hardlinks_without_removing_cache_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+        from aiperf.dataset.memory_map_utils import MemoryMapDatasetBackingStore
+
+        monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path / "mmap")
+        cache_root = mmap_cache.cache_dir()
+        _populate_entry(cache_root, cache_key="cleanup")
+        hit = mmap_cache.lookup("cleanup", compressed=False)
+        assert hit is not None
+        store = MemoryMapDatasetBackingStore(benchmark_id="cleanup")
+        run_data = tmp_path / "mmap" / "aiperf_mmap_cleanup" / "dataset.dat"
+        run_index = tmp_path / "mmap" / "aiperf_mmap_cleanup" / "index.dat"
+
+        mmap_cache.restore_to_run_dir(hit, run_data, run_index)
+        assert os.stat(run_data).st_ino == os.stat(hit.data_path).st_ino
+        assert os.stat(run_index).st_ino == os.stat(hit.index_path).st_ino
+
+        store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
+        await store._cleanup()
+
+        assert not run_data.exists()
+        assert not run_index.exists()
+        assert hit.data_path.read_bytes() == b"DATA"
+        assert hit.index_path.read_bytes() == b"IDX"
 
 
 class TestCacheToggle:
