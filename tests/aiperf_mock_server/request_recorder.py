@@ -112,11 +112,13 @@ class RequestRecorder:
             # at summary time.
             self._vocab_size = None
             self._vocab_size_source = "observed"
-        # Append-binary so a restart accumulates instead of truncating prior
-        # runs at the same path. Per-record flush below keeps the on-disk file
-        # in sync with in-process state, so SIGKILL / OOM only loses the
-        # in-flight record, not the buffered tail.
-        self._file = open(self.path, "ab")  # noqa: SIM115 — lifetime is the recorder's open/close pair
+        # Write-binary (truncate on open) so each run's JSONL stays consistent
+        # with its `.summary.json` — the per-process stats accumulators start
+        # empty, so an `ab`-mode file would mix records from prior runs that
+        # the summary never sees. The per-record flush below still keeps the
+        # on-disk file in sync with in-process state, so SIGKILL / OOM only
+        # loses the in-flight record.
+        self._file = open(self.path, "wb")  # noqa: SIM115 — lifetime is the recorder's open/close pair
         logger.info(
             "Request recorder writing to %s (tokenizer=%s)",
             self.path,
