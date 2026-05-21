@@ -327,17 +327,25 @@ def aggregate_gpu_telemetry(run: RunData) -> pd.DataFrame:
         run: RunData object with gpu_telemetry DataFrame
 
     Returns:
-        DataFrame with timestamp_s and averaged gpu_utilization
+        DataFrame with timestamp_s and averaged NVIDIA GPU utilization
     """
     if run.gpu_telemetry is None or run.gpu_telemetry.empty:
         return pd.DataFrame()
 
     gpu_df = run.gpu_telemetry.copy()
 
+    utilization_col = (
+        "nvidia_gpu_utilization"
+        if "nvidia_gpu_utilization" in gpu_df.columns
+        else "gpu_utilization"
+    )
+    if utilization_col not in gpu_df.columns:
+        return pd.DataFrame()
+
     # If gpu_index column exists, group by timestamp and average
     if "gpu_index" in gpu_df.columns:
         gpu_df = (
-            gpu_df.groupby("timestamp_s").agg({"gpu_utilization": "mean"}).reset_index()
+            gpu_df.groupby("timestamp_s").agg({utilization_col: "mean"}).reset_index()
         )
 
     return gpu_df

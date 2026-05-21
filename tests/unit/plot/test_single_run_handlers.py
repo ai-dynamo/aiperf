@@ -417,7 +417,9 @@ class TestDualAxisHandler:
                 name="throughput_tokens_per_sec", axis="y", source=DataSource.REQUESTS
             ),
             MetricSpec(
-                name="gpu_utilization", axis="y2", source=DataSource.GPU_TELEMETRY
+                name="nvidia_gpu_utilization",
+                axis="y2",
+                source=DataSource.GPU_TELEMETRY,
             ),
         ]
         spec.primary_style = "area"
@@ -431,7 +433,7 @@ class TestDualAxisHandler:
         """Test can_handle returns True when GPU telemetry is available."""
         mock_run = MagicMock()
         mock_run.gpu_telemetry = pd.DataFrame(
-            {"timestamp_s": [1, 2], "gpu_utilization": [80, 85]}
+            {"timestamp_s": [1, 2], "nvidia_gpu_utilization": [80, 85]}
         )
 
         result = handler.can_handle(sample_spec, mock_run)

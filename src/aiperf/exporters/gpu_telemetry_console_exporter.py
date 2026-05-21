@@ -71,6 +71,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             RenderableType: Rich Group containing multiple Tables, or Text message if no data
         """
         renderables = []
+        renderables.append(self._create_platform_disclaimer())
         first_table = True
 
         # TelemetryExportData uses: endpoints[endpoint_display] -> EndpointData.gpus[gpu_key] -> GpuSummary
@@ -98,10 +99,28 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                 )
                 renderables.append(metrics_table)
 
-        if not renderables:
+        if len(renderables) == 1:
             return self._create_no_data_message()
 
         return Group(*renderables)
+
+    def _create_platform_disclaimer(self) -> Text:
+        """Create platform-specific comparability warning for telemetry summaries."""
+        platforms = sorted(
+            {
+                gpu_summary.platform
+                for endpoint_data in self._telemetry_results.endpoints.values()
+                for gpu_summary in endpoint_data.gpus.values()
+            }
+        )
+        platform_text = ", ".join(platforms) if platforms else "unknown"
+        return Text(
+            "GPU telemetry platform: "
+            f"{platform_text}. "
+            "Metric semantics are platform-specific; cross-platform comparisons "
+            "require workload and collector validation.",
+            style="yellow",
+        )
 
     def _create_summary_header(self, table_title_base: str) -> str:
         """Create the summary header with endpoint reachability status.
@@ -112,7 +131,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         Returns:
             Formatted title string with endpoint status
         """
-        title_lines = ["NVIDIA AIPerf | GPU Telemetry Summary"]
+        title_lines = ["AIPerf | GPU Telemetry Summary"]
 
         endpoints_configured = self._telemetry_results.summary.endpoints_configured
         endpoints_successful = self._telemetry_results.summary.endpoints_successful
@@ -122,15 +141,15 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
 
         if failed_count == 0:
             title_lines.append(
-                f"[bold green]{successful_count}/{total_count} DCGM endpoints reachable[/bold green]"
+                f"[bold green]{successful_count}/{total_count} telemetry sources reachable[/bold green]"
             )
         elif successful_count == 0:
             title_lines.append(
-                f"[bold red]{successful_count}/{total_count} DCGM endpoints reachable[/bold red]"
+                f"[bold red]{successful_count}/{total_count} telemetry sources reachable[/bold red]"
             )
         else:
             title_lines.append(
-                f"[bold yellow]{successful_count}/{total_count} DCGM endpoints reachable[/bold yellow]"
+                f"[bold yellow]{successful_count}/{total_count} telemetry sources reachable[/bold yellow]"
             )
 
         for endpoint in endpoints_configured:

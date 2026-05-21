@@ -340,6 +340,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                         gpu_index=gpu_data.metadata.gpu_index,
                         gpu_name=gpu_data.metadata.gpu_model_name,
                         gpu_uuid=gpu_uuid,
+                        platform=gpu_data.metadata.platform,
                         hostname=gpu_data.metadata.hostname,
                         namespace=gpu_data.metadata.namespace,
                         pod_name=gpu_data.metadata.pod_name,

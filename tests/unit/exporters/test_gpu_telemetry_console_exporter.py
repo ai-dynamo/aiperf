@@ -121,7 +121,9 @@ class TestGPUTelemetryConsoleExporter:
 
         output = capsys.readouterr().out
         assert "GPU Telemetry Summary" in output
-        assert "DCGM endpoints reachable" in output
+        assert "telemetry sources reachable" in output
+        assert "GPU telemetry platform: nvidia" in output
+        assert "cross-platform comparisons require" in output
         assert "H100" in output or "A100" in output
         assert "Power" in output and "Usage" in output
 
@@ -143,7 +145,7 @@ class TestGPUTelemetryConsoleExporter:
         output = capsys.readouterr().out
         assert "localhost:9400" in output
         assert "remote-node:9400" in output
-        assert "2/2 DCGM endpoints reachable" in output
+        assert "2/2 telemetry sources reachable" in output
 
     @pytest.mark.asyncio
     async def test_export_shows_failed_endpoints(
@@ -165,7 +167,7 @@ class TestGPUTelemetryConsoleExporter:
         await exporter.export(console)
 
         output = capsys.readouterr().out
-        assert "1/3 DCGM endpoints reachable" in output
+        assert "1/3 telemetry sources reachable" in output
         assert "localhost:9400" in output
         assert "unreachable-node:9400" in output or "unreachable" in output
         assert "❌" in output or "unreachable" in output
@@ -324,7 +326,7 @@ class TestGPUTelemetryConsoleExporter:
                             hostname="test-node",
                             metrics={
                                 # Only include one metric, others are missing
-                                "gpu_power_usage": JsonMetricResult(
+                                "nvidia_power_usage": JsonMetricResult(
                                     unit="W", avg=100.0, min=90.0, max=110.0
                                 ),
                             },
@@ -384,7 +386,7 @@ class TestGPUTelemetryConsoleExporter:
         output = capsys.readouterr().out
         assert "No GPU telemetry data collected" in output
         assert (
-            "0/3 DCGM endpoints reachable" in output
+            "0/3 telemetry sources reachable" in output
             or "Unreachable endpoints" in output
         )
         assert "node1:9400" in output
@@ -485,7 +487,7 @@ class TestGPUTelemetryConsoleExporter:
                             gpu_uuid="GPU-123",
                             hostname="test-node",
                             metrics={
-                                "gpu_power_usage": JsonMetricResult(
+                                "nvidia_power_usage": JsonMetricResult(
                                     unit="W", avg=100.0, min=90.0, max=110.0
                                 ),
                             },
@@ -506,8 +508,8 @@ class TestGPUTelemetryConsoleExporter:
         await exporter.export(console)
 
         output = capsys.readouterr().out
-        # Should show 1/2 endpoints reachable
-        assert "1/2 DCGM endpoints reachable" in output
+        # Should show 1/2 telemetry sources reachable
+        assert "1/2 telemetry sources reachable" in output
         # Should show both endpoints with status
         assert "node1:9400" in output
         assert "node2:9400" in output

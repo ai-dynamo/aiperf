@@ -56,9 +56,9 @@ class TestGpuTelemetry:
 
                 # Counter metrics only have avg (delta), not min/max
                 counter_metrics = {
-                    "energy_consumption",
-                    "xid_errors",
-                    "power_violation",
+                    "nvidia_energy_consumption",
+                    "nvidia_xid_errors",
+                    "nvidia_power_violation",
                 }
                 for metric_name, metric_value in gpu_data.metrics.items():
                     assert metric_value is not None

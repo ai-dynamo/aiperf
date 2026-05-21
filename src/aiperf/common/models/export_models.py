@@ -94,6 +94,10 @@ class GpuSummary(AIPerfBaseModel):
     gpu_index: int
     gpu_name: str
     gpu_uuid: str
+    platform: str = Field(
+        default="unknown",
+        description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', or 'unknown'",
+    )
     hostname: str | None
     namespace: str | None = None
     pod_name: str | None = None

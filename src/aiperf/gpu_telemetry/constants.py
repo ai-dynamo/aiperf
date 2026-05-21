@@ -19,19 +19,38 @@ PYNVML_SOURCE_IDENTIFIER = "pynvml://localhost"
 # Source identifier for amdsmi collector (used in TelemetryRecord.dcgm_url field)
 AMDSMI_SOURCE_IDENTIFIER = "amdsmi://localhost"
 
+NVIDIA_GPU_TELEMETRY_PLATFORM = "nvidia"
+AMD_GPU_TELEMETRY_PLATFORM = "amd"
+UNKNOWN_GPU_TELEMETRY_PLATFORM = "unknown"
+
+NVIDIA_TELEMETRY_FIELD_ALIASES = {
+    "gpu_power_usage": "nvidia_power_usage",
+    "energy_consumption": "nvidia_energy_consumption",
+    "gpu_utilization": "nvidia_gpu_utilization",
+    "mem_utilization": "nvidia_memory_utilization",
+    "gpu_memory_used": "nvidia_memory_used",
+    "gpu_temperature": "nvidia_temperature",
+    "decoder_utilization": "nvidia_decoder_utilization",
+    "encoder_utilization": "nvidia_encoder_utilization",
+    "jpg_utilization": "nvidia_jpg_utilization",
+    "sm_utilization": "nvidia_sm_utilization",
+    "xid_errors": "nvidia_xid_errors",
+    "power_violation": "nvidia_power_violation",
+}
+
 # DCGM field mapping to telemetry record fields
 DCGM_TO_FIELD_MAPPING = {
-    "DCGM_FI_DEV_POWER_USAGE": "gpu_power_usage",
-    "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": "energy_consumption",
-    "DCGM_FI_DEV_GPU_UTIL": "gpu_utilization",
-    "DCGM_FI_DEV_MEM_COPY_UTIL": "mem_utilization",
-    "DCGM_FI_DEV_FB_USED": "gpu_memory_used",
-    "DCGM_FI_DEV_GPU_TEMP": "gpu_temperature",
-    "DCGM_FI_DEV_ENC_UTIL": "encoder_utilization",
-    "DCGM_FI_DEV_DEC_UTIL": "decoder_utilization",
-    "DCGM_FI_PROF_SM_ACTIVE": "sm_utilization",
-    "DCGM_FI_DEV_XID_ERRORS": "xid_errors",
-    "DCGM_FI_DEV_POWER_VIOLATION": "power_violation",
+    "DCGM_FI_DEV_POWER_USAGE": "nvidia_power_usage",
+    "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": "nvidia_energy_consumption",
+    "DCGM_FI_DEV_GPU_UTIL": "nvidia_gpu_utilization",
+    "DCGM_FI_DEV_MEM_COPY_UTIL": "nvidia_memory_utilization",
+    "DCGM_FI_DEV_FB_USED": "nvidia_memory_used",
+    "DCGM_FI_DEV_GPU_TEMP": "nvidia_temperature",
+    "DCGM_FI_DEV_ENC_UTIL": "nvidia_encoder_utilization",
+    "DCGM_FI_DEV_DEC_UTIL": "nvidia_decoder_utilization",
+    "DCGM_FI_PROF_SM_ACTIVE": "nvidia_sm_utilization",
+    "DCGM_FI_DEV_XID_ERRORS": "nvidia_xid_errors",
+    "DCGM_FI_DEV_POWER_VIOLATION": "nvidia_power_violation",
 }
 
 # GPU Telemetry Metrics Configuration
@@ -40,18 +59,46 @@ DCGM_TO_FIELD_MAPPING = {
 # - field_name: Corresponds to TelemetryMetrics model field name
 # - unit_enum: MetricUnitT enum (use .value in exporters to get string)
 GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
-    ("GPU Power Usage", "gpu_power_usage", PowerMetricUnit.WATT),
-    ("Energy Consumption", "energy_consumption", EnergyMetricUnit.MEGAJOULE),
-    ("GPU Utilization", "gpu_utilization", GenericMetricUnit.PERCENT),
-    ("GPU Memory Used", "gpu_memory_used", MetricSizeUnit.GIGABYTES),
-    ("GPU Temperature", "gpu_temperature", TemperatureMetricUnit.CELSIUS),
-    ("Memory Utilization", "mem_utilization", GenericMetricUnit.PERCENT),
-    ("SM Utilization", "sm_utilization", GenericMetricUnit.PERCENT),
-    ("Decoder Utilization", "decoder_utilization", GenericMetricUnit.PERCENT),
-    ("Encoder Utilization", "encoder_utilization", GenericMetricUnit.PERCENT),
-    ("JPEG Utilization", "jpg_utilization", GenericMetricUnit.PERCENT),
-    ("XID Errors", "xid_errors", GenericMetricUnit.COUNT),
-    ("Power Violation", "power_violation", MetricTimeUnit.MICROSECONDS),
+    ("NVIDIA GPU Power Usage", "nvidia_power_usage", PowerMetricUnit.WATT),
+    (
+        "NVIDIA Energy Consumption",
+        "nvidia_energy_consumption",
+        EnergyMetricUnit.MEGAJOULE,
+    ),
+    ("NVIDIA GPU Utilization", "nvidia_gpu_utilization", GenericMetricUnit.PERCENT),
+    (
+        "NVIDIA Memory Utilization",
+        "nvidia_memory_utilization",
+        GenericMetricUnit.PERCENT,
+    ),
+    ("NVIDIA GPU Memory Used", "nvidia_memory_used", MetricSizeUnit.GIGABYTES),
+    ("NVIDIA GPU Temperature", "nvidia_temperature", TemperatureMetricUnit.CELSIUS),
+    (
+        "NVIDIA SM Utilization",
+        "nvidia_sm_utilization",
+        GenericMetricUnit.PERCENT,
+    ),
+    (
+        "NVIDIA Decoder Utilization",
+        "nvidia_decoder_utilization",
+        GenericMetricUnit.PERCENT,
+    ),
+    (
+        "NVIDIA Encoder Utilization",
+        "nvidia_encoder_utilization",
+        GenericMetricUnit.PERCENT,
+    ),
+    (
+        "NVIDIA JPEG Utilization",
+        "nvidia_jpg_utilization",
+        GenericMetricUnit.PERCENT,
+    ),
+    ("NVIDIA XID Errors", "nvidia_xid_errors", GenericMetricUnit.COUNT),
+    (
+        "NVIDIA Power Violation",
+        "nvidia_power_violation",
+        MetricTimeUnit.MICROSECONDS,
+    ),
     # AMD ROCm telemetry (collected by AMDSMITelemetryCollector). These mirror
     # the amdsmi field names rather than NVML semantics, since the underlying
     # signals do not always measure the same physical quantity. Registered here
@@ -71,9 +118,9 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
 # These metrics accumulate over time (e.g., total energy consumed since boot),
 # so we compute the delta between baseline and final values rather than statistics.
 GPU_TELEMETRY_COUNTER_METRICS: set[str] = {
-    "energy_consumption",
-    "xid_errors",
-    "power_violation",
+    "nvidia_energy_consumption",
+    "nvidia_xid_errors",
+    "nvidia_power_violation",
     "amd_energy_consumption",
     "amd_ecc_uncorrectable",
 }

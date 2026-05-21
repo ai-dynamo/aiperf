@@ -153,6 +153,9 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Valid counter (in MJ)
             loader._infer_unit_from_help("Memory (in MB)") == MetricSizeUnit.MEGABYTES
         )
         assert (
+            loader._infer_unit_from_help("Memory (in MiB)") == MetricSizeUnit.MEGABYTES
+        )
+        assert (
             loader._infer_unit_from_help("Memory (in KB)") == MetricSizeUnit.KILOBYTES
         )
         assert (
@@ -206,30 +209,32 @@ DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, NVLink bandwidth (in KB/s)
             )
 
             # Should return 2 metrics:
-            # - DCGM_FI_DEV_GPU_TEMP → gpu_temperature (in 7 defaults, SKIPPED)
-            # - DCGM_FI_DEV_POWER_USAGE → gpu_power_usage (in 7 defaults, SKIPPED)
-            # - DCGM_FI_DEV_SM_CLOCK → sm_clock (NOT in 7 defaults, ADDED with auto-generated name)
-            # - DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL → nvlink_bandwidth_total (new field, ADDED)
+            # - DCGM_FI_DEV_GPU_TEMP → nvidia_temperature (in 7 defaults, SKIPPED)
+            # - DCGM_FI_DEV_POWER_USAGE → nvidia_power_usage (in 7 defaults, SKIPPED)
+            # - DCGM_FI_DEV_SM_CLOCK → nvidia_sm_clock (NOT in 7 defaults, ADDED with auto-generated name)
+            # - DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL → nvidia_nvlink_bandwidth_total (new field, ADDED)
             assert len(custom_metrics) == 2
             custom_field_names = {m[1] for m in custom_metrics}
-            assert "sm_clock" in custom_field_names
-            assert "nvlink_bandwidth_total" in custom_field_names
+            assert "nvidia_sm_clock" in custom_field_names
+            assert "nvidia_nvlink_bandwidth_total" in custom_field_names
 
             # Verify the new DCGM mappings were returned
             assert "DCGM_FI_DEV_SM_CLOCK" in new_dcgm_mappings
-            assert new_dcgm_mappings["DCGM_FI_DEV_SM_CLOCK"] == "sm_clock"
+            assert new_dcgm_mappings["DCGM_FI_DEV_SM_CLOCK"] == "nvidia_sm_clock"
             assert "DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL" in new_dcgm_mappings
             assert (
                 new_dcgm_mappings["DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL"]
-                == "nvlink_bandwidth_total"
+                == "nvidia_nvlink_bandwidth_total"
             )
 
             # Apply mappings (simulating what cli_runner does)
             DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
             # Verify existing mappings were NOT changed
-            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_GPU_TEMP"] == "gpu_temperature"
-            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_POWER_USAGE"] == "gpu_power_usage"
+            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_GPU_TEMP"] == "nvidia_temperature"
+            assert (
+                DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_POWER_USAGE"] == "nvidia_power_usage"
+            )
         finally:
             csv_path.unlink()
 
@@ -253,8 +258,8 @@ DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Tensor active (in %)
 
             # Verify field names
             assert len(custom_metrics) == 2
-            assert custom_metrics[0][1] == "nvlink_bandwidth_total"
-            assert custom_metrics[1][1] == "dcgm_fi_prof_pipe_tensor_active"
+            assert custom_metrics[0][1] == "nvidia_nvlink_bandwidth_total"
+            assert custom_metrics[1][1] == "nvidia_pipe_tensor_active"
 
             # Verify display names extracted from help messages (title cased with acronyms)
             assert custom_metrics[0][0] == "NVLINK Bandwidth"
@@ -289,10 +294,10 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
 
             # These fields were removed from DCGM mapping and are not in the 7 display defaults
             # When added via CSV, they'll get auto-generated field names
-            assert "sm_clock" not in existing_field_names
-            assert "mem_clock" not in existing_field_names
-            assert "memory_temp" not in existing_field_names
-            assert "power_mgmt_limit" not in existing_field_names
+            assert "nvidia_sm_clock" not in existing_field_names
+            assert "nvidia_mem_clock" not in existing_field_names
+            assert "nvidia_memory_temp" not in existing_field_names
+            assert "nvidia_power_mgmt_limit" not in existing_field_names
 
             custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
                 custom_csv_path=csv_path
@@ -302,19 +307,19 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
             assert len(custom_metrics) == 4
             custom_field_names = {m[1] for m in custom_metrics}
             assert custom_field_names == {
-                "sm_clock",
-                "mem_clock",
-                "memory_temp",
-                "power_mgmt_limit",
+                "nvidia_sm_clock",
+                "nvidia_mem_clock",
+                "nvidia_memory_temp",
+                "nvidia_power_mgmt_limit",
             }
 
             # Verify new DCGM mappings (only if they didn't already exist from previous tests)
             # Note: Tests may run in any order, so some may already be in mapping
             for dcgm_field, field_name in [
-                ("DCGM_FI_DEV_SM_CLOCK", "sm_clock"),
-                ("DCGM_FI_DEV_MEM_CLOCK", "mem_clock"),
-                ("DCGM_FI_DEV_MEMORY_TEMP", "memory_temp"),
-                ("DCGM_FI_DEV_POWER_MGMT_LIMIT", "power_mgmt_limit"),
+                ("DCGM_FI_DEV_SM_CLOCK", "nvidia_sm_clock"),
+                ("DCGM_FI_DEV_MEM_CLOCK", "nvidia_mem_clock"),
+                ("DCGM_FI_DEV_MEMORY_TEMP", "nvidia_memory_temp"),
+                ("DCGM_FI_DEV_POWER_MGMT_LIMIT", "nvidia_power_mgmt_limit"),
             ]:
                 if dcgm_field in new_dcgm_mappings:
                     assert new_dcgm_mappings[dcgm_field] == field_name
@@ -323,22 +328,24 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
             DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
             # After applying, all should be in the global mapping
-            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_SM_CLOCK"] == "sm_clock"
-            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_MEM_CLOCK"] == "mem_clock"
-            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_MEMORY_TEMP"] == "memory_temp"
+            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_SM_CLOCK"] == "nvidia_sm_clock"
+            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_MEM_CLOCK"] == "nvidia_mem_clock"
+            assert (
+                DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_MEMORY_TEMP"] == "nvidia_memory_temp"
+            )
             assert (
                 DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_POWER_MGMT_LIMIT"]
-                == "power_mgmt_limit"
+                == "nvidia_power_mgmt_limit"
             )
 
             # Verify the auto-generated field names are correct
             for metric in custom_metrics:
                 display_name, field_name, unit = metric
                 assert field_name in [
-                    "sm_clock",
-                    "mem_clock",
-                    "memory_temp",
-                    "power_mgmt_limit",
+                    "nvidia_sm_clock",
+                    "nvidia_mem_clock",
+                    "nvidia_memory_temp",
+                    "nvidia_power_mgmt_limit",
                 ]
         finally:
             csv_path.unlink()

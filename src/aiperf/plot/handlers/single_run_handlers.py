@@ -1036,6 +1036,7 @@ class DualAxisHandler(BaseSingleRunHandler):
         "throughput_tokens_per_sec": lambda self, data: calculate_throughput_events(
             prepare_request_timeseries(data)
         ),
+        "nvidia_gpu_utilization": lambda self, data: aggregate_gpu_telemetry(data),
         "gpu_utilization": lambda self, data: aggregate_gpu_telemetry(data),
     }
 

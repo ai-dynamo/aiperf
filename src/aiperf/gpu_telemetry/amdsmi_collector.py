@@ -42,7 +42,10 @@ from aiperf.common.models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
-from aiperf.gpu_telemetry.constants import AMDSMI_SOURCE_IDENTIFIER
+from aiperf.gpu_telemetry.constants import (
+    AMD_GPU_TELEMETRY_PLATFORM,
+    AMDSMI_SOURCE_IDENTIFIER,
+)
 from aiperf.gpu_telemetry.protocols import TErrorCallback, TRecordCallback
 
 __all__ = ["AMDSMITelemetryCollector"]
@@ -285,6 +288,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 pci_bus_id=pci_bus_id,
                 device=f"amd{index}",
                 hostname="localhost",
+                platform=AMD_GPU_TELEMETRY_PLATFORM,
             ),
         )
 
