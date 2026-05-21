@@ -151,7 +151,7 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--tokenizer` | `Qwen/Qwen3-0.6B` | HuggingFace tokenizer for corpus (and for the recorder, when enabled) |
+| `--tokenizer` | `builtin` | Tokenizer for corpus (and for the recorder, when enabled). `builtin` = bundled tiktoken `o200k_base` (zero network access); pass any HuggingFace name or path to use an HF tokenizer. |
 | `--tokenizer-revision` | `main` | Tokenizer revision (branch, tag, or commit) |
 | `--tokenizer-trust-remote-code` | `false` | Trust remote code for custom tokenizers |
 | `--no-tokenizer` | `false` | Skip tokenizer, use character-based chunking (faster startup) |
