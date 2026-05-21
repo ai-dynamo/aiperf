@@ -148,6 +148,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/mmap_cache.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/endpoints/base_endpoint.py",
       ""
     ],

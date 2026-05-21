@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import gc
 import os
-import shutil
 import tempfile
 import time
 from io import BytesIO
@@ -230,20 +229,26 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         begin = time.perf_counter()
         await self._configure_dataset()
         dataset_type = self.user_config.input.custom_dataset_type
-        # Mooncake traces support multiple input modes (payload / messages /
-        # input_length); only the `payload` mode produces pre-built raw_payload
-        # turns. The flag captured before _preformat_payloads ran reflects
-        # source-loaded payloads only, not preformatted ones.
+        public_dataset = self.user_config.input.public_dataset
         is_mooncake_payload_mode = (
             dataset_type == CustomDatasetType.MOONCAKE_TRACE
             and self._all_turns_source_loaded_payloads
+        )
+        is_weka_format = (
+            dataset_type == CustomDatasetType.WEKA_TRACE
+            or self.user_config.input.detected_loader == "weka_trace"
+            or (
+                public_dataset is not None
+                and str(public_dataset).startswith("semianalysis_cc_traces_weka")
+            )
         )
         if (
             dataset_type
             in (CustomDatasetType.RAW_PAYLOAD, CustomDatasetType.INPUTS_JSON)
             or is_mooncake_payload_mode
+            or is_weka_format
         ):
-            self.info("Skipping inputs.json generation (payloads are pre-built)")
+            self.info("Skipping inputs.json generation")
         else:
             await self._generate_inputs_json_file()
         await self._configure_dataset_client_and_free_memory()
@@ -797,8 +802,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         Restores ``dataset.dat`` / ``index.dat`` into the run's mmap dir so the
         rest of the pipeline (backing-store cleanup, worker mmap reads, k8s
-        download) sees byte-identical files to a non-cached run. Also restores
-        ``inputs.json`` into the artifact dir when present in the cache entry.
+        download) sees byte-identical files to a non-cached run.
         """
         run_data_path, run_index_path = self._run_mmap_paths()
         mmap_cache.restore_to_run_dir(hit, run_data_path, run_index_path)
@@ -841,18 +845,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             total_size_bytes=manifest.total_size_bytes,
             compressed_size_bytes=manifest.compressed_size_bytes,
         )
-
-        if hit.inputs_json_path is not None:
-            try:
-                target = (
-                    self.user_config.output.artifact_directory
-                    / OutputDefaults.INPUTS_JSON_FILE
-                )
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(hit.inputs_json_path, target)
-                self.info(f"Restored inputs.json from cache to {target}")
-            except OSError as e:
-                self.warning(f"Failed to restore inputs.json from cache: {e!r}")
 
         client_metadata = self._backing_store.get_client_metadata()
         self._cache_hit_used = True
@@ -900,18 +892,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             all_turns_source_loaded_payloads=self._all_turns_source_loaded_payloads,
             dataset_metadata_json=self.dataset_metadata.model_dump_json(),
         )
-        inputs_json_path = (
-            self.user_config.output.artifact_directory / OutputDefaults.INPUTS_JSON_FILE
-        )
         try:
             mmap_cache.populate(
                 cache_key=self._cache_key_for_run,
                 run_data_path=run_data_path,
                 run_index_path=run_index_path,
                 manifest=manifest,
-                inputs_json_path=(
-                    inputs_json_path if inputs_json_path.exists() else None
-                ),
             )
         except Exception as e:
             self.warning(f"Failed to populate mmap cache: {e!r}")
