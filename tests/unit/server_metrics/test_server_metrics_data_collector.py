@@ -92,6 +92,24 @@ gpu_utilization{gpu="1"} 0.92
         assert record.metrics["gpu_utilization"].type == PrometheusMetricType.GAUGE
         assert len(record.metrics["gpu_utilization"].samples) == 2
 
+    def test_parse_gauge_skips_non_finite_samples(self):
+        """Test that NaN/Inf samples are skipped before JSON transport."""
+        metrics_text = """# HELP sglang:fwd_occupancy Forward occupancy
+# TYPE sglang:fwd_occupancy gauge
+sglang:fwd_occupancy{rank="0"} NaN
+sglang:fwd_occupancy{rank="1"} +Inf
+sglang:fwd_occupancy{rank="2"} -Inf
+sglang:fwd_occupancy{rank="3"} 0.5
+"""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+        record = collector._parse_metrics_to_records(make_fetch_result(metrics_text))
+
+        assert record is not None
+        samples = record.metrics["sglang:fwd_occupancy"].samples
+        assert len(samples) == 1
+        assert samples[0].labels == {"rank": "3"}
+        assert samples[0].value == 0.5
+
     def test_parse_histogram_metrics(self, sample_prometheus_metrics):
         """Test parsing histogram metrics with buckets."""
         collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
