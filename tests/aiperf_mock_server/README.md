@@ -698,7 +698,7 @@ python -c "import pandas as pd; print(pd.read_json('/tmp/req.jsonl', lines=True)
 
 ## Project Structure
 
-```
+```text
 tests/aiperf_mock_server/
 ├── __main__.py             # CLI entry point
 ├── app.py                  # FastAPI application and endpoints
