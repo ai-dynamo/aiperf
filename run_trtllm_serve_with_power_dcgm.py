@@ -307,6 +307,16 @@ def parse_args() -> argparse.Namespace:
         "(default: current sys.executable)",
     )
 
+    # DCGM exporter URL passed to aiperf as --gpu-telemetry.
+    parser.add_argument(
+        "--dcgm-url",
+        default="http://localhost:9400/metrics",
+        help="DCGM exporter URL passed to aiperf as --gpu-telemetry for both "
+        "warmup and official runs. dcgm-exporter is presumed already running "
+        "at this URL; the driver does not launch or manage it. "
+        "(default: %(default)s)",
+    )
+
     # Output / lifecycle.
     parser.add_argument(
         "--output-dir",
