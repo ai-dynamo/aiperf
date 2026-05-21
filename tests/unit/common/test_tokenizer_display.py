@@ -199,6 +199,13 @@ class TestDisplayTokenizerValidationError:
                 "No Standard Tokenizer",
                 ["--tokenizer gpt2", "tokenizer_config.json"],
             ),
+            # tokenizer_class not registered in installed transformers (issue #960)
+            (
+                ["TokenizerError", "ValueError"],
+                "Tokenizer class TokenizersBackend does not exist or is not currently imported.",
+                "Unsupported Tokenizer Class",
+                ["TokenizersBackend", "pip install -U 'transformers>=5'"],
+            ),
             # Fallback for unknown error
             (
                 ["TokenizerError", "UnknownError"],
@@ -232,6 +239,7 @@ class TestDisplayTokenizerValidationError:
             "import_error_tiktoken",
             "trust_remote_code",
             "no_text_tokenizer",
+            "missing_tokenizer_class",
             "unknown_fallback",
             "ambiguous_name_error",
             "no_cause_chain_fallback",

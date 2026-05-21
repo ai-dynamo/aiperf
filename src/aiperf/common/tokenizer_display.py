@@ -127,6 +127,12 @@ _TRUST_REMOTE_CODE_RE = re.compile(r"trust_remote_code", re.IGNORECASE)
 _BACKEND_TOKENIZER_INSTANTIATION_RE = re.compile(
     r"couldn't instantiate the backend tokenizer", re.IGNORECASE
 )
+# HF raises this when ``tokenizer_config.json`` references a class not registered in
+# the installed transformers (e.g. ``TokenizersBackend`` is v5-only; nvidia/GLM-5-NVFP4
+# fails on v4). The class name varies, so the insight is built dynamically.
+_MISSING_TOKENIZER_CLASS_RE = re.compile(
+    r"Tokenizer class (\S+) does not exist or is not currently imported"
+)
 _MISSING_PACKAGE_PATTERNS = [
     re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE),
     re.compile(
@@ -179,6 +185,24 @@ def _detect_error(
             ],
             fixes=[
                 "Add: [green]--tokenizer-trust-remote-code[/green]",
+            ],
+        )
+
+    # Check for a tokenizer_class not registered in the installed transformers
+    # (e.g. ``TokenizersBackend`` is v5-only) before type-specific matching.
+    if error_message and (match := _MISSING_TOKENIZER_CLASS_RE.search(error_message)):
+        missing = match.group(1)
+        return TokenizerErrorInsight(
+            title="Unsupported Tokenizer Class",
+            causes=[
+                f"Tokenizer references class [cyan]{missing}[/cyan] which is "
+                "not registered in your installed transformers",
+            ],
+            investigation=[
+                "Check installed version: [cyan]pip show transformers[/cyan]",
+            ],
+            fixes=[
+                f"Upgrade transformers (e.g. [green]pip install -U 'transformers>=5'[/green] for [cyan]{missing}[/cyan])",
             ],
         )
 
