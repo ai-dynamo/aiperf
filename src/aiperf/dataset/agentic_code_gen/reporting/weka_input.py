@@ -98,8 +98,8 @@ def _subagent_session_turns(
     return session_id, turns
 
 
-def _parent_peak_input_length(trace: WekaTrace) -> int:
-    """Peak `input_length` across the parent's normal/streaming requests.
+def _trace_peak_input_length(trace: WekaTrace) -> int:
+    """Peak `input_length` across parent and subagent requests.
 
     Mirrors WekaTraceLoader._filter_traces_by_max_context's rule.
     """
@@ -110,6 +110,10 @@ def _parent_peak_input_length(trace: WekaTrace) -> int:
             and req.input_length > peak
         ):
             peak = req.input_length
+        elif isinstance(req, WekaSubagentEntry):
+            for child_req in req.requests:
+                if child_req.input_length > peak:
+                    peak = child_req.input_length
     return peak
 
 
@@ -125,7 +129,7 @@ def load_weka_as_parsed(
     include_subagents=True (default), each `WekaSubagentEntry` in the parent's
     request list also becomes a session keyed by `f"{trace.id}::sa:{agent_id}"`.
 
-    When max_context_length is set, traces whose parent peak input_length
+    When max_context_length is set, traces whose peak input_length
     exceeds the cap are dropped entirely (parent and subagents).
     """
     traces = _load_weka_traces(path)
@@ -133,7 +137,7 @@ def load_weka_as_parsed(
     for trace in traces:
         if (
             max_context_length is not None
-            and _parent_peak_input_length(trace) > max_context_length
+            and _trace_peak_input_length(trace) > max_context_length
         ):
             continue
         if trace.id in parsed:
@@ -158,7 +162,7 @@ def infer_weka_block_size(path: Path, max_context_length: int | None = None) -> 
     for trace in _load_weka_traces(path):
         if (
             max_context_length is not None
-            and _parent_peak_input_length(trace) > max_context_length
+            and _trace_peak_input_length(trace) > max_context_length
         ):
             continue
         block_sizes.add(trace.block_size)
