@@ -175,3 +175,27 @@ class TestSafeReadTemplatePathReadFailures:
             assert _safe_read_template_path(str(unreadable)) is None
         finally:
             unreadable.chmod(0o644)
+
+
+class TestSafeReadTemplatePathConstructionFailures:
+    """``_safe_read_template_path`` must reject inputs that fail ``Path()`` construction.
+
+    Defensive against upstream parsers that hand the helper a non-string value
+    (e.g., ``--extra-inputs`` JSON parsed to an int/None for ``payload_template``).
+    ``Path(non_str)`` raises ``TypeError`` and certain invalid string contents raise
+    ``ValueError``; both must collapse to ``None`` rather than propagate.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_input",
+        [
+            pytest.param(42, id="int"),
+            pytest.param(None, id="none"),
+            pytest.param(["a", "b"], id="list"),
+            pytest.param({"x": 1}, id="dict"),
+        ],
+    )
+    def test_non_string_input_returns_none(self, bad_input: object) -> None:
+        # ``ts`` is typed ``str`` but the helper guards against parser
+        # misbehavior that smuggles a non-str through ``dict.get``.
+        assert _safe_read_template_path(bad_input) is None  # type: ignore[arg-type]
