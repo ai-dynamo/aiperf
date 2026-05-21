@@ -78,6 +78,18 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     return entry.t
 
 
+def _trace_peak_input_length(trace: WekaTrace) -> int:
+    """Peak recorded context length across parent and subagent requests."""
+    peak = 0
+    for req in trace.requests:
+        if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
+            peak = max(peak, req.input_length)
+        elif isinstance(req, WekaSubagentEntry):
+            for child_req in req.requests:
+                peak = max(peak, child_req.input_length)
+    return peak
+
+
 def _pack_into_streams(
     requests: list[WekaNormalRequest],
 ) -> list[list[WekaNormalRequest]]:
@@ -563,20 +575,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         Uses the per-request ``input_length`` recorded in the WEKA trace
         (cumulative context at that turn) so no client-side re-tokenization
-        is required. The peak across requests is the conversation's worst
-        case; any conversation exceeding it would 4xx mid-run.
+        is required. The peak across parent and subagent requests is the
+        trace's worst case; any conversation branch exceeding it would 4xx
+        mid-run.
         """
         kept: dict[str, list[WekaTrace]] = {}
         max_seen = 0
         for trace_id, wekas in data.items():
-            peak = max(
-                (
-                    req.input_length
-                    for req in wekas[0].requests
-                    if isinstance(req, WekaNormalRequest | WekaStreamingRequest)
-                ),
-                default=0,
-            )
+            peak = _trace_peak_input_length(wekas[0])
             if peak > max_seen:
                 max_seen = peak
             if peak <= max_ctx:
