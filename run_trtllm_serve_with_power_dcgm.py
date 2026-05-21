@@ -636,5 +636,64 @@ def _per_gpu_delta(
     return out
 
 
+def _parse_aiperf_telemetry(artifact_dir: Path) -> dict[str, Any]:
+    """Parse per-GPU power/energy stats from aiperf's profile_export_aiperf.json.
+
+    Returns a dict keyed by GPU UUID. Each value carries the per-GPU
+    identifiers plus the raw stat dicts aiperf computed for `gpu_power_usage`
+    (watts) and `energy_consumption` (megajoules, counter-delta).
+
+    Empty dict on missing file or empty/absent telemetry section (soft failure
+    — a warning is printed to stderr and the caller still writes summary.json).
+    Re-raises json.JSONDecodeError if the file exists but is malformed (hard
+    failure — that indicates an aiperf bug worth surfacing).
+    """
+    json_path = artifact_dir / "profile_export_aiperf.json"
+    if not json_path.is_file():
+        print(
+            f"[run] warning: no aiperf telemetry file at {json_path}",
+            file=sys.stderr,
+        )
+        return {}
+
+    data = json.loads(json_path.read_text())
+    telemetry = data.get("telemetry")
+    if not telemetry:
+        print(
+            f"[run] warning: aiperf JSON has no telemetry section at {json_path}",
+            file=sys.stderr,
+        )
+        return {}
+
+    endpoints = telemetry.get("endpoints", {})
+    if not endpoints:
+        print(
+            f"[run] warning: aiperf telemetry has no endpoints at {json_path}",
+            file=sys.stderr,
+        )
+        return {}
+
+    out: dict[str, Any] = {}
+    for endpoint_url, endpoint_data in endpoints.items():
+        if not isinstance(endpoint_data, dict):
+            continue
+        gpus = endpoint_data.get("gpus", {})
+        if not isinstance(gpus, dict):
+            continue
+        for gpu_uuid, gpu in gpus.items():
+            if not isinstance(gpu, dict):
+                continue
+            metrics = gpu.get("metrics", {}) or {}
+            out[gpu_uuid] = {
+                "gpu_index": gpu.get("gpu_index"),
+                "gpu_name": gpu.get("gpu_name"),
+                "hostname": gpu.get("hostname"),
+                "endpoint_url": endpoint_url,
+                "gpu_power_usage": metrics.get("gpu_power_usage", {}) or {},
+                "energy_consumption": metrics.get("energy_consumption", {}) or {},
+            }
+    return out
+
+
 if __name__ == "__main__":
     sys.exit(main())
