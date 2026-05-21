@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiperf.common.enums import EnergyMetricUnit, PowerMetricUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
@@ -390,13 +391,11 @@ class TestComputeEfficiencyMetrics:
     @pytest.fixture
     def accumulator(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_run,
         mock_pub_client,
     ) -> GPUTelemetryAccumulator:
         return GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=mock_run,
             pub_client=mock_pub_client,
         )
 
