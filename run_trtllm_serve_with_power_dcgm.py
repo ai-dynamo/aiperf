@@ -148,7 +148,7 @@ def _build_aiperf_cmd(
         "ignore_eos:true",
         "--no-server-metrics",
         "--gpu-telemetry",
-        "pynvml",
+        args.dcgm_url,
         "--ui",
         "simple",
         "--artifact_dir",
