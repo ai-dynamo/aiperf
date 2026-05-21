@@ -7,6 +7,7 @@ import { TopNav } from './components/top-nav.js';
 import { Breadcrumb } from './components/breadcrumb.js';
 import { CommandPalette } from './components/command-palette.js';
 import { LogStrip } from './components/log-strip.js';
+import { FreshnessStrip } from './components/freshness.js';
 import { Dashboard } from './pages/dashboard.js';
 import { Jobs } from './pages/jobs.js';
 import { JobDetail } from './pages/job-detail.js';
@@ -89,6 +90,7 @@ function App() {
         <span class="alpha-banner-tag">ALPHA</span>
         <span>Developer testing ground — features here are experimental and unverified. Most will change, break, or be cut before any release.</span>
       </div>
+      <${FreshnessStrip} />
       ${error && html`
         <div class="error-banner">
           <strong>Error:</strong> ${error}

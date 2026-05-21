@@ -59,6 +59,20 @@ renders — by default `aiperf-operator`, or `<release>-aiperf-operator` if your
 release name differs from the chart name. The port is exposed under the
 `results` named port (default 8081, see `resultsServer.port` in `values.yaml`).
 
+### Local no-build UI development
+
+For fast iteration on the static operator UI without adding a frontend build
+step, run the local proxy against a forwarded or otherwise reachable operator
+Results API:
+
+```bash
+uv run python tools/operator_ui_proxy.py --dev-reload --port 8123 --upstream http://127.0.0.1:8081
+```
+
+Open `http://127.0.0.1:8123/live/`. The proxy serves
+`src/aiperf/operator/ui/`, forwards `/api/v1/*` to the configured upstream, and
+reloads the browser when `.html`, `.js`, or `.css` files change.
+
 ### Authentication
 
 The dashboard inherits the Results API's read-only access model: **no per-user

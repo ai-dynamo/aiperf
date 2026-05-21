@@ -55,6 +55,10 @@ class FileListResponse(AIPerfBaseModel):
 
     namespace: str = Field(description="Kubernetes namespace")
     job_id: str = Field(description="Job identifier")
+    ready: bool = Field(
+        default=True,
+        description="Whether final top-level result files are ready to download.",
+    )
     files: list[FileEntry] = Field(
         default_factory=list, description="Available result files"
     )

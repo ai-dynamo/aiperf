@@ -25,6 +25,7 @@ from kubernetes_asyncio import (
 from kubernetes_asyncio.client import ApiClient
 
 from aiperf.kubernetes import preflight_checks
+from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.console import logger
 from aiperf.kubernetes.preflight_utils import (
     parse_image_ref as _shared_parse_image_ref,
@@ -283,13 +284,30 @@ class CLIPreflightChecker:
         if self.endpoint_url:
             checks.append(("Endpoint Connectivity", self._check_endpoint_connectivity))
 
-        for name, check_fn in checks:
-            result = await self._run_check(name, check_fn)
+        try:
+            async with k8s_client(
+                kubeconfig=self.kubeconfig, context=self.kube_context
+            ) as api:
+                self._api = api
+                for name, check_fn in checks:
+                    result = await self._run_check(name, check_fn)
+                    results.add(result)
+                    if show_progress:
+                        _print_check_result_compact(result)
+                    if (
+                        name == "Cluster Connectivity"
+                        and result.status == CheckStatus.FAIL
+                    ):
+                        return results
+        except Exception as e:  # noqa: BLE001 - surface initial connection failures as preflight results
+            if results.checks:
+                raise
+            result = self._cluster_connectivity_failure(e)
             results.add(result)
             if show_progress:
                 _print_check_result_compact(result)
-            if name == "Cluster Connectivity" and result.status == CheckStatus.FAIL:
-                return results
+        finally:
+            self._api = None
 
         return results
 
@@ -314,37 +332,49 @@ class CLIPreflightChecker:
         ]
 
         total = len(checks)
-        for i, (name, check_fn) in enumerate(checks, 1):
-            result = await self._run_check(name, check_fn, show_status=True)
-            results.add(result)
-            _print_check_result(result, i, total)
+        try:
+            async with k8s_client(
+                kubeconfig=self.kubeconfig, context=self.kube_context
+            ) as api:
+                self._api = api
+                for i, (name, check_fn) in enumerate(checks, 1):
+                    result = await self._run_check(name, check_fn, show_status=True)
+                    results.add(result)
+                    _print_check_result(result, i, total)
 
-            if name == "Cluster Connectivity" and result.status == CheckStatus.FAIL:
-                break
+                    if (
+                        name == "Cluster Connectivity"
+                        and result.status == CheckStatus.FAIL
+                    ):
+                        break
+        except Exception as e:  # noqa: BLE001 - surface initial connection failures as preflight results
+            if results.checks:
+                raise
+            result = self._cluster_connectivity_failure(e)
+            results.add(result)
+            _print_check_result(result, 1, total)
+        finally:
+            self._api = None
 
         results.print_summary()
         return results
 
+    def _cluster_connectivity_failure(self, error: Exception) -> CheckResult:
+        """Build the standard cluster connectivity failure result."""
+        return CheckResult(
+            name="Cluster Connectivity",
+            status=CheckStatus.FAIL,
+            message=f"Failed to connect: {error}",
+            hints=[
+                "Check your kubeconfig (~/.kube/config) or KUBECONFIG env var",
+                "Verify the cluster is running and accessible",
+            ],
+        )
+
     async def _check_cluster_connectivity(self) -> CheckResult:
         """Check if we can connect to the Kubernetes cluster."""
-        from aiperf.kubernetes.client import k8s_client
-
-        # Open the shared ApiClient context manager lazily so later checks can
-        # reuse the connection; the context is closed by the caller via the
-        # process lifecycle.
-        cm = k8s_client(kubeconfig=self.kubeconfig, context=self.kube_context)
-        try:
-            self._api = await cm.__aenter__()
-        except Exception as e:  # noqa: BLE001 - surface connection failures as a failed check
-            return CheckResult(
-                name="Cluster Connectivity",
-                status=CheckStatus.FAIL,
-                message=f"Failed to connect: {e}",
-                hints=[
-                    "Check your kubeconfig (~/.kube/config) or KUBECONFIG env var",
-                    "Verify the cluster is running and accessible",
-                ],
-            )
+        if self._api is None:
+            raise RuntimeError("Kubernetes ApiClient is not initialized")
         return await preflight_checks.check_cluster_connectivity(self._api)
 
     async def _check_kubernetes_version(self) -> CheckResult:

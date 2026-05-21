@@ -131,3 +131,30 @@ def test_dashboard_helpers_do_not_currently_export_namespace_or_model_filters() 
     """
 
     assert json.loads(run_node(script)) == ["isRecentJob", "jobCreatedTs", "recentJobs"]
+
+
+def test_dashboard_names_jobs_cluster_and_leaderboard_pollers() -> None:
+    source = (DASHBOARD_HELPERS_PATH.parent / "dashboard.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "source: 'jobs'" in source
+    assert "source: 'cluster'" in source
+    assert "source: 'leaderboard'" in source
+
+
+def test_dashboard_named_pollers_rethrow_after_local_error_handling() -> None:
+    source = (DASHBOARD_HELPERS_PATH.parent / "dashboard.js").read_text(
+        encoding="utf-8"
+    )
+
+    cluster_block = source.split("const data = await api.getCluster();", 1)[1].split(
+        "}, 10000", 1
+    )[0]
+    leaderboard_block = source.split(
+        "const lb = await api.getLeaderboard('request_throughput', 'avg');", 1
+    )[1].split("}, 15000", 1)[0]
+
+    assert "setClusterError(true);" in cluster_block
+    assert "throw err;" in cluster_block
+    assert "throw err;" in leaderboard_block

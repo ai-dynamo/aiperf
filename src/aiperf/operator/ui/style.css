@@ -3089,7 +3089,7 @@ select, input {
 
 /* Hero (3) + Secondary (4) KPI rail wrap. Hero tiles get the large
  * sparkline + gradient bar treatment via metric-card--hero; secondary
- * tiles re-use the existing dense 6-col KpiTile rail underneath. */
+ * tiles reuse the existing dense 6-col KpiTile rail underneath. */
 .kpi-rail__hero {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -6483,3 +6483,126 @@ select, input {
 .log-strip-cat--phase   { background: var(--blue-dim);  color: var(--blue); }
 .log-strip-cat--worker  { background: var(--pink-dim);  color: var(--pink); }
 .log-strip-cat--records { background: var(--green-dim); color: var(--green); }
+
+
+/* ──────────────────────────────────────────────────────────────
+   Freshness strip and stale data banner
+────────────────────────────────────────────────────────────── */
+.freshness-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  margin: 6px 16px 0;
+  background: color-mix(in srgb, var(--bg-card) 85%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.freshness-strip-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.freshness-strip-sources {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.freshness-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--sub);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.freshness-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.freshness-pill--fresh {
+  border-color: color-mix(in srgb, var(--green) 35%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 9%, transparent);
+}
+
+.freshness-pill--fresh .freshness-dot {
+  background: var(--green);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--green) 55%, transparent);
+}
+
+.freshness-pill--stale {
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.freshness-pill--stale .freshness-dot {
+  background: var(--amber);
+}
+
+.freshness-pill--retrying {
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.freshness-pill--retrying .freshness-dot {
+  background: var(--red);
+}
+
+.freshness-pill--stopped {
+  border-color: var(--border-strong);
+  color: var(--muted);
+  background: var(--bg-card);
+}
+
+.freshness-pill--loading .freshness-dot {
+  background: var(--blue);
+  animation: pulse 1.2s infinite;
+}
+
+.stale-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  color: var(--sub);
+  font-size: var(--font-size-sm);
+}
+
+.stale-banner strong {
+  color: var(--amber);
+}
+
+.stale-banner-error {
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}

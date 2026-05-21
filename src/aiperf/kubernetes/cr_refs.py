@@ -13,6 +13,12 @@ AIPERF_JOB_VERSION = "v1alpha1"
 AIPERF_JOB_PLURAL = "aiperfjobs"
 AIPERF_JOB_API_VERSION = f"{AIPERF_JOB_GROUP}/{AIPERF_JOB_VERSION}"
 
+# AIPerfSweep (the AIPerf-owned sweep CR)
+AIPERF_SWEEP_GROUP = AIPERF_JOB_GROUP
+AIPERF_SWEEP_VERSION = AIPERF_JOB_VERSION
+AIPERF_SWEEP_PLURAL = "aiperfsweeps"
+AIPERF_SWEEP_API_VERSION = f"{AIPERF_SWEEP_GROUP}/{AIPERF_SWEEP_VERSION}"
+
 # Backwards-compat aliases -- previous names in kubernetes/constants.py
 # and cli_commands/kube/*.py that other modules already import.
 AIPERF_GROUP = AIPERF_JOB_GROUP

@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""I/O helpers backing :mod:`aiperf.operator.routers.results_files`.
-
-Pure file-system + streaming utilities — path traversal guards, zstd/gzip
-content-negotiation streamers, on-disk job-dir scanning, and zip-bundle
-construction. Routing concerns (route registration, request parsing) live
-in the sibling ``results_files`` module so each file stays single-purpose.
-"""
+"""I/O helpers backing :mod:`aiperf.operator.routers.results_files`."""
 
 from __future__ import annotations
 
@@ -361,14 +355,7 @@ def _extract_model_endpoint(latest_dir: Path) -> tuple[str | None, str | None]:
 
 
 def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
-    """Walk ``<namespace>/<job_id>/<epoch>/`` under ``base_dir``.
-
-    Yields one :class:`JobEntry` per ``<ns>/<name>`` using the run pointed
-    to by latest.txt. Jobs whose pointer is missing or targets a vanished
-    epoch are skipped silently. ``model`` and ``endpoint`` are populated
-    from the run dir's ``job_spec.json`` so the UI can filter clusters of
-    "similar runs" without round-tripping to the live AIPerfJob CR list.
-    """
+    """Walk ``<namespace>/<job_id>/<epoch>/`` under ``base_dir``."""
     found: list[JobEntry] = []
     for ns_dir in sorted(base_dir.iterdir()):
         if not ns_dir.is_dir():
@@ -400,14 +387,21 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
     return found
 
 
+def list_job_files_with_readiness(run_dir: Path) -> tuple[list[dict[str, Any]], bool]:
+    """List visible run artifacts and whether final files are download-ready."""
+    ready = ready_marker_path(run_dir).is_file()
+    entries = _list_artifact_files(
+        run_dir,
+        (CHECKPOINTS_DIR_NAME,),
+        include_root=ready,
+    )
+    return [entry.model_dump() for entry in entries], ready
+
+
 def _list_job_files(job_dir: Path) -> list[FileEntry]:
     """List visible artifacts in a run directory, sorted by display name."""
-    include_root = ready_marker_path(job_dir).is_file()
-    return _list_artifact_files(
-        job_dir,
-        (CHECKPOINTS_DIR_NAME,),
-        include_root=include_root,
-    )
+    files, _ready = list_job_files_with_readiness(job_dir)
+    return [FileEntry.model_validate(file_info) for file_info in files]
 
 
 def _read_profile_export_bytes(job_dir: Path) -> bytes:

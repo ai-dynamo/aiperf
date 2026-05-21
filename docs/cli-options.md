@@ -4218,14 +4218,14 @@ Seconds to keep pods after completion (None to disable TTL).
 
 ### Kubernetes Node Placement
 
-#### `--node-selector` `<str>`
+#### `--node-selector` `<list>`
 
-Node selector labels (e.g., {'gpu': 'true'}).
-<br/>_Default: `{}`_
+CLI-only node selector labels (JSON object or repeated key=value).
+<br/>_Default: `[]`_
 
 #### `--tolerations` `<list>`
 
-Pod tolerations for scheduling on tainted nodes.
+Pod tolerations as JSON object/array or repeated JSON values.
 <br/>_Default: `[]`_
 
 ### Kubernetes Scheduling
@@ -5543,14 +5543,14 @@ Seconds to keep pods after completion (None to disable TTL).
 
 ### Kubernetes Node Placement
 
-#### `--node-selector` `<str>`
+#### `--node-selector` `<list>`
 
-Node selector labels (e.g., {'gpu': 'true'}).
-<br/>_Default: `{}`_
+CLI-only node selector labels (JSON object or repeated key=value).
+<br/>_Default: `[]`_
 
 #### `--tolerations` `<list>`
 
-Pod tolerations for scheduling on tainted nodes.
+Pod tolerations as JSON object/array or repeated JSON values.
 <br/>_Default: `[]`_
 
 ### Kubernetes Scheduling
@@ -5605,7 +5605,7 @@ Service account name for pods.
 
 #### `--trials` `<int>`
 
-Multi-run trials per sweep cell; overrides multi_run.trials in the YAML.
+Multi-run runs per sweep cell; overrides multiRun.numRuns / multi_run.num_runs in the YAML.
 
 #### `--cooldown` `<float>`
 
@@ -6879,14 +6879,14 @@ Seconds to keep pods after completion (None to disable TTL).
 
 ### Kubernetes Node Placement
 
-#### `--node-selector` `<str>`
+#### `--node-selector` `<list>`
 
-Node selector labels (e.g., {'gpu': 'true'}).
-<br/>_Default: `{}`_
+CLI-only node selector labels (JSON object or repeated key=value).
+<br/>_Default: `[]`_
 
 #### `--tolerations` `<list>`
 
-Pod tolerations for scheduling on tainted nodes.
+Pod tolerations as JSON object/array or repeated JSON values.
 <br/>_Default: `[]`_
 
 ### Kubernetes Scheduling

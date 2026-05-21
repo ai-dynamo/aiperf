@@ -25,10 +25,18 @@ def _run_api_script(body: str, set_error: str = "function setError(_) {}") -> ob
         import fs from 'node:fs';
 
         const sourcePath = {_API_JS_PATH.as_posix()!r};
-        const source = fs.readFileSync(sourcePath, 'utf8').replace(
-          "import {{ setError }} from './state.js';",
-          {set_error!r},
-        );
+        const stateImport = `import {{
+  clearFreshnessSource,
+  markFreshnessAttempt,
+  markFreshnessFailure,
+  markFreshnessStopped,
+  markFreshnessSuccess,
+  setError,
+}} from './state.js';`;
+        const sourceText = fs.readFileSync(sourcePath, 'utf8');
+        const source = sourceText.includes(stateImport)
+          ? sourceText.replace(stateImport, {set_error!r})
+          : sourceText.replace("import {{ setError }} from './state.js';", {set_error!r});
         const moduleUrl = `data:text/javascript;base64,${{Buffer.from(source).toString('base64')}}`;
         const {{ api, poll }} = await import(moduleUrl);
 
@@ -200,6 +208,293 @@ def test_poll_aborted_signal_prevents_initial_tick() -> None:
     )
 
     assert result == {"calls": 0, "timers": 0}
+
+
+def test_poll_ignores_rejection_after_abort_cleanup() -> None:
+    result = _run_api_script(
+        """
+        const timers = [];
+        globalThis.setTimeout = (cb, ms) => {
+          timers.push({cb, ms});
+          return timers[timers.length - 1];
+        };
+        globalThis.clearTimeout = () => {};
+        const flush = async () => {
+          await new Promise((resolve) => queueMicrotask(resolve));
+          await new Promise((resolve) => queueMicrotask(resolve));
+        };
+        const events = [];
+        globalThis.markFreshnessAttempt = (source, intervalMs, at) => events.push(['attempt', source, intervalMs, typeof at]);
+        globalThis.markFreshnessSuccess = (source, at) => events.push(['success', source, typeof at]);
+        globalThis.markFreshnessFailure = (source, error, at, retrying) => events.push(['failure', source, error, typeof at, retrying]);
+        globalThis.markFreshnessStopped = (source, reason, at) => events.push(['stopped', source, reason, typeof at]);
+        globalThis.clearFreshnessSource = (source) => events.push(['clear', source]);
+
+        let rejectInFlight;
+        const inFlight = new Promise((_resolve, reject) => { rejectInFlight = reject; });
+        const abort = new AbortController();
+        poll(async () => {
+          abort.abort();
+          await inFlight;
+        }, 5000, abort.signal, {source: 'jobs'});
+        await flush();
+        rejectInFlight(new Error('late abort failure'));
+        await flush();
+
+        console.log(JSON.stringify({events, errorEvents: globalThis.errorEvents, timers: timers.length}));
+        """,
+        set_error=(
+            "globalThis.errorEvents = []; "
+            "function setError(message) { globalThis.errorEvents.push(message); } "
+            "function markFreshnessAttempt(...args) { globalThis.markFreshnessAttempt(...args); } "
+            "function markFreshnessSuccess(...args) { globalThis.markFreshnessSuccess(...args); } "
+            "function markFreshnessFailure(...args) { globalThis.markFreshnessFailure(...args); } "
+            "function markFreshnessStopped(...args) { globalThis.markFreshnessStopped(...args); } "
+            "function clearFreshnessSource(...args) { globalThis.clearFreshnessSource(...args); }"
+        ),
+    )
+
+    assert result == {
+        "events": [["attempt", "jobs", 5000, "number"], ["clear", "jobs"]],
+        "errorEvents": [],
+        "timers": 0,
+    }
+
+
+def test_poll_named_source_records_freshness_attempt_success_retry_and_abort() -> None:
+    result = _run_api_script(
+        """
+        const timers = [];
+        globalThis.setTimeout = (cb, ms) => {
+          const timer = {cb, ms, cleared: false};
+          timers.push(timer);
+          return timer;
+        };
+        globalThis.clearTimeout = (timer) => { timer.cleared = true; };
+        const flush = async () => {
+          await new Promise((resolve) => queueMicrotask(resolve));
+          await new Promise((resolve) => queueMicrotask(resolve));
+        };
+
+        const events = [];
+        globalThis.markFreshnessAttempt = (source, intervalMs, at) => events.push(['attempt', source, intervalMs, typeof at]);
+        globalThis.markFreshnessSuccess = (source, at) => events.push(['success', source, typeof at]);
+        globalThis.markFreshnessFailure = (source, error, at, retrying) => events.push(['failure', source, error, typeof at, retrying]);
+        globalThis.markFreshnessStopped = (source, reason, at) => events.push(['stopped', source, reason, typeof at]);
+        globalThis.clearFreshnessSource = (source) => events.push(['clear', source]);
+
+        let mode = 'fail';
+        const abort = new AbortController();
+        poll(async () => {
+          if (mode === 'fail') throw new Error('jobs down');
+        }, 5000, abort.signal, {source: 'jobs'});
+        await flush();
+        await timers[0].cb();
+        await flush();
+        mode = 'ok';
+        await timers[1].cb();
+        await flush();
+        abort.abort();
+
+        console.log(JSON.stringify({events, timerIntervals: timers.map(t => t.ms)}));
+        """,
+        set_error=(
+            "globalThis.errorEvents = []; "
+            "function setError(message) { globalThis.errorEvents.push(message); } "
+            "function markFreshnessAttempt(...args) { globalThis.markFreshnessAttempt(...args); } "
+            "function markFreshnessSuccess(...args) { globalThis.markFreshnessSuccess(...args); } "
+            "function markFreshnessFailure(...args) { globalThis.markFreshnessFailure(...args); } "
+            "function markFreshnessStopped(...args) { globalThis.markFreshnessStopped(...args); } "
+            "function clearFreshnessSource(...args) { globalThis.clearFreshnessSource(...args); }"
+        ),
+    )
+
+    assert result == {
+        "events": [
+            ["attempt", "jobs", 5000, "number"],
+            ["failure", "jobs", "jobs down", "number", False],
+            ["attempt", "jobs", 5000, "number"],
+            ["failure", "jobs", "jobs down", "number", True],
+            ["attempt", "jobs", 5000, "number"],
+            ["success", "jobs", "number"],
+            ["clear", "jobs"],
+        ],
+        "timerIntervals": [5000, 5000, 5000],
+    }
+
+
+def test_poll_can_mark_named_source_stopped_from_callback() -> None:
+    result = _run_api_script(
+        """
+        const timers = [];
+        globalThis.setTimeout = (cb, ms) => {
+          const timer = {cb, ms, cleared: false};
+          timers.push(timer);
+          return timer;
+        };
+        const flush = async () => {
+          await new Promise((resolve) => queueMicrotask(resolve));
+          await new Promise((resolve) => queueMicrotask(resolve));
+        };
+        const events = [];
+        globalThis.markFreshnessAttempt = (source, intervalMs, at) => events.push(['attempt', source, intervalMs, typeof at]);
+        globalThis.markFreshnessSuccess = (source, at) => events.push(['success', source, typeof at]);
+        globalThis.markFreshnessFailure = (source, error, at, retrying) => events.push(['failure', source, error, typeof at, retrying]);
+        globalThis.markFreshnessStopped = (source, reason, at) => events.push(['stopped', source, reason, typeof at]);
+        globalThis.clearFreshnessSource = (source) => events.push(['clear', source]);
+
+        const abort = new AbortController();
+        poll(async ({stopFreshness}) => {
+          stopFreshness('terminal');
+          abort.abort();
+        }, 5000, abort.signal, {source: 'job-detail'});
+        await flush();
+
+        console.log(JSON.stringify({events, timers: timers.length}));
+        """,
+        set_error=(
+            "function setError(_) {} "
+            "function markFreshnessAttempt(...args) { globalThis.markFreshnessAttempt(...args); } "
+            "function markFreshnessSuccess(...args) { globalThis.markFreshnessSuccess(...args); } "
+            "function markFreshnessFailure(...args) { globalThis.markFreshnessFailure(...args); } "
+            "function markFreshnessStopped(...args) { globalThis.markFreshnessStopped(...args); } "
+            "function clearFreshnessSource(...args) { globalThis.clearFreshnessSource(...args); }"
+        ),
+    )
+
+    assert result == {
+        "events": [
+            ["attempt", "job-detail", 5000, "number"],
+            ["stopped", "job-detail", "terminal", "number"],
+        ],
+        "timers": 0,
+    }
+
+
+def test_poll_stopped_success_clears_prior_global_unhealthy_state() -> None:
+    result = _run_api_script(
+        """
+        const timers = [];
+        globalThis.setTimeout = (cb, ms) => {
+          const timer = {cb, ms, cleared: false};
+          timers.push(timer);
+          return timer;
+        };
+        globalThis.clearTimeout = (timer) => { timer.cleared = true; };
+        const flush = async () => {
+          await new Promise((resolve) => queueMicrotask(resolve));
+          await new Promise((resolve) => queueMicrotask(resolve));
+        };
+
+        const events = [];
+        globalThis.markFreshnessAttempt = (source, intervalMs, at) => events.push(['attempt', source, intervalMs, typeof at]);
+        globalThis.markFreshnessSuccess = (source, at) => events.push(['success', source, typeof at]);
+        globalThis.markFreshnessFailure = (source, error, at, retrying) => events.push(['failure', source, error, typeof at, retrying]);
+        globalThis.markFreshnessStopped = (source, reason, at) => events.push(['stopped', source, reason, typeof at]);
+        globalThis.clearFreshnessSource = (source) => events.push(['clear', source]);
+
+        let mode = 'fail';
+        let calls = 0;
+        const abort = new AbortController();
+        poll(async ({stopFreshness}) => {
+          calls += 1;
+          if (mode === 'fail') throw new Error('jobs down');
+          stopFreshness('terminal');
+        }, 5000, abort.signal, {source: 'jobs'});
+        await flush();
+        await timers[0].cb();
+        await flush();
+        mode = 'ok';
+        await timers[1].cb();
+        await flush();
+
+        console.log(JSON.stringify({events, errorEvents: globalThis.errorEvents, calls, timers: timers.length}));
+        """,
+        set_error=(
+            "globalThis.errorEvents = []; "
+            "function setError(message) { globalThis.errorEvents.push(message); } "
+            "function markFreshnessAttempt(...args) { globalThis.markFreshnessAttempt(...args); } "
+            "function markFreshnessSuccess(...args) { globalThis.markFreshnessSuccess(...args); } "
+            "function markFreshnessFailure(...args) { globalThis.markFreshnessFailure(...args); } "
+            "function markFreshnessStopped(...args) { globalThis.markFreshnessStopped(...args); } "
+            "function clearFreshnessSource(...args) { globalThis.clearFreshnessSource(...args); }"
+        ),
+    )
+
+    unreachable = "Operator API unreachable — live data is paused. Retrying…"
+    assert result == {
+        "events": [
+            ["attempt", "jobs", 5000, "number"],
+            ["failure", "jobs", "jobs down", "number", False],
+            ["attempt", "jobs", 5000, "number"],
+            ["failure", "jobs", "jobs down", "number", True],
+            ["attempt", "jobs", 5000, "number"],
+            ["stopped", "jobs", "terminal", "number"],
+        ],
+        "errorEvents": [unreachable, None],
+        "calls": 3,
+        "timers": 3,
+    }
+
+
+def test_poll_stop_freshness_after_external_abort_does_not_recreate_source() -> None:
+    result = _run_api_script(
+        """
+        const timers = [];
+        globalThis.setTimeout = (cb, ms) => {
+          const timer = {cb, ms, cleared: false};
+          timers.push(timer);
+          return timer;
+        };
+        globalThis.clearTimeout = (timer) => { timer.cleared = true; };
+        const flush = async () => {
+          await new Promise((resolve) => queueMicrotask(resolve));
+          await new Promise((resolve) => queueMicrotask(resolve));
+        };
+
+        const events = [];
+        globalThis.markFreshnessAttempt = (source, intervalMs, at) => events.push(['attempt', source, intervalMs, typeof at]);
+        globalThis.markFreshnessSuccess = (source, at) => events.push(['success', source, typeof at]);
+        globalThis.markFreshnessFailure = (source, error, at, retrying) => events.push(['failure', source, error, typeof at, retrying]);
+        globalThis.markFreshnessStopped = (source, reason, at) => events.push(['stopped', source, reason, typeof at]);
+        globalThis.clearFreshnessSource = (source) => events.push(['clear', source]);
+
+        let capturedStopFreshness;
+        const inFlight = new Promise(() => {});
+        const abort = new AbortController();
+        poll(async ({stopFreshness}) => {
+          capturedStopFreshness = stopFreshness;
+          await inFlight;
+        }, 5000, abort.signal, {source: 'jobs'});
+        await flush();
+        abort.abort();
+        const afterAbort = events.slice();
+        capturedStopFreshness('terminal');
+        await flush();
+
+        console.log(JSON.stringify({events, afterAbort, timers: timers.length}));
+        """,
+        set_error=(
+            "function setError(_) {} "
+            "function markFreshnessAttempt(...args) { globalThis.markFreshnessAttempt(...args); } "
+            "function markFreshnessSuccess(...args) { globalThis.markFreshnessSuccess(...args); } "
+            "function markFreshnessFailure(...args) { globalThis.markFreshnessFailure(...args); } "
+            "function markFreshnessStopped(...args) { globalThis.markFreshnessStopped(...args); } "
+            "function clearFreshnessSource(...args) { globalThis.clearFreshnessSource(...args); }"
+        ),
+    )
+
+    assert result == {
+        "events": [
+            ["attempt", "jobs", 5000, "number"],
+            ["clear", "jobs"],
+        ],
+        "afterAbort": [
+            ["attempt", "jobs", 5000, "number"],
+            ["clear", "jobs"],
+        ],
+        "timers": 0,
+    }
 
 
 def test_compare_jobs_uses_repeated_query_params_without_request_body() -> None:

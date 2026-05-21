@@ -32,6 +32,9 @@ class TextRenderer:
         self._prev_phase: str | None = None
         self._prev_progress_pct: float | None = None
         self._prev_workers: tuple[int, int] | None = None
+        self._prev_sweep_runs: (
+            tuple[int | None, int | None, int | None, int | None] | None
+        ) = None
 
     def render(self, snapshot: WatchSnapshot) -> None:
         """Emit one round of status lines for the current snapshot."""
@@ -63,11 +66,37 @@ class TextRenderer:
         self._prev_progress_pct = pct
 
     def _render_workers(self, elapsed: str, snapshot: WatchSnapshot) -> None:
+        if snapshot.target_kind == "AIPerfSweep":
+            self._render_sweep_runs(elapsed, snapshot)
+            return
         w = snapshot.workers
         workers_state = (w.ready, w.total)
         if workers_state != self._prev_workers:
             logger.info(f"[{elapsed}] Workers: {w.ready}/{w.total} ready")
             self._prev_workers = workers_state
+
+    def _render_sweep_runs(self, elapsed: str, snapshot: WatchSnapshot) -> None:
+        runs_state = (
+            snapshot.sweep_runs_completed,
+            snapshot.sweep_runs_failed,
+            snapshot.sweep_runs_cancelled,
+            snapshot.sweep_runs_total,
+        )
+        if runs_state == self._prev_sweep_runs:
+            return
+        completed, failed, cancelled, total = runs_state
+        done = (completed or 0) + (failed or 0) + (cancelled or 0)
+        total_label = total if total is not None else 0
+        details = []
+        if completed:
+            details.append(f"{completed} succeeded")
+        if failed:
+            details.append(f"{failed} failed")
+        if cancelled:
+            details.append(f"{cancelled} cancelled")
+        suffix = f" ({', '.join(details)})" if details else ""
+        logger.info(f"[{elapsed}] Sweep runs: {done}/{total_label} done{suffix}")
+        self._prev_sweep_runs = runs_state
 
     def _render_metrics(self, elapsed: str, snapshot: WatchSnapshot) -> None:
         m = snapshot.metrics

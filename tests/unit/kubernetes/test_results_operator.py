@@ -422,6 +422,59 @@ class TestListOperatorFiles:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_not_ready_empty_files_warns_missing_ready_marker(self) -> None:
+        from unittest.mock import patch
+
+        list_url = "http://localhost/api/v1/results/ns/job-1/runs/1714150923"
+        session = FakeSession(
+            {list_url: [FakeResponse(json_data={"ready": False, "files": []})]}
+        )
+
+        with patch("aiperf.kubernetes.results_operator.print_warning") as warning:
+            result = await _list_operator_files(
+                session,  # type: ignore[arg-type]
+                api_base="http://localhost",
+                namespace="ns",
+                job_id="job-1",
+                run="1714150923",
+            )
+
+        assert result is None
+        warning.assert_called_once()
+        assert ".aiperf_results_ready.json is missing" in warning.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_not_ready_checkpoint_files_warns_missing_ready_marker(self) -> None:
+        from unittest.mock import patch
+
+        list_url = "http://localhost/api/v1/results/ns/job-1/runs/1714150923"
+        session = FakeSession(
+            {
+                list_url: [
+                    FakeResponse(
+                        json_data={
+                            "ready": False,
+                            "files": [{"name": "checkpoints/phase-1.json"}],
+                        }
+                    )
+                ]
+            }
+        )
+
+        with patch("aiperf.kubernetes.results_operator.print_warning") as warning:
+            result = await _list_operator_files(
+                session,  # type: ignore[arg-type]
+                api_base="http://localhost",
+                namespace="ns",
+                job_id="job-1",
+                run="1714150923",
+            )
+
+        assert result is None
+        warning.assert_called_once()
+        assert ".aiperf_results_ready.json is missing" in warning.call_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_missing_files_key_returns_none(self) -> None:
         list_url = "http://localhost/api/v1/results/ns/job-1"
         session = FakeSession({list_url: [FakeResponse(json_data={})]})

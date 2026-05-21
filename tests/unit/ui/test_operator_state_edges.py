@@ -32,10 +32,23 @@ def _api_import_script() -> str:
     return f"""
         {_state_import_script()}
         let apiSource = readFileSync({str(API_PATH)!r}, 'utf8');
-        apiSource = apiSource.replace(
-          "import {{ setError }} from './state.js';",
-          `import {{ setError }} from '${{stateUrl}}';`,
-        );
+        const stateImport = `import {{
+  clearFreshnessSource,
+  markFreshnessAttempt,
+  markFreshnessFailure,
+  markFreshnessStopped,
+  markFreshnessSuccess,
+  setError,
+}} from './state.js';`;
+        apiSource = apiSource.includes(stateImport)
+          ? apiSource.replace(
+              stateImport,
+              `import {{ clearFreshnessSource, markFreshnessAttempt, markFreshnessFailure, markFreshnessStopped, markFreshnessSuccess, setError }} from '${{stateUrl}}';`,
+            )
+          : apiSource.replace(
+              "import {{ setError }} from './state.js';",
+              `import {{ setError }} from '${{stateUrl}}';`,
+            );
         const apiUrl = 'data:text/javascript;base64,' + Buffer.from(apiSource).toString('base64');
         const apiModule = await import(apiUrl);
     """
@@ -76,7 +89,12 @@ def test_global_state_defaults_and_error_set_clear_are_explicit() -> None:
             "selectedJob": None,
             "clusterInfo": None,
             "globalError": None,
-            "loading": {"jobs": False, "cluster": False, "leaderboard": False, "history": False},
+            "loading": {
+                "jobs": False,
+                "cluster": False,
+                "leaderboard": False,
+                "history": False,
+            },
             "jobsById": {},
             "runningJobs": [],
             "completedJobs": [],
@@ -84,7 +102,12 @@ def test_global_state_defaults_and_error_set_clear_are_explicit() -> None:
         },
         "setMessage": "operator unavailable",
         "cleared": None,
-        "loading": {"jobs": True, "cluster": False, "leaderboard": False, "history": False},
+        "loading": {
+            "jobs": True,
+            "cluster": False,
+            "leaderboard": False,
+            "history": False,
+        },
     }
 
 
@@ -173,7 +196,9 @@ def test_poll_sets_error_only_after_threshold_and_clears_after_recovery() -> Non
     }
 
 
-def test_poll_unhealthy_slots_survive_other_pollers_and_clear_on_navigation_abort() -> None:
+def test_poll_unhealthy_slots_survive_other_pollers_and_clear_on_navigation_abort() -> (
+    None
+):
     script = f"""
         {_api_import_script()}
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -208,3 +233,144 @@ def test_poll_unhealthy_slots_survive_other_pollers_and_clear_on_navigation_abor
         "afterFirstNavigation": "Operator API unreachable — live data is paused. Retrying…",
         "afterSecondNavigation": None,
     }
+
+
+def test_freshness_state_defaults_and_source_updates_are_explicit() -> None:
+    script = f"""
+        {_state_import_script()}
+        const initial = state.freshness.value;
+        const first = state.markFreshnessAttempt('jobs', 5000, 505);
+        Date.now = () => 6060;
+        const defaultAttempt = state.markFreshnessAttempt('sweeps', 7000);
+        state.markFreshnessSuccess('jobs', 1010);
+        const afterSuccess = state.freshness.value.jobs;
+        state.markFreshnessFailure('jobs', 'network down', 2020, false);
+        const afterStale = state.freshness.value.jobs;
+        state.markFreshnessFailure('jobs', 'still down', 3030, true);
+        const afterRetrying = state.freshness.value.jobs;
+        state.markFreshnessStopped('jobs', 'terminal', 4040);
+        const afterStopped = state.freshness.value.jobs;
+        state.clearFreshnessSource('jobs');
+        const hasJobsAfterClear = Object.prototype.hasOwnProperty.call(state.freshness.value, 'jobs');
+        const afterClear = hasJobsAfterClear ? state.freshness.value.jobs : null;
+        console.log(JSON.stringify({{
+          initial,
+          first,
+          defaultAttempt,
+          afterSuccess,
+          afterStale,
+          afterRetrying,
+          afterStopped,
+          hasJobsAfterClear,
+          afterClear,
+        }}));
+    """
+
+    assert json.loads(run_node(script)) == {
+        "initial": {},
+        "first": {
+            "source": "jobs",
+            "status": "loading",
+            "intervalMs": 5000,
+            "lastAttemptAt": 505,
+            "lastSuccessAt": None,
+            "lastError": None,
+            "reason": None,
+        },
+        "defaultAttempt": {
+            "source": "sweeps",
+            "status": "loading",
+            "intervalMs": 7000,
+            "lastAttemptAt": 6060,
+            "lastSuccessAt": None,
+            "lastError": None,
+            "reason": None,
+        },
+        "afterSuccess": {
+            "source": "jobs",
+            "status": "fresh",
+            "intervalMs": 5000,
+            "lastAttemptAt": 1010,
+            "lastSuccessAt": 1010,
+            "lastError": None,
+            "reason": None,
+        },
+        "afterStale": {
+            "source": "jobs",
+            "status": "stale",
+            "intervalMs": 5000,
+            "lastAttemptAt": 2020,
+            "lastSuccessAt": 1010,
+            "lastError": "network down",
+            "reason": None,
+        },
+        "afterRetrying": {
+            "source": "jobs",
+            "status": "retrying",
+            "intervalMs": 5000,
+            "lastAttemptAt": 3030,
+            "lastSuccessAt": 1010,
+            "lastError": "still down",
+            "reason": None,
+        },
+        "afterStopped": {
+            "source": "jobs",
+            "status": "stopped",
+            "intervalMs": 5000,
+            "lastAttemptAt": 4040,
+            "lastSuccessAt": 1010,
+            "lastError": None,
+            "reason": "terminal",
+        },
+        "hasJobsAfterClear": False,
+        "afterClear": None,
+    }
+
+
+def test_freshness_helpers_ignore_empty_source_names() -> None:
+    script = f"""
+        {_state_import_script()}
+        state.markFreshnessAttempt('', 1000);
+        state.markFreshnessSuccess(null, 1234);
+        state.markFreshnessFailure(undefined, 'bad', 2345, true);
+        state.markFreshnessStopped('', 'done', 3456);
+        state.clearFreshnessSource('');
+        console.log(JSON.stringify(state.freshness.value));
+    """
+
+    assert json.loads(run_node(script)) == {}
+
+
+def test_first_load_freshness_failure_stays_loading_even_when_retrying() -> None:
+    script = f"""
+        {_state_import_script()}
+        state.markFreshnessFailure('cluster', 'down', 3000, true);
+        console.log(JSON.stringify(state.freshness.value.cluster));
+    """
+
+    assert json.loads(run_node(script)) == {
+        "source": "cluster",
+        "status": "loading",
+        "intervalMs": None,
+        "lastAttemptAt": 3000,
+        "lastSuccessAt": None,
+        "lastError": "down",
+        "reason": None,
+    }
+
+
+def test_freshness_sources_are_sorted_for_stable_strip_rendering() -> None:
+    script = f"""
+        {_state_import_script()}
+        state.markFreshnessSuccess('sweeps', 2000);
+        state.markFreshnessSuccess('jobs', 1000);
+        state.markFreshnessSuccess('cluster', 2500);
+        state.markFreshnessFailure('cluster', 'down', 3000, true);
+        console.log(JSON.stringify(state.freshnessSources.value.map((s) => [s.source, s.status])));
+    """
+
+    assert json.loads(run_node(script)) == [
+        ["cluster", "retrying"],
+        ["jobs", "fresh"],
+        ["sweeps", "fresh"],
+    ]

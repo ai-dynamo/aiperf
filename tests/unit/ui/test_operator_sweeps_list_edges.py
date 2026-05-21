@@ -45,6 +45,7 @@ def _node_script(expression: str) -> str:
         const api = {{ listSweeps: async () => {{ throw new Error('not called'); }} }};
         function poll() {{}}
         const sweeps = {{ value: [] }};
+        const freshness = {{ value: {{ sweeps: null }} }};
         function dedupeByNsName(rows) {{ return rows; }}
         const navigations = [];
         function navigate(path) {{ navigations.push(path); }}
@@ -65,6 +66,8 @@ def _node_script(expression: str) -> str:
         function NsPill(props) {{ return {{ component: 'NsPill', props }}; }}
         function ModelPill(props) {{ return {{ component: 'ModelPill', props }}; }}
         function RelativeTime(props) {{ return {{ component: 'RelativeTime', props }}; }}
+        function FreshnessPill(props) {{ return {{ component: 'FreshnessPill', props }}; }}
+        function StaleBanner(props) {{ return {{ component: 'StaleBanner', props }}; }}
         function LoadingPanel(props) {{ return {{ component: 'LoadingPanel', props }}; }}
 
         eval(source + '\\nglobalThis.Sweeps = Sweeps;');
@@ -127,9 +130,24 @@ def _node_script(expression: str) -> str:
 
 def test_all_sweeps_default_age_sort_places_new_live_and_archived_rows_first() -> None:
     rows = [
-        {"namespace": "bench", "name": "old-live", "phase": "Running", "age_seconds": 600},
-        {"namespace": "bench", "name": "new-archived", "phase": "Archived", "age_seconds": 5},
-        {"namespace": "bench", "name": "mid-complete", "phase": "Succeeded", "age_seconds": 60},
+        {
+            "namespace": "bench",
+            "name": "old-live",
+            "phase": "Running",
+            "age_seconds": 600,
+        },
+        {
+            "namespace": "bench",
+            "name": "new-archived",
+            "phase": "Archived",
+            "age_seconds": 5,
+        },
+        {
+            "namespace": "bench",
+            "name": "mid-complete",
+            "phase": "Succeeded",
+            "age_seconds": 60,
+        },
     ]
     script = _node_script(
         f"""
@@ -198,8 +216,18 @@ def test_namespace_filter_is_exact_and_clear_chip_preserves_other_filters() -> N
 
 def test_model_text_filter_matches_sweep_model_names() -> None:
     rows = [
-        {"namespace": "bench", "name": "alpha", "phase": "Running", "model": "llama-3.1-70b"},
-        {"namespace": "bench", "name": "bravo", "phase": "Running", "model": "mixtral-8x7b"},
+        {
+            "namespace": "bench",
+            "name": "alpha",
+            "phase": "Running",
+            "model": "llama-3.1-70b",
+        },
+        {
+            "namespace": "bench",
+            "name": "bravo",
+            "phase": "Running",
+            "model": "mixtral-8x7b",
+        },
     ]
     script = _node_script(
         f"""
@@ -249,3 +277,16 @@ def test_empty_states_distinguish_no_data_from_filtered_no_matches() -> None:
     assert "Create one with" in out["realEmpty"]
     assert "No sweeps match these filters." in out["filteredEmpty"]
     assert "Clear filters" in out["filteredEmpty"]
+
+
+def test_sweeps_page_uses_shared_freshness_source_and_stale_banner() -> None:
+    source = _SWEEPS_PAGE_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "import { FreshnessPill, StaleBanner } from '../components/freshness.js';"
+        in source
+    )
+    assert "freshness.value.sweeps" in source
+    assert "source: 'sweeps'" in source
+    assert '<${StaleBanner} source=${sweepsFreshness} label="Sweeps list" />' in source
+    assert "<${FreshnessPill} source=${sweepsFreshness}" in source

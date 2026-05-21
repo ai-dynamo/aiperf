@@ -37,7 +37,7 @@ from aiperf.cli_commands.kube.debug import (
     debug,
 )
 from aiperf.config.kube import KubeManageOptions
-from aiperf.kubernetes.models import JobSetInfo
+from aiperf.kubernetes.models import AIPerfJobInfo, AIPerfSweepInfo, JobSetInfo
 
 # ============================================================
 # Helpers
@@ -245,6 +245,14 @@ class TestDebugMissingTargets:
                 return_value=_fake_k8s_client(api),
             ),
             patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_job,
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_sweep,
+            patch(
                 "aiperf.kubernetes.client.find_jobset",
                 new=AsyncMock(return_value=None),
             ) as mock_find_jobset,
@@ -257,6 +265,12 @@ class TestDebugMissingTargets:
                 job_id="llama-crash-v07",
             )
 
+        mock_find_job.assert_called_once_with(
+            api, "llama-crash-v07", "llama-benchmarks"
+        )
+        mock_find_sweep.assert_called_once_with(
+            api, "llama-crash-v07", "llama-benchmarks"
+        )
         mock_find_jobset.assert_called_once_with(
             api, "llama-crash-v07", "llama-benchmarks"
         )
@@ -265,6 +279,167 @@ class TestDebugMissingTargets:
         )
         mock_pods.assert_not_called()
         mock_report.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_debug_job_id_finds_completed_aiperfjob_cr_after_jobset_cleanup(
+        self,
+    ) -> None:
+        api = MagicMock()
+        job = AIPerfJobInfo(
+            name="job-a",
+            namespace="archived-benchmarks",
+            phase="Completed",
+            job_id="job-a",
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=job),
+            ) as mock_find_job,
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_sweep,
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_jobset,
+            patch("aiperf.kubernetes.console.print_error") as mock_error,
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
+            ) as mock_get_pods,
+            patch(
+                "aiperf.cli_commands.kube.debug._get_node_resources",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "aiperf.cli_commands.kube.debug._get_namespace_events",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("aiperf.cli_commands.kube.debug._print_report") as mock_report,
+        ):
+            await debug(job_id="job-a")
+
+        mock_find_job.assert_called_once_with(api, "job-a", None)
+        mock_find_sweep.assert_not_called()
+        mock_find_jobset.assert_not_called()
+        mock_error.assert_not_called()
+        assert mock_get_pods.call_args.args[1] == "archived-benchmarks"
+        assert "job-a" in mock_get_pods.call_args.args[2]
+        mock_report.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_debug_sweep_child_finds_aiperfjob_cr_after_jobset_cleanup(
+        self,
+    ) -> None:
+        api = MagicMock()
+        child = AIPerfJobInfo(
+            name="sweep-a-v00",
+            namespace="sweep-benchmarks",
+            phase="Completed",
+            job_id="sweep-a-v00",
+            sweep_name="sweep-a",
+            variation_index=0,
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=child),
+            ) as mock_find_job,
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_sweep,
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_jobset,
+            patch("aiperf.kubernetes.console.print_error") as mock_error,
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
+            ) as mock_get_pods,
+            patch(
+                "aiperf.cli_commands.kube.debug._get_node_resources",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "aiperf.cli_commands.kube.debug._get_namespace_events",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("aiperf.cli_commands.kube.debug._print_report"),
+        ):
+            await debug(job_id="sweep-a", variation=0)
+
+        mock_find_job.assert_called_once_with(api, "sweep-a-v00", None)
+        mock_find_sweep.assert_not_called()
+        mock_find_jobset.assert_not_called()
+        mock_error.assert_not_called()
+        assert mock_get_pods.call_args.args[1] == "sweep-benchmarks"
+        assert "sweep-a-v00" in mock_get_pods.call_args.args[2]
+
+    @pytest.mark.asyncio
+    async def test_debug_parent_sweep_cr_resolves_namespace_after_jobset_cleanup(
+        self,
+    ) -> None:
+        api = MagicMock()
+        sweep = AIPerfSweepInfo(
+            name="sweep-a",
+            namespace="sweep-benchmarks",
+            phase="Completed",
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_job,
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=sweep),
+            ) as mock_find_sweep,
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_jobset,
+            patch("aiperf.kubernetes.console.print_error") as mock_error,
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
+            ) as mock_get_pods,
+            patch(
+                "aiperf.cli_commands.kube.debug._get_node_resources",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "aiperf.cli_commands.kube.debug._get_namespace_events",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("aiperf.cli_commands.kube.debug._print_report") as mock_report,
+        ):
+            await debug(job_id="sweep-a")
+
+        mock_find_job.assert_called_once_with(api, "sweep-a", None)
+        mock_find_sweep.assert_called_once_with(api, "sweep-a", None)
+        mock_find_jobset.assert_not_called()
+        mock_error.assert_not_called()
+        assert mock_get_pods.call_args.args[1] == "sweep-benchmarks"
+        mock_report.assert_called_once()
 
 
 # ============================================================
@@ -334,6 +509,14 @@ class TestDebugClusterSelectionPropagation:
                 return_value=_fake_k8s_client(api),
             ),
             patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_job,
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ) as mock_find_sweep,
+            patch(
                 "aiperf.kubernetes.client.find_jobset",
                 new=AsyncMock(return_value=jobset),
             ) as mock_find_jobset,
@@ -358,6 +541,12 @@ class TestDebugClusterSelectionPropagation:
                 trial=0,
             )
 
+        mock_find_job.assert_called_once_with(
+            api, "llama-sweep-v07-t0", "llama-benchmarks"
+        )
+        mock_find_sweep.assert_called_once_with(
+            api, "llama-sweep-v07-t0", "llama-benchmarks"
+        )
         mock_find_jobset.assert_called_once_with(
             api, "llama-sweep-v07-t0", "llama-benchmarks"
         )

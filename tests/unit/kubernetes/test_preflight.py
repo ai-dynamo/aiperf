@@ -47,6 +47,7 @@ from kubernetes_asyncio.client.models import (
 )
 from pytest import param
 
+import aiperf.kubernetes.preflight as preflight_mod
 from aiperf.kubernetes.preflight import (
     CheckResult,
     CheckStatus,
@@ -364,13 +365,9 @@ class TestCheckClusterConnectivity:
         version = MagicMock(spec=VersionApi)
         version.get_code = AsyncMock(return_value=_make_version())
 
-        with (
-            patch(
-                "aiperf.kubernetes.client.k8s_client",
-                return_value=_mock_k8s_client_yields(api),
-            ),
-            _patch_version(version),
-        ):
+        checker._api = api
+
+        with _patch_version(version):
             result = await checker._check_cluster_connectivity()
 
         assert result.status == CheckStatus.PASS
@@ -379,13 +376,11 @@ class TestCheckClusterConnectivity:
     @pytest.mark.asyncio
     async def test_connectivity_fail_on_exception(self) -> None:
         checker = _make_checker()
+        checker._api = _mock_api()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(side_effect=ConnectionError("refused"))
 
-        @asynccontextmanager
-        async def _boom(**kwargs):
-            raise ConnectionError("refused")
-            yield  # noqa: F841, RET503
-
-        with patch("aiperf.kubernetes.client.k8s_client", new=_boom):
+        with _patch_version(version):
             result = await checker._check_cluster_connectivity()
 
         assert result.status == CheckStatus.FAIL
@@ -1273,7 +1268,7 @@ class TestRunQuickChecks:
 
         with (
             patch(
-                "aiperf.kubernetes.client.k8s_client",
+                "aiperf.kubernetes.preflight.k8s_client",
                 return_value=_mock_k8s_client_yields(api),
             ),
             _patch_version(version),
@@ -1294,7 +1289,7 @@ class TestRunQuickChecks:
             raise ConnectionError("refused")
             yield  # noqa: F841, RET503
 
-        with patch("aiperf.kubernetes.client.k8s_client", new=_boom):
+        with patch("aiperf.kubernetes.preflight.k8s_client", new=_boom):
             results = await checker.run_quick_checks()
 
         assert not results.passed
@@ -1317,7 +1312,7 @@ class TestRunQuickChecks:
 
         with (
             patch(
-                "aiperf.kubernetes.client.k8s_client",
+                "aiperf.kubernetes.preflight.k8s_client",
                 return_value=_mock_k8s_client_yields(api),
             ),
             _patch_version(version),
@@ -1345,7 +1340,7 @@ class TestRunQuickChecks:
 
         with (
             patch(
-                "aiperf.kubernetes.client.k8s_client",
+                "aiperf.kubernetes.preflight.k8s_client",
                 return_value=_mock_k8s_client_yields(api),
             ),
             _patch_version(version),
@@ -1366,6 +1361,105 @@ class TestRunAllChecks:
     """Verify full check orchestration."""
 
     @pytest.mark.asyncio
+    async def test_run_all_checks_keeps_k8s_client_open_until_checks_finish(
+        self,
+    ) -> None:
+        checker = _make_checker()
+        api = _mock_api()
+        events: list[str] = []
+
+        @asynccontextmanager
+        async def _fake_k8s_client(**kwargs: Any):
+            events.append("enter")
+            try:
+                yield api
+            finally:
+                events.append("exit")
+
+        async def _record_cluster(check_api: ApiClient) -> CheckResult:
+            assert check_api is api
+            assert "exit" not in events
+            events.append("cluster")
+            return CheckResult("Cluster Connectivity", CheckStatus.PASS, "ok")
+
+        async def _record_version(check_api: ApiClient) -> CheckResult:
+            assert check_api is api
+            assert "exit" not in events
+            events.append("version")
+            return CheckResult("Kubernetes Version", CheckStatus.PASS, "ok")
+
+        async def _record_namespace(
+            check_api: ApiClient, *, namespace: str
+        ) -> CheckResult:
+            assert check_api is api
+            assert namespace == "test-ns"
+            assert "exit" not in events
+            events.append("namespace")
+            return CheckResult("Namespace", CheckStatus.PASS, "ok")
+
+        skip_result = CheckResult("Skipped", CheckStatus.SKIP, "not under test")
+        with (
+            patch.object(preflight_mod, "k8s_client", new=_fake_k8s_client),
+            patch.object(
+                preflight_mod.preflight_checks,
+                "check_cluster_connectivity",
+                new=_record_cluster,
+            ),
+            patch.object(
+                preflight_mod.preflight_checks,
+                "check_kubernetes_version",
+                new=_record_version,
+            ),
+            patch.object(
+                preflight_mod.preflight_checks,
+                "check_namespace",
+                new=_record_namespace,
+            ),
+            patch.object(
+                checker,
+                "_check_rbac_permissions",
+                AsyncMock(return_value=skip_result),
+            ),
+            patch.object(
+                checker, "_check_jobset_crd", AsyncMock(return_value=skip_result)
+            ),
+            patch.object(
+                checker,
+                "_check_jobset_controller",
+                AsyncMock(return_value=skip_result),
+            ),
+            patch.object(
+                checker,
+                "_check_resource_quotas",
+                AsyncMock(return_value=skip_result),
+            ),
+            patch.object(
+                checker,
+                "_check_node_resources",
+                AsyncMock(return_value=skip_result),
+            ),
+            patch.object(
+                checker, "_check_secrets", AsyncMock(return_value=skip_result)
+            ),
+            patch.object(checker, "_check_image", AsyncMock(return_value=skip_result)),
+            patch.object(
+                checker,
+                "_check_network_policies",
+                AsyncMock(return_value=skip_result),
+            ),
+            patch.object(checker, "_check_dns", AsyncMock(return_value=skip_result)),
+            patch.object(
+                checker,
+                "_check_endpoint_connectivity",
+                AsyncMock(return_value=skip_result),
+            ),
+        ):
+            await checker.run_all_checks()
+
+        assert events == ["enter", "cluster", "version", "namespace", "exit"]
+        assert checker._api is None
+
+    @pytest.mark.asyncio
     async def test_all_checks_short_circuits_on_connectivity_failure(self) -> None:
         checker = _make_checker()
 
@@ -1374,7 +1468,7 @@ class TestRunAllChecks:
             raise ConnectionError("refused")
             yield  # noqa: F841, RET503
 
-        with patch("aiperf.kubernetes.client.k8s_client", new=_boom):
+        with patch("aiperf.kubernetes.preflight.k8s_client", new=_boom):
             results = await checker.run_all_checks()
 
         assert not results.passed
@@ -1427,7 +1521,7 @@ class TestRunAllChecks:
 
         with (
             patch(
-                "aiperf.kubernetes.client.k8s_client",
+                "aiperf.kubernetes.preflight.k8s_client",
                 return_value=_mock_k8s_client_yields(api),
             ),
             _patch_version(version),

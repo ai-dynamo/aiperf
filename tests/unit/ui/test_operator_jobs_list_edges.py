@@ -67,7 +67,9 @@ def _job_table_script(expression: str) -> str:
     """
 
 
-def _jobs_page_script(local_jobs: list[dict[str, object]], query_value: dict[str, str], expression: str) -> str:
+def _jobs_page_script(
+    local_jobs: list[dict[str, object]], query_value: dict[str, str], expression: str
+) -> str:
     return f"""
         import fs from 'node:fs';
         const source = fs.readFileSync({str(JOBS_PAGE_PATH)!r}, 'utf8')
@@ -85,6 +87,7 @@ def _jobs_page_script(local_jobs: list[dict[str, object]], query_value: dict[str
         const api = {{ listJobs: async () => ({{ jobs: [] }}) }};
         function poll() {{}}
         const jobs = {{ value: {json.dumps(local_jobs)} }};
+        const freshness = {{ value: {{ jobs: null }} }};
         function dedupeByNsName(items) {{ return items; }}
         function buildJobPath(job) {{ return '/detail/' + (job.name ?? job.job_id ?? ''); }}
         function navigate() {{}}
@@ -95,6 +98,8 @@ def _jobs_page_script(local_jobs: list[dict[str, object]], query_value: dict[str
           overlay0: '#6c7086', teal: '#94e2d5', mauve: '#cba6f7', peach: '#fab387'
         }};
         function JobTable() {{}}
+        function FreshnessPill() {{}}
+        function StaleBanner() {{}}
         function LoadingPanel() {{}}
 
         eval(source + '\\nglobalThis.Jobs = Jobs;');
@@ -143,11 +148,28 @@ def _router_import_script() -> str:
     """
 
 
-def test_job_table_sorts_current_and_archived_jobs_by_age_without_phase_bucketing() -> None:
+def test_job_table_sorts_current_and_archived_jobs_by_age_without_phase_bucketing() -> (
+    None
+):
     jobs = [
-        {"namespace": "bench", "name": "new-archived", "phase": "Archived", "created": "2026-05-03T00:00:00Z"},
-        {"namespace": "bench", "name": "old-running", "phase": "Running", "created": "2026-05-01T00:00:00Z"},
-        {"namespace": "bench", "name": "mid-complete", "phase": "Completed", "created": "2026-05-02T00:00:00Z"},
+        {
+            "namespace": "bench",
+            "name": "new-archived",
+            "phase": "Archived",
+            "created": "2026-05-03T00:00:00Z",
+        },
+        {
+            "namespace": "bench",
+            "name": "old-running",
+            "phase": "Running",
+            "created": "2026-05-01T00:00:00Z",
+        },
+        {
+            "namespace": "bench",
+            "name": "mid-complete",
+            "phase": "Completed",
+            "created": "2026-05-02T00:00:00Z",
+        },
     ]
     script = _job_table_script(
         f"""
@@ -167,7 +189,9 @@ def test_job_table_sorts_current_and_archived_jobs_by_age_without_phase_bucketin
     ]
 
 
-def test_jobs_page_phase_filters_match_expected_status_buckets_case_insensitively() -> None:
+def test_jobs_page_phase_filters_match_expected_status_buckets_case_insensitively() -> (
+    None
+):
     local_jobs = [
         {"namespace": "ns", "name": "starting", "phase": "Initializing"},
         {"namespace": "ns", "name": "live", "phase": "RUNNING"},
@@ -223,10 +247,25 @@ def test_jobs_page_search_matches_name_or_namespace_case_insensitively() -> None
 
 def test_jobs_page_namespace_and_model_filters_stack_exactly() -> None:
     local_jobs = [
-        {"namespace": "prod", "name": "llama-prod", "phase": "Running", "model": "llama"},
-        {"namespace": "prod", "name": "mixtral-prod", "phase": "Running", "model": "mixtral"},
+        {
+            "namespace": "prod",
+            "name": "llama-prod",
+            "phase": "Running",
+            "model": "llama",
+        },
+        {
+            "namespace": "prod",
+            "name": "mixtral-prod",
+            "phase": "Running",
+            "model": "mixtral",
+        },
         {"namespace": "dev", "name": "llama-dev", "phase": "Running", "model": "llama"},
-        {"namespace": "production", "name": "llama-production", "phase": "Running", "model": "llama"},
+        {
+            "namespace": "production",
+            "name": "llama-production",
+            "phase": "Running",
+            "model": "llama",
+        },
     ]
     script = _jobs_page_script(
         local_jobs,
@@ -273,3 +312,16 @@ def test_jobs_page_row_click_delegates_to_build_job_path_for_links() -> None:
     assert "navigate(buildJobPath(job))" in source
     assert "function handleRowClick(job)" in source
     assert "onRowClick=${handleRowClick}" in source
+
+
+def test_jobs_page_uses_shared_freshness_source_and_stale_banner() -> None:
+    source = (UI_ROOT / "pages" / "jobs.js").read_text(encoding="utf-8")
+
+    assert (
+        "import { FreshnessPill, StaleBanner } from '../components/freshness.js';"
+        in source
+    )
+    assert "freshness.value.jobs" in source
+    assert "source: 'jobs'" in source
+    assert '<${StaleBanner} source=${jobsFreshness} label="Jobs list" />' in source
+    assert "<${FreshnessPill} source=${jobsFreshness}" in source

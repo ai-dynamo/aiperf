@@ -15,6 +15,88 @@ export const clusterInfo = signal(null);
 // Global error message (displayed in top bar)
 export const globalError = signal(null);
 
+// Live data freshness by source name. Sources are stable strings such as
+// "jobs", "sweeps", "cluster", "job-detail", and "sweep-detail".
+export const freshness = signal({});
+
+function nowMs() {
+  return Date.now();
+}
+
+function existingFreshness(source) {
+  return freshness.value[source] ?? {
+    source,
+    status: 'idle',
+    intervalMs: null,
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    reason: null,
+  };
+}
+
+function setFreshnessSource(source, patch) {
+  if (!source) return null;
+  const next = { ...existingFreshness(source), ...patch, source };
+  freshness.value = { ...freshness.value, [source]: next };
+  return next;
+}
+
+export function markFreshnessAttempt(source, intervalMs = null, at = nowMs()) {
+  if (!source) return null;
+  const prior = existingFreshness(source);
+  return setFreshnessSource(source, {
+    status: prior.lastSuccessAt == null ? 'loading' : prior.status,
+    intervalMs,
+    lastAttemptAt: at,
+    lastError: null,
+    reason: null,
+  });
+}
+
+export function markFreshnessSuccess(source, at = nowMs()) {
+  if (!source) return null;
+  return setFreshnessSource(source, {
+    status: 'fresh',
+    lastAttemptAt: at,
+    lastSuccessAt: at,
+    lastError: null,
+    reason: null,
+  });
+}
+
+export function markFreshnessFailure(source, error, at = nowMs(), retrying = false) {
+  if (!source) return null;
+  const prior = existingFreshness(source);
+  return setFreshnessSource(source, {
+    status: prior.lastSuccessAt == null ? 'loading' : retrying ? 'retrying' : 'stale',
+    lastAttemptAt: at,
+    lastError: String(error ?? 'refresh failed'),
+    reason: null,
+  });
+}
+
+export function markFreshnessStopped(source, reason = 'stopped', at = nowMs()) {
+  if (!source) return null;
+  return setFreshnessSource(source, {
+    status: 'stopped',
+    lastAttemptAt: at,
+    lastError: null,
+    reason,
+  });
+}
+
+export function clearFreshnessSource(source) {
+  if (!source || freshness.value[source] == null) return;
+  const next = { ...freshness.value };
+  delete next[source];
+  freshness.value = next;
+}
+
+export const freshnessSources = computed(() =>
+  Object.values(freshness.value).sort((a, b) => a.source.localeCompare(b.source)),
+);
+
 // Loading states
 export const loading = signal({
   jobs: false,

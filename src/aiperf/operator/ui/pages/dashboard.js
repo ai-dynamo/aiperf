@@ -233,14 +233,17 @@ export function Dashboard() {
       } finally {
         setFirstJobsLoad(false);
       }
-    }, 5000, ac.signal);
+    }, 5000, ac.signal, { source: 'jobs' });
     poll(async () => {
       try {
         const data = await api.getCluster();
         clusterInfo.value = data;
         setClusterError(false);
-      } catch (_e) { setClusterError(true); }
-    }, 10000, ac.signal);
+      } catch (err) {
+        setClusterError(true);
+        throw err;
+      }
+    }, 10000, ac.signal, { source: 'cluster' });
     // Single leaderboard call to discover which jobs have results,
     // then fetch per-job summaries for the top entries
     poll(async () => {
@@ -266,8 +269,10 @@ export function Dashboard() {
           };
         }
         setSummaryMap((prev) => ({ ...prev, ...newEntries }));
-      } catch (_e) { /* not available yet */ }
-    }, 15000, ac.signal);
+      } catch (err) {
+        throw err;
+      }
+    }, 15000, ac.signal, { source: 'leaderboard' });
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

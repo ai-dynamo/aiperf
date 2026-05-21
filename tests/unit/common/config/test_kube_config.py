@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf.config.kube module."""
 
+import warnings
+
 import pytest
 from pytest import param
 
@@ -493,6 +495,26 @@ class TestKubeOptionsSerialization:
         assert data["ttl_seconds"] == 300
         assert data["node_selector"] == {}
         assert data["tolerations"] == []
+
+    def test_model_dump_node_selector_emits_no_pydantic_serializer_warning(
+        self,
+    ) -> None:
+        """Normalized node_selector uses the declared model field type."""
+        options = KubeOptions(
+            image="aiperf:latest",
+            node_selector=["gpu=true", {"zone": "us-west-1"}],
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            data = options.model_dump()
+
+        assert data["node_selector"] == {"gpu": "true", "zone": "us-west-1"}
+        assert not [
+            warning
+            for warning in caught
+            if "PydanticSerializationUnexpectedValue" in str(warning.message)
+        ]
 
     def test_model_dump_with_secret_mounts(self) -> None:
         """Test model_dump includes nested secret mounts."""

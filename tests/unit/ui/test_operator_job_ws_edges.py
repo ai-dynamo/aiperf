@@ -232,5 +232,5 @@ def test_job_ws_close_live_socket_does_not_schedule_reconnect() -> None:
     """
 
     assert run_node(script) == (
-        '{"closeArgs":[1000,"page leaving"],"updates":[false],"timerCount":0}'
+        '{"closeArgs":[1000,"page leaving"],"updates":[],"timerCount":0}'
     )

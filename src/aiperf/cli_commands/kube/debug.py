@@ -63,7 +63,10 @@ async def _get_namespace_events(
         try:
             raw = serializer.sanitize_for_serialization(event) or {}
         except Exception:  # noqa: BLE001 - diagnostics best-effort; skip malformed events
-            logger.debug("Skipping malformed Kubernetes event during debug aggregation", exc_info=True)
+            logger.debug(
+                "Skipping malformed Kubernetes event during debug aggregation",
+                exc_info=True,
+            )
             continue
         involved = raw.get("involvedObject", {})
         result.append(
@@ -104,7 +107,10 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
         try:
             raw = serializer.sanitize_for_serialization(node) or {}
         except Exception:  # noqa: BLE001 - diagnostics best-effort; skip malformed nodes
-            logger.debug("Skipping malformed Kubernetes node during debug aggregation", exc_info=True)
+            logger.debug(
+                "Skipping malformed Kubernetes node during debug aggregation",
+                exc_info=True,
+            )
             continue
         status = raw.get("status", {})
         capacity = status.get("capacity", {})
@@ -217,6 +223,12 @@ async def _resolve_target_namespaces(
         return target
 
     if job_id:
+        job_info = await kube_client_mod.find_aiperf_job(api, job_id, namespace)
+        if job_info:
+            return [job_info.namespace]
+        sweep_info = await kube_client_mod.find_aiperf_sweep(api, job_id, namespace)
+        if sweep_info:
+            return [sweep_info.namespace]
         jobset_info = await kube_client_mod.find_jobset(api, job_id, namespace)
         if jobset_info:
             return [jobset_info.namespace]

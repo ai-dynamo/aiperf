@@ -133,8 +133,8 @@ export function openJobWs(ns, name, onUpdate) {
 
     ws.onclose = () => {
       ws = null;
-      publish(false);
       if (closed) return;
+      publish(false);
       reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
     };
 

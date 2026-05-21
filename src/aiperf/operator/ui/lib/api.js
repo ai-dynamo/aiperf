@@ -1,4 +1,11 @@
-import { setError } from './state.js';
+import {
+  clearFreshnessSource,
+  markFreshnessAttempt,
+  markFreshnessFailure,
+  markFreshnessStopped,
+  markFreshnessSuccess,
+  setError,
+} from './state.js';
 
 const BASE = '/api/v1';
 
@@ -368,20 +375,25 @@ async function getSweepLogs(ns, name, opts) {
  * Per-page error UX (richer messages, first-load blocks) still works
  * because pages can wrap fn() with their own try/catch + state.
  *
- * @param {() => Promise<void>} fn - Async function to call on each tick
+ * @param {(context: {stopFreshness: (reason?: string) => void, source: string|null}) => Promise<void>} fn
+ *   Async function to call on each tick
  * @param {number} intervalMs - Polling interval in milliseconds
  * @param {AbortSignal} abortSignal - Stop polling when this fires
+ * @param {{source?: string}} [options] - Optional named freshness source
  * @returns {void}
  */
-export function poll(fn, intervalMs, abortSignal) {
+export function poll(fn, intervalMs, abortSignal, options = {}) {
   if (abortSignal.aborted) return;
 
+  const source = options.source ?? null;
   let handle = null;
   let consecutiveFailures = 0;
   let countedAsUnhealthy = false;
+  let stoppedFreshness = false;
 
-  function markHealthy() {
+  function markHealthy(at) {
     consecutiveFailures = 0;
+    if (source && !stoppedFreshness && !abortSignal.aborted) markFreshnessSuccess(source, at);
     if (countedAsUnhealthy) {
       countedAsUnhealthy = false;
       _unhealthyPollers = Math.max(0, _unhealthyPollers - 1);
@@ -389,22 +401,34 @@ export function poll(fn, intervalMs, abortSignal) {
     }
   }
 
-  function markFailure() {
+  function markFailure(err, at) {
     consecutiveFailures += 1;
-    if (consecutiveFailures >= POLL_FAIL_THRESHOLD && !countedAsUnhealthy) {
+    const retrying = consecutiveFailures >= POLL_FAIL_THRESHOLD;
+    if (source && !stoppedFreshness) {
+      markFreshnessFailure(source, err?.message ?? err, at, retrying);
+    }
+    if (retrying && !countedAsUnhealthy) {
       countedAsUnhealthy = true;
       _unhealthyPollers += 1;
       setError('Operator API unreachable — live data is paused. Retrying…');
     }
   }
 
+  function stopFreshness(reason = 'stopped') {
+    if (!source || abortSignal.aborted) return;
+    stoppedFreshness = true;
+    markFreshnessStopped(source, reason, Date.now());
+  }
+
   async function tick() {
     if (abortSignal.aborted) return;
+    const attemptAt = Date.now();
+    if (source && !stoppedFreshness) markFreshnessAttempt(source, intervalMs, attemptAt);
     try {
-      await fn();
-      markHealthy();
-    } catch (_err) {
-      markFailure();
+      await fn({ stopFreshness, source });
+      if (!abortSignal.aborted) markHealthy(Date.now());
+    } catch (err) {
+      if (!abortSignal.aborted) markFailure(err, Date.now());
     }
     if (!abortSignal.aborted) {
       handle = setTimeout(tick, intervalMs);
@@ -413,8 +437,7 @@ export function poll(fn, intervalMs, abortSignal) {
 
   abortSignal.addEventListener('abort', () => {
     if (handle !== null) clearTimeout(handle);
-    // Releasing the unhealthy slot on unmount keeps the banner accurate
-    // when a page navigates away mid-outage.
+    if (source && !stoppedFreshness) clearFreshnessSource(source);
     if (countedAsUnhealthy) {
       countedAsUnhealthy = false;
       _unhealthyPollers = Math.max(0, _unhealthyPollers - 1);

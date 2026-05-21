@@ -36,7 +36,7 @@ _DRY_RUN_PARAM = Parameter(
 )
 _TRIALS_PARAM = Parameter(
     name="--trials",
-    help="Multi-run trials per sweep cell; overrides multi_run.trials in the YAML.",
+    help="Multi-run runs per sweep cell; overrides multiRun.numRuns / multi_run.num_runs in the YAML.",
 )
 _COOLDOWN_PARAM = Parameter(
     name="--cooldown",

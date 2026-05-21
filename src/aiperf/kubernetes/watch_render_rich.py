@@ -52,12 +52,20 @@ class RichRenderer:
         if self._started:
             self._console.clear()
 
-        sections = [
-            self._render_header(snapshot),
-            self._render_progress(snapshot),
-            self._render_metrics(snapshot),
-            self._render_pods(snapshot),
-        ]
+        if snapshot.target_kind == "AIPerfSweep":
+            sections = [
+                self._render_header(snapshot),
+                self._render_sweep_progress(snapshot),
+            ]
+            if snapshot.pods:
+                sections.append(self._render_pods(snapshot))
+        else:
+            sections = [
+                self._render_header(snapshot),
+                self._render_progress(snapshot),
+                self._render_metrics(snapshot),
+                self._render_pods(snapshot),
+            ]
 
         if snapshot.diagnosis.issues:
             sections.append(self._render_problems(snapshot))
@@ -98,6 +106,29 @@ class RichRenderer:
         if snap.current_phase:
             parts.append(f"Phase: {snap.current_phase}")
         return Text("  |  ".join(parts), style="dim") if parts else Text("")
+
+    def _render_sweep_progress(self, snap: WatchSnapshot) -> Panel:
+        completed = snap.sweep_runs_completed or 0
+        failed = snap.sweep_runs_failed or 0
+        cancelled = snap.sweep_runs_cancelled or 0
+        total = snap.sweep_runs_total or 0
+        done = completed + failed + cancelled
+        percent = (done / total * 100.0) if total else 0.0
+
+        lines = [Text(f"Sweep runs: {done}/{total} done ({percent:.0f}%)")]
+        details = []
+        if completed:
+            details.append(f"{completed} succeeded")
+        if failed:
+            details.append(f"{failed} failed")
+        if cancelled:
+            details.append(f"{cancelled} cancelled")
+        if details:
+            lines.append(Text("  " + ", ".join(details), style="dim"))
+        lines.append(Text(f"Phase: {snap.phase}", style="dim"))
+
+        content = Group(ProgressBar(total=100, completed=percent, width=40), *lines)
+        return Panel(content, title="Sweep progress", border_style="cyan")
 
     def _render_progress(self, snap: WatchSnapshot) -> Panel:
         if snap.progress and snap.progress.percent > 0:

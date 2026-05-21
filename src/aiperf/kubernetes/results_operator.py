@@ -39,6 +39,7 @@ from aiperf.kubernetes.results_operator_sweeps import (
 from aiperf.kubernetes.results_operator_sweeps import (
     retrieve_sweep_aggregate_artifacts_from_operator as retrieve_sweep_aggregate_artifacts_from_operator,
 )
+from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -190,6 +191,12 @@ async def _list_operator_files(
 
     if not isinstance(list_data, dict):
         print_error("Operator results listing had invalid JSON shape")
+        return None
+    if list_data.get("ready") is False:
+        print_warning(
+            f"No result files found for {namespace}/{job_id}: "
+            f"{READY_MARKER_NAME} is missing; retry after the run completes"
+        )
         return None
     available = list_data.get("files", [])
     if not available:

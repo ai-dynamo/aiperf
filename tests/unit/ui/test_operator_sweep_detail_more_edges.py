@@ -20,13 +20,7 @@ _SWEEP_DETAIL_HELPERS_PATH = (
     / "sweep-detail-helpers.js"
 )
 _SWEEP_DETAIL_PAGE_PATH = (
-    _REPO_ROOT
-    / "src"
-    / "aiperf"
-    / "operator"
-    / "ui"
-    / "pages"
-    / "sweep-detail.js"
+    _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "sweep-detail.js"
 )
 
 
@@ -156,3 +150,28 @@ def test_diagnostics_only_show_for_active_sweep_phases() -> None:
         "partiallyFailed": False,
         "unknown": False,
     }
+
+
+def test_sweep_detail_uses_named_freshness_and_terminal_stop() -> None:
+    source = _SWEEP_DETAIL_PAGE_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "import { FreshnessPill, StaleBanner } from '../components/freshness.js';"
+        in source
+    )
+    assert "freshness.value['sweep-detail']" in source
+    assert "clearFreshnessSource('sweep-detail')" in source
+    assert "source: 'sweep-detail'" in source
+    assert "stopFreshness('terminal')" in source
+    assert '<${StaleBanner} source=${sweepFreshness} label="Sweep detail" />' in source
+
+
+def test_sweep_detail_clears_route_identity_before_first_poll() -> None:
+    source = _SWEEP_DETAIL_PAGE_PATH.read_text(encoding="utf-8")
+    effect_block = source.split("useEffect(() => {", 1)[1].split(
+        "async function tick", 1
+    )[0]
+
+    assert "setDetail(null)" in effect_block
+    assert "let firstLoadDone = false" in effect_block
+    assert "let firstLoadDone = detail != null" not in source

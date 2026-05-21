@@ -25,6 +25,7 @@ from pytest import param
 
 from aiperf.operator.results_layout import run_dir, write_latest
 from aiperf.operator.routers.results_files import create_results_files_router
+from aiperf.operator.routers.results_files_io import list_job_files_with_readiness
 
 # ============================================================
 # Helpers
@@ -46,7 +47,9 @@ def _app_for_results_dir(results_dir: Path) -> FastAPI:
 async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
     """HTTP client backed by a temp PVC-like results directory."""
     transport = httpx.ASGITransport(app=_app_for_results_dir(tmp_path))
-    async with httpx.AsyncClient(transport=transport, base_url="http://aiperf.local") as c:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://aiperf.local"
+    ) as c:
         yield c
 
 
@@ -132,6 +135,23 @@ class TestResultsFilesPathTraversal:
 class TestResultsFilesReadyMarkerGate:
     """Top-level final artifacts are hidden until ready; checkpoints bypass."""
 
+    def test_list_job_files_with_readiness_hides_final_files_without_marker(
+        self, tmp_path: Path
+    ) -> None:
+        run = _seed_run(
+            tmp_path,
+            files={
+                "profile_export_aiperf.json": b'{"partial": true}',
+                "metrics.json": b'{"should": "stay hidden"}',
+            },
+            ready=False,
+        )
+
+        files, ready = list_job_files_with_readiness(run)
+
+        assert ready is False
+        assert files == []
+
     @pytest.mark.asyncio
     async def test_list_historical_files_missing_ready_marker_lists_only_checkpoints(
         self, tmp_path: Path, client: httpx.AsyncClient
@@ -151,7 +171,9 @@ class TestResultsFilesReadyMarkerGate:
         )
 
         assert response.status_code == 200
-        names = {entry["name"] for entry in response.json()["files"]}
+        body = response.json()
+        assert body["ready"] is False
+        names = {entry["name"] for entry in body["files"]}
         assert names == {"checkpoints/records-manager-0001.parquet"}
 
     @pytest.mark.asyncio
@@ -263,7 +285,9 @@ class TestResultsFilesIndexAndMalformedTrees:
                 )
             ]
 
-        monkeypatch.setattr("aiperf.operator.runs_index.list_runs_for_job", fake_index_rows)
+        monkeypatch.setattr(
+            "aiperf.operator.runs_index.list_runs_for_job", fake_index_rows
+        )
 
         response = await client.get("/api/v1/results/bench-prod/llama-3-8b-load/runs")
 
@@ -287,7 +311,9 @@ class TestResultsFilesIndexAndMalformedTrees:
         response = await client.get("/api/v1/results")
 
         assert response.status_code == 200
-        jobs = {(entry["namespace"], entry["job_id"]) for entry in response.json()["jobs"]}
+        jobs = {
+            (entry["namespace"], entry["job_id"]) for entry in response.json()["jobs"]
+        }
         assert jobs == {("bench-prod", "healthy-load")}
 
     @pytest.mark.asyncio
@@ -328,7 +354,9 @@ class TestResultsFilesUrlEncoding:
             tmp_path,
             namespace="team.alpha+gpu",
             job_id="llama-3.1+8b-load",
-            files={"profile_export_aiperf.json": b'{"request_throughput": {"avg": 42}}'},
+            files={
+                "profile_export_aiperf.json": b'{"request_throughput": {"avg": 42}}'
+            },
         )
 
         response = await client.get(

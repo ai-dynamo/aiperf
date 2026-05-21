@@ -261,6 +261,8 @@ async def resolve_target(
     namespace: str | None = None,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
+    *,
+    quiet: bool = False,
 ) -> ResolvedJob | ResolvedSweep | None:
     """Resolve a name to either an AIPerfJob or AIPerfSweep CR.
 
@@ -281,6 +283,7 @@ async def resolve_target(
         namespace: Optional namespace to search in.
         kubeconfig: Path to kubeconfig file.
         kube_context: Kubernetes context name.
+        quiet: Suppress informational user output while resolving defaults.
 
     Returns:
         :class:`ResolvedJob` if a job (or jobset fallback) is found,
@@ -293,7 +296,7 @@ async def resolve_target(
         find_jobset,
     )
 
-    resolved = resolve_job_id_and_namespace(name, namespace)
+    resolved = resolve_job_id_and_namespace(name, namespace, quiet=quiet)
     if not resolved:
         return None
     target_name, namespace = resolved

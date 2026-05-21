@@ -19,7 +19,8 @@ import { EpochSelector } from '../components/epoch-selector.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
-import { jobs as jobsSignal } from '../lib/state.js';
+import { jobs as jobsSignal, freshness, clearFreshnessSource } from '../lib/state.js';
+import { FreshnessPill, StaleBanner } from '../components/freshness.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 import { ServerMetricsSection } from '../components/server-metrics/index.js';
 import { RelaunchButton, redactConfigForYaml } from '../components/relaunch-button.js';
@@ -1513,6 +1514,7 @@ export function JobDetail({ namespace, name, epoch }) {
   const [liveData, setLiveData] = useState({
     summary: {}, timeseries: {}, serverSummary: null, serverTimeseries: {}, connected: false,
   });
+  const jobFreshness = freshness.value['job-detail'] ?? null;
 
   // Open the per-job WebSocket whenever the run is active AND the URL points
   // at the currently-running epoch — either the no-epoch live URL, or
@@ -1541,6 +1543,7 @@ export function JobDetail({ namespace, name, epoch }) {
   useEffect(() => {
     const ac = new AbortController();
     const pollAc = new AbortController();
+    let stopped = false;
     // Reset chart points when job changes
     throughputPoints.current = { labels: [], values: [] };
     setChartData(null);
@@ -1559,28 +1562,38 @@ export function JobDetail({ namespace, name, epoch }) {
     setJobConfig(null);
     setJobConfigLoaded(false);
     setJobConfigError(null);
+    setJob(null);
+    setError(null);
+    clearFreshnessSource('job-detail');
+    let firstLoadDone = false;
 
     poll(
-      async () => {
+      async ({ stopFreshness }) => {
         let data;
         try {
           data = await api.getJob(namespace, name, epoch);
+          if (stopped) return;
         } catch (err) {
-          // Mirror pages/jobs.js: surface the error at the page level so the
-          // [data-testid=job-detail-error] card renders, then re-throw so
-          // ``poll`` still increments the global unhealthy counter.
-          setError(err?.message ?? String(err));
+          if (stopped) return;
+          if (!firstLoadDone) {
+            // First-load failures replace the page because there is no job
+            // content to preserve yet; later poll failures re-throw into the
+            // freshness path so the stale banner/pill reflects retrying state.
+            setError(err?.message ?? String(err));
+          }
           throw err;
         }
         if (data == null) {
-          // 204 / explicit-null body lands here. Without a job, the
-          // !job && !error branch above would otherwise sit on LoadingPanel
-          // forever.
-          setError('Empty response from operator');
-          return;
+          // 204 / explicit-null body lands here. First-load failure needs a
+          // page error; later polls must preserve rendered content and let
+          // freshness show retry/stale state.
+          const emptyError = new Error('Empty response from operator');
+          if (!firstLoadDone) setError(emptyError.message);
+          throw emptyError;
         }
         setJob(data);
         setError(null);
+        firstLoadDone = true;
 
         const state = deriveJobRunState({
           phase: data?.job?.phase ?? data?.status?.phase,
@@ -1589,6 +1602,7 @@ export function JobDetail({ namespace, name, epoch }) {
         });
         if (state.pollingDone) {
           setPolling(false);
+          stopFreshness('terminal');
           pollAc.abort();
         }
 
@@ -1627,6 +1641,7 @@ export function JobDetail({ namespace, name, epoch }) {
       },
       3000,
       pollAc.signal,
+      { source: 'job-detail' },
     );
 
     // Fetch job config (original CR spec)
@@ -1654,6 +1669,7 @@ export function JobDetail({ namespace, name, epoch }) {
       fetch(resultsBase, { signal: ac.signal })
         .then(r => (r.ok ? r.json() : null))
         .then(d => {
+          if (ac.signal.aborted) return;
           if (!d) {
             setFilesLoaded(true);
             setServerMetricsLoaded(true);
@@ -1721,6 +1737,7 @@ export function JobDetail({ namespace, name, epoch }) {
           }
         })
         .catch(() => {
+          if (ac.signal.aborted) return;
           setFilesLoaded(true);
           setServerMetricsLoaded(true);
           setJsonlLoaded(true);
@@ -1728,6 +1745,7 @@ export function JobDetail({ namespace, name, epoch }) {
     }
 
     return () => {
+      stopped = true;
       pollAc.abort();
       ac.abort();
     };
@@ -1942,6 +1960,7 @@ export function JobDetail({ namespace, name, epoch }) {
                         ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
                         : null
               }
+              ${jobFreshness && html`<${FreshnessPill} source=${jobFreshness} compact=${true} />`}
               <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
             ${endpointUrl && html`
@@ -2025,6 +2044,8 @@ export function JobDetail({ namespace, name, epoch }) {
           `}
         </div>
       </div>
+
+      <${StaleBanner} source=${jobFreshness} label="Job detail" />
 
       <${RunSelectorCard}
         namespace=${namespace}

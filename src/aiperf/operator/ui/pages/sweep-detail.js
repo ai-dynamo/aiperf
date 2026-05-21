@@ -2,7 +2,8 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { palette, phaseColor } from '../lib/theme.js';
-import { sweeps as sweepsSignal } from '../lib/state.js';
+import { sweeps as sweepsSignal, freshness, clearFreshnessSource } from '../lib/state.js';
+import { FreshnessPill, StaleBanner } from '../components/freshness.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { Conditions } from '../components/conditions.js';
 import { DiagnosticsPanel } from '../components/diagnostics-panel.js';
@@ -157,6 +158,7 @@ export function SweepDetail({ namespace, name, epoch }) {
   // downgrade Live → Stale without nuking the rest of the page on a
   // transient operator restart or port-forward blip.
   const [liveStale, setLiveStale] = useState(false);
+  const sweepFreshness = freshness.value['sweep-detail'] ?? null;
   const status = detail?.status ?? {};
   const latestPersistedSweepEpoch = epochs.find(e => e?.isLatest)?.epoch ?? epochs[0]?.epoch;
   const resolvedEpoch = epoch
@@ -166,8 +168,12 @@ export function SweepDetail({ namespace, name, epoch }) {
   useEffect(() => {
     const ac = new AbortController();
     let stopped = false;
+    setDetail(null);
+    setError(null);
+    setLiveStale(false);
     let firstLoadDone = false;
-    async function tick() {
+    clearFreshnessSource('sweep-detail');
+    async function tick({ stopFreshness }) {
       try {
         const d = await api.getSweep(namespace, name, epoch);
         if (stopped) return;
@@ -176,7 +182,10 @@ export function SweepDetail({ namespace, name, epoch }) {
         setLiveStale(false);
         firstLoadDone = true;
         const phase = (d?.sweep?.phase ?? '').toLowerCase();
-        if (TERMINAL.has(phase)) ac.abort();
+        if (TERMINAL.has(phase)) {
+          stopFreshness('terminal');
+          ac.abort();
+        }
       } catch (e) {
         if (stopped) return;
         if (!firstLoadDone) {
@@ -190,7 +199,7 @@ export function SweepDetail({ namespace, name, epoch }) {
         throw e;
       }
     }
-    poll(tick, 5000, ac.signal);
+    poll(tick, 5000, ac.signal, { source: 'sweep-detail' });
     return () => { stopped = true; ac.abort(); };
   }, [namespace, name, epoch]);
 
@@ -429,6 +438,7 @@ export function SweepDetail({ namespace, name, epoch }) {
               ${s.model && html`<${ModelPill} model=${s.model} testId="sweep-detail-model-pill" />`}
               ${s.model && s.model !== '---' && html`<${SimilarSweepsLink} namespace=${s.namespace} model=${s.model} currentName=${s.name} />`}
               ${s.age_seconds != null && html`<${RelativeTime} seconds=${s.age_seconds} mode="elapsed" className="text-dim" />`}
+              ${sweepFreshness && html`<${FreshnessPill} source=${sweepFreshness} compact=${true} />`}
               ${isRunning
                 ? liveStale
                   ? html`
@@ -478,6 +488,8 @@ export function SweepDetail({ namespace, name, epoch }) {
           </div>
         </div>
       </div>
+
+      <${StaleBanner} source=${sweepFreshness} label="Sweep detail" />
 
       ${conditions.length > 0 && html`
         <div style="margin-bottom: var(--space-4)">

@@ -20,12 +20,12 @@ from aiperf.operator.results_layout import EPOCH_RE, resolve_run_dir
 from aiperf.operator.routers.results_files_io import (
     PROFILE_EXPORT_FILENAME,
     _display_name,
-    _list_job_files,
     _read_profile_export_bytes,
     _safe_resolve,
     _scan_job_dirs,
     _serve_job_file,
     _stream_job_bundle,
+    list_job_files_with_readiness,
 )
 from aiperf.operator.routers.results_schemas import (
     FileListResponse,
@@ -145,8 +145,13 @@ async def _build_file_list_response(
 ) -> FileListResponse:
     """Resolve a job's run dir and enumerate its files."""
     job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
-    files = await asyncio.to_thread(_list_job_files, job_dir)
-    return FileListResponse(namespace=namespace, job_id=job_id, files=files)
+    files, ready = await asyncio.to_thread(list_job_files_with_readiness, job_dir)
+    return FileListResponse(
+        namespace=namespace,
+        job_id=job_id,
+        ready=ready,
+        files=files,
+    )
 
 
 def _epoch_bundle_response(

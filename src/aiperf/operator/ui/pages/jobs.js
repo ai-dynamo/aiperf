@@ -1,10 +1,11 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
-import { jobs, dedupeByNsName } from '../lib/state.js';
+import { jobs, dedupeByNsName, freshness } from '../lib/state.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 import { palette } from '../lib/theme.js';
 import { JobTable } from '../components/job-table.js';
+import { FreshnessPill, StaleBanner } from '../components/freshness.js';
 import { LoadingPanel } from '../components/spinner.js';
 
 const FILTERS = [
@@ -52,6 +53,7 @@ export function Jobs() {
   // the user knows whether they're staring at fresh data or a hung poll.
   const [lastUpdated, setLastUpdated] = useState(null);
   const [tickNow, setTickNow] = useState(Date.now());
+  const jobsFreshness = freshness.value.jobs ?? null;
 
   // URL-driven filter state
   const q = query.value;
@@ -96,6 +98,7 @@ export function Jobs() {
       },
       5000,
       ac.signal,
+      { source: 'jobs' },
     );
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -205,8 +208,11 @@ export function Jobs() {
               data-testid="jobs-last-updated"
             >· updated ${updatedAgo}s ago</span>
           `}
+          ${jobsFreshness && html`<${FreshnessPill} source=${jobsFreshness} compact=${true} />`}
         </span>
       </div>
+
+      <${StaleBanner} source=${jobsFreshness} label="Jobs list" />
 
       <!-- Filter bar -->
       <div style="display: flex; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; align-items: center">

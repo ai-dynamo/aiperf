@@ -1,11 +1,12 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
-import { sweeps, dedupeByNsName } from '../lib/state.js';
+import { sweeps, dedupeByNsName, freshness } from '../lib/state.js';
 import { navigate, query, setQuery } from '../lib/router.js';
 import { palette, phaseColor } from '../lib/theme.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
+import { FreshnessPill, StaleBanner } from '../components/freshness.js';
 import { LoadingPanel } from '../components/spinner.js';
 
 const FILTERS = [
@@ -110,6 +111,7 @@ export function Sweeps() {
   // whether they're looking at a fresh snapshot or a stalled poll.
   const [lastUpdated, setLastUpdated] = useState(null);
   const [tickNow, setTickNow] = useState(Date.now());
+  const sweepsFreshness = freshness.value.sweeps ?? null;
 
   const q = query.value;
   const phaseKey = q.phase ?? null;
@@ -146,7 +148,7 @@ export function Sweeps() {
       } finally {
         setFirstLoad(false);
       }
-    }, 5000, ac.signal);
+    }, 5000, ac.signal, { source: 'sweeps' });
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -268,8 +270,11 @@ export function Sweeps() {
               data-testid="sweeps-last-updated"
             >· updated ${updatedAgo}s ago</span>
           `}
+          ${sweepsFreshness && html`<${FreshnessPill} source=${sweepsFreshness} compact=${true} />`}
         </span>
       </div>
+
+      <${StaleBanner} source=${sweepsFreshness} label="Sweeps list" />
 
       <div style="display: flex; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; align-items: center">
         <div style="position: relative; flex: 1; min-width: 150px; display: flex; align-items: center">

@@ -10,6 +10,7 @@ import signal
 from datetime import datetime, timezone
 from typing import Protocol
 
+from aiperf.kubernetes import cli_helpers
 from aiperf.kubernetes.watch_models import WatchSnapshot
 from aiperf.operator.status import Phase
 
@@ -64,9 +65,9 @@ class WatchOrchestrator:
         """Configure the orchestrator.
 
         Args:
-            job_id: Target ``AIPerfJob`` CR name. If ``None``, the job is
-                resolved via ``cli_helpers.resolve_job_id_and_namespace``
-                (single-job convenience path).
+            job_id: Target ``AIPerfJob`` or ``AIPerfSweep`` CR name. If
+                ``None``, the target is resolved from the last benchmark via
+                ``cli_helpers.resolve_target``.
             namespace: Kubernetes namespace for the CR. Falls back to
                 ``DEFAULT_BENCHMARK_NAMESPACE`` when ``None``.
             kubeconfig: Optional path to a kubeconfig file; ``None`` uses the
@@ -97,19 +98,38 @@ class WatchOrchestrator:
     async def run(self) -> None:
         """Main watch loop."""
         from aiperf.kubernetes.client import k8s_client
-        from aiperf.kubernetes.watch_pollers import CRPoller, EventPoller, PodPoller
+        from aiperf.kubernetes.watch_pollers import (
+            CRPoller,
+            EventPoller,
+            PodPoller,
+            SweepCRPoller,
+        )
 
-        resolved = self._resolve_job()
+        resolved = await self._resolve_target()
         if resolved is None:
             return
-        job_id, ns = resolved
+        job_id, ns, target_kind = resolved
 
         async with k8s_client(
             kubeconfig=self._kubeconfig,
             context=self._kube_context,
         ) as api:
-            cr_poller = CRPoller(api, job_id, ns)
-            pod_poller = PodPoller(api, job_id, ns)
+            cr_poller = (
+                SweepCRPoller(api, job_id, ns)
+                if target_kind == "AIPerfSweep"
+                else CRPoller(api, job_id, ns)
+            )
+            child_job_ids_provider = (
+                (lambda: cr_poller.child_job_ids)
+                if target_kind == "AIPerfSweep"
+                else None
+            )
+            pod_poller = PodPoller(
+                api,
+                job_id,
+                ns,
+                job_ids_provider=child_job_ids_provider,
+            )
             event_poller = EventPoller(api, job_id, ns)
 
             self._install_signal_handlers()
@@ -128,17 +148,26 @@ class WatchOrchestrator:
                 if self._renderer:
                     self._renderer.stop()
 
-    def _resolve_job(self) -> tuple[str, str] | None:
-        from aiperf.kubernetes import cli_helpers
+    async def _resolve_target(self) -> tuple[str, str, str] | None:
         from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
         ns = self._namespace or DEFAULT_BENCHMARK_NAMESPACE
-        if self._job_id:
-            return self._job_id, ns
-        resolved = cli_helpers.resolve_job_id_and_namespace(None, ns, quiet=self._quiet)
-        if not resolved:
+        target = await cli_helpers.resolve_target(
+            self._job_id,
+            ns,
+            kubeconfig=self._kubeconfig,
+            kube_context=self._kube_context,
+            quiet=self._quiet,
+        )
+        if target is None:
             return None
-        return resolved
+        try:
+            target_kind = (
+                "AIPerfSweep" if hasattr(target, "sweep_info") else "AIPerfJob"
+            )
+            return target.name, target.namespace, target_kind
+        finally:
+            await target.aclose()
 
     def _install_signal_handlers(self) -> None:
         # ``run()`` always invokes this from inside the running loop;
@@ -161,13 +190,18 @@ class WatchOrchestrator:
 
         poll_count = 0
         while self._running:
-            tasks = [cr_poller.poll()]
+            tasks = []
+            if cr_poller.target_kind == "AIPerfSweep":
+                await asyncio.gather(cr_poller.poll(), return_exceptions=True)
+            else:
+                tasks.append(cr_poller.poll())
             # Pod and event polling is slower, do it less frequently
             if poll_count % 3 == 0:
                 tasks.append(pod_poller.poll())
                 tasks.append(event_poller.poll())
 
-            await asyncio.gather(*tasks, return_exceptions=True)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
             snapshot = self._build_snapshot(
                 job_id=job_id,
@@ -181,11 +215,17 @@ class WatchOrchestrator:
             if self._renderer:
                 self._renderer.render(snapshot)
 
-            if cr_poller.phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+            if self._is_terminal_phase(cr_poller.target_kind, cr_poller.phase):
                 break
 
             poll_count += 1
             await asyncio.sleep(self._interval)
+
+    @staticmethod
+    def _is_terminal_phase(target_kind: str, phase: str) -> bool:
+        if target_kind == "AIPerfSweep":
+            return phase in {"Succeeded", "PartiallyFailed", "Failed", "Cancelled"}
+        return phase in {Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED}
 
     @staticmethod
     def _build_snapshot(
@@ -201,6 +241,7 @@ class WatchOrchestrator:
             job_id=job_id,
             namespace=ns,
             phase=cr_poller.phase,
+            target_kind=cr_poller.target_kind,
             current_phase=cr_poller.current_phase,
             elapsed_seconds=cr_poller.elapsed_seconds,
             progress=cr_poller.progress,
@@ -215,6 +256,10 @@ class WatchOrchestrator:
             endpoint=cr_poller.endpoint,
             image=cr_poller.image,
             results=cr_poller.results,
+            sweep_runs_completed=cr_poller.sweep_runs_completed,
+            sweep_runs_failed=cr_poller.sweep_runs_failed,
+            sweep_runs_cancelled=cr_poller.sweep_runs_cancelled,
+            sweep_runs_total=cr_poller.sweep_runs_total,
             error=cr_poller.error,
         )
 

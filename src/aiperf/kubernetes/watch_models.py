@@ -239,7 +239,10 @@ class WatchSnapshot:
     """Kubernetes namespace containing the benchmark."""
 
     phase: str
-    """Current JobSet phase."""
+    """Current workload phase."""
+
+    target_kind: str = "AIPerfJob"
+    """Watched Kubernetes custom resource kind."""
 
     current_phase: str | None = None
     """Active benchmark phase name, if running."""
@@ -285,6 +288,18 @@ class WatchSnapshot:
 
     results: dict[str, Any] | None = None
     """Final benchmark results, if completed."""
+
+    sweep_runs_completed: int | None = None
+    """AIPerfSweep child runs that completed successfully."""
+
+    sweep_runs_failed: int | None = None
+    """AIPerfSweep child runs that failed."""
+
+    sweep_runs_cancelled: int | None = None
+    """AIPerfSweep child runs that were cancelled."""
+
+    sweep_runs_total: int | None = None
+    """Total expected AIPerfSweep child runs."""
 
     error: str | None = None
     """Error message if the benchmark failed."""

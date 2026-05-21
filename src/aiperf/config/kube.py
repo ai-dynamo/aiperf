@@ -7,12 +7,14 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Annotated, Any
 
+import orjson
+
 if TYPE_CHECKING:
     from aiperf.config import AIPerfConfig
     from aiperf.config.deployment import DeploymentConfig
 
 from cyclopts import Group
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
 
 from aiperf.config.cli_parameter import CLIParameter
 from aiperf.kubernetes.enums import ImagePullPolicy
@@ -26,6 +28,95 @@ class _KubeGroups:
     K8S_SCHEDULING = Group.create_ordered("Kubernetes Scheduling")
     K8S_SECRETS = Group.create_ordered("Kubernetes Secrets")
     K8S_METADATA = Group.create_ordered("Kubernetes Metadata")
+
+
+def _parse_json_cli_value(raw: str, field_name: str, expected: str) -> Any:
+    """Parse a JSON CLI token and include the field name in failures."""
+    try:
+        return orjson.loads(raw)
+    except orjson.JSONDecodeError as exc:
+        raise ValueError(f"{field_name} must be valid {expected}") from exc
+
+
+def _coerce_node_selector_entries(value: Any) -> list[str | dict[str, str]]:
+    """Coerce CLI/Python node-selector input into mergeable entries."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [_string_map(value, "node_selector")]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{"):
+            parsed = _parse_json_cli_value(
+                stripped,
+                "node_selector",
+                "JSON object or key=value",
+            )
+            if not isinstance(parsed, dict):
+                raise ValueError("node_selector JSON must be an object")
+            return [_string_map(parsed, "node_selector")]
+        if "=" in stripped:
+            return [stripped]
+        raise ValueError("node_selector must be a JSON object or key=value")
+    if isinstance(value, list):
+        entries: list[str | dict[str, str]] = []
+        for item in value:
+            entries.extend(_coerce_node_selector_entries(item))
+        return entries
+    raise ValueError("node_selector must be a JSON object or key=value")
+
+
+def _merge_node_selector_entries(value: Any) -> dict[str, str]:
+    """Merge parsed node-selector entries into the Kubernetes map shape."""
+    selector: dict[str, str] = {}
+    for item in _coerce_node_selector_entries(value):
+        if isinstance(item, dict):
+            selector.update(item)
+            continue
+        key, label_value = item.split("=", 1)
+        if not key:
+            raise ValueError("node_selector key=value entries require a key")
+        selector[key] = label_value
+    return selector
+
+
+def _coerce_tolerations(value: Any) -> list[dict[str, Any]]:
+    """Coerce CLI/Python tolerations input into Kubernetes list shape."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [_string_keyed_map(value, "tolerations")]
+    if isinstance(value, str):
+        parsed = _parse_json_cli_value(
+            value.strip(), "tolerations", "JSON object or array"
+        )
+        return _coerce_tolerations(parsed)
+    if isinstance(value, list):
+        tolerations: list[dict[str, Any]] = []
+        for item in value:
+            tolerations.extend(_coerce_tolerations(item))
+        return tolerations
+    raise ValueError("tolerations must be a JSON object or array")
+
+
+def _string_map(value: dict[Any, Any], field_name: str) -> dict[str, str]:
+    """Validate a JSON object whose keys and values must be strings."""
+    parsed: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise ValueError(f"{field_name} keys and values must be strings")
+        parsed[key] = item
+    return parsed
+
+
+def _string_keyed_map(value: dict[Any, Any], field_name: str) -> dict[str, Any]:
+    """Validate a JSON object whose keys must be strings."""
+    parsed: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise ValueError(f"{field_name} keys must be strings")
+        parsed[key] = item
+    return parsed
 
 
 class SecretMountConfig(BaseModel):
@@ -145,14 +236,37 @@ class KubeOptions(KubeManageOptions):
     # Node placement
     node_selector: Annotated[
         dict[str, str],
-        Field(description="Node selector labels (e.g., {'gpu': 'true'})"),
-        CLIParameter(name="--node-selector", group=_KubeGroups.K8S_NODE_PLACEMENT),
+        BeforeValidator(_merge_node_selector_entries),
+        Field(description="Node selector labels (JSON object or repeated key=value)"),
+        CLIParameter(parse=False),
     ] = {}
+
+    node_selector_cli: Annotated[
+        list[str | dict[str, str]],
+        BeforeValidator(_coerce_node_selector_entries),
+        Field(
+            exclude=True,
+            description="CLI-only node selector labels (JSON object or repeated key=value)",
+        ),
+        CLIParameter(
+            name="--node-selector",
+            group=_KubeGroups.K8S_NODE_PLACEMENT,
+            accepts_keys=False,
+            n_tokens=-1,
+        ),
+    ] = []
 
     tolerations: Annotated[
         list[dict[str, Any]],
-        Field(description="Pod tolerations for scheduling on tainted nodes"),
-        CLIParameter(name="--tolerations", group=_KubeGroups.K8S_NODE_PLACEMENT),
+        BeforeValidator(_coerce_tolerations),
+        Field(
+            description="Pod tolerations as JSON object/array or repeated JSON values"
+        ),
+        CLIParameter(
+            name="--tolerations",
+            group=_KubeGroups.K8S_NODE_PLACEMENT,
+            n_tokens=-1,
+        ),
     ] = []
 
     # Scheduling / Kueue
@@ -272,6 +386,15 @@ class KubeOptions(KubeManageOptions):
 
             validate_dns_label(v, "name", max_length=40)
         return v
+
+    @model_validator(mode="after")
+    def normalize_placement_options(self) -> KubeOptions:
+        """Normalize CLI-friendly placement values to Kubernetes deployment shapes."""
+        self.node_selector = _merge_node_selector_entries(
+            [self.node_selector, *self.node_selector_cli]
+        )
+        self.tolerations = _coerce_tolerations(self.tolerations)
+        return self
 
     @model_validator(mode="after")
     def validate_env_from_secrets_format(self) -> KubeOptions:

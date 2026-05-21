@@ -14,16 +14,16 @@ import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.client import job_selector
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_GROUP,
     AIPERF_JOB_PLURAL,
     AIPERF_JOB_VERSION,
+    AIPERF_SWEEP_GROUP,
+    AIPERF_SWEEP_PLURAL,
+    AIPERF_SWEEP_VERSION,
 )
 from aiperf.kubernetes.watch_models import (
-    EventSnapshot,
     MetricsSnapshot,
-    PodSnapshot,
     ProgressSnapshot,
     WorkersSnapshot,
 )
@@ -60,6 +60,7 @@ class CRPoller:
         self._api = api
         self._job_id = job_id
         self._namespace = namespace
+        self.target_kind: str = "AIPerfJob"
         self.phase: str = "Unknown"
         self.current_phase: str | None = None
         self.workers: WorkersSnapshot = WorkersSnapshot()
@@ -72,6 +73,11 @@ class CRPoller:
         self.image: str | None = None
         self.results: dict[str, Any] | None = None
         self.error: str | None = None
+        self.sweep_runs_completed: int | None = None
+        self.sweep_runs_failed: int | None = None
+        self.sweep_runs_cancelled: int | None = None
+        self.sweep_runs_total: int | None = None
+        self.child_job_ids: list[str] = []
         self.start_time: datetime | None = None
         self.raw_metrics: dict[str, Any] = {}
         self.server_metrics: dict[str, Any] = {}
@@ -271,182 +277,107 @@ class CRPoller:
             return None
 
 
-class PodPoller:
-    """Polls the K8s Pod API for this job's pod/container states.
-
-    Callers **must** ``await poll()`` at least once before reading
-    ``self.pods``; before the first successful poll the list is empty.
-
-    ``poll()`` is idempotent and failure-tolerant: transient API exceptions
-    are swallowed and the previous ``pods`` list is left unchanged so the
-    caller can invoke it on a fixed interval without try/except.
-
-    Example:
-        >>> async with k8s_client() as api:
-        ...     poller = PodPoller(api, "aiperf-bench-7f2a", "aiperf-bench")
-        ...     await poller.poll()
-        ...     for pod in poller.pods:
-        ...         print(pod.name, pod.status, pod.ready)
-    """
+class SweepCRPoller(CRPoller):
+    """Polls AIPerfSweep CR status for phase and child-run progress."""
 
     def __init__(self, api: ApiClient, job_id: str, namespace: str) -> None:
-        self._api = api
-        self._job_id = job_id
-        self._namespace = namespace
-        self.pods: list[PodSnapshot] = []
+        super().__init__(api, job_id, namespace)
+        self.target_kind = "AIPerfSweep"
 
     async def poll(self) -> None:
-        """Fetch latest pod status."""
-        core = client.CoreV1Api(self._api)
-        try:
-            pod_list = await core.list_namespaced_pod(
-                self._namespace,
-                label_selector=job_selector(self._job_id),
-            )
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
-            logger.debug(f"Failed to list pods for {self._job_id}", exc_info=True)
-            return
-        self.pods = [PodSnapshot.from_raw(_pod_to_raw(p)) for p in pod_list.items]
-
-
-class EventPoller:
-    """Polls the K8s Event API filtered to this job's resources.
-
-    Callers **must** ``await poll()`` at least once before reading
-    ``self.events``; before the first successful poll the list is empty.
-    Only the 20 most recent matching events are retained.
-
-    ``poll()`` is idempotent and failure-tolerant: transient API exceptions
-    are swallowed and the previous ``events`` list is left unchanged so the
-    caller can invoke it on a fixed interval without try/except.
-
-    Example:
-        >>> async with k8s_client() as api:
-        ...     poller = EventPoller(api, "aiperf-bench-7f2a", "aiperf-bench")
-        ...     await poller.poll()
-        ...     for ev in poller.events:
-        ...         print(ev.timestamp, ev.type, ev.reason, ev.message)
-    """
-
-    def __init__(self, api: ApiClient, job_id: str, namespace: str) -> None:
-        self._api = api
-        self._job_id = job_id
-        self._namespace = namespace
-        self.events: list[EventSnapshot] = []
-
-    async def poll(self) -> None:
-        """Fetch latest events."""
-        core = client.CoreV1Api(self._api)
-        try:
-            ev_list = await core.list_namespaced_event(self._namespace)
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
-            logger.debug(f"Failed to list events for {self._job_id}", exc_info=True)
+        """Fetch the latest AIPerfSweep state and populate this poller's fields."""
+        raw = await self._get_raw_cr()
+        if not raw:
             return
 
-        filtered = []
-        for ev in ev_list.items:
-            involved = ev.involved_object
-            involved_name = involved.name if involved and involved.name else ""
-            if self._job_id not in involved_name:
-                continue
-            ts = ev.last_timestamp
-            filtered.append(
-                EventSnapshot(
-                    timestamp=ts.isoformat() if ts else "",
-                    type=ev.type or "",
-                    reason=ev.reason or "",
-                    object=involved_name,
-                    message=ev.message or "",
-                    count=1,
+        status = raw.get("status", {})
+        spec = raw.get("spec", {})
+
+        self.phase = status.get("phase", "Pending")
+        self.current_phase = None
+        self.error = status.get("error")
+
+        self._populate_elapsed_time(status)
+        self._populate_conditions(status)
+        self._populate_metadata(spec, status)
+        self._populate_sweep_runs(status)
+        self._populate_child_job_ids(status)
+        self._populate_results(status)
+
+    def _populate_sweep_runs(self, status: dict[str, Any]) -> None:
+        run_states = status.get("runStates", {})
+        self.sweep_runs_completed = _as_int(
+            run_states.get("completed", status.get("completedRuns"))
+        )
+        self.sweep_runs_failed = _as_int(
+            run_states.get("failed", status.get("failedRuns"))
+        )
+        self.sweep_runs_cancelled = _as_int(
+            run_states.get("cancelled", status.get("cancelledRuns"))
+        )
+        total = status.get("totalRuns") or status.get("maxTotalRuns")
+        if total is None:
+            total = sum(
+                count or 0
+                for count in (
+                    self.sweep_runs_completed,
+                    self.sweep_runs_failed,
+                    self.sweep_runs_cancelled,
+                    _as_int(run_states.get("pending")),
+                    _as_int(run_states.get("running")),
                 )
             )
+        self.sweep_runs_total = _as_int(total)
 
-        self.events = sorted(filtered, key=lambda e: e.timestamp)[-20:]
+    def _populate_child_job_ids(self, status: dict[str, Any]) -> None:
+        """Populate child AIPerfJob names from live and terminal sweep status."""
+        child_job_ids: list[str] = []
+        seen: set[str] = set()
 
+        def append_child_name(child_name: object) -> None:
+            if not isinstance(child_name, str) or not child_name or child_name in seen:
+                return
+            child_job_ids.append(child_name)
+            seen.add(child_name)
 
-def _pod_metadata_raw(metadata: Any) -> dict[str, Any]:
-    """Extract pod metadata into PodSnapshot.from_raw's dict shape."""
-    if not metadata:
-        return {}
-    raw: dict[str, Any] = {
-        "name": metadata.name or "",
-        "namespace": metadata.namespace or "",
-    }
-    ts = metadata.creation_timestamp
-    if ts:
-        raw["creationTimestamp"] = (
-            ts.isoformat() if isinstance(ts, datetime) else str(ts)
-        )
-    if metadata.labels:
-        raw["labels"] = dict(metadata.labels)
-    return raw
+        current_child_ref = status.get("currentChildRef")
+        if isinstance(current_child_ref, dict):
+            append_child_name(current_child_ref.get("name"))
 
+        for run in status.get("runs", []):
+            if not isinstance(run, dict):
+                continue
+            append_child_name(run.get("childName"))
+        self.child_job_ids = child_job_ids
 
-def _container_state_raw(state: Any) -> dict[str, Any]:
-    """Extract the one active container state (running/waiting/terminated)."""
-    if state is None:
-        return {}
-    if state.running is not None:
-        return {"running": {}}
-    if state.waiting is not None:
-        w = state.waiting
-        return {
-            "waiting": {
-                k: v
-                for k, v in {"reason": w.reason, "message": w.message}.items()
-                if v is not None
-            }
-        }
-    if state.terminated is not None:
-        t = state.terminated
-        return {
-            "terminated": {
-                k: v
-                for k, v in {
-                    "reason": t.reason,
-                    "message": t.message,
-                    "exitCode": t.exit_code,
-                }.items()
-                if v is not None
-            }
-        }
-    return {}
+    async def _get_raw_cr(self) -> dict[str, Any] | None:
+        """Get the raw AIPerfSweep CR dict from the K8s API."""
+        custom = client.CustomObjectsApi(self._api)
+        try:
+            raw = await custom.get_namespaced_custom_object(
+                group=AIPERF_SWEEP_GROUP,
+                version=AIPERF_SWEEP_VERSION,
+                plural=AIPERF_SWEEP_PLURAL,
+                namespace=self._namespace,
+                name=self._job_id,
+            )
+            return raw
+        except ApiException as e:
+            if e.status != 404:
+                logger.debug(f"Failed to fetch sweep CR {self._job_id}: {e}")
+            return None
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            logger.debug(f"Failed to fetch sweep CR {self._job_id}", exc_info=True)
+            return None
 
 
-def _container_status_raw(cs: Any) -> dict[str, Any]:
-    """Serialize one V1ContainerStatus into the raw dict shape."""
-    entry: dict[str, Any] = {
-        "name": cs.name or "",
-        "ready": bool(cs.ready),
-        "restartCount": cs.restart_count or 0,
-    }
-    state_dict = _container_state_raw(cs.state)
-    if state_dict:
-        entry["state"] = state_dict
-    return entry
-
-
-def _pod_status_raw(status: Any) -> dict[str, Any]:
-    """Serialize V1PodStatus into the raw dict shape."""
-    if not status:
-        return {}
-    raw: dict[str, Any] = {}
-    if status.phase:
-        raw["phase"] = status.phase
-    containers_raw = [
-        _container_status_raw(cs) for cs in status.container_statuses or []
-    ]
-    if containers_raw:
-        raw["containerStatuses"] = containers_raw
-    return raw
-
-
-def _pod_to_raw(pod: Any) -> dict[str, Any]:
-    """Serialize a V1Pod back to the raw dict shape PodSnapshot.from_raw expects."""
-    return {
-        "metadata": _pod_metadata_raw(pod.metadata),
-        "status": _pod_status_raw(pod.status),
-    }
+def _as_int(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _metric_avg(metrics: dict, key: str) -> float:

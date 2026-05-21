@@ -148,6 +148,24 @@ class TestWorkersRendering:
         renderer.render(_snapshot(workers=state))
         assert renderer._prev_workers == (8, 10)
 
+    def test_sweep_snapshot_tracks_run_progress_instead_of_workers(self) -> None:
+        renderer = TextRenderer()
+
+        renderer.render(
+            _snapshot(
+                target_kind="AIPerfSweep",
+                phase="Succeeded",
+                sweep_runs_completed=3,
+                sweep_runs_failed=1,
+                sweep_runs_cancelled=1,
+                sweep_runs_total=5,
+                workers=WorkersSnapshot(ready=0, total=0),
+            )
+        )
+
+        assert renderer._prev_workers is None
+        assert renderer._prev_sweep_runs == (3, 1, 1, 5)
+
 
 class TestMetricsAndDiagnosisRendering:
     """Key metrics line only emits when request_count > 0."""
