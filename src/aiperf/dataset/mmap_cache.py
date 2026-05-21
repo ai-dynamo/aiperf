@@ -43,6 +43,7 @@ import functools
 import hashlib
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -309,17 +310,39 @@ def lookup(cache_key: str, *, compressed: bool) -> CacheHit | None:
     )
 
 
+def _restore_file(src: Path, dst: Path) -> str:
+    start = time.perf_counter()
+    try:
+        os.link(src, dst)
+        method = "hardlink"
+    except OSError:
+        shutil.copyfile(src, dst)
+        method = "copy"
+    duration = time.perf_counter() - start
+    size_gib = src.stat().st_size / (1024**3)
+    _logger.info(
+        f"Restored mmap cache file {dst.name} via {method} "
+        f"in {duration:.3f}s ({size_gib:.2f} GiB)"
+    )
+    return method
+
+
 def restore_to_run_dir(
     hit: CacheHit, run_data_path: Path, run_index_path: Path
 ) -> None:
-    """Copy cached dataset/index files into the run directory.
-
-    The run directory is created if needed. Files are copied (not symlinked) so the
-    backing-store cleanup hook can ``unlink`` them at run end without nuking the cache.
-    """
+    """Restore cached dataset/index files into the run directory."""
+    total_start = time.perf_counter()
     run_data_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(hit.data_path, run_data_path)
-    shutil.copyfile(hit.index_path, run_index_path)
+    data_method = _restore_file(hit.data_path, run_data_path)
+    index_method = _restore_file(hit.index_path, run_index_path)
+    total_duration = time.perf_counter() - total_start
+    data_size_gib = hit.data_path.stat().st_size / (1024**3)
+    index_size_gib = hit.index_path.stat().st_size / (1024**3)
+    _logger.info(
+        f"Restored mmap cache files in {total_duration:.3f}s via "
+        f"dataset={data_method} index={index_method} "
+        f"(dataset={data_size_gib:.2f} GiB, index={index_size_gib:.2f} GiB)"
+    )
 
 
 def populate(
@@ -376,11 +399,7 @@ def populate(
         shutil.copyfile(run_data_path, cache_data)
         shutil.copyfile(run_index_path, cache_index)
 
-        if inputs_json_path is not None and inputs_json_path.exists():
-            shutil.copyfile(inputs_json_path, tmp_dir / INPUTS_JSON_FILENAME)
-            manifest.has_inputs_json = True
-        else:
-            manifest.has_inputs_json = False
+        manifest.has_inputs_json = False
 
         manifest_bytes = orjson.dumps(
             manifest.model_dump(mode="json"),
