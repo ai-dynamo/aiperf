@@ -572,6 +572,8 @@ flowchart LR
 | `stream` | Whether the request asked for streaming. |
 | `tokenization_mode` | How ISL was counted: `prompt_token_ids`, `chat_template`, `chat_template_string`, `chat_template_fallback`, `tokenizer_call`, `encode_without_special_tokens`, or `plain_text_encode` for the low-level recorder API. |
 
+> **Note on `chat_template_fallback` ISL drift.** When the tokenizer has no chat template (e.g. `builtin` tiktoken) the recorder renders messages as literal ChatML — `<|im_start|>role\n...<|im_end|>` — and tokenizes that string without special-token handling. Each role marker becomes ~5 raw tokens instead of the single token a real chat template would produce, so a `chat_template_fallback` ISL is inflated by roughly *5 × (2N + 1)* tokens for an N-message conversation. The `tokenization_mode` field on every JSONL row tells you which path was used; compare rows with the same mode when validating `--isl-mean` against ground truth.
+
 **Summary** — `<PATH>.summary.json` and stdout, per endpoint:
 
 ```text
