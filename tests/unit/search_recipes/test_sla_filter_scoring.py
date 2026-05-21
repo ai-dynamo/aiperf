@@ -9,28 +9,44 @@ iteration's averaged constraint metric violates a filter or is unmeasurable.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 # Branch's BayesianSearchPlanner subclasses OptunaSearchPlanner so the
 # ``bo`` extra (skopt) is no longer required; the helper test exists to
 # pin observable behavior (history feasibility + objective values) rather
 # than internal sampler internals.
-
 from aiperf.common.models.export_models import JsonMetricResult
-from aiperf.config.sweep.adaptive import (
-    SearchSpaceDimension,
-    SLAFilter,
-)
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import (
     AdaptiveObjective,
     AdaptiveSearchSweep,
+)
+from aiperf.config.sweep.adaptive import (
+    SearchSpaceDimension,
+    SLAFilter,
 )
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.search_planner.bayesian import (
     BayesianSearchPlanner,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_tpe_sampler_for_sla_scoring_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aiperf.orchestrator.search_planner import optuna_planner
+    from aiperf.orchestrator.search_planner._optuna_helpers import build_sampler
+
+    def _build_sampler(cfg: AdaptiveSearchSweep) -> Any:
+        if cfg.optuna_sampler == "botorch":
+            cfg = cfg.model_copy(
+                update={"optuna_sampler": "tpe", "optuna_acquisition": None}
+            )
+        return build_sampler(cfg)
+
+    monkeypatch.setattr(optuna_planner, "build_sampler", _build_sampler)
 
 
 def _base_config() -> BenchmarkConfig:
@@ -59,11 +75,13 @@ def _cfg_with_filter(threshold: float = 200.0, **overrides) -> AdaptiveSearchSwe
                 path="phases.profiling.concurrency", lo=1, hi=100, kind="int"
             ),
         ],
-        objectives=[AdaptiveObjective(
-            metric="output_token_throughput",
-            stat="avg",
-            direction=OptimizationDirection.MAXIMIZE,
-        )],
+        objectives=[
+            AdaptiveObjective(
+                metric="output_token_throughput",
+                stat="avg",
+                direction=OptimizationDirection.MAXIMIZE,
+            )
+        ],
         max_iterations=5,
         n_initial_points=2,
         random_seed=42,

@@ -12,6 +12,8 @@ plumbs an objective vector through ``study.tell`` end-to-end:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 optuna = pytest.importorskip("optuna")
@@ -161,20 +163,49 @@ def test_build_qnehvi_candidates_func_returns_callable():
     assert callable(func)
 
 
-def test_qnehvi_candidates_func_runs_on_synthetic_2obj():
+def _stub_botorch_optimization(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     pytest.importorskip("botorch")
+    import botorch.fit as fit_mod
+    import botorch.optim as optim_mod
+    import torch
+
+    calls = {"fit": 0, "optimize": 0}
+
+    def _fit(mll: Any, *_args: Any, **_kwargs: Any) -> Any:
+        calls["fit"] += 1
+        return mll
+
+    def _optimize_acqf(*, bounds: Any, q: int, **_kwargs: Any) -> tuple[Any, Any]:
+        calls["optimize"] += 1
+        candidates = torch.full(
+            (q, bounds.size(-1)),
+            0.5,
+            dtype=bounds.dtype,
+            device=bounds.device,
+        )
+        values = torch.zeros(q, dtype=bounds.dtype, device=bounds.device)
+        return candidates, values
+
+    monkeypatch.setattr(fit_mod, "fit_gpytorch_mll", _fit)
+    monkeypatch.setattr(optim_mod, "optimize_acqf", _optimize_acqf)
+    return calls
+
+
+def test_qnehvi_candidates_func_runs_on_synthetic_2obj(monkeypatch):
     import torch
 
     from aiperf.orchestrator.search_planner._optuna_helpers import (
         build_qnehvi_candidates_func,
     )
 
+    calls = _stub_botorch_optimization(monkeypatch)
     func = build_qnehvi_candidates_func(reference_point=[-100.0, -100.0])
-    train_x = torch.tensor([[0.1], [0.5], [0.9]])
-    train_obj = torch.tensor([[1.0, 2.0], [2.0, 1.0], [1.5, 1.5]])
-    bounds = torch.tensor([[0.0], [1.0]])
+    train_x = torch.tensor([[0.1], [0.5], [0.9]], dtype=torch.float64)
+    train_obj = torch.tensor([[1.0, 2.0], [2.0, 1.0], [1.5, 1.5]], dtype=torch.float64)
+    bounds = torch.tensor([[0.0], [1.0]], dtype=torch.float64)
     candidates = func(train_x, train_obj, None, bounds, None)
     assert candidates.shape[-1] == 1  # 1D search space
+    assert calls == {"fit": 1, "optimize": 1}
 
 
 def test_multi_objective_improvement_patience_uses_hypervolume_delta():

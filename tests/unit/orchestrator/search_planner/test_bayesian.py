@@ -9,26 +9,42 @@ the `bo` extra.
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pytest
 
-skopt = pytest.importorskip("skopt")
-
-# Imports below depend on skopt being importable. pytest.importorskip must
-# precede them so the whole module is skipped when the `bo` extra is absent.
+# BayesianSearchPlanner now subclasses OptunaSearchPlanner; these tests patch
+# the sampler to TPE so they exercise planner behavior without the heavy BoTorch path.
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
-from aiperf.config.sweep.adaptive import SearchSpaceDimension  # noqa: E402
 from aiperf.config.config import BenchmarkConfig  # noqa: E402
 from aiperf.config.sweep import (  # noqa: E402
     AdaptiveObjective,
     AdaptiveSearchSweep,
     SweepVariation,
 )
+from aiperf.config.sweep.adaptive import SearchSpaceDimension  # noqa: E402
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection  # noqa: E402
 from aiperf.orchestrator.models import RunResult  # noqa: E402
 from aiperf.orchestrator.search_planner.bayesian import (  # noqa: E402
     BayesianSearchPlanner,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_tpe_sampler_for_planner_logic_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiperf.orchestrator.search_planner import optuna_planner
+    from aiperf.orchestrator.search_planner._optuna_helpers import build_sampler
+
+    def _build_sampler(cfg: AdaptiveSearchSweep) -> Any:
+        if cfg.optuna_sampler == "botorch":
+            cfg = cfg.model_copy(
+                update={"optuna_sampler": "tpe", "optuna_acquisition": None}
+            )
+        return build_sampler(cfg)
+
+    monkeypatch.setattr(optuna_planner, "build_sampler", _build_sampler)
 
 
 def _base_config() -> BenchmarkConfig:

@@ -8,6 +8,7 @@ BoTorch's default RBF.
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pytest
 
@@ -21,29 +22,52 @@ from aiperf.orchestrator.search_planner._optuna_helpers import (  # noqa: E402
 )
 
 
-def _capture_built_models(monkeypatch, captured: list):
+def _capture_built_models(monkeypatch: pytest.MonkeyPatch, captured: list[Any]) -> None:
     """Patch SingleTaskGP so every constructed model lands in `captured`."""
     real_cls = botorch.models.SingleTaskGP
 
-    def _spy(*args, **kwargs):
+    def _spy(*args: Any, **kwargs: Any) -> Any:
         instance = real_cls(*args, **kwargs)
         captured.append(instance)
         return instance
 
     monkeypatch.setattr(botorch.models, "SingleTaskGP", _spy)
-    # Also patch the symbol bound inside _optuna_helpers' candidates_func
-    # closure — the `from botorch.models import SingleTaskGP` binding is
-    # captured at builder construction time inside the closure, so monkeypatch
-    # must hit that namespace too.
     import aiperf.orchestrator.search_planner._optuna_helpers as helpers_mod
 
     if hasattr(helpers_mod, "SingleTaskGP"):
         monkeypatch.setattr(helpers_mod, "SingleTaskGP", _spy)
 
 
+def _stub_botorch_optimization(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    calls = {"fit": 0, "optimize": 0}
+
+    def _fit(mll: Any, *_args: Any, **_kwargs: Any) -> Any:
+        calls["fit"] += 1
+        return mll
+
+    def _optimize_acqf(*, bounds: Any, q: int, **_kwargs: Any) -> tuple[Any, Any]:
+        calls["optimize"] += 1
+        candidates = torch.full(
+            (q, bounds.size(-1)),
+            0.5,
+            dtype=bounds.dtype,
+            device=bounds.device,
+        )
+        values = torch.zeros(q, dtype=bounds.dtype, device=bounds.device)
+        return candidates, values
+
+    import botorch.fit as fit_mod
+    import botorch.optim as optim_mod
+
+    monkeypatch.setattr(fit_mod, "fit_gpytorch_mll", _fit)
+    monkeypatch.setattr(optim_mod, "optimize_acqf", _optimize_acqf)
+    return calls
+
+
 def test_qlognei_candidates_func_fits_dsp_kernel(monkeypatch):
     captured: list = []
     _capture_built_models(monkeypatch, captured)
+    calls = _stub_botorch_optimization(monkeypatch)
 
     func = build_qlognei_candidates_func()
     train_x = torch.rand(8, 3, dtype=torch.float64)
@@ -63,11 +87,13 @@ def test_qlognei_candidates_func_fits_dsp_kernel(monkeypatch):
     assert isinstance(prior, gpytorch.priors.LogNormalPrior)
     expected_loc = math.sqrt(2.0) + 0.5 * math.log(3)
     assert math.isclose(prior.loc.item(), expected_loc, rel_tol=1e-9)
+    assert calls == {"fit": 1, "optimize": 1}
 
 
 def test_qnehvi_candidates_func_fits_dsp_kernel_per_objective(monkeypatch):
     captured: list = []
     _capture_built_models(monkeypatch, captured)
+    calls = _stub_botorch_optimization(monkeypatch)
 
     func = build_qnehvi_candidates_func(reference_point=[-1e9, -1e9])
     d = 4
@@ -89,3 +115,4 @@ def test_qnehvi_candidates_func_fits_dsp_kernel_per_objective(monkeypatch):
         assert math.isclose(
             base_kernel.lengthscale_prior.loc.item(), expected_loc, rel_tol=1e-9
         )
+    assert calls == {"fit": 1, "optimize": 1}

@@ -9,11 +9,9 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("optuna")
-pytest.importorskip("botorch")
 
-# Imports below depend on Optuna+BoTorch being importable. pytest.importorskip
-# must precede them so the whole module is skipped when the optional BoTorch
-# stack is absent.
+# Imports below depend on Optuna being importable. pytest.importorskip
+# must precede them so the module is skipped when Optuna is absent.
 import orjson  # noqa: E402
 
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
@@ -29,8 +27,8 @@ from aiperf.orchestrator.aggregation.sweep import OptimizationDirection  # noqa:
 from aiperf.orchestrator.executor import RunExecutor  # noqa: E402
 from aiperf.orchestrator.models import RunResult  # noqa: E402
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator  # noqa: E402
-from aiperf.orchestrator.search_planner.bayesian import (  # noqa: E402
-    BayesianSearchPlanner,
+from aiperf.orchestrator.search_planner.optuna_planner import (  # noqa: E402
+    OptunaSearchPlanner,
 )
 
 
@@ -95,6 +93,7 @@ def _plan_with_bo(max_iterations: int = 4, trials: int = 1) -> BenchmarkPlan:
         max_iterations=max_iterations,
         n_initial_points=2,
         random_seed=42,
+        optuna_sampler="tpe",
     )
     return BenchmarkPlan(
         configs=[_base_config()],
@@ -107,7 +106,7 @@ def _plan_with_bo(max_iterations: int = 4, trials: int = 1) -> BenchmarkPlan:
 @pytest.mark.asyncio
 async def test_execute_adaptive_search_runs_max_iterations_iterations(tmp_path: Path):
     plan = _plan_with_bo(max_iterations=4, trials=1)
-    planner = BayesianSearchPlanner(plan.configs[0], plan.sweep)
+    planner = OptunaSearchPlanner(plan.configs[0], plan.sweep)
     orch = MultiRunOrchestrator(base_dir=tmp_path)
     executor = _RecordingExecutor()
 
@@ -129,7 +128,7 @@ async def test_execute_adaptive_search_writes_search_history_incrementally(
     tmp_path: Path,
 ):
     plan = _plan_with_bo(max_iterations=3)
-    planner = BayesianSearchPlanner(plan.configs[0], plan.sweep)
+    planner = OptunaSearchPlanner(plan.configs[0], plan.sweep)
     orch = MultiRunOrchestrator(base_dir=tmp_path)
     await orch.execute_adaptive_search(plan, _RecordingExecutor(), planner)
     search_history = orjson.loads((tmp_path / "search_history.json").read_bytes())
@@ -145,7 +144,7 @@ async def test_execute_dispatches_to_adaptive_when_adaptive_search_set(tmp_path:
     orch = MultiRunOrchestrator(base_dir=tmp_path)
     # Call execute() (not execute_adaptive_search): the dispatch should kick in.
     # Pass planner via a kwarg the orchestrator forwards.
-    planner = BayesianSearchPlanner(plan.configs[0], plan.sweep)
+    planner = OptunaSearchPlanner(plan.configs[0], plan.sweep)
     results = await orch.execute(plan, _RecordingExecutor(), search_planner=planner)
     assert len(results) == 3
 
@@ -153,7 +152,7 @@ async def test_execute_dispatches_to_adaptive_when_adaptive_search_set(tmp_path:
 @pytest.mark.asyncio
 async def test_execute_adaptive_search_respects_cancel_check(tmp_path: Path):
     plan = _plan_with_bo(max_iterations=10)
-    planner = BayesianSearchPlanner(plan.configs[0], plan.sweep)
+    planner = OptunaSearchPlanner(plan.configs[0], plan.sweep)
     orch = MultiRunOrchestrator(base_dir=tmp_path)
     state = {"calls": 0}
 
