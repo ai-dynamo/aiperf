@@ -8,6 +8,8 @@ import { Conditions } from '../components/conditions.js';
 import { DiagnosticsPanel } from '../components/diagnostics-panel.js';
 import { JobTable } from '../components/job-table.js';
 import { LiveVariationsCard } from '../components/live-variations-card.js';
+import { SweepLiveTrialBoard } from '../components/sweep-live-trial-board.js';
+import { SweepWinnerSummary } from '../components/sweep-winner-summary.js';
 import { ArtifactsCard } from '../components/artifacts-card.js';
 import { CellsChart } from '../components/cells-chart.js';
 import { CellsTable } from '../components/cells-table.js';
@@ -20,7 +22,7 @@ import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
 import { fmtBytes, fmtNumber } from '../lib/format.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
-import { buildSweepVariations, resolveSweepManifest, shouldShowSweepDiagnostics } from './sweep-detail-helpers.js';
+import { buildSweepVariations, pickSweepWinner, resolveSweepManifest, shouldShowSweepDiagnostics, sweepPhaseMode } from './sweep-detail-helpers.js';
 
 // ``archived`` is included so polling stops for sweeps whose live CR
 // has been deleted but whose aggregate.json is still served from the
@@ -57,7 +59,7 @@ const PARETO_AXES = [
     key: 'tps_ttft',
     label: 'req/s × TTFT',
     x: { key: 'request_throughput',      stat: 'avg', label: 'Throughput',       unit: 'req/s' },
-    y: { key: 'time_to_first_token',     stat: 'avg', label: 'TTFT',             unit: 'ms'    },
+    y: { key: 'time_to_first_token',     stat: 'p50', label: 'TTFT',             unit: 'ms'    },
     yIsSmallerBetter: true,
   },
   {
@@ -263,9 +265,10 @@ export function SweepDetail({ namespace, name, epoch }) {
     [detail, archivedChildren],
   );
 
-  // Fetch each child's status (summary + phase + progressPercent) once per
-  // manifest snapshot, so the headline cells, the live-variations card, and
-  // the children chart all share one set of network requests.
+  // Fetch each child's status (summary + phase + progressPercent) after every
+  // sweep-detail poll. Child names can remain stable while phases and metrics
+  // move Pending -> Running -> Succeeded, so tying this only to the manifest
+  // snapshot would leave the live trial board stale.
   useEffect(() => {
     if (manifest.length === 0) {
       setChildSummaries({});
@@ -277,17 +280,17 @@ export function SweepDetail({ namespace, name, epoch }) {
         api.getJob(c.namespace ?? namespace, c.name)
           .then(d => [c.name, {
             summary: d?.status?.summary ?? d?.status?.results?.metrics ?? null,
-            phase: d?.status?.phase ?? null,
-            progressPercent: d?.status?.progressPercent ?? d?.progressPercent ?? null,
+            phase: d?.status?.phase ?? d?.job?.phase ?? null,
+            progressPercent: d?.status?.progressPercent ?? d?.job?.progressPercent ?? d?.progressPercent ?? null,
           }])
-          .catch(() => [c.name, { summary: null, phase: null, progressPercent: null }])
+          .catch(() => [c.name, { summary: null, phase: 'Unknown', progressPercent: null }])
       )
     ).then(pairs => {
       if (cancelled) return;
       setChildSummaries(Object.fromEntries(pairs));
     });
     return () => { cancelled = true; };
-  }, [namespace, JSON.stringify(manifest.map(c => c.name))]);
+  }, [detail, namespace, JSON.stringify(manifest.map(c => c.name))]);
 
   // Group manifest entries by variation_index and compute mean/std/cv per
   // headline metric across the available trials. ``perMetric`` is keyed
@@ -304,8 +307,9 @@ export function SweepDetail({ namespace, name, epoch }) {
   const chartMetric = useMemo(() => {
     const m = HEADLINE_METRICS.find(x => x.key + '.' + x.stat === chartMetricKey)
       ?? HEADLINE_METRICS[0];
+    const metricKey = m.key + '.' + m.stat;
     const series = variations.map(v => {
-      const r = v.perMetric?.[m.key + '.' + m.stat];
+      const r = v.perMetric?.[metricKey];
       return {
         variation_index: v.variation_index,
         label: v.label,
@@ -315,7 +319,7 @@ export function SweepDetail({ namespace, name, epoch }) {
         n: r?.n ?? 0,
       };
     });
-    return { meta: m, series };
+    return { meta: m, metricKey, series };
   }, [variations, chartMetricKey]);
 
   const paretoAxis = useMemo(() =>
@@ -405,6 +409,10 @@ export function SweepDetail({ namespace, name, epoch }) {
   // to render — avoids a confusing "No cells completed yet." card sitting
   // next to a populated VariationsTable.
   const hasManifest = manifest.length > 0;
+  const phaseMode = sweepPhaseMode(phase);
+  const isLiveMode = phaseMode === 'live';
+  const isTerminalMode = phaseMode === 'terminal';
+  const winner = pickSweepWinner({ variations, metricKey: chartMetric.metricKey });
 
   return html`
     <div class="sweep-detail" data-testid="page-sweep-detail">
@@ -556,6 +564,10 @@ export function SweepDetail({ namespace, name, epoch }) {
         })}
       </div>
 
+      ${isTerminalMode && html`
+        <${SweepWinnerSummary} winner=${winner} metric=${chartMetric.meta} />
+      `}
+
       <div style="margin-bottom: var(--space-4)">
         <${ArtifactsCard}
           files=${artifactFiles}
@@ -593,6 +605,13 @@ export function SweepDetail({ namespace, name, epoch }) {
           }}
         />
       </div>
+
+      ${isLiveMode && hasManifest && html`
+        <${SweepLiveTrialBoard}
+          manifest=${manifest}
+          childSummaries=${childSummaries}
+        />
+      `}
 
       <!-- Per-variation curve + table (driven by the inline aggregate manifest) -->
       ${hasManifest && html`

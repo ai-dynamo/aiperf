@@ -1,4 +1,10 @@
 const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
+const CHILD_RUNNING_PHASES = new Set(['profiling', 'processing', 'running', 'aggregating']);
+const CHILD_PENDING_PHASES = new Set(['pending', 'queued', 'initializing', '']);
+const TERMINAL_PHASES = new Set(['succeeded', 'completed', 'archived', 'failed', 'partiallyfailed', 'cancelled']);
+const SUCCEEDED_PHASES = new Set(['succeeded', 'completed', 'archived']);
+const FAILED_PHASES = new Set(['failed', 'partiallyfailed']);
+const CANCELLED_PHASES = new Set(['cancelled']);
 
 const DEFAULT_HEADLINE_METRICS = [
   { key: 'request_throughput', stat: 'avg', label: 'Req throughput', unit: 'req/s' },
@@ -16,6 +22,37 @@ function pick(obj, keys) {
     if (obj?.[key] != null) return obj[key];
   }
   return null;
+}
+
+function normalizePhase(phase) {
+  return (phase ?? '').toString().toLowerCase();
+}
+
+export function sweepPhaseMode(phase) {
+  const normalized = normalizePhase(phase);
+  if (RUNNING_PHASES.has(normalized)) return 'live';
+  if (TERMINAL_PHASES.has(normalized)) return 'terminal';
+  return 'unknown';
+}
+
+export function childSweepState(phase) {
+  const normalized = normalizePhase(phase);
+  if (CHILD_PENDING_PHASES.has(normalized)) return 'pending';
+  if (CHILD_RUNNING_PHASES.has(normalized)) return 'running';
+  if (SUCCEEDED_PHASES.has(normalized)) return 'succeeded';
+  if (FAILED_PHASES.has(normalized)) return 'failed';
+  if (CANCELLED_PHASES.has(normalized)) return 'cancelled';
+  return 'unknown';
+}
+
+export function isHigherBetterMetric(metricKey) {
+  const normalized = (metricKey ?? '').toString().toLowerCase();
+  return !(
+    normalized.includes('latency') ||
+    normalized.includes('ttft') ||
+    normalized.includes('time_to_first_token') ||
+    normalized.includes('inter_token_latency')
+  );
 }
 
 function meanStd(values) {
@@ -110,6 +147,60 @@ export function buildSweepVariations({
     });
 }
 
+export function buildTrialBoardRows({ manifest, childSummaries }) {
+  if (!manifest || manifest.length === 0) return [];
+  const groups = new Map();
+  for (const child of manifest) {
+    const variationIndex = Number(pick(child, ['variation_index', 'variationIndex']) ?? 0);
+    if (!groups.has(variationIndex)) {
+      groups.set(variationIndex, {
+        variation_index: variationIndex,
+        label: pick(child, ['variation_label', 'variationLabel']) ?? '',
+        trials: [],
+      });
+    }
+    const summary = childSummaries?.[child.name] ?? {};
+    const phase = pick(summary, ['phase']) ?? pick(child, ['phase']) ?? pick(child, ['status']);
+    groups.get(variationIndex).trials.push({
+      trial_index: Number(pick(child, ['trial_index', 'trialIndex']) ?? 0),
+      name: child.name,
+      namespace: child.namespace,
+      phase,
+      state: childSweepState(phase),
+      progressPercent: pick(summary, ['progressPercent']) ?? pick(child, ['progress_percent', 'progressPercent']) ?? null,
+      summary: pick(summary, ['summary']) ?? null,
+    });
+  }
+  return [...groups.values()]
+    .sort((a, b) => a.variation_index - b.variation_index)
+    .map(group => ({
+      ...group,
+      trials: group.trials.sort((a, b) => a.trial_index - b.trial_index),
+    }));
+}
+
+export function pickSweepWinner({ variations, metricKey = 'output_token_throughput.avg' }) {
+  const higherIsBetter = isHigherBetterMetric(metricKey);
+  let winner = null;
+  for (const variation of variations ?? []) {
+    const metric = variation?.perMetric?.[metricKey];
+    const mean = metric?.mean;
+    if (typeof mean !== 'number' || !Number.isFinite(mean)) continue;
+    if (!winner || (higherIsBetter ? mean > winner.mean : mean < winner.mean)) {
+      winner = {
+        variation_index: variation.variation_index,
+        label: variation.label,
+        metricKey,
+        mean,
+        cv: metric.cv ?? null,
+        n: metric.n ?? null,
+        higherIsBetter,
+      };
+    }
+  }
+  return winner;
+}
+
 export function shouldShowSweepDiagnostics(phase) {
-  return RUNNING_PHASES.has((phase ?? '').toLowerCase());
+  return sweepPhaseMode(phase) === 'live';
 }

@@ -35,7 +35,7 @@ function bestPointForX(points, yIsSmallerBetter) {
   const byX = new Map();
   for (const point of points) {
     const current = byX.get(point.x);
-    if (!current || (yIsSmallerBetter ? point.y <= current.y : point.y >= current.y)) {
+    if (!current || (yIsSmallerBetter ? point.y < current.y : point.y > current.y)) {
       byX.set(point.x, point);
     }
   }

@@ -12,12 +12,20 @@ from tests.unit.ui.node_utils import run_node
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _COMPONENTS_DIR = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "components"
 _SWEEP_DETAIL_HELPERS_PATH = (
-    _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "sweep-detail-helpers.js"
+    _REPO_ROOT
+    / "src"
+    / "aiperf"
+    / "operator"
+    / "ui"
+    / "pages"
+    / "sweep-detail-helpers.js"
 )
 _SWEEP_DETAIL_PAGE_PATH = _SWEEP_DETAIL_HELPERS_PATH.with_name("sweep-detail.js")
 
 
-def _run_component_script(component_name: str, export_names: list[str], body: str) -> dict[str, object]:
+def _run_component_script(
+    component_name: str, export_names: list[str], body: str
+) -> dict[str, object]:
     component_path = _COMPONENTS_DIR / component_name
     chart_wrapper_stub = (
         ""
@@ -244,7 +252,11 @@ def test_pareto_same_xy_ties_render_all_points_but_only_one_frontier_step() -> N
         """,
     )
 
-    assert result["scatterNames"] == ["concurrency=8", "concurrency=8-copy", "concurrency=16"]
+    assert result["scatterNames"] == [
+        "concurrency=8",
+        "concurrency=8-copy",
+        "concurrency=16",
+    ]
     assert result["frontier"] == [
         {"x": 100, "y": 50, "jobName": "concurrency=8"},
         {"x": 120, "y": 45, "jobName": "concurrency=16"},
@@ -266,3 +278,5 @@ def test_metric_selector_query_defaults_are_elided_from_url() -> None:
         "onclick=${() => setQuery({ axis: a.key === DEFAULT_PARETO_AXIS_KEY ? undefined : a.key })}"
         in source
     )
+    assert "key: 'tps_ttft'" in source
+    assert "y: { key: 'time_to_first_token',     stat: 'p50', label: 'TTFT'" in source

@@ -29,19 +29,10 @@ function finiteOrNull(value) {
   return typeof value === 'number' && isFinite(value) ? value : null;
 }
 
-function uniqueLabels(labels) {
-  const counts = new Map();
-  return labels.map(label => {
-    const count = (counts.get(label) ?? 0) + 1;
-    counts.set(label, count);
-    return count === 1 ? label : `${label} (${count})`;
-  });
-}
-
 export function VariationsChart({ variations, metricLabel, unit }) {
   const chart = useMemo(() => {
     if (!variations || variations.length === 0) return null;
-    const labels = uniqueLabels(variations.map(v => shortLabel(v.label) || `v${v.variation_index}`));
+    const labels = variations.map(v => shortLabel(v.label) || `v${v.variation_index}`);
     const means = variations.map(v => finiteOrNull(v.mean));
     // If every variation is missing this metric (e.g. selected metric not yet
     // computed across any trial), Chart.js still renders an empty axis box —
