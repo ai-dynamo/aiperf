@@ -20,6 +20,7 @@ from aiperf.common.finite import scrub_non_finite
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.jobset import controller_dns_name
+from aiperf.kubernetes.results_sidecar import write_ready_marker
 from aiperf.operator import events, runs_index
 from aiperf.operator.client_cache import (
     get_or_create_progress_client,
@@ -436,6 +437,7 @@ def _record_results_on_status(
 
     if has_files:
         dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+        write_ready_marker(dest_dir)
         sb.set_results_path(str(dest_dir))
         write_latest(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
         sb.set_run_epoch(int(epoch))

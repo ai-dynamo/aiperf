@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import orjson
 
+from aiperf.kubernetes.results_sidecar import ready_marker_path
 from aiperf.operator.handlers.completion import _record_results_on_status
 from aiperf.operator.models import ControllerFetchResult
 from aiperf.operator.results_layout import epoch_key_from_body, write_latest
@@ -239,3 +240,25 @@ class TestSummaryFallbackFromFiles:
         assert isinstance(run_epoch, int)
         assert run_epoch == int(epoch)
         assert run_epoch <= INT64_MAX
+
+    def test_successful_file_archive_writes_ready_marker(self, tmp_path: Path) -> None:
+        _setup_export(tmp_path, "ns", "test-job")
+        run_path = tmp_path / "ns" / "test-job" / FIXTURE_EPOCH
+        sb = MagicMock()
+        result = ControllerFetchResult(
+            metrics=None,
+            downloaded=["profile_export_aiperf.json"],
+        )
+
+        with _patch_results_dir(tmp_path):
+            _record_results_on_status(
+                body=_body(),
+                namespace="ns",
+                job_id="test-job",
+                result=result,
+                sb=sb,
+                has_metrics=False,
+                has_files=True,
+            )
+
+        assert ready_marker_path(run_path).is_file()
