@@ -166,7 +166,7 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 
 DCGM metrics automatically scale based on observed token throughput. The system tracks peak throughput and uses that as 100% load:
 
-```
+```text
 Token Flow:
 ┌─────────────────┐
 │  LLM Endpoint   │  (chat/completions)
