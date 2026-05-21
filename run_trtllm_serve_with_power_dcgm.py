@@ -548,6 +548,7 @@ def main() -> int:
 
         energy_j = final_energy - baseline_energy
         avg_power_w = energy_j / bench_wall_s if bench_wall_s > 0 else 0.0
+        aiperf_reported = _parse_aiperf_telemetry(official_artifact)
         summary = {
             "warmup_skipped": args.skip_warmup,
             "warmup_return_code": warmup_rc,
@@ -564,6 +565,8 @@ def main() -> int:
             "osl": args.osl,
             "request_count": args.request_count,
             "concurrency": args.concurrency,
+            "dcgm_url": args.dcgm_url,
+            "aiperf_reported": aiperf_reported,
         }
         write_json(output_dir / "summary.json", summary)
 
