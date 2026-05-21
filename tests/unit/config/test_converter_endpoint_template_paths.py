@@ -1,0 +1,147 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Security regression tests for template-path reads in ``_converter_endpoint``.
+
+Path-injection hardening for ``--extra-inputs payload_template=...``: the
+converter must resolve the path through ``Path.resolve(strict=True)``,
+refuse to follow symlinks, and read with explicit UTF-8 encoding. When any
+safety check fails (missing path, symlink, non-regular file), the converter
+falls back to treating the original string as a literal template body — the
+pre-existing behavior for non-file inputs.
+
+Covers both call sites that read a user-supplied template path:
+``_endpoint_template_from_extra`` (line 33) and ``_endpoint_template_fallback``
+(line 53).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from aiperf.config.flags._converter_endpoint import (
+    _endpoint_template_fallback,
+    _endpoint_template_from_extra,
+)
+from aiperf.plugin.enums import EndpointType
+
+
+class TestEndpointTemplateFromExtraPathSafety:
+    """``payload_template`` in ``extra_inputs`` must read files safely."""
+
+    def test_regular_file_is_read_as_body(self, tmp_path: Path) -> None:
+        template = tmp_path / "tmpl.json"
+        template.write_text('{"hello": "world"}', encoding="utf-8")
+        endpoint: dict = {}
+        extra: dict = {"payload_template": str(template)}
+
+        _endpoint_template_from_extra(endpoint, extra)
+
+        assert endpoint["template"]["body"] == '{"hello": "world"}'
+
+    def test_utf8_file_is_decoded_explicitly(self, tmp_path: Path) -> None:
+        template = tmp_path / "tmpl.json"
+        template.write_text('{"text": "café"}', encoding="utf-8")
+        endpoint: dict = {}
+        extra: dict = {"payload_template": str(template)}
+
+        _endpoint_template_from_extra(endpoint, extra)
+
+        assert endpoint["template"]["body"] == '{"text": "café"}'
+
+    def test_symlink_is_rejected_and_string_used_as_literal_body(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "target.json"
+        target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
+        link = tmp_path / "link.json"
+        link.symlink_to(target)
+        endpoint: dict = {}
+        extra: dict = {"payload_template": str(link)}
+
+        _endpoint_template_from_extra(endpoint, extra)
+
+        assert endpoint["template"]["body"] == str(link)
+
+    def test_missing_path_falls_back_to_literal_body(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nonexistent.json"
+        endpoint: dict = {}
+        extra: dict = {"payload_template": str(missing)}
+
+        _endpoint_template_from_extra(endpoint, extra)
+
+        assert endpoint["template"]["body"] == str(missing)
+
+    def test_directory_path_falls_back_to_literal_body(self, tmp_path: Path) -> None:
+        endpoint: dict = {}
+        extra: dict = {"payload_template": str(tmp_path)}
+
+        _endpoint_template_from_extra(endpoint, extra)
+
+        assert endpoint["template"]["body"] == str(tmp_path)
+
+
+class TestEndpointTemplateFallbackPathSafety:
+    """Fallback path through ``endpoint['extra']`` must read files safely."""
+
+    def test_regular_file_is_read_as_body(self, tmp_path: Path) -> None:
+        template = tmp_path / "tmpl.json"
+        template.write_text('{"hello": "world"}', encoding="utf-8")
+        endpoint: dict = {
+            "type": EndpointType.TEMPLATE,
+            "extra": {"payload_template": str(template)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert endpoint["template"]["body"] == '{"hello": "world"}'
+
+    def test_symlink_is_rejected_and_string_used_as_literal_body(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "target.json"
+        target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
+        link = tmp_path / "link.json"
+        link.symlink_to(target)
+        endpoint: dict = {
+            "type": EndpointType.TEMPLATE,
+            "extra": {"payload_template": str(link)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert endpoint["template"]["body"] == str(link)
+
+    def test_missing_path_falls_back_to_literal_body(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nonexistent.json"
+        endpoint: dict = {
+            "type": EndpointType.TEMPLATE,
+            "extra": {"payload_template": str(missing)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert endpoint["template"]["body"] == str(missing)
+
+    @pytest.mark.parametrize(
+        "ep_type",
+        [
+            pytest.param(EndpointType.CHAT, id="chat"),
+            pytest.param(EndpointType.COMPLETIONS, id="completions"),
+        ],
+    )
+    def test_non_template_endpoints_skip_fallback(
+        self, tmp_path: Path, ep_type: EndpointType
+    ) -> None:
+        template = tmp_path / "tmpl.json"
+        template.write_text("body", encoding="utf-8")
+        endpoint: dict = {
+            "type": ep_type,
+            "extra": {"payload_template": str(template)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert "template" not in endpoint
