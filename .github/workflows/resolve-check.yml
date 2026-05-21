@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Runs `uv sync` against pyproject.toml on every PR-style branch push so
+# partial-upload PyPI releases (e.g. yarl 1.24.0 ships only cp310 wheels)
+# surface as a fast-failing, explicit "Resolve Check" status — instead of
+# being buried inside `make first-time-setup` or only catching the next
+# nightly's env-builder docker build.
+#
+# The actual safety net is the `[tool.uv] required-environments` block in
+# pyproject.toml, which makes uv backtrack past any version that doesn't
+# have a wheel-or-sdist for every platform listed. This workflow just
+# verifies that constraint resolves cleanly for the branch under review.
+#
+# Nightly has its own copy of the same check (see `resolve-check:` in
+# nightly.yml). Duplicated rather than `workflow_call`-shared so each
+# workflow stays self-contained.
+
+name: Resolve Check
+
+on:
+  push:
+    branches:
+      - main
+      - 'pull-request/*'
+      - 'release/*'
+
+jobs:
+  resolve-check:
+    name: Resolve Check (uv sync)
+    # Same default Velonix worker class used by stage-nightly-container
+    # and the nightly resolve-check — amd64 linux, matches what the
+    # env-builder docker stage will see during the actual build.
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # No later step needs authenticated git operations, so don't
+          # leave the GITHUB_TOKEN in .git/config after checkout.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Validate dependency resolution against required-environments
+        # --no-install-project skips installing aiperf itself; only resolves
+        # and installs the dependency graph, which is all we need to
+        # enforce the required-environments check.
+        run: uv sync --active --no-install-project

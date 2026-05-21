@@ -43,6 +43,10 @@ on:
         description: 'Skip GitLab security scan. Emergency use only.'
         type: boolean
         default: false
+      manual_artifacts:
+        description: 'Tag/store this run under the manual-dispatch scheme (+manual.<run_id> wheel-version suffix, nightly-manual/<date>/<run_id>/ Artifactory + S3 paths, nightly-manual-<...>-<run_id> container tag). Uncheck only to deliberately overwrite the scheduled artifact locations from a manual run.'
+        type: boolean
+        default: true
 
 # Allow concurrent nightly runs. Shared destinations (ECR/NGC `aiperf:<container_tag>`,
 # S3 wheel path, Artifactory wheel) are last-writer-wins on same-day/same-commit
@@ -83,6 +87,7 @@ jobs:
       base_version:           ${{ steps.version.outputs.base_version }}
       run_timestamp:          ${{ steps.version.outputs.run_timestamp }}
       resolved_sha:           ${{ steps.version.outputs.resolved_sha }}
+      stage_subpath:          ${{ steps.version.outputs.stage_subpath }}
       release:                ${{ steps.release.outputs.release }}
     steps:
       # Workflow file itself must come from main on dispatch.
@@ -95,7 +100,7 @@ jobs:
       # Schedule → tip of main. Dispatch → user-supplied SHA.
       # fetch-depth: 0 so the next step can run merge-base against origin/main.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || 'main' }}
           fetch-depth: 0
@@ -111,9 +116,14 @@ jobs:
           fi
           echo "Verified ${BUILD_SHA} is on main."
 
+      # Only relevant on re-attempts — first-attempt runs have no prior
+      # artifact to restore and the missing-artifact warning would otherwise
+      # show up on every fresh nightly. continue-on-error: true is still
+      # belt-and-suspenders for the case where a prior artifact expired.
       - name: Restore version artifact from prior attempt
         id: restore
-        uses: actions/download-artifact@v4
+        if: ${{ github.run_attempt > 1 }}
+        uses: actions/download-artifact@v5
         with:
           name: nightly-version
           path: .nightly-version/
@@ -121,13 +131,22 @@ jobs:
 
       - name: Compute or restore version strings
         id: version
+        env:
+          # Forward the dispatch-only input into the shell. For schedule
+          # events the inputs context is empty, so this resolves to '' and
+          # the branch below treats it as falsy.
+          MANUAL_ARTIFACTS: ${{ inputs.manual_artifacts }}
         run: |
           set -euo pipefail
 
-          if [ -f ".nightly-version/version-info.env" ]; then
+          # Restore from a prior attempt's archived snapshot. GH Actions
+          # re-runs always execute the same workflow file as the original
+          # run, so an artifact written by this code is always read back
+          # by this same code — no cross-version compat needed.
+          if [ -f ".nightly-version/version-info.txt" ]; then
             echo "Restoring version strings from prior run attempt."
             # shellcheck source=/dev/null
-            source .nightly-version/version-info.env
+            source .nightly-version/version-info.txt
           else
             # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
             # WHEEL_VERSION are disambiguated by the 7-char short SHA so
@@ -149,14 +168,38 @@ jobs:
             # summary, Slack notification, and forwarded to the GitLab scan. It
             # is NOT a git tag — nothing in this workflow pushes a git tag.
             NIGHTLY_TAG="AIPerf Nightlies"
-            # Example: nightly-20260423-33d7011
-            CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
-            # PEP 440 dev version, date-stamped. Example:
-            # 0.8.0.dev20260423 → aiperf-0.8.0.dev20260423-py3-none-any.whl
-            # The commit SHA is tracked separately in the wheel METADATA
-            # (Project-URL: Repository) and inside the wheel as
-            # `aiperf/_build_info.py` — see the build-container job below.
-            WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+
+            # Scheduled vs manual disambiguation:
+            #   - Scheduled (cron) — always uses bare nightly naming:
+            #       WHEEL_VERSION = <base>.dev<YYYYMMDD>
+            #       STAGE_SUBPATH = nightly/<YYYYMMDD>
+            #       CONTAINER_TAG = <YYYYMMDD>-<sha7>
+            #   - Manual (workflow_dispatch) with manual_artifacts=true (default):
+            #       WHEEL_VERSION = <base>.dev<YYYYMMDD>+manual.<run_id>
+            #         (PEP 440 local-version suffix so each manual build is
+            #          independently addressable; non-local scheduled wheel
+            #          stays the default for `pip install aiperf-nightly`)
+            #       STAGE_SUBPATH = nightly-manual/<YYYYMMDD>/<run_id>
+            #       CONTAINER_TAG = manual-<YYYYMMDD>-<sha7>-<run_id>
+            #   - Manual with manual_artifacts=false — fall back to the bare
+            #     nightly naming so the run deliberately overwrites scheduled
+            #     artifact locations (for emergency re-publishes etc.).
+            # The container tag intentionally omits a leading "nightly-" — the
+            # NGC staging repo is already named "aiperf-nightly", so prefixing
+            # the tag would be redundant. RELEASE_TYPE (forwarded to GitLab)
+            # carries the nightly-vs-ondemand signal instead.
+            # github.run_id is stable across re-attempts of the same run, so
+            # an attempt-2 rerun produces the same identifiers (combined with
+            # the version-info.txt restore above).
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${MANUAL_ARTIFACTS:-true}" = "true" ]; then
+              WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+manual.${GITHUB_RUN_ID}"
+              STAGE_SUBPATH="nightly-manual/${TIMESTAMP}/${GITHUB_RUN_ID}"
+              CONTAINER_TAG="manual-${TIMESTAMP}-${SHORT_SHA}-${GITHUB_RUN_ID}"
+            else
+              WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+              STAGE_SUBPATH="nightly/${TIMESTAMP}"
+              CONTAINER_TAG="${TIMESTAMP}-${SHORT_SHA}"
+            fi
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
             # PEP 491: the dist name "aiperf-nightly" escapes to "aiperf_nightly"
@@ -173,10 +216,12 @@ jobs:
           echo "base_version=${BASE_VERSION}"                     >> "$GITHUB_OUTPUT"
           echo "run_timestamp=${TIMESTAMP:-reused}"               >> "$GITHUB_OUTPUT"
           echo "resolved_sha=${FULL_SHA}"                         >> "$GITHUB_OUTPUT"
+          echo "stage_subpath=${STAGE_SUBPATH}"                   >> "$GITHUB_OUTPUT"
 
           mkdir -p .nightly-version
           # Values are single-quoted because NIGHTLY_TAG contains whitespace
-          # and version-info.env is `source`d on rerun.
+          # and version-info.txt is `source`d on rerun (extension is .txt
+          # but the format is plain shell key='value' so it round-trips).
           {
             echo "NIGHTLY_TAG='${NIGHTLY_TAG}'"
             echo "WHEEL_VERSION='${WHEEL_VERSION}'"
@@ -186,13 +231,21 @@ jobs:
             echo "BASE_VERSION='${BASE_VERSION}'"
             echo "TIMESTAMP='${TIMESTAMP:-reused}'"
             echo "FULL_SHA='${FULL_SHA}'"
-          } > .nightly-version/version-info.env
+            echo "STAGE_SUBPATH='${STAGE_SUBPATH}'"
+          } > .nightly-version/version-info.txt
+
+          # Echo the file contents into the workflow log so the resolved
+          # values are visible on the job page without having to download
+          # the archived artifact.
+          echo "::group::Resolved version info"
+          cat .nightly-version/version-info.txt
+          echo "::endgroup::"
 
       - name: Save version artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nightly-version
-          path: .nightly-version/version-info.env
+          path: .nightly-version/version-info.txt
           overwrite: true
           retention-days: 7
 
@@ -233,12 +286,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -259,12 +312,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -280,12 +333,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -303,6 +356,32 @@ jobs:
       source_ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
     secrets: inherit
 
+  # Fail fast on partial-upload PyPI releases (e.g. yarl 1.24.0 with only
+  # cp310 wheels) before we burn ~10 min in build-container's env-builder
+  # docker stage. The same check happens implicitly inside that stage's
+  # `uv sync`, but surfacing it as a dedicated job here gives an explicit
+  # diagnostic + cuts the failure-to-feedback time down to ~1 min.
+  resolve-check:
+    name: Resolve Check (uv sync)
+    needs: [prepare-nightly]
+    # prod-aiperf-default-v1 is the same default Velonix worker class
+    # used by stage-nightly-container — amd64 Linux, faithful preview
+    # of what env-builder will resolve against later in the pipeline.
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          # No later step needs authenticated git operations, so don't
+          # leave the GITHUB_TOKEN in .git/config after checkout.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Validate dependency resolution against required-environments
+        run: uv sync --active --no-install-project
+
   # ============================================================================
   # PHASE 3: BUILD
   # No environment: declaration — builder runners carry AWS credentials via IAM
@@ -310,16 +389,17 @@ jobs:
   # ============================================================================
 
   # `needs:` orders build after tests so their results appear in the summary,
-  # but the `if:` condition only hard-gates on prepare-nightly + pre-commit.
-  # Unit/integration test failures are visible but non-blocking — the rest of
-  # the pipeline continues to build, stage, and scan.
+  # but the `if:` condition only hard-gates on prepare-nightly + pre-commit +
+  # resolve-check. Unit/integration test failures are visible but non-blocking
+  # — the rest of the pipeline continues to build, stage, and scan.
   build-container:
     name: Build Container (${{ matrix.arch }})
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end]
+    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end, resolve-check]
     if: >-
       ${{ always()
           && needs.prepare-nightly.result == 'success'
-          && needs.pre-commit.result == 'success' }}
+          && needs.pre-commit.result == 'success'
+          && needs.resolve-check.result == 'success' }}
     # 90 min covers cold registry cache on both archs plus license extraction.
     timeout-minutes: 90
     strategy:
@@ -335,12 +415,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Patch version in pyproject.toml
         uses: ./.github/actions/update-pyproject-version
@@ -524,17 +604,12 @@ jobs:
           # Fresh venv — separate from .venv-check-{orig,nightly} above so
           # the install/uninstall state of one cannot bleed into the other.
           uv venv .venv-wheel-tests
-          uv pip install --python .venv-wheel-tests/bin/python "${NIGHTLY}"
-          # Test deps the wheel does not carry (not in Requires-Dist).
-          # looptime is required by the auto-fixture in tests/conftest.py that
-          # makes asyncio.sleep run instantly. trustme is used by transport
-          # tests for TLS certificate fixtures. httpx is pulled in by
-          # tests/unit/api and tests/unit/server, which use Starlette/FastAPI
-          # TestClient and httpx.AsyncClient directly (collection-time import).
-          uv pip install --python .venv-wheel-tests/bin/python \
-            'pytest>=7.0.0' pytest-asyncio 'pytest-xdist>=3.8.0' \
-            'hypothesis>=6.0.0' 'looptime>=0.5' 'trustme>=1.0.0' \
-            'httpx>=0.27.0'
+          # Install the wheel together with its [test] extra. The extra
+          # bundles every test-runtime dep (pytest, pytest-asyncio,
+          # pytest-xdist, pytest-cov, hypothesis, looptime, trustme, httpx,
+          # jsonschema), so test deps stay in lockstep with pyproject.toml
+          # instead of drifting from a hand-curated list here.
+          uv pip install --python .venv-wheel-tests/bin/python "${NIGHTLY}[test]"
           # tests/unit/conftest.py loads tests.harness, which in turn imports
           # the `aiperf_mock_server` package. The package is dev-only and
           # not in the wheel; install it editable from the in-tree source.
@@ -716,7 +791,7 @@ jobs:
 
       - name: Upload license artifacts
         if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: license-artifacts-${{ needs.prepare-nightly.outputs.wheel_version }}
           path: |
@@ -733,7 +808,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
@@ -764,6 +839,8 @@ jobs:
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
+    outputs:
+      container_image: ${{ steps.copy.outputs.container_image }}
     env:
       CRANE_VERSION: v0.20.2
       CRANE_SHA256: ''
@@ -799,6 +876,7 @@ jobs:
             --username "${NGC_USERNAME}" --password-stdin
 
       - name: Copy multi-arch images ECR → NGC staging
+        id: copy
         env:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
@@ -808,18 +886,23 @@ jobs:
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
+          # NGC destination repo is `aiperf-nightly` to mirror the PyPI
+          # naming (`aiperf` canonical dist / `aiperf-nightly` nightly dist).
+          # ECR source side stays `aiperf` — only the staging target renames.
+          CONTAINER_IMAGE="${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
           for ARCH in amd64 arm64; do
             crane copy \
               "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-${ARCH}"
+              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-${ARCH}"
           done
 
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}" 2>/dev/null || true
+          crane delete "${CONTAINER_IMAGE}" 2>/dev/null || true
           crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-arm64" \
+            --tag      "${CONTAINER_IMAGE}"
+          echo "Container staged: ${CONTAINER_IMAGE}"
+          echo "container_image=${CONTAINER_IMAGE}" >> "${GITHUB_OUTPUT}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
@@ -839,10 +922,27 @@ jobs:
           WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
           WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
+          TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
+          STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
+          RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "${TMPDIR}"' EXIT
+
+          # Provenance properties attached to every staged wheel as
+          # Artifactory matrix parameters (key=value pairs after the
+          # path, separated by ';'). Two properties:
+          #   - github.run.url: link back to the workflow run that
+          #     produced this wheel. Viewable in Artifactory UI under
+          #     the file's Properties tab; surfaces in xray/audit too.
+          #   - git.commit.sha: full commit SHA the wheel was built from.
+          # github.run.url contains ':' and '/' which Artifactory
+          # accepts in matrix-parameter values, but URL-encoding the
+          # value is the safe form (handled below via python3 -c).
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          RUN_URL_ENC=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${RUN_URL}")
+          PROPS=";github.run.url=${RUN_URL_ENC};git.commit.sha=${RESOLVED_SHA}"
 
           # Single-object copies (no --recursive) so we only need s3:GetObject.
           # Stage both the canonical `aiperf` wheel and the renamed
@@ -857,19 +957,31 @@ jobs:
             # (/api/pypi/) does not accept sub-path deploys — it expects the
             # repo root URL. ARTIFACTORY_URL must be the generic repo base:
             # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
-            TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${FN}"
+            # STAGE_SUBPATH is set in prepare-nightly: scheduled nightlies
+            # land under "nightly/<YYYYMMDD>/", manual dispatches under
+            # "nightly-manual/<YYYYMMDD>/<run_id>/" so they don't collide.
+            TARGET_URL="${ARTIFACTORY_URL%/}/${STAGE_SUBPATH}/${FN}"
             BODY_FILE=$(mktemp)
             HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
               -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
               -T "${TMPDIR}/${FN}" \
-              "${TARGET_URL}")
+              "${TARGET_URL}${PROPS}")
             if [ "${HTTP_CODE}" != "201" ]; then
               echo "::error::Artifactory deploy failed for ${FN}: HTTP ${HTTP_CODE} at ${TARGET_URL}"
               cat "${BODY_FILE}" || true
               exit 1
             fi
             echo "Wheel staged to Artifactory: ${TARGET_URL}"
+            echo "  properties: github.run.url=${RUN_URL}, git.commit.sha=${RESOLVED_SHA}"
           done
+
+          # Note: explicit POST /api/pypi/<repo>/reindex was tried here but
+          # returns HTTP 403 with the current ARTIFACTORY_USER (which has
+          # Deploy permission but not Manage Repository). Until the IAM is
+          # widened we rely on whatever auto-reindex mechanism the repo has
+          # configured, or out-of-band recalculation via the Artifactory UI.
+          # `pip install aiperf-nightly==<dev-version>` against the simple
+          # index is the canonical check.
 
   # ============================================================================
   # PHASE 5: TRIGGER GITLAB SECURITY SCAN
@@ -894,7 +1006,10 @@ jobs:
           WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
           NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
           CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
+          CONTAINER_IMAGE:        ${{ needs.stage-nightly-container.outputs.container_image }}
           RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
+          STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -903,6 +1018,14 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
             RELEASE_TYPE="nightly"
           fi
+
+          # Repo-relative paths to the staged wheels. STAGE_SUBPATH is
+          # "nightly/<YYYYMMDD>" for scheduled runs and
+          # "nightly-manual/<YYYYMMDD>/<run_id>" for manual dispatches;
+          # forwarding the explicit paths means GitLab consumers don't need
+          # to know the layout convention or branch on event type.
+          ARTIFACTORY_WHEEL_PATH="${STAGE_SUBPATH}/${WHEEL_FILENAME}"
+          ARTIFACTORY_NIGHTLY_WHEEL_PATH="${STAGE_SUBPATH}/${NIGHTLY_WHEEL_FILENAME}"
 
           TOKEN_FILE=$(mktemp)
           echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
@@ -921,10 +1044,14 @@ jobs:
             --form "variables[WHEEL_FILENAME]=${WHEEL_FILENAME}" \
             --form "variables[NIGHTLY_WHEEL_FILENAME]=${NIGHTLY_WHEEL_FILENAME}" \
             --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
+            --form "variables[CONTAINER_IMAGE]=${CONTAINER_IMAGE}" \
             --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
             --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
+            --form "variables[ARTIFACTORY_WHEEL_PATH]=${ARTIFACTORY_WHEEL_PATH}" \
+            --form "variables[ARTIFACTORY_NIGHTLY_WHEEL_PATH]=${ARTIFACTORY_NIGHTLY_WHEEL_PATH}" \
+            --form "variables[TIMESTAMP]=${TIMESTAMP}" \
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
@@ -939,6 +1066,50 @@ jobs:
           fi
 
           echo "GitLab security scan triggered: pipeline ID ${PIPELINE_ID}"
+
+  # ============================================================================
+  # PHASE 5b: WEIGHT-DRIFT SUGGESTION (informational, never blocks)
+  # tools/suggest_test_docs_weights.py walks the test-docs matrix logs and
+  # writes a markdown table of `weight=` recommendations to the job summary.
+  # ============================================================================
+
+  suggest-shard-weights:
+    name: Suggest Shard Weights (drift report)
+    needs: [prepare-nightly, test-docs-end-to-end]
+    if: ${{ always() && needs.test-docs-end-to-end.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    # Informational only: a failure here must never block the rest of the pipeline.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Generate weight-suggestion report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Write to a file first so we can route the same content to the
+          # GHA log (visible per-job), the run-level step summary (visible
+          # above the job list on the run page), and an uploaded artifact
+          # (downloadable later via `gh run download`).
+          python3 tools/suggest_test_docs_weights.py \
+            --run-id "${GITHUB_RUN_ID}" \
+            --output suggest-weights.md
+          echo "::group::Weight Suggestion Report"
+          cat suggest-weights.md
+          echo "::endgroup::"
+          cat suggest-weights.md >> "${GITHUB_STEP_SUMMARY}"
+      - name: Upload suggestion report as artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: suggest-shard-weights
+          path: suggest-weights.md
+          retention-days: 30
 
   # ============================================================================
   # PHASE 6: SUMMARY

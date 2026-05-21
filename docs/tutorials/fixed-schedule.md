@@ -121,6 +121,20 @@ Execute only a portion of the schedule using start and end offsets:
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
+# Re-create the schedule file so this example runs standalone.
+cat > precise_schedule.jsonl << 'EOF'
+{"timestamp": 0, "input_length": 100, "hash_ids": [3001]}
+{"timestamp": 500, "input_length": 200, "hash_ids": [3002]}
+{"timestamp": 750, "input_length": 150, "hash_ids": [3003]}
+{"timestamp": 1000, "input_length": 300, "hash_ids": [3004]}
+{"timestamp": 1250, "input_length": 180, "hash_ids": [3005]}
+{"timestamp": 2000, "input_length": 400, "hash_ids": [3006]}
+{"timestamp": 2500, "input_length": 250, "hash_ids": [3007]}
+{"timestamp": 3000, "input_length": 350, "hash_ids": [3008]}
+{"timestamp": 4000, "input_length": 500, "hash_ids": [3009]}
+{"timestamp": 5000, "input_length": 600, "hash_ids": [3010, 3050]}
+EOF
+
 # Execute schedule from 2s to 6s window
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
