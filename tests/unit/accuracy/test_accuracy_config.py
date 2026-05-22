@@ -23,7 +23,6 @@ from aiperf.config.accuracy import AccuracyConfig
 # This branch (AIP-874) implements ``aime``, ``math``, and ``code_execution``,
 # so those names are absent from the stub lists.
 STUB_BENCHMARKS = (
-    "hellaswag",
     "bigbench",
     "aime24",
     "aime25",
@@ -31,7 +30,7 @@ STUB_BENCHMARKS = (
     "gpqa_diamond",
     "lcb_codegeneration",
 )
-STUB_GRADERS = ("exact_match",)
+STUB_GRADERS: tuple[str, ...] = ()
 
 
 class TestAcceptsImplemented:
@@ -88,8 +87,8 @@ class TestRejectsStubBenchmark:
     ) -> None:
         """Case-insensitive enum lookup must not bypass the validator."""
         with pytest.raises(ValidationError) as exc:
-            AccuracyConfig(benchmark="HELLASWAG")
-        assert "hellaswag" in str(exc.value)
+            AccuracyConfig(benchmark="BIGBENCH")
+        assert "bigbench" in str(exc.value)
 
 
 class TestRejectsStubGrader:
