@@ -390,6 +390,45 @@ class _KeywordOnlyChatTemplateTokenizer(_FakeTokenizer):
         return [501, len(conversation), 502]
 
 
+class _WrapperWithSpecialTokenAddingBackend:
+    """Mimics AIPerf's `Tokenizer` wrapper: the wrapper's own `__call__`
+    suppresses backend special tokens (returning 3 ids), but the unwrapped
+    `_tokenizer` backend adds two BOS/EOS sentinels (returning 5 ids).
+
+    The recorder must prefer the wrapper's `__call__` so ISL counts stay
+    consistent with `add_special_tokens=False` semantics.
+    """
+
+    class _Backend:
+        def __init__(self, call_log: list[str]) -> None:
+            self._log = call_log
+
+        def __call__(self, text: str) -> dict[str, list[int]]:
+            self._log.append(text)
+            return {"input_ids": [101, 999, 999, 999, 102]}
+
+        def encode(self, text: str, **_: object) -> list[int]:
+            return [101, 999, 999, 999, 102]
+
+    def __init__(self) -> None:
+        self.wrapper_calls: list[str] = []
+        self.backend_calls: list[str] = []
+        self._tokenizer = self._Backend(self.backend_calls)
+
+    def __len__(self) -> int:
+        return 32000
+
+    def __call__(self, text: str) -> dict[str, list[int]]:
+        self.wrapper_calls.append(text)
+        return {"input_ids": [999, 999, 999]}
+
+    def encode(self, text: str, **_: object) -> list[int]:
+        return [999, 999, 999]
+
+    def decode(self, ids: list[int]) -> str:
+        return " ".join(str(i) for i in ids)
+
+
 def _make_recorder(tmp_path, tokenizer: _FakeTokenizer) -> RequestRecorder:
     path = tmp_path / "rec.jsonl"
     r = RequestRecorder(
@@ -596,6 +635,39 @@ class TestRecorderTokenIdTracking:
         assert "alpha\nbeta" not in tok.called_texts
         assert r._vocab_counts["/v1/completions"] == Counter({1: 1, 2: 1, 3: 1})
         row = _read_jsonl(r.path)[0]
+        assert row["isl"] == 3
+        assert row["tokenization_mode"] == "tokenizer_call"
+        r._file.close()
+
+    def test_record_request_completion_prefers_wrapper_call_over_backend(
+        self, tmp_path
+    ) -> None:
+        """Regression: `_tokenizer_call_ids` must call the wrapper's `__call__`
+        (which configures `add_special_tokens=False`) rather than unwrapping to
+        the raw backend (which adds them). Otherwise HF completion / TGI /
+        embedding ISL counts include spurious BOS/EOS tokens.
+        """
+        tok = _WrapperWithSpecialTokenAddingBackend()
+        r = _make_recorder(tmp_path, tok)
+        req = CompletionRequest(model="m", prompt="alpha", max_tokens=4)
+
+        r.record_request(
+            ts=0.0,
+            endpoint="/v1/completions",
+            request_id="x",
+            model="m",
+            request=req,
+            stream=False,
+            osl_fingerprint={"max_tokens": 4},
+        )
+        r._file.flush()
+
+        # Wrapper must have handled the call; the backend must NOT have been
+        # bypassed by an unwrap step.
+        assert tok.wrapper_calls == ["alpha"]
+        assert tok.backend_calls == []
+        row = _read_jsonl(r.path)[0]
+        # 3 ids from the wrapper's __call__, not 5 from the backend.
         assert row["isl"] == 3
         assert row["tokenization_mode"] == "tokenizer_call"
         r._file.close()

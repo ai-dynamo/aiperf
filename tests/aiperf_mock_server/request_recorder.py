@@ -405,10 +405,14 @@ def _encode_texts_without_special_tokens(
 
 
 def _tokenizer_call_ids(tokenizer: Any, text: str) -> list[int]:
+    # Prefer the wrapper's `__call__` when it has one — AIPerf's `Tokenizer`
+    # wrapper sets `add_special_tokens=False` there; unwrapping to the
+    # backend would silently re-introduce BOS/EOS tokens.
+    if callable(tokenizer):
+        return _extract_input_ids(tokenizer(text))
     inner = _unwrap_tokenizer(tokenizer)
     if callable(inner):
-        result = inner(text)
-        return _extract_input_ids(result)
+        return _extract_input_ids(inner(text))
     return _encode_without_special_tokens(tokenizer, text)
 
 
