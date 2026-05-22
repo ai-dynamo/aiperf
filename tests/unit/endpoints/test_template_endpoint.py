@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.common.exceptions import InvalidStateError
@@ -467,7 +469,9 @@ class TestTemplateEndpointPathSafety:
     directly and must apply the same path-injection hardening.
     """
 
-    def test_symlinked_payload_template_treated_as_literal(self, tmp_path):
+    def test_symlinked_payload_template_treated_as_literal(
+        self, tmp_path: Path
+    ) -> None:
         target = tmp_path / "target.json"
         target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
         link = tmp_path / "link.json"
@@ -483,3 +487,17 @@ class TestTemplateEndpointPathSafety:
         # source. Rendering it produces the path string unchanged (no Jinja
         # vars to substitute), proving the symlink target was never read.
         assert endpoint._template.render() == str(link)
+
+    def test_regular_file_payload_template_is_loaded(self, tmp_path: Path) -> None:
+        template_file = tmp_path / "tmpl.json"
+        template_file.write_text('{"text": {{ texts|tojson }}}', encoding="utf-8")
+        model_endpoint = create_model_endpoint(
+            EndpointType.TEMPLATE,
+            extra=[("payload_template", str(template_file))],
+        )
+
+        endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
+
+        # File path resolves cleanly through safe_read_template_path; the
+        # file CONTENTS (not the path string) became the Jinja source.
+        assert endpoint._template.render(texts=["a", "b"]) == '{"text": ["a", "b"]}'

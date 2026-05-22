@@ -51,5 +51,5 @@ def safe_read_template_path(ts: str) -> str | None:
         return None
     try:
         return resolved.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return None

@@ -373,7 +373,7 @@ Sanitizer chain (in the order SAST engines walk it):
 3. `path.resolve(strict=True)` — the canonical sanitizer that
    Snyk/CodeQL/Semgrep recognize; raises on missing paths.
 4. Require `resolved.is_file()` — rejects directories, devices, fifos.
-5. `read_text(encoding="utf-8")` — explicit decode; no platform default.
+5. `read_text(encoding="utf-8")` — explicit decode; no platform default. Catches `UnicodeError` alongside `OSError` so non-UTF-8 files fall back to the literal-string branch rather than crashing config conversion.
 
 Returning `None` on any failure preserves the existing "treat as a literal
 value" fallback that both call sites (`_converter_endpoint` and

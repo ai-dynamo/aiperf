@@ -237,3 +237,20 @@ class TestSafeReadTemplatePathRuntimeError:
     def test_unknown_user_prefix_returns_none(self) -> None:
         # `~nonexistentuser123abc` cannot resolve; expanduser raises RuntimeError.
         assert safe_read_template_path("~nonexistentuser123abc/template.j2") is None
+
+
+class TestSafeReadTemplatePathDecodeFailures:
+    """A file passing every sanitizer check but failing UTF-8 decode must
+    collapse to ``None`` (the caller treats the original path string as a
+    literal template body) instead of crashing with ``UnicodeDecodeError``.
+
+    ``UnicodeDecodeError`` is a subclass of ``ValueError``, not ``OSError``,
+    so the read-step catch must include ``UnicodeError`` alongside ``OSError``.
+    """
+
+    def test_non_utf8_file_returns_none(self, tmp_path: Path) -> None:
+        bad = tmp_path / "latin1.bin"
+        # Bytes 0xff/0xfe are valid Latin-1 but invalid as a UTF-8 start byte.
+        bad.write_bytes(b"\xff\xfe binary template body")
+
+        assert safe_read_template_path(str(bad)) is None
