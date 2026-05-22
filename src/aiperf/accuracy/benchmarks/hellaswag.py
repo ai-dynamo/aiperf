@@ -73,6 +73,16 @@ except ImportError:  # pragma: no cover - exercised only without optional dep
     HellaSwagTemplate = None  # type: ignore[assignment]
 
 
+# Lowercased-value → enum lookup so the docstring's promise of
+# case-insensitive activity_label matching is actually honoured — the
+# previous per-call ``name in {t.value for t in HellaSwagTask}`` check
+# was case-sensitive and rejected ``"applying sunscreen"``. Built once
+# at module load since ``HellaSwagTask`` is immutable.
+_LOWER_VALUE_TO_TASK: dict[str, Any] = (
+    {t.value.lower(): t for t in HellaSwagTask} if _HAS_DEEPEVAL else {}
+)
+
+
 _MISSING_DEEPEVAL_HINT = (
     "deepeval is not installed; HellaSwag's prompt template (the "
     "trt-llm reference) cannot be rendered. Install with: "
@@ -157,15 +167,10 @@ def _resolve_tasks(tasks: list[str] | None) -> list[Any]:
             "by itself (or omit --accuracy-tasks) to select every task, "
             f"or list specific activity labels. Got: {tasks!r}"
         )
-    # Build a lowercased-value lookup so the docstring's promise of
-    # case-insensitive activity_label matching is actually honoured —
-    # the previous ``name in {t.value for t in HellaSwagTask}`` check
-    # was case-sensitive and rejected ``"applying sunscreen"``.
-    lower_value_map: dict[str, Any] = {t.value.lower(): t for t in HellaSwagTask}
     resolved: list[Any] = []
     unknown: list[str] = []
     for name in tasks:
-        member = lower_value_map.get(name.lower())
+        member = _LOWER_VALUE_TO_TASK.get(name.lower())
         if member is not None:
             resolved.append(member)
             continue
