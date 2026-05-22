@@ -267,8 +267,11 @@ class TrajectorySource(ConversationSource):
             if n == 2:
                 k_i = 0
             else:
-                k_max = min(int(0.7 * n), n - 2)
-                k_i = int(rng.integers(low=0, high=k_max + 1))
+                k_min = min(int(self._start_min_ratio * n), n - 2)
+                k_max = min(int(self._start_max_ratio * n), n - 2)
+                if k_min > k_max:
+                    k_min = k_max
+                k_i = int(rng.integers(low=k_min, high=k_max + 1))
             extras.append(
                 Trajectory(conversation_id=source.conversation_id, start_turn_index=k_i)
             )

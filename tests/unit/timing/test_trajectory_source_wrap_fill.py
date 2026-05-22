@@ -33,6 +33,8 @@ def _make_source_for_helper(num_traces: int, turns_per_trace: int) -> Trajectory
     """
     src = TrajectorySource.__new__(TrajectorySource)
     src._random_seed = 42
+    src._start_min_ratio = 0.0
+    src._start_max_ratio = 0.7
     src._metadata_lookup = _make_metadata_lookup(num_traces, turns_per_trace)
     return src
 
@@ -89,6 +91,17 @@ def test_wrap_fill_pool_of_two_turns_uses_k_zero():
     distinct = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     extras = src._wrap_fill_lanes(distinct, extra_count=3)
     assert all(e.start_turn_index == 0 for e in extras)
+
+
+def test_wrap_fill_respects_configured_start_range():
+    src = _make_source_for_helper(num_traces=1, turns_per_trace=20)
+    src._start_min_ratio = 0.9
+    src._start_max_ratio = 1.0
+    distinct = [Trajectory(conversation_id="trace_0", start_turn_index=18)]
+
+    extras = src._wrap_fill_lanes(distinct, extra_count=8)
+
+    assert {e.start_turn_index for e in extras} == {18}
 
 
 def _make_metadata(num_traces: int, turns_per_trace: int) -> MagicMock:

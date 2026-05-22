@@ -242,6 +242,34 @@ class TestPhaseRunnerLifecycle:
             cb.register_phase.assert_called_once()
             assert cb.register_phase.call_args.kwargs["phase"] == CreditPhase.PROFILING
 
+    async def test_warmup_does_not_dispatch_pre_session_branches(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        branch_orchestrator = MagicMock()
+        branch_orchestrator.dispatch_pre_session_branches = AsyncMock()
+        branch_orchestrator.has_pending_branch_work.return_value = False
+        branch_orchestrator.cleanup = MagicMock()
+        r._branch_orchestrator = branch_orchestrator
+
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=False)
+
+        branch_orchestrator.dispatch_pre_session_branches.assert_not_awaited()
+
     async def test_run_configures_concurrency_manager(
         self,
         conv_src: MagicMock,
@@ -471,6 +499,37 @@ class TestRamperCreation:
 
 
 class TestPhaseRunnerCancellation:
+    async def test_cancel_after_sending_complete_publishes_phase_complete(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        r._progress.all_credits_sent_event.set()
+
+        async def cancel_after_sending_complete(stats: CreditPhaseStats) -> None:
+            r.cancel()
+
+        pub.publish_phase_sending_complete.side_effect = cancel_after_sending_complete
+
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            stats = await r.run(is_final_phase=True)
+
+        assert stats.was_cancelled is True
+        assert stats.grace_period_timeout_triggered is False
+        pub.publish_phase_complete.assert_awaited_once()
+        complete_stats = pub.publish_phase_complete.await_args.args[0]
+        assert complete_stats.was_cancelled is True
+        assert complete_stats.grace_period_timeout_triggered is False
+        assert "branch_stats" in pub.publish_phase_complete.await_args.kwargs
+
     async def test_cancel_sets_flag(self, runner: PhaseRunner) -> None:
         assert runner._was_cancelled is False
         runner.cancel()
