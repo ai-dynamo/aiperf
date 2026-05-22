@@ -35,10 +35,11 @@ Common optional columns:
 - All timestamps are normalized to `ms since first event in file`.
 - Rows inside each session are sorted by normalized timestamp before replay.
 - `prompt` is replayed as the literal completion prompt.
-- `output_tokens` becomes both `max_tokens` and `min_tokens`.
+- `output_tokens` becomes both `max_tokens` and `min_tokens`. If `max_osl` caps the row, both values use the capped output length.
 - `total_hashes` is forwarded as per-row request body metadata under `hash_ids`.
 - `block_size` is forwarded per row when present.
 - `request_canceled` is retained in trace metadata but is not filtered out.
+- Per-row request metadata is forwarded through `Turn.extra_body` and merged after endpoint-level `extra` values, so replay metadata wins when keys collide.
 
 `output_text` is preserved in the trace model for debugging and offline validation, but AIPerf still measures a fresh model response during the benchmark.
 

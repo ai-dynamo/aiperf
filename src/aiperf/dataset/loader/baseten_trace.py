@@ -1,36 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Baseten.co, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# trace reader that parses the following dataset format:
-# [
-#     {
-#         # relative timestamp since start of experiment in milliseconds
-#         "timestamp_start_unix_ms": 100,
-#         # a prompt that replaces the original tokenized text
-#         "prompt": "this is turn 1",
-#         # targeted response to preserve multi-turn gap-free prefills
-#         "output_text": ", response to turn 1",
-#         # metadata used to construct prompt and output_text. spans across input and output.
-#         "total_hashes": [1, 2],
-#         # recorded input and output tokens for tokenizer
-#         "input_tokens": 10,
-#         "output_tokens": 12,
-#         # session ids, poor man session id is e.g. total_hashes[200] etc
-#         "poor_man_session_id": 7,
-#         "provided_session_id": 1,
-#         # speculation ratio, per decode iteration average tokens.
-#         "speculation_ratio": 1.5,
-#     },
-#     {
-#         "timestamp_start_unix_ms": 200,
-#         "prompt": "this is turn 1, response to turn 1, and now turn 2 with all context included.",
-#         "output_text": ", and response to turn 2",
-#         "total_hashes": [1, 2, 3],
-#         "input_tokens": 22,
-#         "output_tokens": 13,
-#         "poor_man_session_id": 7,
-#     },
-# ]
+"""Baseten Parquet trace replay loader."""
 
 from __future__ import annotations
 
@@ -43,7 +14,10 @@ import pyarrow.parquet as pq
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode
-from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.base_trace_loader import (
+    BaseTraceDatasetLoader,
+    _has_meaningful_synthesis,
+)
 from aiperf.dataset.loader.models import BasetenTrace
 
 _METADATA_COLUMNS_TIME = "timestamp_start_unix_ms"
@@ -70,6 +44,22 @@ def _score_session_groups(
     counts = Counter(session_id for session_id in session_ids if session_id is not None)
     repeated_group_sizes = [count for count in counts.values() if count > 1]
     return (sum(repeated_group_sizes), len(repeated_group_sizes))
+
+
+def _choose_repeated_session_key(
+    provided_session_ids: list[str | int | None],
+    poor_man_session_ids: list[int | None],
+) -> str | None:
+    provided_score = _score_session_groups(provided_session_ids)
+    poor_score = _score_session_groups(poor_man_session_ids)
+
+    if provided_score > poor_score and provided_score[0] > 0:
+        return _METADATA_COLUMNS_SESSION
+    if poor_score > provided_score and poor_score[0] > 0:
+        return _METADATA_COLUMNS_POOR_MAN_SESSION
+    if provided_score == poor_score and provided_score[0] > 0:
+        return _METADATA_COLUMNS_SESSION
+    return None
 
 
 class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
@@ -109,6 +99,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         trace.output_length = int(trace.output_tokens)
         trace.text_input = trace.prompt
         trace.hash_ids = list(trace.total_hashes or [])
+
+    def _set_request_body(self, trace: BasetenTrace) -> None:
+        if trace.hash_ids is None:
+            trace.hash_ids = list(trace.total_hashes or [])
         trace.request_body = {"min_tokens": trace.output_length}
         if trace.hash_ids:
             trace.request_body["hash_ids"] = trace.hash_ids
@@ -127,7 +121,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             return {}
 
         session_key = self._choose_session_key(items)
-        self.info(f"Using Baseten trace session key: {session_key}")
+        if session_key is None:
+            self.info("No repeated Baseten trace session key found; generating session IDs.")
+        else:
+            self.info(f"Using Baseten trace session key: {session_key}")
 
         groups: dict[str, list[BasetenTrace]] = defaultdict(list)
         for trace in items:
@@ -135,15 +132,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 session_key == _METADATA_COLUMNS_SESSION
                 and trace.provided_session_id is not None
             ):
-                session_id = trace.provided_session_id
+                session_id = str(trace.provided_session_id)
             elif (
                 session_key == _METADATA_COLUMNS_POOR_MAN_SESSION
                 and trace.poor_man_session_id is not None
             ):
-                session_id = str(trace.poor_man_session_id)
-            elif trace.provided_session_id is not None:
-                session_id = trace.provided_session_id
-            elif trace.poor_man_session_id is not None:
                 session_id = str(trace.poor_man_session_id)
             else:
                 session_id = self.session_id_generator.next()
@@ -180,20 +173,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _choose_session_key_from_metadata_rows(
         self, rows: list[dict[str, Any]]
     ) -> str | None:
-        provided_score = _score_session_groups(
-            [row.get(_METADATA_COLUMNS_SESSION) for row in rows]
+        return _choose_repeated_session_key(
+            [row.get(_METADATA_COLUMNS_SESSION) for row in rows],
+            [row.get(_METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows],
         )
-        poor_score = _score_session_groups(
-            [row.get(_METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows]
-        )
-
-        if provided_score > poor_score and provided_score[0] > 0:
-            return _METADATA_COLUMNS_SESSION
-        if poor_score > provided_score and poor_score[0] > 0:
-            return _METADATA_COLUMNS_POOR_MAN_SESSION
-        if provided_score == poor_score and provided_score[0] > 0:
-            return _METADATA_COLUMNS_SESSION
-        return None
 
     def _sample_session_ids(
         self,
@@ -296,6 +279,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             if not self._filter_and_cap_trace(trace):
                 continue
 
+            self._set_request_body(trace)
             items.append(trace)
 
         self._log_filtering_summary()
@@ -306,27 +290,17 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 f"across {len(data):,} sessions from {self.filename}"
             )
         )
+
+        if _has_meaningful_synthesis(self._synthesis):
+            data = self._apply_synthesis(data)
+
         return data
 
-    def _choose_session_key(self, items: list[BasetenTrace]) -> str:
-        provided_score = _score_session_groups(
-            [trace.provided_session_id for trace in items]
+    def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
+        return _choose_repeated_session_key(
+            [trace.provided_session_id for trace in items],
+            [trace.poor_man_session_id for trace in items],
         )
-        poor_score = _score_session_groups(
-            [trace.poor_man_session_id for trace in items]
-        )
-
-        if provided_score > poor_score and provided_score[0] > 0:
-            return _METADATA_COLUMNS_SESSION
-        if poor_score > provided_score and poor_score[0] > 0:
-            return _METADATA_COLUMNS_POOR_MAN_SESSION
-        if provided_score == poor_score and provided_score[0] > 0:
-            return _METADATA_COLUMNS_SESSION
-        if any(trace.provided_session_id is not None for trace in items):
-            return _METADATA_COLUMNS_SESSION
-        if any(trace.poor_man_session_id is not None for trace in items):
-            return _METADATA_COLUMNS_POOR_MAN_SESSION
-        return "generated"
 
     def _synthesis_exclude_fields(self) -> frozenset[str]:
         return frozenset(
@@ -360,5 +334,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             original = originals[i] if i < len(originals) else originals[-1]
             merged = original.model_dump()
             merged.update(synth_dict)
-            result.append(BasetenTrace.model_validate(merged))
+            trace = BasetenTrace.model_validate(merged)
+            self._set_request_body(trace)
+            result.append(trace)
         return result

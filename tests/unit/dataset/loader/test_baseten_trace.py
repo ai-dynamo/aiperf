@@ -228,7 +228,8 @@ class TestBasetenTraceDatasetLoader:
 
         dataset = loader.load_dataset()
 
-        assert list(dataset.keys()) == ["999", "1"]
+        ordered_prompts = [traces[0].text_input for traces in dataset.values()]
+        assert ordered_prompts == ["earlier session", "later session"]
 
     def test_trace_session_sample_ratio_samples_whole_sessions(self, tmp_path: Path):
         path = _write_parquet(
@@ -307,6 +308,10 @@ class TestBasetenTraceDatasetLoader:
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2
+        assert sorted(trace.text_input for traces in dataset.values() for trace in traces) == [
+            "row-1",
+            "row-2",
+        ]
 
     def test_trace_session_sampling_falls_back_to_poor_man_session_id(
         self, tmp_path: Path
@@ -420,6 +425,31 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    def test_request_body_uses_capped_output_length(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "cap me",
+                    "input_tokens": 5,
+                    "output_tokens": 10,
+                    "poor_man_session_id": 1,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_max_osl=3),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        trace = next(iter(next(iter(dataset.values()))))
+
+        assert trace.output_length == 3
+        assert trace.request_body == {"min_tokens": 3}
+
 
 class TestBasetenTraceModel:
     def test_model_maps_alias_fields(self):
@@ -433,6 +463,23 @@ class TestBasetenTraceModel:
         )
 
         assert trace.dataset_version == "0.0.11"
+
+    def test_model_accepts_null_hashes_and_numeric_provided_session_id(self):
+        trace = BasetenTrace(
+            timestamp_start_unix_ms=123,
+            prompt="hello",
+            input_tokens=10,
+            output_tokens=20,
+            total_hashes=None,
+            provided_session_id=42,
+            request_canceled=1,
+            org_id=7,
+        )
+
+        assert trace.total_hashes == []
+        assert trace.provided_session_id == 42
+        assert trace.request_canceled == 1
+        assert trace.org_id == 7
 
 
 class TestSynthesisHooks:
@@ -482,6 +529,11 @@ class TestSynthesisHooks:
         assert result[0].timestamp == 5
         assert result[0].input_length == 50
         assert result[0].output_length == 60
+        assert result[0].request_body == {
+            "min_tokens": 60,
+            "hash_ids": [1, 2],
+            "block_size": 64,
+        }
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
