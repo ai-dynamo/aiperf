@@ -187,6 +187,8 @@ navigation:
   contents:
   - page: Getting Started on Kubernetes
     path: kubernetes/getting-started.md
+  - page: Deploy from Source Checkout
+    path: kubernetes/source-checkout-deploy.md
   - page: End-to-End Workflow
     path: kubernetes/workflow.md
   - page: Config Init and Manifest Generation

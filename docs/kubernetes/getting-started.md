@@ -638,6 +638,7 @@ aiperf kube generate --no-operator \
 
 ## Next Steps
 
+- [Deploy from a Source Checkout](source-checkout-deploy.md) -- Build and push AIPerf, install the operator with Helm, and run on a real cluster
 - [Kubernetes Configuration Reference](configuration.md) -- All CRD fields, deployment options, and config patterns
 - [Monitoring and Troubleshooting](monitoring.md) -- Watch, debug, and diagnose benchmark issues
 - [Production Deployments](production.md) -- CI/CD, Kueue scheduling, secrets, and GitOps workflows

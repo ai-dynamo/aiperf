@@ -42,6 +42,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 ## Kubernetes
 
 - [docs/kubernetes/getting-started.md](docs/kubernetes/getting-started.md): Helm install, first `AIPerfJob`.
+- [docs/kubernetes/source-checkout-deploy.md](docs/kubernetes/source-checkout-deploy.md): Real-cluster source checkout deployment — build/push AIPerf image to NGC or GHCR, Helm install/upgrade operator, benchmark real endpoints, optional Dynamo/vLLM server path.
 - [docs/kubernetes/workflow.md](docs/kubernetes/workflow.md): End-to-end narrative walkthrough — `init` → `validate` → `preflight` → `profile` → `attach`/`watch` → `results` → cleanup, with the "last benchmark" state file.
 - [docs/kubernetes/init-and-generate.md](docs/kubernetes/init-and-generate.md): `aiperf kube init` scaffold and `aiperf kube generate` for rendering CR/JobSet manifests without deploying (GitOps workflow).
 - [docs/kubernetes/configuration.md](docs/kubernetes/configuration.md): CR schema, operator tunables, composite CLI flags, `resourceMode` QoS modes, `AIPERF_K8S_*` env var reference.

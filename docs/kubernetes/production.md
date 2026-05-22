@@ -460,6 +460,7 @@ Workers will still fail fast if the endpoint never comes up -- this only suppres
 ## Related Documentation
 
 - [Getting Started](getting-started.md) -- First benchmark walkthrough
+- [Deploy from a Source Checkout](source-checkout-deploy.md) -- Build and push AIPerf, Helm install the operator, and run on a real cluster
 - [Kubernetes Configuration](configuration.md) -- All CRD fields and deployment options
 - [Monitoring and Troubleshooting](monitoring.md) -- Watch, debug, and diagnose issues
 - [Environment Variables](../environment-variables.md) -- All AIPERF_* environment variables
