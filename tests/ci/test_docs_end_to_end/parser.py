@@ -53,11 +53,17 @@ class MarkdownParser:
         while i < len(lines):
             line = lines[i].strip()
 
-            # Look for HTML comment tags: <!-- tag-name -->
+            # Look for HTML comment tags. Two forms:
+            #   <!-- tag-name -->
+            #   <!-- tag-name weight=<int> -->  (optional runtime hint, seconds)
+            # The weight hint is only meaningful on opening aiperf-run tags;
+            # it's silently ignored on closing tags (which the categorizer
+            # filters out anyway).
             if line.startswith("<!--") and line.endswith("-->"):
-                tag_match = re.match(r"<!--\s*(\S+)\s*-->", line)
+                tag_match = re.match(r"<!--\s*(\S+)(?:\s+weight=(\d+))?\s*-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
+                    weight_str = tag_match.group(2)
 
                     # Check for setup or aiperf-run tags ending with endpoint-server
                     if self._is_target_tag(tag_name):
@@ -67,13 +73,16 @@ class MarkdownParser:
                         bash_content = self._extract_bash_block(lines, i + 1)
 
                         if bash_content:
-                            command = Command(
+                            command_kwargs = dict(
                                 tag_name=tag_name,
                                 command=bash_content,
                                 file_path=file_path,
                                 start_line=i + 1,
                                 end_line=i + len(bash_content.split("\n")) + 2,
                             )
+                            if weight_str is not None:
+                                command_kwargs["weight"] = int(weight_str)
+                            command = Command(**command_kwargs)
 
                             self._categorize_command(command)
                         else:

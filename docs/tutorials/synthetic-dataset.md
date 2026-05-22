@@ -62,7 +62,7 @@ aiperf profile \
 
 For shared-prefix benchmarking (e.g., RAG scenarios):
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=200 -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \

@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 torch = pytest.importorskip("torch")
 botorch = pytest.importorskip("botorch")
 gpytorch = pytest.importorskip("gpytorch")

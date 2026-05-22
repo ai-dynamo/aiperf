@@ -19,7 +19,7 @@ import textwrap
 import pytest
 from pydantic import ValidationError
 
-from aiperf.config.loader.core import load_config_from_string
+from aiperf.config.loader.core import _MAX_CONFIG_NESTING_DEPTH, load_config_from_string
 from aiperf.config.loader.errors import ConfigurationError
 
 _VALID_BENCHMARK = textwrap.dedent("""\
@@ -99,8 +99,9 @@ def test_yaml_cycle_raises_configuration_error() -> None:
 
 def test_yaml_deep_nesting_raises_configuration_error() -> None:
     """A pathologically deep config must raise ConfigurationError, not RecursionError."""
-    # Build a deeply nested mapping under the `variables` envelope key.
-    depth = 1000
+    # Stay just above AIPerf's explicit depth guard without forcing PyYAML itself
+    # into interpreter-level recursion warnings before the guard can run.
+    depth = _MAX_CONFIG_NESTING_DEPTH + 1
     nested = "leaf: 1"
     for _ in range(depth):
         nested = "a:\n  " + nested.replace("\n", "\n  ")

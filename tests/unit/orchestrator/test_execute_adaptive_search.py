@@ -103,6 +103,7 @@ def _plan_with_bo(max_iterations: int = 4, trials: int = 1) -> BenchmarkPlan:
     )
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_execute_adaptive_search_runs_max_iterations_iterations(tmp_path: Path):
     plan = _plan_with_bo(max_iterations=4, trials=1)
@@ -123,6 +124,7 @@ async def test_execute_adaptive_search_runs_max_iterations_iterations(tmp_path: 
     ]
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_execute_adaptive_search_writes_search_history_incrementally(
     tmp_path: Path,
@@ -136,6 +138,7 @@ async def test_execute_adaptive_search_writes_search_history_incrementally(
     assert search_history["best_trials"] is not None
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_execute_dispatches_to_adaptive_when_adaptive_search_set(tmp_path: Path):
     """The top-level execute() must route plans-with-AdaptiveSearchSweep to the BO path."""

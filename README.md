@@ -43,6 +43,15 @@ source venv/bin/activate
 pip install aiperf
 ```
 
+> [!NOTE]
+> On Linux **aarch64** (`arm64`), one of AIPerf's dependencies (`crick`)
+> ships only an sdist and needs a C compiler at install time. Install
+> the system build toolchain before `pip install aiperf` —
+> `sudo apt install build-essential` (Debian/Ubuntu),
+> `sudo yum groupinstall "Development Tools"` (RHEL/CentOS), or
+> equivalent. Linux x86_64, macOS, and Windows install from pre-built
+> wheels and need no toolchain.
+
 Optional integrations:
 - `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
 - `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming

@@ -703,7 +703,9 @@ def test_cleanup_emits_leak_warning_when_state_nonempty(caplog):
     ]
     orch._descendant_counts["leaky-parent"] = 2
 
-    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
+    with caplog.at_level(
+        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
+    ):
         orch.cleanup()
 
     leak_messages = [r for r in caplog.records if "leaked state" in r.getMessage()]

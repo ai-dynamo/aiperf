@@ -86,13 +86,13 @@ class TestFileDatasetRecordsShape:
 class TestFileDatasetRecordsSoftWarning:
     def test_warns_above_threshold(self, caplog):
         records = [{"text": f"q{i}"} for i in range(501)]
-        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset"):
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.config"):
             FileDataset.model_validate(_base(records=records))
         assert any("inline records" in r.message.lower() for r in caplog.records)
 
     def test_no_warn_at_or_below_threshold(self, caplog):
         records = [{"text": f"q{i}"} for i in range(500)]
-        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset"):
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.config"):
             FileDataset.model_validate(_base(records=records))
         assert not any("inline records" in r.message.lower() for r in caplog.records)
 
@@ -101,7 +101,7 @@ class TestFileDatasetRecordsSoftWarning:
             "pool_a": [{"text": f"a{i}"} for i in range(300)],
             "pool_b": [{"text": f"b{i}"} for i in range(250)],
         }
-        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset"):
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.config"):
             FileDataset.model_validate(
                 _base(format=DatasetFormat.RANDOM_POOL, records=records)
             )

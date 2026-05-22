@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-import importlib.metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from aiperf import __version__ as aiperf_version
 from aiperf.common.models import RequestInfo, RequestRecord
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config import BenchmarkConfig, BenchmarkRun
@@ -16,7 +16,7 @@ from aiperf.plugin.enums import TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport
 
-AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
+AIPERF_USER_AGENT = f"aiperf/{aiperf_version}"
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],

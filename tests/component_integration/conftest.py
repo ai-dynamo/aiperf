@@ -26,11 +26,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 # Limit glibc malloc arenas to avoid heap-corruption SIGABRT and OOM-killed
-# xdist workers under heavy `-n auto` load. Each component_integration test
-# runs aiperf in-process with full Pydantic / msgspec / tokenizer imports,
-# so the default 8×NCPU arenas per worker × 24 workers blows out RAM. The
-# integration conftest carries the same setting (gotcha 2026-04-21).
+# xdist workers under heavy `-n auto` load. Component_integration runs aiperf
+# in-process with full Pydantic / msgspec / tokenizer / torch imports, so the
+# default 8×NCPU arenas blows out RAM in 2-CPU CI runners. glibc reads this
+# env var at *process startup*, so the authoritative export lives in the
+# Makefile (`MALLOC_ARENA_MAX=2 pytest ...`); the setdefault here only helps
+# if pytest was invoked some other way (e.g., from an IDE).
 os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+os.environ.setdefault("AIPERF_TOKENIZER_SKIP_PRELOAD", "1")
 
 import pytest
 
@@ -111,14 +114,20 @@ class ComponentIntegrationTestDefaults:
     ui: str = "simple"
 
 
-def _raise_system_exit(code: int) -> None:
-    raise SystemExit(code)
+_REAL_OS_EXIT = os._exit
+_OS_EXIT_PATCH_OWNER_PID = os.getpid()
+
+
+def _component_test_os_exit(code: int) -> SystemExit | None:
+    if os.getpid() == _OS_EXIT_PATCH_OWNER_PID:
+        return SystemExit(code)
+    _REAL_OS_EXIT(code)
 
 
 @pytest.fixture(autouse=True, scope="package")
 def mock_os_exit():
-    """Patch os._exit to raise SystemExit instead of exiting the process."""
-    with patch("os._exit", side_effect=_raise_system_exit):
+    """Patch os._exit to no-op in pytest without leaking into forked children."""
+    with patch("os._exit", side_effect=_component_test_os_exit):
         yield
 
 
@@ -160,14 +169,23 @@ def hf_offline_mode():
     """Disable HuggingFace Hub network calls for the duration of this package.
 
     Scoped to package so it doesn't bleed into unit tests or other suites.
+
+    Both HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE are needed: the tokenizer
+    validator's prefetch-skip gate (tokenizer_validator.py) ANDs both vars,
+    and the prefetch path spawns ProcessPoolExecutor subprocesses that
+    bypass our in-process Tokenizer.from_pretrained patch and would
+    otherwise hit the real HF cache (EPERM under sandboxes/CI containers).
     """
-    prev = os.environ.get("HF_HUB_OFFLINE")
-    os.environ["HF_HUB_OFFLINE"] = "1"
+    keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    prev = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "1"
     yield
-    if prev is None:
-        os.environ.pop("HF_HUB_OFFLINE", None)
-    else:
-        os.environ["HF_HUB_OFFLINE"] = prev
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True, scope="package")

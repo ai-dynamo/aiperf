@@ -441,7 +441,9 @@ def test_cleanup_clears_pre_dispatched_and_logs_leak(caplog):
     orch._descendant_counts["ghost-parent"] = 3
     orch._pre_dispatched_branches.add(("conv-x", "branch-y"))
 
-    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
+    with caplog.at_level(
+        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
+    ):
         orch.cleanup()
 
     leak_warnings = [r for r in caplog.records if "leaked state" in r.getMessage()]
