@@ -22,11 +22,12 @@ import sys
 from pathlib import Path
 
 import pytest
+from pytest import param
 
+from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.flags._converter_endpoint import (
     _endpoint_template_fallback,
     _endpoint_template_from_extra,
-    _safe_read_template_path,
 )
 from aiperf.plugin.enums import EndpointType
 
@@ -131,10 +132,10 @@ class TestEndpointTemplateFallbackPathSafety:
     @pytest.mark.parametrize(
         "ep_type",
         [
-            pytest.param(EndpointType.CHAT, id="chat"),
-            pytest.param(EndpointType.COMPLETIONS, id="completions"),
+            param(EndpointType.CHAT, id="chat"),
+            param(EndpointType.COMPLETIONS, id="completions"),
         ],
-    )
+    )  # fmt: skip
     def test_non_template_endpoints_skip_fallback(
         self, tmp_path: Path, ep_type: EndpointType
     ) -> None:
@@ -151,7 +152,7 @@ class TestEndpointTemplateFallbackPathSafety:
 
 
 class TestSafeReadTemplatePathReadFailures:
-    """``_safe_read_template_path`` must swallow ``OSError`` from the read step.
+    """``safe_read_template_path`` must swallow ``OSError`` from the read step.
 
     ``resolve(strict=True)`` already exercises the ``OSError`` branch via
     ``FileNotFoundError`` for missing paths. The remaining uncovered branch is
@@ -172,13 +173,13 @@ class TestSafeReadTemplatePathReadFailures:
         unreadable.write_text('{"hello": "world"}', encoding="utf-8")
         unreadable.chmod(0o000)
         try:
-            assert _safe_read_template_path(str(unreadable)) is None
+            assert safe_read_template_path(str(unreadable)) is None
         finally:
             unreadable.chmod(0o644)
 
 
 class TestSafeReadTemplatePathConstructionFailures:
-    """``_safe_read_template_path`` must reject inputs that fail ``Path()`` construction.
+    """``safe_read_template_path`` must reject inputs that fail ``Path()`` construction.
 
     Defensive against upstream parsers that hand the helper a non-string value
     (e.g., ``--extra-inputs`` JSON parsed to an int/None for ``payload_template``).
@@ -189,13 +190,50 @@ class TestSafeReadTemplatePathConstructionFailures:
     @pytest.mark.parametrize(
         "bad_input",
         [
-            pytest.param(42, id="int"),
-            pytest.param(None, id="none"),
-            pytest.param(["a", "b"], id="list"),
-            pytest.param({"x": 1}, id="dict"),
+            param(42, id="int"),
+            param(None, id="none"),
+            param(["a", "b"], id="list"),
+            param({"x": 1}, id="dict"),
         ],
-    )
+    )  # fmt: skip
     def test_non_string_input_returns_none(self, bad_input: object) -> None:
         # ``ts`` is typed ``str`` but the helper guards against parser
         # misbehavior that smuggles a non-str through ``dict.get``.
-        assert _safe_read_template_path(bad_input) is None  # type: ignore[arg-type]
+        assert safe_read_template_path(bad_input) is None  # type: ignore[arg-type]
+
+
+class TestSafeReadTemplatePathSymlinkedParent:
+    """Symlinks anywhere in the path chain must be rejected, not just at the leaf.
+
+    ``Path("link_dir/file.json").is_symlink()`` returns ``False`` because the
+    leaf is a regular file — but ``resolve(strict=True)`` follows the symlinked
+    parent. A complete CWE-22 mitigation must check every component.
+    """
+
+    def test_symlinked_parent_directory_is_rejected(self, tmp_path: Path) -> None:
+        real_dir = tmp_path / "real_dir"
+        real_dir.mkdir()
+        target = real_dir / "tmpl.json"
+        target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
+        link_dir = tmp_path / "link_dir"
+        link_dir.symlink_to(real_dir)
+        file_via_link = link_dir / "tmpl.json"
+
+        # Sanity: the leaf is NOT a symlink, but the parent IS.
+        assert not file_via_link.is_symlink()
+        assert file_via_link.parent.is_symlink()
+
+        assert safe_read_template_path(str(file_via_link)) is None
+
+
+class TestSafeReadTemplatePathRuntimeError:
+    """``expanduser()`` raises ``RuntimeError`` for unresolvable ``~user`` prefixes.
+
+    A literal template body starting with ``~unknownuser/`` must collapse to
+    ``None`` (caller falls back to the literal-template-body branch) rather
+    than crash config conversion.
+    """
+
+    def test_unknown_user_prefix_returns_none(self) -> None:
+        # `~nonexistentuser123abc` cannot resolve; expanduser raises RuntimeError.
+        assert safe_read_template_path("~nonexistentuser123abc/template.j2") is None

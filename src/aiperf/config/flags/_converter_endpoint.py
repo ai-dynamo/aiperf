@@ -10,9 +10,9 @@ the dict shape consumed by ``AIPerfConfig``.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.flags._section_fields import ENDPOINT_FIELDS
 
 if TYPE_CHECKING:
@@ -23,40 +23,13 @@ def _url(item: str) -> str:
     return item if "://" in item else f"http://{item}"
 
 
-def _safe_read_template_path(ts: str) -> str | None:
-    """Return file contents if ``ts`` safely resolves to a regular file, else ``None``.
-
-    Hardens ``--extra-inputs payload_template=<path>`` against CWE-22 path-injection
-    findings: rejects symlinks before resolving, then resolves through
-    ``Path.resolve(strict=True)`` (the sanitizer SAST tools recognize), requires the
-    resolved target to be a regular file, and reads with explicit UTF-8 encoding.
-    Returning ``None`` signals the caller to treat ``ts`` as a literal template body.
-    """
-    try:
-        path = Path(ts).expanduser()
-    except (TypeError, ValueError):
-        return None
-    if path.is_symlink():
-        return None
-    try:
-        resolved = path.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError):
-        return None
-    if not resolved.is_file():
-        return None
-    try:
-        return resolved.read_text(encoding="utf-8")
-    except OSError:
-        return None
-
-
 def _endpoint_template_from_extra(
     endpoint: dict[str, Any], extra: dict[str, Any]
 ) -> None:
     payload_template = extra.pop("payload_template", None)
     if payload_template is None:
         return
-    body = _safe_read_template_path(payload_template)
+    body = safe_read_template_path(payload_template)
     if body is None:
         body = payload_template
     endpoint["template"] = {
@@ -77,7 +50,7 @@ def _endpoint_template_fallback(endpoint: dict[str, Any]) -> None:
     ts = ex.get("payload_template")
     if ts is None:
         return
-    body = _safe_read_template_path(ts)
+    body = safe_read_template_path(ts)
     endpoint["template"] = {"body": body if body is not None else ts}
 
 

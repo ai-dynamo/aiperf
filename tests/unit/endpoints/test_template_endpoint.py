@@ -457,3 +457,29 @@ def test_metadata():
     assert metadata.supports_images is True
     assert metadata.supports_videos is True
     assert metadata.metrics_title == "LLM Metrics"
+
+
+class TestTemplateEndpointPathSafety:
+    """``TemplateEndpoint.__init__`` must reject symlinks when loading payload_template.
+
+    The CLI-flag converter (``_converter_endpoint.build_endpoint``) is one entry
+    point; YAML/direct AIPerfConfig consumption flows through ``TemplateEndpoint``
+    directly and must apply the same path-injection hardening.
+    """
+
+    def test_symlinked_payload_template_treated_as_literal(self, tmp_path):
+        target = tmp_path / "target.json"
+        target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
+        link = tmp_path / "link.json"
+        link.symlink_to(target)
+        model_endpoint = create_model_endpoint(
+            EndpointType.TEMPLATE,
+            extra=[("payload_template", str(link))],
+        )
+
+        endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
+
+        # Post-fix: symlink rejected, the path string itself is the template
+        # source. Rendering it produces the path string unchanged (no Jinja
+        # vars to substitute), proving the symlink target was never read.
+        assert endpoint._template.render() == str(link)
