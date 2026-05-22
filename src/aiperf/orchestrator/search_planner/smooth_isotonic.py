@@ -373,7 +373,12 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         return out
 
     def _mutate_base(self, value: int) -> BenchmarkConfig:
-        cfg_dict = self._base.model_dump(mode="json", exclude_none=True)
+        # mode="python" (not "json") so JSON-only field_serializers don't fire
+        # mid-pipeline. The redactors on EndpointConfig.api_key / .headers
+        # would otherwise replace credentials with "<redacted>" in the dict,
+        # and re-validation would bake that literal into the iteration's
+        # config — causing 401/403 against any auth-validating endpoint.
+        cfg_dict = self._base.model_dump(mode="python", exclude_none=True)
         _set_nested_value(cfg_dict, self._dim.path, value)
         self._apply_sla_precision(cfg_dict)
         self._apply_sla_warmup(cfg_dict, value)

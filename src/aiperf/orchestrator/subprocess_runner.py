@@ -19,6 +19,14 @@ import orjson
 # nor any logging path inherits the plaintext value.
 _INJECTED_API_KEY_ENV = "AIPERF_INJECTED_API_KEY"
 
+# Sensitive entries from EndpointConfig.headers (Authorization, X-API-Key, etc.)
+# are forwarded via this env var for the same reason: the headers serializer
+# replaces those values with "<redacted>" on every JSON dump, so the on-disk
+# run_config.json is secret-free but the child needs the real values to talk
+# to the upstream. Non-sensitive headers round-trip through run_config.json
+# normally and are not duplicated here.
+_INJECTED_HEADERS_ENV = "AIPERF_INJECTED_HEADERS"
+
 
 def main() -> None:
     """Run a single benchmark from a BenchmarkRun JSON file.
@@ -42,6 +50,10 @@ def main() -> None:
     # Pop (don't just read) so child processes the benchmark spawns
     # don't inherit the secret. Restore onto the loaded config below.
     injected_api_key = os.environ.pop(_INJECTED_API_KEY_ENV, None)
+    injected_headers_raw = os.environ.pop(_INJECTED_HEADERS_ENV, None)
+    injected_headers = (
+        orjson.loads(injected_headers_raw) if injected_headers_raw else None
+    )
 
     from aiperf.cli_runner import _run_single_benchmark
     from aiperf.config import BenchmarkRun
@@ -53,6 +65,8 @@ def main() -> None:
         run = BenchmarkRun.model_validate(data)
         if injected_api_key is not None:
             run.cfg.endpoint.api_key = injected_api_key
+        if injected_headers:
+            run.cfg.endpoint.headers.update(injected_headers)
         _run_single_benchmark(run)
 
     except KeyError as e:

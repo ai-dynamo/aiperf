@@ -243,3 +243,155 @@ def test_subprocess_runner_pops_and_restores_api_key(tmp_path, monkeypatch):
         "AIPERF_INJECTED_API_KEY must be popped before benchmark runs so "
         "child processes can't inherit the secret"
     )
+
+
+@pytest.mark.asyncio
+async def test_run_config_never_contains_plaintext_sensitive_headers(tmp_path):
+    """run_config.json must redact credential-bearing header values.
+
+    Mirrors ``test_run_config_never_contains_plaintext_api_key`` for the
+    headers field. ``EndpointConfig.headers`` has a field_serializer that
+    replaces sensitive values with ``<redacted>`` on every JSON dump, so
+    the on-disk artifact is secret-free.
+    """
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    cfg.endpoint.headers = {
+        "Authorization": "Api-Key real-secret-value",
+        "X-Trace-Id": "trace-001",
+    }
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="headers-redact",
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        await executor.execute(run)
+
+    on_disk = _orjson.loads((tmp_path / "run_config.json").read_bytes())
+    on_disk_headers = on_disk["cfg"]["endpoint"]["headers"]
+    assert on_disk_headers["Authorization"] != "Api-Key real-secret-value"
+    # Non-sensitive headers must still round-trip through the JSON normally.
+    assert on_disk_headers["X-Trace-Id"] == "trace-001"
+
+
+@pytest.mark.asyncio
+async def test_subprocess_receives_sensitive_headers_via_env(tmp_path):
+    """Sensitive headers reach the subprocess via AIPERF_INJECTED_HEADERS.
+
+    REGRESSION-LOCK: pre-fix the parent wrote a redacted ``run_config.json``
+    (because ``EndpointConfig.headers`` has a ``when_used="json"`` field
+    serializer) and the subprocess loaded ``Authorization: <redacted>`` as
+    the header value, so sweep runs against endpoints requiring custom auth
+    schemes (e.g. ``Api-Key`` instead of ``Bearer``) would all 403.
+    """
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    cfg.endpoint.headers = {
+        "Authorization": "Api-Key real-secret-value",
+        "X-Trace-Id": "trace-001",
+    }
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="headers-env-forward",
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        await executor.execute(run)
+
+    _, call_kwargs = mock_run.call_args
+    env = call_kwargs.get("env") or {}
+    raw = env.get("AIPERF_INJECTED_HEADERS")
+    assert raw is not None, "Sensitive headers must be forwarded via env var"
+    forwarded = _orjson.loads(raw)
+    # Only sensitive entries should ride the env channel; non-sensitive ones
+    # round-trip through the JSON dump as-is.
+    assert forwarded == {"Authorization": "Api-Key real-secret-value"}
+
+
+@pytest.mark.asyncio
+async def test_no_headers_env_var_when_no_sensitive_headers(tmp_path):
+    """AIPERF_INJECTED_HEADERS is absent when no sensitive headers are set."""
+    import os as _os
+
+    cfg = _benchmark_config()
+    cfg.endpoint.headers = {"X-Trace-Id": "trace-001"}  # non-sensitive only
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="no-sensitive-headers",
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    _os.environ.pop("AIPERF_INJECTED_HEADERS", None)
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        await executor.execute(run)
+
+    _, call_kwargs = mock_run.call_args
+    env = call_kwargs.get("env") or {}
+    assert "AIPERF_INJECTED_HEADERS" not in env
+
+
+def test_subprocess_runner_pops_and_restores_sensitive_headers(tmp_path, monkeypatch):
+    """subprocess_runner.main consumes AIPERF_INJECTED_HEADERS and overlays
+    the real values onto the loaded BenchmarkRun, leaving non-sensitive
+    headers from run_config.json untouched."""
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    # Write a redacted config to disk (mirrors what _prepare_run_artifacts does).
+    cfg.endpoint.headers = {
+        "Authorization": "<redacted>",
+        "X-Trace-Id": "trace-001",
+    }
+    run_data = {
+        "benchmark_id": "x",
+        "cfg": cfg.model_dump(mode="json", exclude_none=True),
+        "label": "r1",
+        "artifact_dir": str(tmp_path),
+    }
+    config_file = tmp_path / "run_config.json"
+    config_file.write_bytes(_orjson.dumps(run_data))
+
+    monkeypatch.setenv(
+        "AIPERF_INJECTED_HEADERS",
+        _orjson.dumps({"Authorization": "Api-Key real-secret"}).decode(),
+    )
+    monkeypatch.setattr("sys.argv", ["subprocess_runner", str(config_file)])
+
+    captured: dict = {}
+
+    def fake_run_single_benchmark(run):
+        captured["headers"] = dict(run.cfg.endpoint.headers)
+        captured["env_after_pop"] = (
+            "AIPERF_INJECTED_HEADERS" in __import__("os").environ
+        )
+
+    with patch(
+        "aiperf.cli_runner._run_single_benchmark", side_effect=fake_run_single_benchmark
+    ):
+        from aiperf.orchestrator.subprocess_runner import main as subprocess_main
+
+        subprocess_main()
+
+    assert captured["headers"]["Authorization"] == "Api-Key real-secret"
+    assert captured["headers"]["X-Trace-Id"] == "trace-001"
+    assert captured["env_after_pop"] is False, (
+        "AIPERF_INJECTED_HEADERS must be popped before benchmark runs so "
+        "child processes can't inherit the secret"
+    )

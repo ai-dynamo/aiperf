@@ -97,18 +97,25 @@ class LocalSubprocessExecutor(RunExecutor):
     ) -> subprocess.CompletedProcess[str]:
         """Run the benchmark subprocess runner and return its completed-process.
 
-        The api_key is forwarded via ``AIPERF_INJECTED_API_KEY`` rather
-        than written into ``run_config.json`` (which would be redacted by
-        the field_serializer anyway). ``subprocess_runner.main`` consumes
-        and unsets the variable before invoking the benchmark, so neither
-        the subprocess's own children nor any logging path sees it.
+        The api_key and any credential-bearing entries in
+        ``endpoint.headers`` (Authorization, X-API-Key, etc.) are forwarded
+        via ``AIPERF_INJECTED_API_KEY`` / ``AIPERF_INJECTED_HEADERS`` rather
+        than written into ``run_config.json`` (which redacts them via
+        the field_serializers anyway). ``subprocess_runner.main`` consumes
+        and unsets the variables before invoking the benchmark, so neither
+        the subprocess's own children nor any logging path sees them.
         """
         import os
+
+        from aiperf.common.redact import extract_sensitive_headers
 
         env = os.environ.copy()
         api_key = run.cfg.endpoint.api_key
         if api_key is not None:
             env["AIPERF_INJECTED_API_KEY"] = api_key
+        sensitive_headers = extract_sensitive_headers(run.cfg.endpoint.headers)
+        if sensitive_headers:
+            env["AIPERF_INJECTED_HEADERS"] = orjson.dumps(sensitive_headers).decode()
         # No timeout - SystemController handles benchmark duration internally.
         # stdin/stdout pass through so Textual can detect TTY and render live dashboard.
         # -u forces unbuffered output for live dashboard rendering.

@@ -550,3 +550,51 @@ def test_random_seed_reproducibility_first_5_proposals():
         planner_a.tell(va, [_make_result(va, throughput=10.0, ttft_p95=50.0)])
         planner_b.tell(vb, [_make_result(vb, throughput=10.0, ttft_p95=50.0)])
     assert proposals_a == proposals_b
+
+
+# ---------------------------------------------------------------------------
+# Credential preservation across ask() / _mutate_base
+# ---------------------------------------------------------------------------
+
+
+def _base_config_with_credentials() -> BenchmarkConfig:
+    """Base config carrying credential-bearing fields the JSON serializers
+    would redact (locks in the credential-preservation regression)."""
+    return BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {
+                "urls": ["http://x"],
+                "type": "chat",
+                "api_key": "sk-real-prod-key",
+                "headers": {
+                    "Authorization": "Api-Key real-secret-value",
+                    "X-Trace-Id": "trace-001",
+                },
+            },
+            "datasets": [{"name": "profiling", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 10,
+                }
+            ],
+        }
+    )
+
+
+def test_ask_preserves_credentials() -> None:
+    """REGRESSION-LOCK: ``ask()`` previously dumped the base config with
+    mode="json", firing the EndpointConfig.api_key + .headers redactors
+    and baking ``<redacted>`` into every proposal's config. Same fix as
+    ``smooth_isotonic`` and ``monotonic``; locked separately here so a
+    single-planner revert is caught.
+    """
+    planner = OptunaSearchPlanner(_base_config_with_credentials(), _cfg())
+    cfg, _ = planner.ask()
+    assert cfg.endpoint.api_key == "sk-real-prod-key"
+    assert cfg.endpoint.headers["Authorization"] == "Api-Key real-secret-value"
+    # Non-sensitive header must round-trip too.
+    assert cfg.endpoint.headers["X-Trace-Id"] == "trace-001"
