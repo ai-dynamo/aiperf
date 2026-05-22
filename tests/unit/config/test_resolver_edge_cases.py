@@ -366,6 +366,54 @@ class TestDatasetResolverEdgeCases:
 
         assert run.resolved.dataset_file_paths is None
 
+    def test_detect_type_falls_through_for_csv_first_line(self, tmp_path) -> None:
+        """A non-JSON first line (BurstGPT's CSV header) must not short-circuit
+        structural detection. Regresses the bug where ValueError on
+        ``load_json_str`` returned (None, None) before any loader's
+        ``can_load`` got a chance.
+        """
+        from aiperf.plugin.enums import CustomDatasetType
+
+        csv_file = tmp_path / "burst.csv"
+        csv_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "5,ChatGPT,472,18,490,Conversation log\n"
+            "45,ChatGPT,1087,230,1317,Conversation log\n"
+        )
+
+        detected, first_record = DatasetResolver._detect_type(str(csv_file))
+
+        assert detected == CustomDatasetType.BURST_GPT_TRACE
+        assert first_record is None
+
+    def test_burst_gpt_csv_auto_detected_with_timing(self, tmp_path) -> None:
+        """End-to-end resolver pass: BurstGPT CSV with no explicit format
+        is recognized and reports has_timing=True so fixed_schedule can run.
+        """
+        csv_file = tmp_path / "burst.csv"
+        csv_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "5,ChatGPT,472,18,490,Conversation log\n"
+            "45,ChatGPT,1087,230,1317,Conversation log\n"
+        )
+
+        config = _make_config(
+            datasets=[{"name": "main", "type": "file", "path": str(csv_file)}],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 2,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+
 
 # ============================================================
 # TimingResolver Edge Cases
