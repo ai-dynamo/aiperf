@@ -4,6 +4,7 @@
 
 import orjson
 
+from aiperf.common.finite import scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
@@ -87,6 +88,10 @@ class AggregateSweepJsonExporter(AggregateBaseExporter):
 
         # Serialize to JSON with indentation
         # OPT_SERIALIZE_NUMPY handles numpy types (float64, int64, etc.)
+        # scrub_non_finite enforces the "null means absent, numeric means
+        # present" contract: orjson would otherwise silently coerce NaN/inf
+        # to null and collide with explicit-None sentinels downstream.
         return orjson.dumps(
-            output, option=orjson.OPT_INDENT_2 | orjson.OPT_SERIALIZE_NUMPY
+            scrub_non_finite(output),
+            option=orjson.OPT_INDENT_2 | orjson.OPT_SERIALIZE_NUMPY,
         ).decode("utf-8")

@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.console import Console, ConsoleRenderable, Group
 from rich.highlighter import ReprHighlighter
@@ -16,12 +17,15 @@ from rich.text import Text
 from rich.traceback import Traceback
 
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
-from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.environment import Environment
 from aiperf.common.utils import is_tty
+from aiperf.config.artifacts import OutputDefaults
+from aiperf.config.runtime import ServiceDefaults
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
 _global_log_queue: "multiprocessing.Queue | None" = None
@@ -120,8 +124,7 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
 def setup_child_process_logging(
     log_queue: "multiprocessing.Queue | None" = None,
     service_id: str | None = None,
-    service_config: ServiceConfig | None = None,
-    user_config: UserConfig | None = None,
+    run: "BenchmarkRun | None" = None,
 ) -> None:
     """Set up logging for a child process to send logs to the main process.
 
@@ -130,13 +133,15 @@ def setup_child_process_logging(
     Args:
         log_queue: The multiprocessing queue to send logs to. If None, tries to get the global queue.
         service_id: The ID of the service to log under. If None, logs will be under the process name.
-        service_config: The service configuration used to determine the log level.
-        user_config: The user configuration used to determine the log folder.
+        run: BenchmarkRun whose ``cfg.logging.level``, ``cfg.runtime.ui``, and
+            ``cfg.artifacts.dir`` drive level/handler/log-folder choices.
     """
     root_logger = logging.getLogger()
     level = ServiceDefaults.LOG_LEVEL.upper()
-    if service_config:
-        level = service_config.log_level.upper()
+    ui_type = None
+    if run is not None:
+        level = run.cfg.logging.level.upper()
+        ui_type = run.cfg.runtime.ui
 
         if service_id:
             # If the service is in the trace or debug services, set the level to trace or debug
@@ -156,11 +161,7 @@ def setup_child_process_logging(
     for existing_handler in root_logger.handlers[:]:
         root_logger.removeHandler(existing_handler)
 
-    if (
-        log_queue is not None
-        and service_config
-        and service_config.ui_type == UIType.DASHBOARD
-    ):
+    if log_queue is not None and ui_type == UIType.DASHBOARD:
         # For dashboard UI, we want to log to the queue, so it can be displayed in the UI
         # log viewer, instead of the console directly.
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
@@ -182,18 +183,18 @@ def setup_child_process_logging(
         # For non-TTY environments, use basic logging without rich formatting
         root_logger.addHandler(_create_basic_handler(level))
 
-    if user_config and user_config.output.artifact_directory:
+    if run is not None:
         file_handler = create_file_handler(
-            user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER, level
+            run.cfg.artifacts.dir / OutputDefaults.LOG_FOLDER, level
         )
         root_logger.addHandler(file_handler)
 
 
 # TODO: Integrate with the subprocess logging instead of being separate
-def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -> None:
+def setup_rich_logging(run: "BenchmarkRun") -> None:
     """Set up rich logging with appropriate configuration. Falls back to basic logging for non-TTY."""
     # Set logging level for the root logger (affects all loggers)
-    level = service_config.log_level.upper()
+    level = run.cfg.logging.level.upper()
     logging.root.setLevel(level)
 
     if is_tty():
@@ -210,8 +211,7 @@ def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -
     logging.root.addHandler(console_handler)
 
     # Enable file logging for services
-    # TODO: Use config to determine if file logging is enabled and the folder path.
-    log_folder = user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER
+    log_folder = run.cfg.artifacts.dir / OutputDefaults.LOG_FOLDER
     log_folder.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(log_folder / OutputDefaults.LOG_FILE)
     file_handler.setLevel(level)

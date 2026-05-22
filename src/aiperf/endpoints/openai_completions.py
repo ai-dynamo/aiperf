@@ -52,8 +52,8 @@ class CompletionsEndpoint(BaseEndpoint):
         if extra:
             payload.update(extra)
 
-        if turn.request_body:
-            payload.update(turn.request_body)
+        if turn.extra_body:
+            payload.update(turn.extra_body)
 
         if (
             model_endpoint.endpoint.streaming

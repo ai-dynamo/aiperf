@@ -112,7 +112,7 @@ class TestChatEndpoint:
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="Audio content must be in the format"):
+        with pytest.raises(ValueError, match="audio content must be in the format"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_with_video(self, endpoint, model_endpoint):
@@ -159,12 +159,12 @@ class TestChatEndpoint:
         assert "max_completion_tokens" not in payload
         assert "max_tokens" not in payload
 
-    def test_format_payload_forwards_request_body(self, endpoint, model_endpoint):
-        """Test per-turn request_body fields are forwarded into chat payload."""
+    def test_format_payload_forwards_extra_body(self, endpoint, model_endpoint):
+        """Test per-turn extra_body fields are forwarded into chat payload."""
         turn = Turn(
             texts=[Text(contents=["Generate text"])],
             model="test-model",
-            request_body={"hash_ids": [1, 2], "block_size": 64},
+            extra_body={"hash_ids": [1, 2], "block_size": 64},
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 

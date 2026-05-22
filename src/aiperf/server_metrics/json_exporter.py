@@ -8,6 +8,7 @@ import orjson
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -15,6 +16,7 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsEndpointInfo,
     ServerMetricsExportData,
     ServerMetricsSummary,
+    UnknownMetricData,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
@@ -40,14 +42,11 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
         Raises:
             DataExporterDisabled: If server metrics are disabled or no data is available
         """
-        if exporter_config.user_config.server_metrics_disabled:
+        if exporter_config.cfg.server_metrics_disabled:
             raise DataExporterDisabled("Server metrics is disabled")
 
         # Check if JSON format is enabled
-        if (
-            ServerMetricsFormat.JSON
-            not in exporter_config.user_config.server_metrics_formats
-        ):
+        if ServerMetricsFormat.JSON not in exporter_config.cfg.server_metrics_formats:
             raise DataExporterDisabled(
                 "Server metrics JSON export disabled: format not selected"
             )
@@ -62,9 +61,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             )
 
         super().__init__(exporter_config, **kwargs)
-        self._file_path = (
-            exporter_config.user_config.output.server_metrics_export_json_file
-        )
+        self._file_path = exporter_config.cfg.artifacts.server_metrics_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing ServerMetricsJsonExporter with config: {exporter_config}",
             lambda: f"Initializing ServerMetricsJsonExporter with file path: {self._file_path}",
@@ -117,8 +114,8 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             endpoint_info=endpoint_info if endpoint_info else None,
         )
 
-        # Serialize user config with exclude_unset=True to only include explicitly set values
-        input_config = self._user_config.model_dump(
+        # Serialize benchmark config with exclude_unset=True to only include explicitly set values
+        input_config = self._cfg.model_dump(
             mode="json",
             exclude_unset=True,
         )
@@ -134,7 +131,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
         )
 
         return orjson.dumps(
-            export_data.model_dump(mode="json", exclude_none=True),
+            scrub_non_finite(export_data.model_dump(mode="json", exclude_none=True)),
             option=orjson.OPT_INDENT_2,
         ).decode()
 
@@ -143,7 +140,10 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
     ) -> tuple[
         dict[
             str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
+            GaugeMetricData
+            | CounterMetricData
+            | HistogramMetricData
+            | UnknownMetricData,
         ],
         dict[str, ServerMetricsEndpointInfo] | None,
     ]:
@@ -177,7 +177,10 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
 
         metrics: dict[
             str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
+            GaugeMetricData
+            | CounterMetricData
+            | HistogramMetricData
+            | UnknownMetricData,
         ] = {}
         endpoint_info: dict[str, ServerMetricsEndpointInfo] = {}
 
@@ -197,6 +200,8 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
                     match metric_data.type:
                         case PrometheusMetricType.GAUGE:
                             metric_class = GaugeMetricData
+                        case PrometheusMetricType.UNKNOWN:
+                            metric_class = UnknownMetricData
                         case PrometheusMetricType.COUNTER:
                             metric_class = CounterMetricData
                         case PrometheusMetricType.HISTOGRAM:

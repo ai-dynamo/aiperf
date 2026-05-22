@@ -11,34 +11,36 @@ import pytest
 
 import aiperf.endpoints  # noqa: F401  # Import to register endpoints
 import aiperf.transports  # noqa: F401  # Import to register transports
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import EndpointType
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
-def user_config(tmp_path: Path) -> UserConfig:
-    """Create a UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-            url="http://localhost:8000",
-        ),
-        output=OutputConfig(artifact_directory=tmp_path),
+def cli_config(tmp_path: Path) -> CLIConfig:
+    """Create a CLIConfig for testing."""
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type=EndpointType.CHAT,
+        streaming=False,
+        url="http://localhost:8000",
+        artifact_directory=tmp_path,
     )
 
 
 @pytest.fixture
-def empty_dataset_manager(
-    user_config: UserConfig,
-) -> DatasetManager:
+def benchmark_run(cli_config: CLIConfig):
+    """Build a v2 BenchmarkRun from the dataset-scoped cli_config fixture."""
+    return make_run_from_cli(cli_config)
+
+
+@pytest.fixture
+def empty_dataset_manager(benchmark_run) -> DatasetManager:
     """Create a DatasetManager instance with empty dataset."""
     manager = DatasetManager(
-        service_config=ServiceConfig(),
-        user_config=user_config,
+        run=benchmark_run,
         service_id="test_dataset_manager",
     )
     manager.dataset = {}
@@ -47,13 +49,12 @@ def empty_dataset_manager(
 
 @pytest.fixture
 def populated_dataset_manager(
-    user_config: UserConfig,
+    benchmark_run,
     sample_conversations: dict[str, Conversation],
 ) -> DatasetManager:
     """Create a DatasetManager instance with sample data."""
     manager = DatasetManager(
-        service_config=ServiceConfig(),
-        user_config=user_config,
+        run=benchmark_run,
         service_id="test_dataset_manager",
     )
     manager.dataset = sample_conversations
@@ -73,10 +74,23 @@ def capture_file_writes():
 
     capture = FileWriteCapture()
 
-    def mock_write_bytes(self, data):
-        capture.write_bytes(data)
+    class _FakeAsyncFile:
+        async def write(self, data):
+            if isinstance(data, (bytes, bytearray)):
+                capture.write_bytes(bytes(data))
+            else:
+                capture.written_content = data
 
-    with patch("pathlib.Path.write_bytes", mock_write_bytes):
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_aiofiles_open(*args, **kwargs):
+        return _FakeAsyncFile()
+
+    with patch("aiofiles.open", fake_aiofiles_open):
         yield capture
 
 

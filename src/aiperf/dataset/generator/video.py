@@ -15,8 +15,8 @@ import soundfile as sf
 from PIL import Image, ImageDraw
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.video_config import VIDEO_AUDIO_CODEC_MAP, VideoConfig
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.config.dataset import VIDEO_AUDIO_CODEC_MAP, VideoConfig
 from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
 
@@ -29,9 +29,12 @@ class VideoGenerator(BaseGenerator):
     and returned as base64 encoded strings.
     """
 
-    def __init__(self, config: VideoConfig, **kwargs):
+    def __init__(self, config: VideoConfig | None, **kwargs):
         super().__init__(**kwargs)
-        self.config = config
+        # Fall back to a default VideoConfig when the dataset doesn't configure
+        # video. The default has ``width=None, height=None`` so ``generate()``
+        # short-circuits early via the ``not self.config.width`` guard.
+        self.config = config if config is not None else VideoConfig()
         self._audio_rng = rng.derive("dataset.video.audio")
         self._noise_rng = rng.derive("dataset.video.noise")
 
@@ -312,7 +315,8 @@ class VideoGenerator(BaseGenerator):
 
     def _generate_audio_data(self) -> bytes:
         """Generate Gaussian noise audio data matching video duration as WAV bytes."""
-        sample_rate_hz = int(self.config.audio.sample_rate * 1000)
+        sample_rate = self.config.audio.sample_rate
+        sample_rate_hz = int(sample_rate if sample_rate > 1000 else sample_rate * 1000)
         num_samples = int(self.config.duration * sample_rate_hz)
         signal = generate_noise_signal(
             self._audio_rng, num_samples, self.config.audio.channels

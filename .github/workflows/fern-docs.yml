@@ -96,10 +96,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -132,13 +132,13 @@ jobs:
           fi
 
       - name: Checkout source branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: source-checkout
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -216,7 +216,7 @@ jobs:
           cat docs.yml
 
       - name: Setup Node.js for Fern validation
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -273,7 +273,7 @@ jobs:
           echo "Successfully synced dev docs to docs-website branch"
 
       - name: Publish Docs
-        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
+        if: steps.ctx.outputs.is_main == 'true' && (steps.changes.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch')
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         working-directory: docs-checkout/fern
@@ -356,13 +356,13 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: source-checkout
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -418,7 +418,7 @@ jobs:
           yq -i '.products[0] = load("/tmp/preserved_product.yml")' docs.yml
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -544,7 +544,7 @@ jobs:
           echo "Processing version: $VERSION (tag: $TAG)"
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: docs-website
           fetch-depth: 0
@@ -641,13 +641,13 @@ jobs:
           echo "Updating $DOCS_FILE to include $TAG..."
 
           # Check if version already in docs.yml
-          if yq ".products[0].versions[] | select(.display-name == \"$TAG\")" "$DOCS_FILE" | grep -q .; then
+          if yq -e ".products[0].versions[] | select(.\"display-name\" == \"$TAG\")" "$DOCS_FILE" > /dev/null 2>&1; then
             echo "Version $TAG already in docs.yml, skipping update"
             exit 0
           fi
 
           # Find the index of the "dev" entry and insert new version right after it
-          DEV_IDX=$(yq '.products[0].versions | to_entries | map(select(.value.display-name == "dev")) | .[0].key' "$DOCS_FILE")
+          DEV_IDX=$(yq '.products[0].versions | to_entries | map(select(.value."display-name" == "dev")) | .[0].key' "$DOCS_FILE")
           INSERT_IDX=$((DEV_IDX + 1))
 
           yq -i "
@@ -664,6 +664,8 @@ jobs:
           # Update the "Latest" entry to point to the new version
           yq -i ".products[0].versions[0].path = \"./versions/$TAG.yml\"" "$DOCS_FILE"
           yq -i ".products[0].versions[0].display-name = \"Latest ($TAG)\"" "$DOCS_FILE"
+          yq -i ".products[0].versions[0].slug = \"latest\"" "$DOCS_FILE"
+          yq -i ".products[0].versions[0].availability = \"stable\"" "$DOCS_FILE"
 
           echo "Updated docs.yml products/versions section:"
           yq '.products[0].versions' "$DOCS_FILE"
@@ -690,7 +692,7 @@ jobs:
           echo "Successfully released documentation for $TAG on docs-website branch"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 

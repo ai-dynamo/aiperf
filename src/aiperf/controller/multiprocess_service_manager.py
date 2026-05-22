@@ -9,7 +9,6 @@ from multiprocessing.context import ForkProcess, SpawnProcess
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
@@ -41,12 +40,10 @@ class MultiProcessServiceManager(BaseServiceManager):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
         log_queue: "multiprocessing.Queue | None" = None,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
+        super().__init__(required_services, **kwargs)
         self.multi_process_info: list[MultiProcessRunInfo] = []
         self.log_queue = log_queue
 
@@ -69,8 +66,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 kwargs={
                     "service_type": service_type,
                     "service_id": service_id,
-                    "service_config": self.service_config,
-                    "user_config": self.user_config,
+                    "run": self.run,
                     "log_queue": self.log_queue,
                 },
                 daemon=True,
@@ -220,7 +216,8 @@ class MultiProcessServiceManager(BaseServiceManager):
         timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
     ) -> None:
         """Wait for all required services to be started."""
-        self.debug("Waiting for all required services to start...")
-        self.warning(
-            "Waiting for all required services to start is not implemented for multiprocessing"
+        raise NotImplementedError(
+            "MultiprocessServiceManager.wait_for_all_services_start is not wired up. "
+            "Multiprocess services self-report START via heartbeats; if a future caller "
+            "needs an explicit barrier here, implement it rather than calling this stub."
         )

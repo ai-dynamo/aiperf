@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: HTTP Trace Metrics (Latency Breakdown)
+# description: Capture per-phase HTTP timing (DNS, connect, sending, waiting/TTFB, receiving) for transport-layer debugging.
+# category: Advanced
+# tags: http, trace, debugging, ttfb, k6, har, network
+# difficulty: advanced
+# features: showTraceTiming, trace export, k6/HAR-aligned metrics
+#
+# HTTP Trace Metrics
+# ==================
+# Adds an HTTP trace timing table alongside the standard LLM metrics. Useful
+# when you need to know *where* a request is spending time at the transport
+# layer — server processing, network, connection pool, or DNS.
+#
+# Metrics captured (k6 / HAR aligned):
+#   http_req_blocked     : time waiting for a free connection from the pool
+#   http_req_dns_lookup  : DNS resolution (0 if cached)
+#   http_req_connecting  : TCP + TLS handshake (0 if connection reused)
+#   http_req_sending     : time to transmit the request
+#   http_req_waiting     : Time-To-First-Byte (server processing + net latency)
+#   http_req_receiving   : time to download the full response body
+#   http_req_duration    : sending + waiting + receiving (direct measurement)
+#   http_req_total       : sum of all 6 phases (reconcilable breakdown)
+#
+# Display vs export:
+#   artifacts.showTraceTiming = true  -> shows trace table in console
+#   artifacts.trace           = true  -> writes raw trace_data into per-record JSONL
+#                                        (timestamps, chunks, headers, socket info)
+#   artifacts.records         = [jsonl]  -> required for trace export
+#
+# Common debugging signals:
+#   high blocked  -> connection pool too small
+#   high dns      -> DNS issue / no caching
+#   high waiting  -> server is the bottleneck
+#   high receiving-> large response or slow network
+#
+# Run: aiperf profile --config http_trace_metrics.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 500
+    isl: {mean: 256, stddev: 50}
+    osl: {mean: 256, stddev: 25}
+
+  profiling:
+    type: poisson
+    rate: 20.0
+    concurrency: 50
+    requests: 500
+    # gracePeriod requires `duration:`; this run stops by request count, so it's omitted.
+
+  artifacts:
+    dir: ./artifacts/http_trace
+    summary: [json]
+    records: [jsonl]            # Required so per-request HTTP trace data has somewhere to land
+    showTraceTiming: true            # Render the HTTP trace timing table in console output
+    trace: true                      # Embed raw trace_data (timestamps, chunks, headers) in each JSONL record
+    sliceDuration: 30s

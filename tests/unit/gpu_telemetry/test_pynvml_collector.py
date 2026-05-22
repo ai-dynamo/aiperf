@@ -443,6 +443,25 @@ class TestPyNVMLCallbacks:
         assert collector_id == "test_collector"
 
     @pytest.mark.asyncio
+    async def test_public_collect_and_process_metrics_delegates(self, patch_pynvml):
+        """`GPUTelemetryManager` baseline/final-state capture calls the public
+        ``collect_and_process_metrics`` name; ensure PyNVML exposes it and that
+        it routes to the same scrape path as the periodic loop."""
+        _, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_callback = AsyncMock()
+        collector = PyNVMLTelemetryCollector(
+            record_callback=mock_callback,
+            collector_id="test_collector",
+        )
+
+        await collector.initialize()
+        await collector.collect_and_process_metrics()
+        await collector.stop()
+
+        mock_callback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_error_callback_on_exception(self, patch_pynvml):
         """Test error callback is called when collection fails."""
         _, PyNVMLTelemetryCollector = patch_pynvml

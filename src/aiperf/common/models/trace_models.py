@@ -105,10 +105,12 @@ class TraceDataExport(AIPerfBaseModel):
     )
     request_chunks_count: int = Field(
         default=0,
+        ge=0,
         description="Number of request chunks sent.",
     )
     request_bytes_total: int = Field(
         default=0,
+        ge=0,
         description="Total bytes sent in request chunks.",
     )
 
@@ -141,10 +143,12 @@ class TraceDataExport(AIPerfBaseModel):
     )
     response_chunks_count: int = Field(
         default=0,
+        ge=0,
         description="Number of response chunks received.",
     )
     response_bytes_total: int = Field(
         default=0,
+        ge=0,
         description="Total bytes received in response chunks.",
     )
     response_receive_end_ns: int | None = Field(
@@ -265,6 +269,8 @@ class AioHttpTraceDataExport(TraceDataExport):
     )
     local_port: int | None = Field(
         default=None,
+        ge=1,
+        le=65535,
         description="Local (ephemeral) port used for the connection.",
     )
     remote_ip: str | None = Field(
@@ -273,6 +279,8 @@ class AioHttpTraceDataExport(TraceDataExport):
     )
     remote_port: int | None = Field(
         default=None,
+        ge=1,
+        le=65535,
         description="Remote port of the server.",
     )
 
@@ -396,10 +404,12 @@ class BaseTraceData(AIPerfBaseModel):
     )
     request_chunks_count: int = Field(
         default=0,
+        ge=0,
         description="Number of request chunks sent.",
     )
     request_bytes_total: int = Field(
         default=0,
+        ge=0,
         description="Total bytes sent in request chunks.",
     )
 
@@ -432,10 +442,12 @@ class BaseTraceData(AIPerfBaseModel):
     )
     response_chunks_count: int = Field(
         default=0,
+        ge=0,
         description="Number of response chunks received.",
     )
     response_bytes_total: int = Field(
         default=0,
+        ge=0,
         description="Total bytes received in response chunks.",
     )
     response_receive_end_perf_ns: int | None = Field(
@@ -608,6 +620,8 @@ class AioHttpTraceData(BaseTraceData):
     )
     local_port: int | None = Field(
         default=None,
+        ge=1,
+        le=65535,
         description="Local (ephemeral) port used for the connection.",
     )
     remote_ip: str | None = Field(
@@ -616,5 +630,7 @@ class AioHttpTraceData(BaseTraceData):
     )
     remote_port: int | None = Field(
         default=None,
+        ge=1,
+        le=65535,
         description="Remote port of the server.",
     )

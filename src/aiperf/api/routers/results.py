@@ -110,7 +110,7 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
 @results_router.get("/api/results/list", response_model=ResultsListResponse)
 async def list_results(component: ResultsDep) -> ResultsListResponse:
     """List all available result files in the artifacts directory."""
-    results_dir = component.user_config.output.artifact_directory
+    results_dir = component.run.cfg.artifacts.artifact_directory
     if not await aio_os.path.exists(results_dir):
         return ResultsListResponse()
 
@@ -133,7 +133,7 @@ async def get_result_file(
     component: ResultsDep, request: Request, filename: str
 ) -> StreamingResponse:
     """Download a result file by name."""
-    artifact_dir = component.user_config.output.artifact_directory
+    artifact_dir = component.run.cfg.artifacts.artifact_directory
     file_path = (artifact_dir / filename).resolve()
 
     if not file_path.is_relative_to(artifact_dir.resolve()):

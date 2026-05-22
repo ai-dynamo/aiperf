@@ -117,11 +117,69 @@ class TestConfidenceAggregation:
         ttft_metric = aggregate.metrics["ttft_avg"]
         assert ttft_metric.mean == pytest.approx(105.0)
 
-    def test_aggregate_error_with_insufficient_runs(self):
-        """Test aggregation raises error with < 2 successful runs."""
-        strategy = ConfidenceAggregation()
+    def test_aggregate_single_run_returns_degraded_metrics(self, caplog):
+        """A single successful run no longer raises — returns point estimates.
 
-        # Only one successful run
+        Pre-fix this branch raised ``Insufficient successful runs for
+        confidence intervals``, which broke users who explicitly set
+        ``num_profile_runs=1`` for fast iteration. The degraded path keeps
+        per-metric values flowing (``mean=value``, ``std=0``, ``ci=[v, v]``)
+        so downstream exporters and SLA filters still receive each metric.
+        ``metadata.single_run=True`` flags the degenerate case so CI-consuming
+        UIs can render "n=1, no CI" instead of a zero-width error bar.
+        """
+        import logging
+        import math
+
+        strategy = ConfidenceAggregation()
+        results = [
+            RunResult(
+                label="run_0001",
+                success=True,
+                summary_metrics={
+                    "ttft": JsonMetricResult(unit="ms", avg=100.0, p50=98.0, p95=110.0),
+                },
+                artifacts_path=Path("/tmp/run_0001"),
+            ),
+        ]
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="aiperf.orchestrator.aggregation.confidence",
+        ):
+            aggregate = strategy.aggregate(results)
+
+        assert aggregate.num_runs == 1
+        assert aggregate.num_successful_runs == 1
+        assert aggregate.metadata["single_run"] is True
+
+        # Each populated stat surfaces with point-estimate degenerate stats.
+        avg_metric = aggregate.metrics["ttft_avg"]
+        assert avg_metric.mean == 100.0
+        assert avg_metric.min == 100.0
+        assert avg_metric.max == 100.0
+        assert avg_metric.std == 0.0
+        assert avg_metric.cv == 0.0
+        assert avg_metric.se == 0.0
+        assert avg_metric.ci_low == 100.0
+        assert avg_metric.ci_high == 100.0
+        assert math.isnan(avg_metric.t_critical)
+        assert avg_metric.unit == "ms"
+
+        # p95 also flows through as a point estimate.
+        p95_metric = aggregate.metrics["ttft_p95"]
+        assert p95_metric.mean == 110.0
+        assert p95_metric.ci_low == 110.0
+        assert p95_metric.ci_high == 110.0
+
+        assert any("only 1 successful run" in r.getMessage() for r in caplog.records), (
+            "expected WARNING about single-run degenerate aggregation; "
+            f"got: {[r.getMessage() for r in caplog.records]}"
+        )
+
+    def test_aggregate_single_run_with_one_failed_still_degrades(self):
+        """One success + one failure → degraded path, failed_runs records the failure."""
+        strategy = ConfidenceAggregation()
         results = [
             RunResult(
                 label="run_0001",
@@ -129,10 +187,23 @@ class TestConfidenceAggregation:
                 summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
                 artifacts_path=Path("/tmp/run_0001"),
             ),
+            RunResult(
+                label="run_0002",
+                success=False,
+                error="endpoint refused",
+                artifacts_path=Path("/tmp/run_0002"),
+            ),
         ]
 
-        with pytest.raises(ValueError, match="Insufficient successful runs"):
-            strategy.aggregate(results)
+        aggregate = strategy.aggregate(results)
+
+        assert aggregate.num_runs == 2
+        assert aggregate.num_successful_runs == 1
+        assert aggregate.metadata["single_run"] is True
+        assert len(aggregate.failed_runs) == 1
+        assert aggregate.failed_runs[0]["label"] == "run_0002"
+        assert aggregate.failed_runs[0]["error"] == "endpoint refused"
+        assert aggregate.metrics["ttft_avg"].mean == 100.0
 
     def test_aggregate_error_with_all_failed_runs(self):
         """Test aggregation raises error when all runs failed."""

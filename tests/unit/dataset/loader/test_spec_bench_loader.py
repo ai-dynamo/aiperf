@@ -5,20 +5,21 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.spec_bench import SpecBenchLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from tests.unit.conftest import make_run_from_cli
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def cli_config() -> CLIConfig:
+    return CLIConfig(model_names=["test-model"])
 
 
 @pytest.fixture
-async def loader(user_config: UserConfig) -> SpecBenchLoader:
-    return SpecBenchLoader(user_config=user_config)
+async def loader(cli_config: CLIConfig) -> SpecBenchLoader:
+    return SpecBenchLoader(run=make_run_from_cli(cli_config))
 
 
 @pytest.mark.asyncio

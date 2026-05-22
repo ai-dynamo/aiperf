@@ -1,0 +1,130 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: User Files (Templated Artifacts)
+# description: Capture run parameters as JSON/YAML/text files materialized into the artifact directory.
+# category: Advanced
+# tags: artifacts, user_files, jinja2, kubernetes
+# difficulty: intermediate
+# features: artifacts.user_files, jinja2 templating, structured JSON output
+#
+# User Files
+# ==========
+# `artifacts.user_files` declares additional files AIPerf renders and writes
+# into the run's artifact directory before the benchmark starts. Use it to
+# capture the parameters that produced a given run alongside the benchmark
+# output, so downstream tooling (dashboards, comparison scripts, recipe
+# regression suites) can correlate input config with measured results.
+#
+# Each entry has:
+#   - path:    relative to the run dir (subdirs allowed; '..' and absolute paths rejected)
+#   - format:  json | yaml | text  (optional; inferred from content type)
+#   - content: any value; string leaves are rendered with Jinja2
+#
+# Context available in Jinja expressions:
+#   User-supplied (from the top-level `variables:` block):
+#     {{ any_name_you_defined }}
+#   System-injected (always present, resolved at run-time):
+#     {{ epoch }}         run epoch as a string
+#     {{ job_name }}      AIPerfJob name in k8s; --artifact-dir basename locally
+#     {{ namespace }}     k8s namespace; "" locally
+#     {{ model }}         first model name
+#     {{ endpoint_url }}  first endpoint url
+#     {{ artifact_dir }}  absolute run directory path
+#
+# Run: aiperf profile --config user_files.yaml
+
+schemaVersion: "2.0"
+
+variables:
+  scenario_label: dense-agg
+  concurrency_per_gpu: 32
+  deployment_gpu_count: 4
+  total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+  isl: 1024
+  osl: 1024
+
+randomSeed: 42
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: "{{ total_concurrency * 4 }}"
+    prompts:
+      isl: {mean: "{{ isl }}", stddev: 0}
+      osl: {mean: "{{ osl }}", stddev: 0}
+
+  phases:
+    - name: warmup
+      type: concurrency
+      concurrency: "{{ total_concurrency }}"
+      requests: "{{ total_concurrency }}"
+      excludeFromResults: true
+    - name: profiling
+      type: concurrency
+      concurrency: "{{ total_concurrency }}"
+      requests: "{{ total_concurrency * 10 }}"
+
+  artifacts:
+    dir: ./artifacts/user_files_demo
+    summary: [json]
+    records: [jsonl]
+
+    # The interesting part: three files written into the run dir before the
+    # benchmark starts. Each demonstrates a different content/format pattern.
+    user_files:
+
+      # 1. Structured JSON config dump (auto-inferred format).
+      #    This is the production pattern from the DGX recipe configs:
+      #    capture every input parameter so a later `aiperf plot` or
+      #    comparison tool can label this run unambiguously.
+      - path: input_config.json
+        content:
+          scenario: "{{ scenario_label }}"
+          mode: agg
+          gpu_count: "{{ deployment_gpu_count }}"
+          concurrency_per_gpu: "{{ concurrency_per_gpu }}"
+          total_concurrency: "{{ total_concurrency }}"
+          isl: "{{ isl }}"
+          osl: "{{ osl }}"
+          model: "{{ model }}"
+          endpoint: "{{ endpoint_url }}"
+          run:
+            epoch: "{{ epoch }}"
+            job_name: "{{ job_name }}"
+            namespace: "{{ namespace }}"
+
+      # 2. Explicit YAML, written into a subdirectory.
+      #    Subdirs are created automatically; symlinked-escape is rejected.
+      - path: meta/run.yaml
+        format: yaml
+        content:
+          run_id: "{{ job_name }}-{{ epoch }}"
+          artifact_dir: "{{ artifact_dir }}"
+          tags:
+            - "{{ scenario_label }}"
+            - "isl={{ isl }}"
+            - "osl={{ osl }}"
+
+      # 3. Free-form text (e.g. a per-run README rendered with Jinja).
+      #    Use format: text whenever content is a string; otherwise json/yaml
+      #    is inferred and a string would be rejected.
+      - path: README.md
+        format: text
+        content: |
+          # Run {{ job_name }} ({{ scenario_label }})
+
+          - Model: `{{ model }}`
+          - Endpoint: `{{ endpoint_url }}`
+          - Concurrency: {{ total_concurrency }} ({{ concurrency_per_gpu }}/GPU x {{ deployment_gpu_count }} GPUs)
+          - ISL/OSL: {{ isl }} / {{ osl }}
+          - Started: epoch {{ epoch }}

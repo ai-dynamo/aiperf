@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import orjson
@@ -41,6 +42,9 @@ import orjson
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.utils import load_json_str
+
+if TYPE_CHECKING:
+    from aiperf.common.random_generator import RandomGenerator
 
 logger = AIPerfLogger(__name__)
 
@@ -119,22 +123,30 @@ class SequenceLengthDistribution:
         Initialize distribution from list of sequence length pairs.
 
         Args:
-            pairs: List of SequenceLengthPair objects. Probabilities must sum to 1.0.
+            pairs: List of SequenceLengthPair objects. Probabilities must sum to 100.0.
 
         Raises:
-            ValueError: If pairs is empty or probabilities don't sum to 1.0.
+            ValueError: If pairs is empty or probabilities don't sum to 100.0.
         """
         if not pairs:
             raise ValueError(
                 "Distribution must contain at least one sequence length pair"
             )
 
-        self._rng = rng.derive("models.sequence.distribution")
+        # RNG is derived lazily on first sample so that parsing/construction
+        # stays pure and works before bootstrap calls rng.init().
+        self._rng: RandomGenerator | None = None
         self._pairs = tuple(pairs)  # Immutable copy
         _validate_probability_sum(list(self._pairs))
         self._cumulative_probs = self._compute_cumulative_probabilities()
 
         logger.debug(f"Created distribution with {len(self._pairs)} pairs: {self}")
+
+    def _get_rng(self) -> RandomGenerator:
+        """Lazily derive and cache the RNG on first use."""
+        if self._rng is None:
+            self._rng = rng.derive("models.sequence.distribution")
+        return self._rng
 
     def _compute_cumulative_probabilities(self) -> np.ndarray:
         """Compute cumulative probability distribution for efficient sampling."""
@@ -149,7 +161,7 @@ class SequenceLengthDistribution:
         Returns:
             Tuple of (input_seq_len, output_seq_len)
         """
-        rand_val = self._rng.random()
+        rand_val = self._get_rng().random()
 
         # Binary search for efficiency with large distributions
         idx = np.searchsorted(self._cumulative_probs, rand_val, side="right")
@@ -159,14 +171,14 @@ class SequenceLengthDistribution:
 
         # Sample from normal distribution if stddev is specified
         if pair.input_seq_len_stddev > 0:
-            isl = self._rng.sample_positive_normal_integer(
+            isl = self._get_rng().sample_positive_normal_integer(
                 pair.input_seq_len, pair.input_seq_len_stddev
             )
         else:
             isl = pair.input_seq_len
 
         if pair.output_seq_len_stddev > 0:
-            osl = self._rng.sample_positive_normal_integer(
+            osl = self._get_rng().sample_positive_normal_integer(
                 pair.output_seq_len, pair.output_seq_len_stddev
             )
         else:
@@ -187,7 +199,8 @@ class SequenceLengthDistribution:
         if batch_size <= 0:
             raise ValueError(f"Batch size must be positive, got {batch_size}")
 
-        rand_vals = self._rng.random_batch(batch_size)
+        rng_inst = self._get_rng()
+        rand_vals = rng_inst.random_batch(batch_size)
         indices = np.searchsorted(self._cumulative_probs, rand_vals, side="right")
         indices = np.clip(indices, 0, len(self._pairs) - 1)
 
@@ -195,14 +208,14 @@ class SequenceLengthDistribution:
         for idx in indices:
             pair = self._pairs[idx]
             if pair.input_seq_len_stddev > 0:
-                isl = self._rng.sample_positive_normal_integer(
+                isl = rng_inst.sample_positive_normal_integer(
                     pair.input_seq_len, pair.input_seq_len_stddev
                 )
             else:
                 isl = pair.input_seq_len
 
             if pair.output_seq_len_stddev > 0:
-                osl = self._rng.sample_positive_normal_integer(
+                osl = rng_inst.sample_positive_normal_integer(
                     pair.output_seq_len, pair.output_seq_len_stddev
                 )
             else:

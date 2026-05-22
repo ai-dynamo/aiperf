@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Vision-Language Model Benchmark
+# description: Benchmark VLMs with synthetic images of varying resolutions.
+# category: Multimodal
+# tags: vision, multimodal, images
+# difficulty: intermediate
+# features: image config, resolution distributions
+#
+# Multimodal Vision Benchmark
+# ============================
+# Generates synthetic images (random pixels) and sends them alongside text
+# prompts via the OpenAI vision API format. Tests how image count and
+# resolution affect throughput and latency.
+#
+# Tune `images.batchSize` to match your real-world traffic shape:
+#   1   - standard VQA (single image per request)
+#   4+  - multi-image understanding (comparison, multi-frame analysis)
+#
+# Run: aiperf profile --config multimodal_vision.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: llava-hf/llava-1.5-7b-hf
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
+
+  dataset:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 100, stddev: 20}
+      osl: {mean: 256, stddev: 50}
+    images:
+      batchSize: 1            # Single image per request — standard VQA
+      width: 512
+      height: 512
+      format: jpeg            # JPEG is smaller on the wire than PNG
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 20
+      concurrency: 4
+
+    - name: profiling
+      type: poisson
+      requests: 500
+      concurrency: 16
+      rate: 10.0
+
+  artifacts:
+    dir: ./artifacts/multimodal_vision
+    summary: [json]
+    records: [jsonl]

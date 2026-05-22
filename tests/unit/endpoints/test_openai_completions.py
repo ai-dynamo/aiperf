@@ -69,13 +69,13 @@ class TestCompletionsEndpoint:
         }
         assert payload == expected_payload
 
-    def test_format_payload_forwards_request_body_on_single_turn(self, model_endpoint):
+    def test_format_payload_forwards_extra_body_on_single_turn(self, model_endpoint):
         endpoint = CompletionsEndpoint(model_endpoint)
         request_info = create_request_info(
             model_endpoint=model_endpoint,
             texts=["second"],
             max_tokens=33,
-            request_body={"hash_ids": [1, 2], "block_size": 64},
+            extra_body={"hash_ids": [1, 2], "block_size": 64},
         )
 
         payload = endpoint.format_payload(request_info)
@@ -85,7 +85,7 @@ class TestCompletionsEndpoint:
         assert payload["hash_ids"] == [1, 2]
         assert payload["block_size"] == 64
 
-    def test_format_payload_request_body_overrides_endpoint_extra(self, model_endpoint):
+    def test_format_payload_extra_body_overrides_endpoint_extra(self, model_endpoint):
         endpoint = CompletionsEndpoint(model_endpoint)
         model_endpoint.endpoint.extra = [
             ("hash_ids", [9, 9]),
@@ -95,7 +95,7 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(
             model_endpoint=model_endpoint,
             texts=["second"],
-            request_body={"hash_ids": [1, 2], "block_size": 64},
+            extra_body={"hash_ids": [1, 2], "block_size": 64},
         )
 
         payload = endpoint.format_payload(request_info)

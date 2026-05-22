@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: Time-Based Soak Test
+# description: Run a fixed-duration benchmark (e.g., 1h) to validate stability and detect leaks under sustained load.
+# category: Load Testing
+# tags: soak, stability, duration, sla, drift
+# difficulty: intermediate
+# features: time-based stop, gracePeriod, sliceDuration, two-phase
+#
+# Time-Based Soak Test
+# ====================
+# Stops by elapsed time, not by request count. Use for:
+#   - Stability validation     (does latency drift over an hour?)
+#   - Memory-leak detection    (does RSS climb? KV cache release?)
+#   - SLA observation windows  (consistent measurement durations across runs)
+#   - A/B comparisons          (same wall-clock time on each side)
+#
+# Lifecycle:
+#   |-------- duration: send requests --------|--- gracePeriod: drain ---|
+#                                              ^
+#                              (no new requests dispatched here)
+#
+# Tips:
+#   - Use sliceDuration to slice the run into windows so you can plot drift.
+#   - gracePeriod: "inf" waits forever for in-flight requests (fine for soaks).
+#   - Combine with `request-count` if you want "stop when *either* fires".
+#
+# Run: aiperf profile --config time_based_soak.yaml
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 2000                   # Pool of unique prompts; recycled to fill the duration
+    isl: {mean: 512, stddev: 50}
+    osl: {mean: 256, stddev: 25}
+
+  warmup:
+    type: concurrency
+    duration: 60s                   # 1-minute warmup so JIT/caches settle before measurement
+    concurrency: 16
+    # excludeFromResults is implied by the `warmup:` shorthand — no need to set it.
+
+  profiling:
+    type: concurrency
+    duration: 3600s                 # 1-hour soak; bump to 8h+ for overnight runs
+    concurrency: 32
+    gracePeriod: 120s               # Or use "inf" if any in-flight request must be allowed to finish
+
+  artifacts:
+    dir: ./artifacts/soak
+    summary: [json]
+    records: [jsonl]
+    sliceDuration: 5m               # 12 windows over a 1h soak — enough to spot drift without noise
+
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv]            # Useful for correlating queue depth / KV cache with latency drift
+
+  gpuTelemetry:
+    enabled: true                   # Long soaks are where thermal throttling and power drift show up

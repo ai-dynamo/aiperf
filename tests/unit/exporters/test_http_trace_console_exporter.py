@@ -4,9 +4,9 @@
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.http_trace_console_exporter import HttpTraceConsoleExporter
 from aiperf.metrics.types.http_trace_metrics import (
@@ -28,12 +28,15 @@ from aiperf.metrics.types.http_trace_metrics import (
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from aiperf.plugin.enums import EndpointType
+from tests.unit.exporters.conftest import (
+    make_exporter_config as _make_v2_exporter_config,
+)
 
 
 @pytest.fixture
 def mock_endpoint_config():
-    return EndpointConfig(
-        type=EndpointType.CHAT,
+    return CLIConfig(
+        endpoint_type=EndpointType.CHAT,
         streaming=True,
         model_names=["test-model"],
     )
@@ -155,23 +158,22 @@ def sample_mixed_records(sample_http_trace_records):
 
 def make_exporter_config(
     records: list[MetricResult],
-    endpoint_config: EndpointConfig,
+    endpoint_config: CLIConfig,
     show_trace_timing: bool = True,
 ) -> ExporterConfig:
     """Create an ExporterConfig with the specified settings."""
-    user_config = UserConfig(
-        endpoint=endpoint_config,
-        output=OutputConfig(show_trace_timing=show_trace_timing),
+    cli_config = CLIConfig(
+        **endpoint_config.model_dump(exclude_unset=True),
+        show_trace_timing=show_trace_timing,
     )
-    return ExporterConfig(
+    return _make_v2_exporter_config(
         results=ProfileResults(
             records=records,
             start_ns=0,
             end_ns=0,
             completed=0,
         ),
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        cli_config=cli_config,
         telemetry_results=None,
     )
 

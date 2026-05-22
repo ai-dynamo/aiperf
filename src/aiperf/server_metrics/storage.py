@@ -890,8 +890,7 @@ class ServerMetricEntry:
         return cls(
             metric_type=metric_family.type,
             description=metric_family.description,
-            data=ScalarTimeSeries()
-            if metric_family.type
-            in (PrometheusMetricType.GAUGE, PrometheusMetricType.COUNTER)
-            else HistogramTimeSeries(),
+            data=HistogramTimeSeries()
+            if metric_family.type == PrometheusMetricType.HISTOGRAM
+            else ScalarTimeSeries(),
         )

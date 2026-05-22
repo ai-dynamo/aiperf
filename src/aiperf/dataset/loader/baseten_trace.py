@@ -77,7 +77,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._session_sample_ratio = self.user_config.input.trace_session_sample_ratio
+        dataset = self.run.cfg.get_default_dataset()
+        self._session_sample_ratio = getattr(
+            dataset, "trace_session_sample_ratio", None
+        )
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
 
     @classmethod
@@ -97,7 +100,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         return _REQUIRED_COLUMNS.issubset(schema.names)
 
-    def _parse_trace(self, line: str) -> BasetenTrace:
+    def _parse_trace(self, record: dict) -> BasetenTrace:
         raise NotImplementedError("BasetenTraceDatasetLoader reads Parquet, not JSONL.")
 
     def _preprocess_trace(self, trace: BasetenTrace) -> None:

@@ -9,14 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.enums import WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.workers.worker_manager import WorkerManager, WorkerStatusInfo
+from tests.unit.conftest import make_run_from_cli
 
 DEFAULT_MEMORY = 1024 * 1024 * 100
 WORKER_ID = "test-worker-1"
@@ -25,17 +24,16 @@ WORKER_ID = "test-worker-1"
 @pytest.fixture
 def worker_manager() -> WorkerManager:
     """Create a WorkerManager instance for testing."""
-    service_config = ServiceConfig(workers=WorkersConfig(max=4))
-    user_config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        loadgen=LoadGeneratorConfig(concurrency=10),
+    cli_config = CLIConfig(
+        workers_max=4,
+        model_names=["test-model"],
+        **CLIConfig(concurrency=10).model_dump(exclude_unset=True),
     )
     with patch(
         "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=8
     ):
         manager = WorkerManager(
-            service_config=service_config,
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             service_id="test-worker-manager",
         )
         manager.warning = MagicMock()
@@ -108,19 +106,19 @@ class TestMaxWorkers:
         with patch(
             "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
         ):
-            service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
             # Set request_count to be >= concurrency to avoid validation error
             request_count = max(concurrency or 10, 10)
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(
-                    concurrency=concurrency, request_count=request_count
-                ),
+            loadgen_kwargs: dict = {"request_count": request_count}
+            if concurrency is not None:
+                loadgen_kwargs["concurrency"] = concurrency
+            cli_config = CLIConfig(
+                workers_max=max_workers,
+                model_names=["test-model"],
+                **CLIConfig(**loadgen_kwargs).model_dump(exclude_unset=True),
             )
 
             worker_manager = WorkerManager(
-                service_config=service_config,
-                user_config=user_config,
+                run=make_run_from_cli(cli_config),
                 service_id="test-worker-manager",
             )
 
@@ -147,15 +145,14 @@ class TestMaxWorkers:
         with patch(
             "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
         ):
-            service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(request_rate=request_rate),
+            cli_config = CLIConfig(
+                workers_max=max_workers,
+                model_names=["test-model"],
+                **CLIConfig(request_rate=request_rate).model_dump(exclude_unset=True),
             )
 
             worker_manager = WorkerManager(
-                service_config=service_config,
-                user_config=user_config,
+                run=make_run_from_cli(cli_config),
                 service_id="test-worker-manager",
             )
 

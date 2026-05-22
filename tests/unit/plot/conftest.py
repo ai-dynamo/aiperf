@@ -9,15 +9,23 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import logging
+import warnings
 from pathlib import Path
 from typing import Any
 
+import matplotlib.figure
 import pytest
 
 from aiperf.plot.core.mode_detector import ModeDetector
 
 logging.getLogger("choreographer").setLevel(logging.WARNING)
 logging.getLogger("kaleido").setLevel(logging.WARNING)
+warnings.filterwarnings(
+    "ignore",
+    message="There is no current event loop",
+    category=DeprecationWarning,
+    module="looptime\\._internal\\.plugin",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -165,32 +173,36 @@ def sample_aggregated_data() -> dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
-def mock_kaleido_write_image(request, monkeypatch):
-    """Mock Plotly's write_image to avoid slow Kaleido rendering in unit tests only.
+def mock_plot_image_writers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock expensive plot image finalization in unit tests."""
 
-    This fixture automatically patches fig.write_image() and fig.to_image()
-    to avoid the expensive Kaleido/Chrome rendering process during unit tests.
-    Integration tests are skipped to allow real PNG generation.
-    """
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
-    def mock_write_image(self, *args, **kwargs):
-        """Mock write_image that creates an empty file."""
-        # Extract the file path from args or kwargs
-        if args:
-            path = Path(args[0])
-        else:
-            path = Path(kwargs.get("file", kwargs.get("path", "/tmp/mock.png")))
-
-        # Create parent directory if needed
+    def write_png(path_like: object) -> None:
+        path = Path(path_like)
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(png_bytes)
 
-        # Write a minimal PNG header to make it a valid file
-        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    def mock_write_image(self: object, *args: object, **kwargs: object) -> None:
+        if args:
+            write_png(args[0])
+        else:
+            write_png(kwargs.get("file", kwargs.get("path", "/tmp/mock.png")))
 
-    def mock_to_image(self, *args, **kwargs):
-        """Mock to_image that returns minimal PNG bytes."""
-        return b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    def mock_to_image(self: object, *args: object, **kwargs: object) -> bytes:
+        return png_bytes
 
-    # Patch the methods on the Figure class
+    def mock_savefig(
+        self: matplotlib.figure.Figure, fname: object, *args: object, **kwargs: object
+    ) -> None:
+        write_png(fname)
+
+    def mock_tight_layout(
+        self: matplotlib.figure.Figure, *args: object, **kwargs: object
+    ) -> None:
+        return None
+
     monkeypatch.setattr("plotly.graph_objects.Figure.write_image", mock_write_image)
     monkeypatch.setattr("plotly.graph_objects.Figure.to_image", mock_to_image)
+    monkeypatch.setattr(matplotlib.figure.Figure, "savefig", mock_savefig)
+    monkeypatch.setattr(matplotlib.figure.Figure, "tight_layout", mock_tight_layout)

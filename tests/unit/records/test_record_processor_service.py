@@ -14,7 +14,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
     """Test the RecordProcessor._create_metric_record_metadata method."""
 
     @pytest.fixture
-    def mock_record_processor(self, service_config, user_config):
+    def mock_record_processor(self, cli_config):
         """Create a mock RecordProcessor instance for testing."""
         instance = MagicMock(spec=RecordProcessor)
         instance.service_id = "test-processor-id"

@@ -6,7 +6,7 @@ sidebar-title: Server Metrics Collection
 
 # Server Metrics Collection
 
-AIPerf automatically collects metrics from Prometheus-compatible endpoints exposed by LLM inference servers (vLLM, SGLang, TRT-LLM, Dynamo, etc.).
+AIPerf automatically collects metrics from Prometheus-compatible endpoints exposed by LLM inference servers and serving frontends (vLLM, SGLang, TRT-LLM, Dynamo, Triton, etc.).
 
 ## Quick Reference
 
@@ -14,7 +14,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 |---------|-------------|---------|
 | **Auto-discovery** | Automatically finds `/metrics` endpoint on server URL | Enabled |
 | **Collection** | Scrapes metrics every 333ms during benchmark | Enabled |
-| **Outputs** | JSON (aggregated), CSV (tabular), JSONL (time-series), Parquet (cumulative deltas) | JSON + CSV |
+| **Outputs** | JSON (aggregated), CSV (tabular), JSONL (time-series), Parquet (cumulative deltas) | JSON + CSV + Parquet |
 | **Custom endpoints** | `--server-metrics URL [URL...]` for additional endpoints | None |
 | **Disable** | `--no-server-metrics` to turn off collection | Enabled |
 | **Windowed stats** | `--slice-duration SECONDS` for time-sliced analysis | Off |
@@ -27,11 +27,13 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 |--------|------|---------------|
 | `vllm:num_requests_running` | gauge | Active batch size (`stats.avg`) |
 | `vllm:num_requests_waiting` | gauge | Queue depth—growing = saturation (`stats.max`) |
+| `vllm:num_requests_waiting_by_reason` | gauge | Queue depth split into `capacity` and `deferred` (`stats.max`) |
 | `vllm:kv_cache_usage_perc` | gauge | >0.9 = capacity limit (`stats.max`) |
 | `vllm:num_preemptions` | counter | >0 = memory pressure (`stats.total`) |
 | `vllm:e2e_request_latency_seconds` | histogram | E2E latency (`stats.p99_estimate`) |
 | `vllm:time_to_first_token_seconds` | histogram | TTFT (`stats.p99_estimate`) |
 | `vllm:inter_token_latency_seconds` | histogram | ITL (`stats.p99_estimate`) |
+| `vllm:prompt_tokens_by_source` | counter | Prompt-token source mix (`source` label) |
 | `vllm:generation_tokens` | counter | Decode throughput (`stats.rate`) |
 
 </Accordion>
@@ -40,13 +42,15 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 
 | Metric | Type | What to Watch |
 |--------|------|---------------|
-| `dynamo_frontend_inflight_requests` | gauge | Active requests (`stats.avg`) |
-| `dynamo_frontend_queued_requests` | gauge | Requests awaiting first token (`stats.avg`) |
+| `dynamo_frontend_active_requests` | gauge | HTTP handler active requests (`stats.avg`) |
+| `dynamo_frontend_inflight_requests` | gauge | Engine-bound active requests (`stats.avg`) |
+| `dynamo_frontend_queued_requests` | gauge | HTTP requests awaiting first token (`stats.avg`) |
 | `dynamo_frontend_request_duration_seconds` | histogram | E2E latency (`stats.p99_estimate`) |
 | `dynamo_frontend_time_to_first_token_seconds` | histogram | TTFT (`stats.p99_estimate`) |
 | `dynamo_frontend_inter_token_latency_seconds` | histogram | ITL (`stats.p99_estimate`) |
-| `dynamo_frontend_requests` | counter | Throughput (`stats.rate`) |
-| `dynamo_component_kvstats_gpu_cache_usage_percent` | gauge | Backend cache usage (`stats.max`) |
+| `dynamo_frontend_requests` | counter | Completed request throughput (`stats.rate`) |
+| `dynamo_frontend_output_tokens` | counter | Decode throughput (`stats.rate`) |
+| `dynamo_component_gpu_cache_usage_percent` | gauge | Backend cache usage (`stats.max`) |
 
 </Accordion>
 
@@ -59,7 +63,12 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `sglang:token_usage` | gauge | >0.9 = capacity limit (`stats.max`) |
 | `sglang:cache_hit_rate` | gauge | Prefix cache efficiency (`stats.avg`) |
 | `sglang:gen_throughput` | gauge | Real-time tokens/s (`stats.avg`) |
+| `sglang:time_to_first_token_seconds` | histogram | TTFT (`stats.p99_estimate`) |
+| `sglang:inter_token_latency_seconds` | histogram | ITL (`stats.p99_estimate`) |
+| `sglang:e2e_request_latency_seconds` | histogram | E2E latency (`stats.p99_estimate`) |
 | `sglang:queue_time_seconds` | histogram | Queue wait (`stats.p99_estimate`) |
+| `sglang:prompt_tokens` | counter | Prefill throughput (`stats.rate`) |
+| `sglang:generation_tokens` | counter | Decode throughput (`stats.rate`) |
 
 </Accordion>
 
@@ -67,22 +76,52 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 
 | Metric | Type | What to Watch |
 |--------|------|---------------|
-| `trtllm:e2e_request_latency_seconds` | histogram | E2E latency (`stats.p99_estimate`) |
-| `trtllm:time_to_first_token_seconds` | histogram | TTFT (`stats.p99_estimate`) |
-| `trtllm:time_per_output_token_seconds` | histogram | ITL (`stats.p99_estimate`) |
-| `trtllm:request_queue_time_seconds` | histogram | Queue wait (`stats.p99_estimate`) |
-| `trtllm:request_success` | counter | Completed requests (`stats.rate`) |
+| `trtllm_e2e_request_latency_seconds` | histogram | E2E latency (`stats.p99_estimate`) |
+| `trtllm_time_to_first_token_seconds` | histogram | TTFT (`stats.p99_estimate`) |
+| `trtllm_time_per_output_token_seconds` | histogram | ITL (`stats.p99_estimate`) |
+| `trtllm_request_queue_time_seconds` | histogram | Queue wait (`stats.p99_estimate`) |
+| `trtllm_request_prefill_time_seconds` | histogram | Prefill duration (`stats.p99_estimate`) |
+| `trtllm_request_decode_time_seconds` | histogram | Decode duration (`stats.p99_estimate`) |
+| `trtllm_request_success` | counter | Completed requests (`stats.rate`) |
+| `trtllm_prompt_tokens` | counter | Prefill throughput (`stats.rate`) |
+| `trtllm_generation_tokens` | counter | Decode throughput (`stats.rate`) |
+| `trtllm_num_requests_running` | gauge | Active requests (`stats.avg`) |
+| `trtllm_num_requests_waiting` | gauge | Queued requests (`stats.max`) |
+| `trtllm_kv_cache_utilization` | gauge | KV cache usage (`stats.max`) |
+| `trtllm_kv_cache_hit_rate` | gauge | KV cache reuse efficiency (`stats.avg`) |
 
 > [!IMPORTANT]
 > **TRT-LLM server-side setup is required.** Unlike vLLM and SGLang, `trtllm-serve` does not expose Prometheus exposition format at `/metrics` by default — the default `/metrics` returns an iteration-stats JSON array (`application/json`), which is not parseable as Prometheus. Two consequences:
 >
-> 1. **Enable Prometheus on the server.** Pass `return_perf_metrics: true` in your `extra_llm_api_options.yaml`. This mounts the proper Prometheus exposition at `/prometheus/metrics` (a non-standard path).
+> 1. **Enable Prometheus on the server.** Pass `return_perf_metrics: true` in your `extra_llm_api_options.yaml`. This mounts the proper Prometheus exposition at `/prometheus/metrics` (a non-standard path). Add `enable_iter_perf_stats: true` when you want iteration-derived queue/KV/memory metrics from the PyTorch backend.
 > 2. **AIPerf auto-detects and falls back.** When AIPerf hits `/metrics` and gets `application/json`, it automatically probes `<base>/prometheus/metrics` once. If the alt path serves Prometheus, AIPerf swaps the URL and continues — no manual override needed. If the alt path also fails (e.g. `return_perf_metrics` was not set), the collector auto-disables for the remainder of the run with a single warning.
 >
 > Example `extra_llm_api_options.yaml` snippet:
 > ```yaml
 > return_perf_metrics: true
+> enable_iter_perf_stats: true
 > ```
+
+</Accordion>
+
+<Accordion title="Triton Inference Server">
+
+| Metric | Type | What to Watch |
+|--------|------|---------------|
+| `nv_inference_request_success` | counter | Successful request throughput (`stats.rate`) |
+| `nv_inference_request_failure` | counter | Failed requests by `reason` (`stats.total`) |
+| `nv_inference_count` | counter | Inference throughput and average batch size numerator (`stats.rate`) |
+| `nv_inference_exec_count` | counter | Execution throughput and average batch size denominator (`stats.rate`) |
+| `nv_inference_pending_request_count` | gauge | Backend queue depth (`stats.max`) |
+| `nv_inference_request_duration_us` | counter | Cumulative E2E request time (`stats.total`, microseconds) |
+| `nv_inference_queue_duration_us` | counter | Cumulative queue time (`stats.total`, microseconds) |
+| `nv_inference_first_response_histogram_ms` | histogram | First-response latency when histogram latencies are enabled (`stats.p99_estimate`) |
+| `nv_gpu_utilization` | gauge | GPU utilization (`stats.avg`) |
+| `nv_gpu_memory_used_bytes` | gauge | GPU memory pressure (`stats.max`) |
+| `nv_cache_num_hits_per_model` | counter | Response-cache hits (`stats.total`) |
+| `nv_cache_num_misses_per_model` | counter | Response-cache misses (`stats.total`) |
+
+Triton serves Prometheus metrics at `http://localhost:8002/metrics` by default, not on the inference HTTP port. Use `--server-metrics http://HOST:8002/metrics` when the inference URL and metrics URL differ. Triton latency summaries are ignored by AIPerf; enable `--metrics-config histogram_latencies=true` for first-response histogram percentiles.
 
 </Accordion>
 
@@ -106,11 +145,11 @@ AIPerf automatically:
 3. Captures baseline metrics before warmup period begins (reference point for deltas) — also where AIPerf first parses the response and validates it as Prometheus exposition format; see [Compatibility & auto-disable](#compatibility--auto-disable) for what happens when an endpoint returns non-Prometheus content
 4. Collects metrics at configurable intervals during warmup and profiling
 5. Performs final scrape after profiling completes (captures end state)
-6. Exports selected formats (default: JSON + CSV):
+6. Exports selected formats (default: JSON + CSV + Parquet):
    - `server_metrics_export.json` - Aggregated statistics (profiling period only)
    - `server_metrics_export.csv` - Tabular format (profiling period only)
+   - `server_metrics_export.parquet` - Raw time-series with delta calculations
    - `server_metrics_export.jsonl` - Time-series data (all scrapes, opt-in only)
-   - `server_metrics_export.parquet` - Raw time-series with delta calculations (opt-in only)
 
 > [!NOTE]
 > **Custom file naming:** The `--profile-export-prefix` (or `--profile-export-file`) flag changes the prefix for all export files, including server metrics. Any file extension is automatically stripped from the provided value. For example:
@@ -125,9 +164,13 @@ AIPerf automatically:
 
 **Time filtering:** Statistics in JSON/CSV exports exclude the warmup period, showing only metrics from the profiling phase. The JSONL file contains all scrapes (including warmup) for complete time-series analysis.
 
-**Format selection:** By default, only JSON and CSV formats are generated to avoid large JSONL files. To include JSONL for time-series analysis:
+**Format selection:** By default, JSON, CSV, and Parquet formats are generated (JSONL is opt-in to avoid large files). To opt out of Parquet, or to include JSONL for time-series analysis:
 ```bash
-aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl
+# Disable Parquet (JSON + CSV only)
+aiperf profile --model MODEL ... --server-metrics-formats json csv
+
+# Add JSONL for raw time-series snapshots
+aiperf profile --model MODEL ... --server-metrics-formats json csv parquet jsonl
 ```
 
 ### Adding Custom Endpoints
@@ -151,19 +194,21 @@ aiperf profile --model MODEL ... --no-server-metrics
 ### Selecting Output Formats
 
 ```bash
-# Default: JSON + CSV only
+# Default: JSON + CSV + Parquet
 aiperf profile --model MODEL ...
 
-# Add time-series formats as needed
-aiperf profile --model MODEL ... --server-metrics-formats json csv parquet
-aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
+# Opt out of Parquet (JSON + CSV only)
+aiperf profile --model MODEL ... --server-metrics-formats json csv
+
+# Add JSONL for raw time-series snapshots
+aiperf profile --model MODEL ... --server-metrics-formats json csv parquet jsonl
 ```
 
 | Format | Use Case | Size |
 |--------|----------|------|
 | **JSON/CSV** (default) | Summary statistics, CI/CD thresholds | Small |
-| **Parquet** | SQL queries, pandas/DuckDB analytics | Compressed |
-| **JSONL** | Debugging, raw Prometheus snapshots | 10-100x larger |
+| **Parquet** (default) | SQL queries, pandas/DuckDB analytics | Compressed |
+| **JSONL** (opt-in) | Debugging, raw Prometheus snapshots | 10-100x larger |
 
 ## Compatibility & auto-disable
 
@@ -173,7 +218,7 @@ AIPerf scrapes `/metrics` at ~3 Hz and parses the response as Prometheus exposit
 - the HTTP `Content-Type` is `application/json` (the response body is never read in this case — the rejection is cheaper than parsing); or
 - the body fails to parse as Prometheus exposition format (`prometheus_client.parser.text_string_to_metric_families` raises `ValueError` — e.g. a server returns `text/plain` with garbage, or a JSON body without a content-type).
 
-**TRT-LLM `/prometheus/metrics` fallback.** Before disabling, AIPerf probes `<base>/prometheus/metrics` exactly once — TRT-LLM mounts the proper Prometheus path there when launched with `return_perf_metrics: true` (see the TRT-LLM entry in the [Quick Reference table](#quick-reference) above). If the probe succeeds, the collector swaps its URL there and the run continues with the alt endpoint. The probe is only attempted when the configured URL ends with exactly `/metrics`; URLs ending with anything else (e.g. `/prometheus/metrics`, `/v1/metrics`, `/api/metrics`) are left untouched.
+**TRT-LLM `/prometheus/metrics` fallback.** Before disabling, AIPerf probes `<base>/prometheus/metrics` exactly once — TRT-LLM mounts the proper Prometheus path there when launched with `return_perf_metrics: true` (see the TRT-LLM entry in the [Quick Reference table](#quick-reference) above). If the probe succeeds, the collector swaps its URL there and the run continues with the alt endpoint. The probe is attempted whenever the configured URL ends with `/metrics` and is not already `/prometheus/metrics` itself — so `/metrics`, `/v1/metrics`, and `/api/metrics` all trigger the fallback probe. URLs that don't end in `/metrics` (e.g. `/stats`, `/telemetry`) are left untouched, and `/prometheus/metrics` is excluded to avoid probing the same path it would swap to.
 
 **On auto-disable.** A single `WARNING` is emitted naming the endpoint and the suppression flag. Subsequent scrape cycles short-circuit, the collector emits no further log noise, and the rest of the benchmark proceeds normally — other configured endpoints (DCGM telemetry, additional `--server-metrics` URLs) are unaffected.
 
@@ -199,7 +244,7 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 ## Output Files
 
 > [!NOTE]
-> The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-directory`, default: `./artifacts/<run_info>`).
+> The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-dir` / `--output-artifact-dir`, default: `./artifacts/<run_info>`).
 
 ### 1. Time-Series: `server_metrics_export.jsonl`
 
@@ -327,9 +372,13 @@ Aggregated statistics from profiling period. Metrics from all endpoints are merg
     }
   },
   "input_config": {
-    "endpoint": { "model_names": ["Qwen/Qwen3-0.6B"], "streaming": true },
-    "loadgen": { "concurrency": 400, "request_rate": 5000.0, "request_count": 30000 },
-    "output": { "slice_duration": 5.0 }
+    "models": ["Qwen/Qwen3-0.6B"],
+    "endpoint": { "urls": ["http://localhost:8000"], "streaming": true },
+    "datasets": [{ "name": "default", "type": "synthetic", "count": 30000 }],
+    "phases": [
+      { "name": "profiling", "type": "concurrency", "concurrency": 400, "requests": 30000 }
+    ],
+    "artifacts": { "slice_duration": 5.0 }
   }
 }
 ```
@@ -341,7 +390,7 @@ jq '.metrics["vllm:e2e_request_latency_seconds"].series[0].stats.p99_estimate' s
 
 ### 3. CSV Export: `server_metrics_export.csv`
 
-Tabular export organized in four sections (separated by blank lines): **gauge**, **counter**, **histogram**, **info**.
+Tabular export organized in five sections (separated by blank lines): **gauge**, **counter**, **histogram**, **unknown**, **info**. The **unknown** section holds families that the Prometheus server declared as `# TYPE foo untyped` (or with no `# TYPE` line at all); they use the same statistics columns as gauges.
 
 - Labels expanded into individual columns for easy filtering/pivoting
 - Open directly in Excel/Sheets or load with pandas
@@ -364,7 +413,7 @@ Raw time-series data with delta calculations applied. Uses a normalized schema (
 |--------|------|-------------|
 | `endpoint_url` | string | Source Prometheus endpoint |
 | `metric_name` | string | Metric name |
-| `metric_type` | string | `gauge`, `counter`, or `histogram` |
+| `metric_type` | string | `gauge`, `unknown`, `counter`, or `histogram` |
 | `timestamp_ns` | int64 | Collection timestamp (nanoseconds) |
 | `value` | float64 | Gauge/counter value (delta for counters) |
 | `sum`, `count` | float64 | Histogram sum/count deltas |
@@ -375,7 +424,7 @@ See [Parquet Schema Reference](server-metrics-parquet-schema.md) for complete sc
 
 **Related documentation:**
 - [JSON Schema Reference](server-metrics-json-schema.md) - Complete JSON export format specification
-- [Server Metrics Reference](server-metrics-reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
+- [Server Metrics Reference](server-metrics-reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo, Triton)
 - [Parquet Schema Reference](server-metrics-parquet-schema.md) - Raw time-series data schema
 
 **Quick examples:**
@@ -427,7 +476,7 @@ Series-level field: `buckets` (per-bucket delta counts, not cumulative)
 - Percentiles are **estimates** from bucket interpolation
 
 > [!NOTE]
-> **Prometheus Summary metrics are not supported.** Summary quantiles are computed cumulatively over the entire server lifetime, making them unsuitable for benchmark-specific analysis. Major LLM inference servers (vLLM, SGLang, TRT-LLM, Dynamo) use Histograms instead, which allow period-specific percentile estimation.
+> **Prometheus Summary metrics are not supported.** Summary quantiles are computed cumulatively over the entire server lifetime, making them unsuitable for benchmark-specific analysis. Use Histogram families for percentile estimation when the server offers them. Rare optional Summary families, such as SGLang's `sglang:eplb_balancedness`, Triton's `nv_inference_*_summary_us`, or Triton's response-cache `nv_cache_*_summary_per_model`, are ignored by AIPerf exports.
 
 ## Timesliced Statistics
 
@@ -467,18 +516,27 @@ AIPerf automatically infers units from metric names and descriptions using stand
 |--------|------|-------------|
 | `vllm:num_requests_running` | gauge | Requests in execution batches |
 | `vllm:num_requests_waiting` | gauge | Requests in queue (saturation indicator) |
+| `vllm:num_requests_waiting_by_reason` | gauge | Waiting requests split by `capacity` vs `deferred` |
+| `vllm:engine_sleep_state` | gauge | Engine sleep/offload state |
 | `vllm:kv_cache_usage_perc` | gauge | KV-cache usage (0.0-1.0, >0.9 = capacity limit) |
 | `vllm:num_preemptions` | counter | Requests preempted due to memory pressure |
 | `vllm:prefix_cache_hits` | counter | Tokens served from prefix cache |
 | `vllm:prefix_cache_queries` | counter | Tokens queried (hit_rate = hits/queries) |
+| `vllm:external_prefix_cache_hits` | counter | Tokens served from external KV connector cache |
+| `vllm:external_prefix_cache_queries` | counter | Tokens queried from external KV connector cache |
+| `vllm:mm_cache_hits` | counter | Multi-modal cache hits |
+| `vllm:mm_cache_queries` | counter | Multi-modal cache queries |
 | `vllm:time_to_first_token_seconds` | histogram | Time to first token (TTFT) |
 | `vllm:e2e_request_latency_seconds` | histogram | End-to-end latency |
 | `vllm:inter_token_latency_seconds` | histogram | Time between output tokens (ITL) |
 | `vllm:request_queue_time_seconds` | histogram | Time spent waiting in queue |
 | `vllm:request_prefill_time_seconds` | histogram | Time spent in prefill phase |
 | `vllm:request_decode_time_seconds` | histogram | Time spent in decode phase |
+| `vllm:request_prefill_kv_computed_tokens` | histogram | New KV tokens computed during prefill, excluding cached tokens |
 | `vllm:request_success` | counter | Completed requests |
 | `vllm:prompt_tokens` | counter | Total prompt tokens (rate = prefill throughput) |
+| `vllm:prompt_tokens_by_source` | counter | Prompt tokens by `local_compute`, `local_cache_hit`, or `external_kv_transfer` |
+| `vllm:prompt_tokens_cached` | counter | Cached prompt tokens (local + external) |
 | `vllm:generation_tokens` | counter | Total generated tokens (rate = decode throughput) |
 
 ### Dynamo
@@ -497,7 +555,12 @@ AIPerf automatically infers units from metric names and descriptions using stand
 | `dynamo_component_request_duration_seconds` | histogram | Per-component processing time |
 | `dynamo_component_inflight_requests` | gauge | Active requests per worker |
 | `dynamo_component_errors` | counter | Errors by component/type |
-| `dynamo_component_kvstats_gpu_cache_usage_percent` | gauge | Backend KV-cache usage |
+| `dynamo_component_gpu_cache_usage_percent` | gauge | Backend KV-cache usage |
+| `dynamo_component_embedding_cache_hits` | counter | Multimodal embedding-cache hits |
+| `dynamo_component_embedding_cache_misses` | counter | Multimodal embedding-cache misses |
+| `dynamo_component_kv_publisher_zmq_events` | counter | KV publisher relay events |
+| `dynamo_tokio_global_queue_depth` | gauge | Tokio runtime global queue depth |
+| `dynamo_frontend_event_loop_delay_seconds` | histogram | Event-loop delay canary |
 
 ### SGLang
 
@@ -508,18 +571,53 @@ AIPerf automatically infers units from metric names and descriptions using stand
 | `sglang:token_usage` | gauge | Memory utilization (>0.9 = capacity limit) |
 | `sglang:cache_hit_rate` | gauge | Prefix cache hit rate |
 | `sglang:gen_throughput` | gauge | Real-time generation tokens/s |
+| `sglang:prompt_tokens` | counter | Total prompt tokens (rate = prefill throughput) |
+| `sglang:generation_tokens` | counter | Total generated tokens (rate = decode throughput) |
+| `sglang:time_to_first_token_seconds` | histogram | Time to first token (TTFT) |
+| `sglang:inter_token_latency_seconds` | histogram | Time between output tokens (ITL) |
+| `sglang:e2e_request_latency_seconds` | histogram | End-to-end latency |
 | `sglang:queue_time_seconds` | histogram | Queue wait time |
-| `sglang:per_stage_req_latency_seconds` | histogram | Latency by stage (prefill_*/decode_*) |
+| `sglang:per_stage_req_latency_seconds` | histogram | Latency by observed stage (`request_process`, `prefill_forward`, `decode_waiting`, etc.) |
 
 ### TRT-LLM
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `trtllm:time_to_first_token_seconds` | histogram | Time to first token (TTFT) |
-| `trtllm:e2e_request_latency_seconds` | histogram | End-to-end latency |
-| `trtllm:time_per_output_token_seconds` | histogram | Per-token generation time (ITL) |
-| `trtllm:request_queue_time_seconds` | histogram | Time in WAITING phase |
-| `trtllm:request_success` | counter | Completed requests |
+| `trtllm_time_to_first_token_seconds` | histogram | Time to first token (TTFT) |
+| `trtllm_e2e_request_latency_seconds` | histogram | End-to-end latency |
+| `trtllm_time_per_output_token_seconds` | histogram | Per-token generation time (ITL) |
+| `trtllm_request_queue_time_seconds` | histogram | Time in waiting phase |
+| `trtllm_request_prefill_time_seconds` | histogram | Prefill/context phase duration |
+| `trtllm_request_decode_time_seconds` | histogram | Decode/generation phase duration |
+| `trtllm_request_inference_time_seconds` | histogram | Total scheduled inference duration |
+| `trtllm_request_success` | counter | Completed requests by `finished_reason` |
+| `trtllm_prompt_tokens` | counter | Total prompt tokens (rate = prefill throughput) |
+| `trtllm_generation_tokens` | counter | Total generated tokens (rate = decode throughput) |
+| `trtllm_num_requests_running` | gauge | Active requests |
+| `trtllm_num_requests_waiting` | gauge | Queued requests |
+| `trtllm_kv_cache_utilization` | gauge | KV cache utilization |
+| `trtllm_kv_cache_hit_rate` | gauge | KV cache hit rate |
+| `trtllm_num_aborted_requests` | counter | Dynamo-TRTLLM additional aborted/cancelled requests |
+| `trtllm_kv_transfer_latency_seconds` | histogram | Dynamo-TRTLLM additional KV-transfer latency |
+| `trtllm_kv_transfer_bytes` | histogram | Dynamo-TRTLLM additional KV-transfer size |
+| `trtllm_kv_transfer_speed_gb_s` | histogram | Dynamo-TRTLLM additional KV-transfer speed |
+
+### Triton Inference Server
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nv_inference_request_success` | counter | Successful inference requests |
+| `nv_inference_request_failure` | counter | Failed inference requests by `reason` |
+| `nv_inference_count` | counter | Inferences performed; divide by `nv_inference_exec_count` for average batch size |
+| `nv_inference_exec_count` | counter | Backend batch executions |
+| `nv_inference_pending_request_count` | gauge | Requests received by Triton but not yet executing |
+| `nv_inference_request_duration_us` | counter | Cumulative end-to-end request handling time |
+| `nv_inference_queue_duration_us` | counter | Cumulative scheduler queue time |
+| `nv_inference_first_response_histogram_ms` | histogram | Optional first-response latency histogram |
+| `nv_gpu_utilization` | gauge | GPU utilization |
+| `nv_gpu_memory_used_bytes` | gauge | Used GPU memory |
+| `nv_cache_num_hits_per_model` | counter | Response-cache hits per model (when response cache is enabled) |
+| `nv_cache_num_misses_per_model` | counter | Response-cache misses per model (when response cache is enabled) |
 
 ---
 
@@ -530,7 +628,7 @@ AIPerf automatically infers units from metric names and descriptions using stand
 | High p99, good p50 | `vllm:num_requests_waiting` spikes | Queue buildup—reduce concurrency or increase server capacity |
 | OOM crashes | `vllm:kv_cache_usage_perc` approaching 1.0 | Reduce `max_model_len` or increase `gpu_memory_utilization` |
 | Low throughput | `vllm:num_requests_running` vs `vllm:num_requests_waiting` | Low both = client bottleneck; high waiting = server bottleneck |
-| Endpoint unreachable | `curl http://localhost:8000/metrics` | Check server running, network, firewall; use explicit `--server-metrics` URL |
+| Endpoint unreachable | `curl http://localhost:8000/metrics` or `curl http://localhost:8002/metrics` for Triton | Check server running, network, firewall; use explicit `--server-metrics` URL |
 | `WARNING ... non-Prometheus content-type 'application/json'` | `curl -i <base>/metrics` shows `Content-Type: application/json` | Server isn't serving Prometheus at `/metrics`. For TRT-LLM, set `return_perf_metrics: true` in `extra_llm_api_options.yaml` so AIPerf's auto-probe finds `/prometheus/metrics`. To silence the warning entirely, pass `--no-server-metrics`. See [Compatibility & auto-disable](#compatibility--auto-disable). |
 
 ---

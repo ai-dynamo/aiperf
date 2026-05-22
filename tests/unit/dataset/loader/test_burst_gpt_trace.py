@@ -8,9 +8,10 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.burst_gpt import BurstGPTTraceDatasetLoader
 from aiperf.dataset.loader.models import BurstGPTTrace
+from tests.unit.conftest import make_run_from_cli
 
 # ============================================================================
 # Helpers
@@ -38,18 +39,16 @@ def _make_csv_file(
 
 
 def _make_loader(
-    filename: str, user_config: UserConfig | None = None
+    filename: str, cli_config: CLIConfig | None = None
 ) -> BurstGPTTraceDatasetLoader:
-    user_config = user_config or UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"])
-    )
+    cli_config = cli_config or CLIConfig(model_names=["test-model"])
     prompt_generator = Mock()
     prompt_generator.generate.return_value = "Generated prompt"
     prompt_generator._decoded_cache = {}
     prompt_generator._build_token_sequence.return_value = [1, 2, 3]
     return BurstGPTTraceDatasetLoader(
         filename=filename,
-        user_config=user_config,
+        run=make_run_from_cli(cli_config),
         prompt_generator=prompt_generator,
     )
 

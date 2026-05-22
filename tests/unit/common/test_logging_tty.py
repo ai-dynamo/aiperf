@@ -27,20 +27,17 @@ def clean_root_logger():
 
 
 @pytest.fixture()
-def mock_user_config(tmp_path):
-    """Minimal mock UserConfig with artifact directory pointing to tmp_path."""
-    cfg = MagicMock()
-    cfg.output.artifact_directory = tmp_path
-    return cfg
+def mock_run(tmp_path):
+    """Minimal mock BenchmarkRun exposing the cfg paths setup_*_logging reads.
 
-
-@pytest.fixture()
-def mock_service_config():
-    """Minimal mock ServiceConfig with INFO log level and DASHBOARD UI."""
-    cfg = MagicMock()
-    cfg.log_level = "INFO"
-    cfg.ui_type = UIType.DASHBOARD
-    return cfg
+    Mirrors the v2 BenchmarkRun shape: ``cfg.logging.level``, ``cfg.runtime.ui``,
+    and ``cfg.artifacts.dir``. Defaults to INFO + DASHBOARD; tests adjust as needed.
+    """
+    run = MagicMock()
+    run.cfg.logging.level = "INFO"
+    run.cfg.runtime.ui = UIType.DASHBOARD
+    run.cfg.artifacts.dir = tmp_path
+    return run
 
 
 # ---------------------------------------------------------------------------
@@ -90,25 +87,21 @@ class TestSetupRichLogging:
     def _clean(self, clean_root_logger):
         """Ensure clean root logger for every test."""
 
-    def test_tty_uses_custom_rich_handler(
-        self, monkeypatch, mock_user_config, mock_service_config
-    ):
+    def test_tty_uses_custom_rich_handler(self, monkeypatch, mock_run):
         """When is_tty() is True, root logger should get a CustomRichHandler."""
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: True)
 
-        setup_rich_logging(mock_user_config, mock_service_config)
+        setup_rich_logging(mock_run)
 
         root = logging.getLogger()
         rich_handlers = [h for h in root.handlers if isinstance(h, CustomRichHandler)]
         assert len(rich_handlers) == 1
 
-    def test_non_tty_uses_basic_stream_handler(
-        self, monkeypatch, mock_user_config, mock_service_config
-    ):
+    def test_non_tty_uses_basic_stream_handler(self, monkeypatch, mock_run):
         """When is_tty() is False, root logger should get a basic StreamHandler."""
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)
 
-        setup_rich_logging(mock_user_config, mock_service_config)
+        setup_rich_logging(mock_run)
 
         root = logging.getLogger()
         console_handlers = [
@@ -118,13 +111,11 @@ class TestSetupRichLogging:
         assert not isinstance(console_handlers[0], CustomRichHandler)
 
     @pytest.mark.parametrize("tty", [True, False])
-    def test_file_handler_always_added(
-        self, monkeypatch, mock_user_config, mock_service_config, tty
-    ):
+    def test_file_handler_always_added(self, monkeypatch, mock_run, tty):
         """A FileHandler should always be added regardless of TTY state."""
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: tty)
 
-        setup_rich_logging(mock_user_config, mock_service_config)
+        setup_rich_logging(mock_run)
 
         root = logging.getLogger()
         file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
@@ -142,10 +133,10 @@ class TestSetupChildProcessLogging:
         """Ensure clean root logger for every test."""
 
     def test_dashboard_with_queue_uses_multiprocess_handler(
-        self, monkeypatch, mock_service_config
+        self, monkeypatch, mock_run
     ):
         """Dashboard UI with a log queue should use MultiProcessLogHandler."""
-        mock_service_config.ui_type = UIType.DASHBOARD
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
         mock_queue = MagicMock()
 
         # TTY state should be irrelevant when dashboard + queue
@@ -154,7 +145,7 @@ class TestSetupChildProcessLogging:
         setup_child_process_logging(
             log_queue=mock_queue,
             service_id="worker_1",
-            service_config=mock_service_config,
+            run=mock_run,
         )
 
         root = logging.getLogger()
@@ -163,34 +154,30 @@ class TestSetupChildProcessLogging:
         ]
         assert len(mp_handlers) == 1
 
-    def test_non_dashboard_tty_uses_custom_rich_handler(
-        self, monkeypatch, mock_service_config
-    ):
+    def test_non_dashboard_tty_uses_custom_rich_handler(self, monkeypatch, mock_run):
         """Non-dashboard UI in a TTY should use CustomRichHandler."""
-        mock_service_config.ui_type = UIType.SIMPLE
+        mock_run.cfg.runtime.ui = UIType.SIMPLE
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: True)
 
         setup_child_process_logging(
             log_queue=None,
             service_id="worker_1",
-            service_config=mock_service_config,
+            run=mock_run,
         )
 
         root = logging.getLogger()
         rich_handlers = [h for h in root.handlers if isinstance(h, CustomRichHandler)]
         assert len(rich_handlers) == 1
 
-    def test_non_dashboard_non_tty_uses_basic_handler(
-        self, monkeypatch, mock_service_config
-    ):
+    def test_non_dashboard_non_tty_uses_basic_handler(self, monkeypatch, mock_run):
         """Non-dashboard UI in a non-TTY should use a basic StreamHandler."""
-        mock_service_config.ui_type = UIType.NONE
+        mock_run.cfg.runtime.ui = UIType.NONE
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)
 
         setup_child_process_logging(
             log_queue=None,
             service_id="worker_1",
-            service_config=mock_service_config,
+            run=mock_run,
         )
 
         root = logging.getLogger()
@@ -198,21 +185,23 @@ class TestSetupChildProcessLogging:
             h
             for h in root.handlers
             if isinstance(h, logging.StreamHandler)
-            and not isinstance(h, CustomRichHandler | MultiProcessLogHandler)
+            and not isinstance(
+                h, CustomRichHandler | MultiProcessLogHandler | logging.FileHandler
+            )
         ]
         assert len(console_handlers) == 1
 
     def test_dashboard_without_queue_and_tty_uses_rich_handler(
-        self, monkeypatch, mock_service_config
+        self, monkeypatch, mock_run
     ):
         """Dashboard UI without a log queue in a TTY should fall through to CustomRichHandler."""
-        mock_service_config.ui_type = UIType.DASHBOARD
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: True)
 
         setup_child_process_logging(
             log_queue=None,
             service_id="worker_1",
-            service_config=mock_service_config,
+            run=mock_run,
         )
 
         root = logging.getLogger()
@@ -220,16 +209,16 @@ class TestSetupChildProcessLogging:
         assert len(rich_handlers) == 1
 
     def test_dashboard_without_queue_and_non_tty_uses_basic_handler(
-        self, monkeypatch, mock_service_config
+        self, monkeypatch, mock_run
     ):
         """Dashboard UI without a log queue in a non-TTY should fall through to basic handler."""
-        mock_service_config.ui_type = UIType.DASHBOARD
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)
 
         setup_child_process_logging(
             log_queue=None,
             service_id="worker_1",
-            service_config=mock_service_config,
+            run=mock_run,
         )
 
         root = logging.getLogger()
@@ -237,40 +226,35 @@ class TestSetupChildProcessLogging:
             h
             for h in root.handlers
             if isinstance(h, logging.StreamHandler)
-            and not isinstance(h, CustomRichHandler | MultiProcessLogHandler)
+            and not isinstance(
+                h, CustomRichHandler | MultiProcessLogHandler | logging.FileHandler
+            )
         ]
         assert len(console_handlers) == 1
 
-    def test_file_handler_added_when_user_config_provided(
-        self, monkeypatch, mock_service_config, mock_user_config
-    ):
-        """File handler should be added when user_config with artifact directory is provided."""
-        mock_service_config.ui_type = UIType.NONE
+    def test_file_handler_added_when_run_provided(self, monkeypatch, mock_run):
+        """File handler should be added when a BenchmarkRun is provided."""
+        mock_run.cfg.runtime.ui = UIType.NONE
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)
 
         setup_child_process_logging(
             log_queue=None,
             service_id="worker_1",
-            service_config=mock_service_config,
-            user_config=mock_user_config,
+            run=mock_run,
         )
 
         root = logging.getLogger()
         file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
         assert len(file_handlers) == 1
 
-    def test_no_file_handler_when_no_user_config(
-        self, monkeypatch, mock_service_config
-    ):
-        """No file handler should be added when user_config is None."""
-        mock_service_config.ui_type = UIType.NONE
+    def test_no_file_handler_when_no_run(self, monkeypatch):
+        """No file handler should be added when run is None."""
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)
 
         setup_child_process_logging(
             log_queue=None,
             service_id="worker_1",
-            service_config=mock_service_config,
-            user_config=None,
+            run=None,
         )
 
         root = logging.getLogger()

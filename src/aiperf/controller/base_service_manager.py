@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ServiceRunInfo
 from aiperf.common.types import ServiceTypeT
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class BaseServiceManager(AIPerfLifecycleMixin, ABC):
@@ -19,18 +22,12 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: "BenchmarkRun",
         **kwargs,
     ):
-        super().__init__(
-            service_config=service_config,
-            user_config=user_config,
-            **kwargs,
-        )
+        super().__init__(run=run, **kwargs)
         self.required_services = required_services
-        self.service_config = service_config
-        self.user_config = user_config
+        self.run = run
         self.kwargs = kwargs
         # Maps to track service information
         self.service_map: dict[ServiceTypeT, list[ServiceRunInfo]] = {}

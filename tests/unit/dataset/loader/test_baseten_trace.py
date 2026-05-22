@@ -7,10 +7,12 @@ from unittest.mock import Mock
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
 from aiperf.common.enums import ConversationContextMode
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
 from aiperf.dataset.loader.models import BasetenTrace
+from aiperf.plugin.enums import CustomDatasetType
+from tests.unit.conftest import make_run_from_cli
 
 
 def _write_parquet(path: Path, rows: list[dict]) -> Path:
@@ -24,6 +26,13 @@ def _mock_prompt_generator() -> Mock:
     generator._decoded_cache = {}
     generator.tokenizer.resolved_name = "test-tokenizer"
     return generator
+
+
+def _make_run(input_file: str | Path | None = None, **kwargs):
+    if input_file is not None:
+        kwargs.setdefault("input_file", str(input_file))
+        kwargs.setdefault("custom_dataset_type", CustomDatasetType.BASETEN_TRACE)
+    return make_run_from_cli(CLIConfig(model_names=["test-model"], **kwargs))
 
 
 class TestBasetenTraceDatasetLoader:
@@ -100,7 +109,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -134,7 +143,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -145,7 +154,7 @@ class TestBasetenTraceDatasetLoader:
         turn = conversations[0].turns[0]
         assert turn.texts[0].contents == ["literal prompt"]
         assert turn.max_tokens == 12
-        assert turn.request_body == {
+        assert turn.extra_body == {
             "min_tokens": 12,
             "hash_ids": [11, 12],
             "block_size": 64,
@@ -175,7 +184,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -213,7 +222,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -257,10 +266,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(trace_session_sample_ratio=0.01, random_seed=7),
-            ),
+            run=_make_run(path, trace_session_sample_ratio=0.01, random_seed=7),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -294,10 +300,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(trace_session_sample_ratio=0.01, random_seed=7),
-            ),
+            run=_make_run(path, trace_session_sample_ratio=0.01, random_seed=7),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -347,10 +350,7 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(trace_session_sample_ratio=0.01, random_seed=7),
-            ),
+            run=_make_run(path, trace_session_sample_ratio=0.01, random_seed=7),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -402,14 +402,11 @@ class TestBasetenTraceDatasetLoader:
         )
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(
-                    file=str(path),
-                    fixed_schedule=True,
-                    fixed_schedule_start_offset=2 * one_hour_ms,
-                    fixed_schedule_end_offset=3 * one_hour_ms,
-                ),
+            run=_make_run(
+                path,
+                fixed_schedule=True,
+                fixed_schedule_start_offset=2 * one_hour_ms,
+                fixed_schedule_end_offset=3 * one_hour_ms,
             ),
             prompt_generator=_mock_prompt_generator(),
         )
@@ -443,7 +440,7 @@ class TestSynthesisHooks:
         path = _write_parquet(tmp_path / "trace.parquet", [])
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -461,7 +458,7 @@ class TestSynthesisHooks:
         path = _write_parquet(tmp_path / "trace.parquet", [])
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
         originals = [
@@ -495,7 +492,7 @@ class TestSynthesisHooks:
         path = _write_parquet(tmp_path / "trace.parquet", [])
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            user_config=UserConfig(endpoint=EndpointConfig(model_names=["test-model"])),
+            run=_make_run(),
             prompt_generator=_mock_prompt_generator(),
         )
         originals = [

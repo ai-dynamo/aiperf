@@ -2,27 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Data models for multi-run orchestration."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import JsonMetricResult
-
-
-class RunConfig(AIPerfBaseModel):
-    """Configuration for a single benchmark run."""
-
-    config: UserConfig = Field(description="The benchmark configuration to execute")
-    label: str = Field(
-        description="Human-readable label for this run (e.g., 'run_0001')"
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata about this run (e.g., trial number, parameter values)",
-    )
 
 
 class RunResult(AIPerfBaseModel):
@@ -38,7 +26,14 @@ class RunResult(AIPerfBaseModel):
     artifacts_path: Path | None = Field(
         default=None, description="Path to run artifacts directory"
     )
-    metadata: dict[str, Any] = Field(
+    variation_label: str = Field(
+        default="",
+        description="Sweep variation label (matches BenchmarkRun.variation.label).",
+    )
+    variation_values: dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional metadata about this run (e.g., trial_index, value_index, concurrency, sweep_mode)",
+        description="Parameter values for this run's variation; mirror of variation.values.",
+    )
+    trial_index: int = Field(
+        default=0, description="Zero-based trial index within the variation."
     )

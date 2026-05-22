@@ -1,0 +1,6 @@
+{"session_id":"r1","turns":[{"model":"test-chat-model","messages":[{"role":"user","content":"r1 root"}],"max_tokens":10,"forks":["c1a","c1b"]}]}
+{"session_id":"c1a","turns":[{"model":"test-chat-model","messages":[{"role":"user","content":"c1a"}],"max_tokens":10}]}
+{"session_id":"c1b","turns":[{"model":"test-chat-model","messages":[{"role":"user","content":"c1b"}],"max_tokens":10}]}
+{"session_id":"r2","turns":[{"model":"test-chat-model","messages":[{"role":"user","content":"r2 root"}],"max_tokens":10,"forks":["c2a","c2b"]}]}
+{"session_id":"c2a","turns":[{"model":"test-chat-model","messages":[{"role":"user","content":"c2a"}],"max_tokens":10}]}
+{"session_id":"c2b","turns":[{"model":"test-chat-model","messages":[{"role":"user","content":"c2b"}],"max_tokens":10}]}

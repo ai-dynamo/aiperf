@@ -18,6 +18,10 @@ sys.path.insert(0, str(THIS_DIR))
 from parser import MarkdownParser  # noqa: E402
 
 servers = MarkdownParser().parse_directory(str(REPO_ROOT))
+# Include `weight` in each aiperf_command entry so weight-only changes
+# (which alter shard assignment and per-shard wall-clock) invalidate
+# the detect-changes hash and trigger the GPU e2e job. Sorting as
+# [command, weight] tuples keeps the result deterministic across runs.
 normalized = sorted(
     [
         {
@@ -26,7 +30,7 @@ normalized = sorted(
             "health_check": (
                 s.health_check_command.command if s.health_check_command else None
             ),
-            "aiperf_commands": sorted(c.command for c in s.aiperf_commands),
+            "aiperf_commands": sorted([c.command, c.weight] for c in s.aiperf_commands),
         }
         for name, s in servers.items()
     ],

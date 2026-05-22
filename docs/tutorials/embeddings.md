@@ -18,24 +18,27 @@ This guide covers profiling OpenAI-compatible embedding endpoints using vLLM.
 
 Launch a vLLM server with an embedding model:
 
+<!-- setup-vllm-embeddings-openai-endpoint-server -->
 ```bash
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model BAAI/bge-small-en-v1.5
 ```
+<!-- /setup-vllm-embeddings-openai-endpoint-server -->
 
 Verify the server is ready:
+
+<!-- health-check-vllm-embeddings-openai-endpoint-server -->
 ```bash
-curl -s http://localhost:8000/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{"model":"BAAI/bge-small-en-v1.5","input":"test"}' | jq
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/embeddings -H "Content-Type: application/json" -d "{\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":\"test\"}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
+<!-- /health-check-vllm-embeddings-openai-endpoint-server -->
 
 ### Profile with Synthetic Inputs
 
 Run AIPerf against the embeddings endpoint using synthetic inputs:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-embeddings-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model BAAI/bge-small-en-v1.5 \
@@ -47,7 +50,7 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- /aiperf-run-vllm-embeddings-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -75,9 +78,13 @@ Embeddings endpoints return metrics focused on request latency and throughput. N
 
 ### Profile with Custom Input File
 
-Create a JSONL embeddings input file:
+Create a JSONL embeddings input file and run AIPerf against it. The two
+steps are combined into a single bash block so the test-docs CI actually
+exercises the `aiperf profile` invocation — the runner extracts the first
+bash block after the tag, so a split would leave the profile command
+unrun.
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-embeddings-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
 {"texts": ["What is artificial intelligence?"]}
@@ -86,10 +93,7 @@ cat <<EOF > inputs.jsonl
 {"texts": ["Define deep learning."]}
 {"texts": ["What are transformers in AI?"]}
 EOF
-```
 
-Run AIPerf using the custom input file:
-```bash
 aiperf profile \
     --model BAAI/bge-small-en-v1.5 \
     --endpoint-type embeddings \
@@ -99,7 +103,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 5
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- /aiperf-run-vllm-embeddings-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

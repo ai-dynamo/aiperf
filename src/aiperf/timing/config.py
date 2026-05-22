@@ -3,17 +3,47 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import ConfigDict, Field
 
-from aiperf.common.config import InputDefaults, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.config.dataset.defaults import InputDefaults
 from aiperf.plugin.enums import (
     ArrivalPattern,
+    PhaseType,
     TimingMode,
     URLSelectionStrategy,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
+
+if TYPE_CHECKING:
+    from aiperf.config.phases import PhaseConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
+
+
+# Map ``PhaseType`` values onto the ``ArrivalPattern`` values consumed by the
+# timing strategies. Concurrency / fixed_schedule phases don't use an arrival
+# pattern; we still set a sensible default so downstream code paths remain
+# uniform when they consult this field.
+_PHASE_TYPE_TO_ARRIVAL_PATTERN: dict[PhaseType, ArrivalPattern] = {
+    PhaseType.POISSON: ArrivalPattern.POISSON,
+    PhaseType.GAMMA: ArrivalPattern.GAMMA,
+    PhaseType.CONSTANT: ArrivalPattern.CONSTANT,
+    PhaseType.USER_CENTRIC: ArrivalPattern.POISSON,
+    PhaseType.CONCURRENCY: ArrivalPattern.CONCURRENCY_BURST,
+    PhaseType.FIXED_SCHEDULE: ArrivalPattern.CONCURRENCY_BURST,
+}
+
+
+def _phase_timing_mode(phase_type: PhaseType) -> TimingMode:
+    """Map a phase type to the timing strategy used for credit issuance."""
+    if phase_type == PhaseType.FIXED_SCHEDULE:
+        return TimingMode.FIXED_SCHEDULE
+    if phase_type == PhaseType.USER_CENTRIC:
+        return TimingMode.USER_CENTRIC_RATE
+    return TimingMode.REQUEST_RATE
 
 
 class TimingConfig(AIPerfBaseModel):
@@ -45,29 +75,37 @@ class TimingConfig(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> TimingConfig:
-        """Build ordered list of phase configs based on user config: [warmup?, profiling].
+    def from_run(cls, run: BenchmarkRun) -> TimingConfig:
+        """Build ordered list of credit-phase configs from a ``BenchmarkRun``.
 
-        Warmup (if enabled) executes first to prepare system,
-        then profiling for actual measurement.
+        Iterates ``run.cfg.get_warmup_phases()`` first (each becomes a WARMUP
+        CreditPhaseConfig) followed by ``run.cfg.get_profiling_phases()``
+        (each becomes a PROFILING CreditPhaseConfig). The cancellation policy
+        is sourced from the first profiling phase that declares one; URLs and
+        url-selection strategy come from the endpoint section.
         """
-        loadgen = user_config.loadgen
+        cfg = run.cfg
+
         configs: list[CreditPhaseConfig] = []
+        for phase in cfg.get_warmup_phases():
+            configs.append(_build_warmup_config(phase))
+        for phase in cfg.get_profiling_phases():
+            configs.append(_build_profiling_config(phase))
 
-        warmup = _build_warmup_config(user_config)
-        if warmup:
-            configs.append(warmup)
-
-        configs.append(_build_profiling_config(user_config))
+        cancellation_config: RequestCancellationConfig = RequestCancellationConfig()
+        for phase in cfg.get_profiling_phases():
+            if getattr(phase, "cancellation", None) is not None:
+                cancellation_config = RequestCancellationConfig(
+                    rate=phase.cancellation.rate,
+                    delay=phase.cancellation.delay,
+                )
+                break
 
         return cls(
             phase_configs=configs,
-            request_cancellation=RequestCancellationConfig(
-                rate=loadgen.request_cancellation_rate,
-                delay=loadgen.request_cancellation_delay,
-            ),
-            urls=user_config.endpoint.urls,
-            url_selection_strategy=user_config.endpoint.url_selection_strategy,
+            request_cancellation=cancellation_config,
+            urls=list(cfg.endpoint.urls),
+            url_selection_strategy=cfg.endpoint.url_strategy,
         )
 
 
@@ -184,87 +222,90 @@ class CreditPhaseConfig(AIPerfBaseModel):
     )
 
 
-def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
-    """Build warmup phase config if any warmup stop condition is set.
+def _ramp_duration(ramp: object | None) -> float | None:
+    """Extract the ramp duration in seconds from a ``RamperConfig`` (or None)."""
+    if ramp is None:
+        return None
+    return getattr(ramp, "duration", None)
 
-    Returns None if warmup disabled (no stop conditions).
+
+def _phase_request_rate(phase: PhaseConfig) -> float | None:
+    """Return the configured request rate for a phase, if any."""
+    return getattr(phase, "rate", None)
+
+
+def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:
+    """Map a phase type to its arrival pattern."""
+    return _PHASE_TYPE_TO_ARRIVAL_PATTERN.get(phase.type, ArrivalPattern.POISSON)
+
+
+def _build_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig:
+    """Build a warmup CreditPhaseConfig from a warmup PhaseConfig.
+
     Warmup triggers JIT compilation, memory allocation, and connection pool
     initialization so profiling measurements aren't polluted by cold-start effects.
 
-    Note:
-        When warmup_grace_period is not specified, defaults to infinity (wait forever
-        for in-flight requests). This differs from the CreditPhaseConfig field default
-        of None (disabled) because warmup should always complete all requests.
+    When the phase doesn't set ``grace_period``, default to infinity (wait
+    forever for in-flight requests). This differs from the CreditPhaseConfig
+    field default of None (disabled) because warmup should always complete all
+    in-flight requests before transitioning to profiling.
     """
-    loadgen = user_config.loadgen
-    if not (
-        loadgen.warmup_request_count
-        or loadgen.warmup_duration
-        or loadgen.warmup_num_sessions
-    ):
-        return None
-
-    request_rate = loadgen.warmup_request_rate or loadgen.request_rate
-    arrival_pattern = loadgen.warmup_arrival_pattern or loadgen.arrival_pattern
-    concurrency = loadgen.warmup_concurrency or loadgen.concurrency
-    prefill_concurrency = (
-        loadgen.warmup_prefill_concurrency or loadgen.prefill_concurrency
-    )
-    if request_rate is None or arrival_pattern is None:
-        arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
-        if concurrency is None and prefill_concurrency is None:
-            concurrency = 1
-            # TODO: We should add a warning here
+    grace_period = phase.grace_period
+    if grace_period is None:
+        grace_period = float("inf")
 
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
         # Warmup phase is always request rate timing mode
         timing_mode=TimingMode.REQUEST_RATE,
-        total_expected_requests=loadgen.warmup_request_count,
-        expected_duration_sec=loadgen.warmup_duration,
-        expected_num_sessions=loadgen.warmup_num_sessions,
-        concurrency=concurrency,
-        prefill_concurrency=prefill_concurrency,
-        request_rate=request_rate,
-        arrival_pattern=arrival_pattern,
-        arrival_smoothness=loadgen.arrival_smoothness,
+        total_expected_requests=phase.requests,
+        expected_duration_sec=phase.duration,
+        expected_num_sessions=phase.sessions,
+        concurrency=phase.concurrency,
+        prefill_concurrency=phase.prefill_concurrency,
+        request_rate=_phase_request_rate(phase),
+        arrival_pattern=_phase_arrival_pattern(phase),
+        arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=False,
-        grace_period_sec=loadgen.warmup_grace_period if loadgen.warmup_grace_period is not None else float('inf'),
-        concurrency_ramp_duration_sec=loadgen.warmup_concurrency_ramp_duration or loadgen.concurrency_ramp_duration,
-        prefill_concurrency_ramp_duration_sec=loadgen.warmup_prefill_concurrency_ramp_duration or loadgen.prefill_concurrency_ramp_duration,
-        request_rate_ramp_duration_sec=loadgen.warmup_request_rate_ramp_duration or loadgen.request_rate_ramp_duration,
-    )  # fmt: skip
+        grace_period_sec=grace_period,
+        concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
+        prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),
+        request_rate_ramp_duration_sec=_ramp_duration(
+            getattr(phase, "rate_ramp", None)
+        ),
+    )
 
 
-def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
-    """Build profiling phase config (always created).
+def _build_profiling_config(phase: PhaseConfig) -> CreditPhaseConfig:
+    """Build a profiling CreditPhaseConfig from a profiling PhaseConfig.
 
     Main benchmark phase where all performance metrics are collected.
     Grace period allows in-flight requests to complete after the stop condition
     is met, ensuring metrics include requests that were sent before the deadline.
     """
-
-    loadgen = user_config.loadgen
-    input = user_config.input
-
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
-        timing_mode=user_config.timing_mode,
-        expected_duration_sec=loadgen.benchmark_duration,
-        total_expected_requests=loadgen.request_count,
-        expected_num_sessions=input.conversation.num,
-        concurrency=loadgen.concurrency,
-        prefill_concurrency=loadgen.prefill_concurrency,
-        request_rate=loadgen.request_rate or loadgen.user_centric_rate,
-        arrival_pattern=loadgen.arrival_pattern,
-        arrival_smoothness=loadgen.arrival_smoothness,
-        grace_period_sec=loadgen.benchmark_grace_period,
-        num_users=loadgen.num_users,
-        concurrency_ramp_duration_sec=loadgen.concurrency_ramp_duration,
-        prefill_concurrency_ramp_duration_sec=loadgen.prefill_concurrency_ramp_duration,
-        request_rate_ramp_duration_sec=loadgen.request_rate_ramp_duration,
+        timing_mode=_phase_timing_mode(phase.type),
+        expected_duration_sec=phase.duration,
+        total_expected_requests=phase.requests,
+        expected_num_sessions=phase.sessions,
+        concurrency=phase.concurrency,
+        prefill_concurrency=phase.prefill_concurrency,
+        request_rate=_phase_request_rate(phase),
+        arrival_pattern=_phase_arrival_pattern(phase),
+        arrival_smoothness=getattr(phase, "smoothness", None),
+        seamless=phase.seamless,
+        grace_period_sec=phase.grace_period,
+        num_users=getattr(phase, "users", None),
+        concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
+        prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),
+        request_rate_ramp_duration_sec=_ramp_duration(
+            getattr(phase, "rate_ramp", None)
+        ),
         # Fixed schedule config
-        auto_offset_timestamps=input.fixed_schedule_auto_offset,
-        fixed_schedule_start_offset=input.fixed_schedule_start_offset,
-        fixed_schedule_end_offset=input.fixed_schedule_end_offset,
-    )  # fmt: skip
+        auto_offset_timestamps=getattr(
+            phase, "auto_offset", InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
+        ),
+        fixed_schedule_start_offset=getattr(phase, "start_offset", None),
+        fixed_schedule_end_offset=getattr(phase, "end_offset", None),
+    )
