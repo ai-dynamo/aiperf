@@ -437,7 +437,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         if total_output_tokens is not None and total_energy_j > 0:
             results.append(MetricResult(
                 tag="output_tokens_per_joule", header="Output Tokens per Joule",
-                unit="tokens/J", avg=total_output_tokens / total_energy_j, count=1,
+                unit="tokens/J", avg=total_output_tokens / total_energy_j, count=None,
             ))  # fmt: skip
         else:
             self.debug(
