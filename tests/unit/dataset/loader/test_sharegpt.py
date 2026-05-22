@@ -139,3 +139,27 @@ class TestShareGPTLoader:
         """Test that ShareGPTLoader returns the correct preferred sampling strategy."""
         strategy = ShareGPTLoader.get_preferred_sampling_strategy()
         assert strategy == DatasetSamplingStrategy.SEQUENTIAL
+
+    async def test_skips_row_with_non_dict_messages_without_crashing(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """A malformed row whose 'conversations' list contains non-dict items
+        (strings, None, ints) must be skipped — not abort the whole load via
+        AttributeError on the next .get() call. Also covers the case where a
+        row has one valid dict + non-dict noise (fewer than two usable dicts)."""
+        dataset = [
+            {"conversations": ["raw_string", None, 42]},
+            {"conversations": [None, {"from": "gpt", "value": "orphan reply text"}]},
+            {
+                "conversations": [
+                    {"from": "human", "value": "Hello can you help me with a question"},
+                    {"from": "gpt", "value": "Yes I can help you with that question"},
+                ]
+            },
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        assert len(conversations) == 1
+        assert (
+            conversations[0].turns[0].texts[0].contents[0]
+            == "Hello can you help me with a question"
+        )

@@ -154,7 +154,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
 
     @staticmethod
     def _sharegpt_prompt_completion_pairs(
-        conversations: list[dict[str, Any]],
+        conversations: list[Any],
     ) -> list[tuple[str, str]]:
         """Pair prompts with completions from ShareGPT ``conversations`` entries.
 
@@ -163,15 +163,18 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         first two ``value`` fields are treated as a single pair (minimal JSON
         and unit tests without role fields).
         """
-        uses_roles = any(c.get("from") in ("human", "gpt") for c in conversations)
+        message_dicts = [c for c in conversations if isinstance(c, dict)]
+        if len(message_dicts) < 2:
+            return []
+        uses_roles = any(c.get("from") in ("human", "gpt") for c in message_dicts)
         if not uses_roles:
-            prompt = conversations[0].get("value")
-            completion = conversations[1].get("value")
+            prompt = message_dicts[0].get("value")
+            completion = message_dicts[1].get("value")
             if not prompt or not completion:
                 return []
             return [(prompt, completion)]
 
-        role_msgs = [c for c in conversations if c.get("from") in ("human", "gpt")]
+        role_msgs = [c for c in message_dicts if c.get("from") in ("human", "gpt")]
         pairs: list[tuple[str, str]] = []
         i = 0
         while i < len(role_msgs) - 1:
