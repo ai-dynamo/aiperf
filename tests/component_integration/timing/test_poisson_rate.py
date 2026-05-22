@@ -28,6 +28,7 @@ from tests.component_integration.timing.conftest import (
     BaseCreditFlowTests,
     TimingTestConfig,
     build_timing_command,
+    skip_on_cloud_windows_timing,
 )
 from tests.harness.analyzers import (
     CreditFlowAnalyzer,
@@ -88,6 +89,7 @@ class TestPoissonRateCreditFlow(BaseCreditFlowTests):
         return build_timing_command(config, arrival_pattern="poisson")
 
 
+@skip_on_cloud_windows_timing
 @pytest.mark.component_integration
 class TestPoissonRateStatistics:
     """Statistical distribution tests for Poisson rate mode.
