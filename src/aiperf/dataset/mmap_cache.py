@@ -61,7 +61,9 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
-MANIFEST_VERSION = 1
+# Bump when cached side-data changes. Version 2 adds TurnMetadata.raw_messages_count,
+# which trajectory sampling needs to avoid fresh sessions with messages=[].
+MANIFEST_VERSION = 2
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
