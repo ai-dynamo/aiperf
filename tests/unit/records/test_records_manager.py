@@ -1,20 +1,34 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.environment import Environment
+from aiperf.common.messages import RealtimeMetricsCommand
+from aiperf.common.messages.inference_messages import (
+    MetricRecordsData,
+    MetricRecordsMessage,
+)
 from aiperf.common.models import (
+    CreditPhaseStats,
+    ErrorDetails,
     MetricResult,
+    PhaseRecordsStats,
     ProcessRecordsResult,
     ProfileResults,
+    RequestRecord,
     TimesliceResult,
 )
 from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
+from aiperf.plugin.enums import UIType
+from aiperf.records.records_manager import RecordsManager
+from aiperf.records.records_tracker import RecordsTracker
 
 
 # Helper functions
@@ -51,6 +65,271 @@ def create_metric_record_data(
         ),
         metrics=metrics or {},
     )
+
+
+class RecordingAccumulator:
+    """Capture metric records delivered by RecordsManager dispatch."""
+
+    def __init__(self) -> None:
+        self.records: list[Any] = []
+
+    async def process_record(self, record_data: MetricRecordsData) -> None:
+        self.records.append(record_data)
+
+
+def test_has_realtime_update_detects_changed_server_snapshot_with_same_record_count() -> (
+    None
+):
+    phase_stats = PhaseRecordsStats(
+        phase=CreditPhase.PROFILING,
+        success_records=2,
+    )
+    manager = MagicMock(spec=RecordsManager)
+    manager._previous_realtime_records = 2
+    manager._previous_realtime_server_snapshot = {"num_running": 1.0}
+    manager._has_realtime_update = RecordsManager._has_realtime_update.__get__(manager)
+
+    assert (
+        manager._has_realtime_update(
+            phase_stats,
+            {"num_running": 2.0},
+        )
+        is True
+    )
+
+
+def _make_realtime_task_manager(
+    *,
+    phase_stats: PhaseRecordsStats,
+    server_snapshot: dict[str, float],
+) -> MagicMock:
+    manager = MagicMock(spec=RecordsManager)
+    manager.stop_requested = False
+    manager.service_config = ServiceConfig(ui_type=UIType.NONE)
+    manager._records_tracker = MagicMock()
+    manager._records_tracker.create_stats_for_phase.return_value = phase_stats
+    manager._collect_realtime_server_snapshot = MagicMock(return_value=server_snapshot)
+    manager._has_realtime_update = RecordsManager._has_realtime_update.__get__(manager)
+    manager._previous_realtime_records = None
+    manager._previous_realtime_server_snapshot = None
+    manager._report_realtime_metrics = AsyncMock(return_value=True)
+    return manager
+
+
+async def _run_one_realtime_task_tick(
+    manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def stop_after_sleep(_interval: float) -> None:
+        manager.stop_requested = True
+
+    monkeypatch.setattr(
+        "aiperf.records.records_manager.asyncio.sleep", stop_after_sleep
+    )
+    monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.01)
+    task = RecordsManager._report_realtime_inference_metrics_task
+    await getattr(task, "__wrapped__", task)(manager)
+
+
+@pytest.mark.asyncio
+async def test_realtime_task_reports_and_advances_changed_snapshot_with_same_record_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase_stats = PhaseRecordsStats(
+        phase=CreditPhase.PROFILING,
+        success_records=2,
+    )
+    manager = _make_realtime_task_manager(
+        phase_stats=phase_stats,
+        server_snapshot={"num_running": 2.0},
+    )
+    manager._previous_realtime_records = 2
+    manager._previous_realtime_server_snapshot = {"num_running": 1.0}
+
+    await _run_one_realtime_task_tick(manager, monkeypatch)
+
+    manager._report_realtime_metrics.assert_awaited_once_with(
+        server_snapshot={"num_running": 2.0}
+    )
+    assert manager._previous_realtime_records == 2
+    assert manager._previous_realtime_server_snapshot == {"num_running": 2.0}
+
+
+@pytest.mark.asyncio
+async def test_realtime_task_skips_unchanged_records_and_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase_stats = PhaseRecordsStats(
+        phase=CreditPhase.PROFILING,
+        success_records=2,
+    )
+    manager = _make_realtime_task_manager(
+        phase_stats=phase_stats,
+        server_snapshot={"num_running": 1.0},
+    )
+    manager._previous_realtime_records = 2
+    manager._previous_realtime_server_snapshot = {"num_running": 1.0}
+
+    await _run_one_realtime_task_tick(manager, monkeypatch)
+
+    manager._report_realtime_metrics.assert_not_awaited()
+    assert manager._previous_realtime_records == 2
+    assert manager._previous_realtime_server_snapshot == {"num_running": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_realtime_task_reuses_precomputed_snapshot_without_duplicate_collect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase_stats = PhaseRecordsStats(
+        phase=CreditPhase.PROFILING,
+        success_records=2,
+    )
+    manager = _make_realtime_task_manager(
+        phase_stats=phase_stats,
+        server_snapshot={"num_running": 2.0},
+    )
+
+    await _run_one_realtime_task_tick(manager, monkeypatch)
+
+    manager._collect_realtime_server_snapshot.assert_called_once_with()
+    manager._report_realtime_metrics.assert_awaited_once_with(
+        server_snapshot={"num_running": 2.0}
+    )
+
+
+@pytest.mark.asyncio
+async def test_realtime_task_does_not_advance_state_when_report_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase_stats = PhaseRecordsStats(
+        phase=CreditPhase.PROFILING,
+        success_records=2,
+    )
+    manager = _make_realtime_task_manager(
+        phase_stats=phase_stats,
+        server_snapshot={"num_running": 2.0},
+    )
+    manager._report_realtime_metrics.side_effect = RuntimeError("publish failed")
+
+    with pytest.raises(RuntimeError, match="publish failed"):
+        await _run_one_realtime_task_tick(manager, monkeypatch)
+
+    assert manager._previous_realtime_records is None
+    assert manager._previous_realtime_server_snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_realtime_metrics_command_reports_unconditionally() -> None:
+    manager = MagicMock(spec=RecordsManager)
+    manager._report_realtime_metrics = AsyncMock()
+    command = RealtimeMetricsCommand(service_id="dashboard")
+
+    handler = RecordsManager._on_realtime_metrics_command
+    await getattr(handler, "__wrapped__", handler)(manager, command)
+
+    manager._report_realtime_metrics.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_context_overflow_skip_bypasses_metric_accumulators_and_stream_exporters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = MetricRecordMetadata(
+        session_num=0,
+        conversation_id="overflow-conversation",
+        turn_index=0,
+        request_start_ns=100,
+        request_end_ns=200,
+        worker_id="worker-1",
+        record_processor_id="processor-1",
+        benchmark_phase=CreditPhase.PROFILING,
+        context_overflow_skip=True,
+    )
+    message = MetricRecordsMessage(
+        service_id="record-processor-1",
+        metadata=metadata,
+        results=[{"context_overflow_count": 1}],
+        error=ErrorDetails(message="context window exceeded"),
+    )
+    record_data = message.to_data().model_copy(
+        update={"request": RequestRecord(context_overflow=True)}
+    )
+    monkeypatch.setattr(message, "to_data", lambda: record_data)
+
+    fake_metric_accumulator = RecordingAccumulator()
+    fake_stream_exporter = RecordingAccumulator()
+    manager = MagicMock(spec=RecordsManager)
+    manager.is_trace_enabled = False
+    manager._metric_record_accumulators = [fake_metric_accumulator]
+    manager._metric_record_stream_exporters = [fake_stream_exporter]
+    manager._records_tracker = RecordsTracker()
+    manager._records_tracker.update_phase_info(
+        CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            final_requests_completed=1,
+        )
+    )
+    manager._skipped_context_overflow_count = 0
+    manager._error_tracker = MagicMock()
+    manager._handle_all_records_received = AsyncMock()
+    manager._maybe_trigger_failed_request_abort = AsyncMock()
+    manager._send_record_to_accumulators = (
+        RecordsManager._send_record_to_accumulators.__get__(manager)
+    )
+    manager._on_metric_records = RecordsManager._on_metric_records.__get__(manager)
+
+    await manager._on_metric_records(message)
+
+    assert fake_metric_accumulator.records == []
+    assert fake_stream_exporter.records == []
+    phase_stats = manager._records_tracker.create_stats_for_phase(CreditPhase.PROFILING)
+    assert phase_stats.success_records == 1
+    assert phase_stats.error_records == 0
+    assert phase_stats.records_end_ns is not None
+    assert manager._skipped_context_overflow_count == 1
+    manager._handle_all_records_received.assert_awaited_once_with(CreditPhase.PROFILING)
+    manager._error_tracker.increment_error_count_for_phase.assert_not_called()
+    manager._maybe_trigger_failed_request_abort.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_results_exposes_skipped_context_overflow_count() -> None:
+    manager = MagicMock()
+    manager.service_id = "records-manager"
+    manager._records_tracker = RecordsTracker()
+    manager._records_tracker.update_phase_info(
+        CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            final_requests_completed=1,
+            final_requests_sent=1,
+            start_ns=100,
+            requests_end_ns=200,
+        )
+    )
+    manager._skipped_context_overflow_count = 1
+    manager._error_tracker = MagicMock()
+    manager._error_tracker.get_error_summary_for_phase.return_value = []
+    manager._snapshot_branch_stats.return_value = None
+    manager._summarize_all_accumulators = AsyncMock(return_value=([], [], []))
+    manager._finalize_stream_exporters = AsyncMock()
+    manager._run_analyzers = AsyncMock(return_value={})
+    manager._publish_all_results = AsyncMock()
+    manager.publish = AsyncMock()
+    manager.debug = MagicMock()
+    manager.info = MagicMock()
+    manager.user_config.gpu_telemetry_disabled = True
+    manager.user_config.server_metrics_disabled = True
+    manager._process_results = RecordsManager._process_results.__get__(manager)
+
+    result = await manager._process_results(
+        phase=CreditPhase.PROFILING, cancelled=False
+    )
+
+    assert result.results.completed == 0
+    assert result.results.context_overflow_count == 1
+    published = manager.publish.await_args.args[0]
+    assert published.results.results.context_overflow_count == 1
 
 
 class TestRecordsManagerTelemetry:

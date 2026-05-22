@@ -349,11 +349,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._error_tracker = ErrorTracker()
 
         self._previous_realtime_records: int | None = None
+        self._previous_realtime_server_snapshot: dict[str, float] | None = None
         self._prev_realtime_snapshot: tuple[int, float] | None = None
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
         self._metric_state = ErrorTrackingState()
+        self._skipped_context_overflow_count = 0
 
         # Orchestrator-emitted DAG sub-agent stats, received via
         # CreditPhaseCompleteMessage. Keyed by phase so ProfileResults for the
@@ -431,16 +433,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         record_data = message.to_data()
 
-        # Context-overflow records in AGENTIC_REPLAY scenarios bypass the
-        # error tracker, accumulators, and stream exporters, but STILL bump
-        # the records-side counter so the completion barrier converges.
-        # The records-side counter ``total_records`` is compared against the
-        # credit-side ``final_requests_completed`` at end-of-phase; if we
-        # dropped the record entirely the LHS would lag the RHS forever and
-        # the run would hang. Classify as success so error counters stay at
-        # zero (the original "don't count as failure" intent) while keeping
-        # the invariant intact.
+        # Context-overflow records in AGENTIC_REPLAY scenarios bypass normal
+        # user-facing per-record processing but still advance the records-side
+        # success counter so the completion barrier converges. Keep only a
+        # narrow aggregate side-channel count for runtime submission validation.
         if getattr(record_data.metadata, "context_overflow_skip", False):
+            self._skipped_context_overflow_count += 1
             phase = record_data.metadata.benchmark_phase
             phase_tracker = self._records_tracker._get_phase_tracker(phase)
             phase_tracker.increment_success_records()
@@ -846,10 +844,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             phase_stats = self._records_tracker.create_stats_for_phase(
                 CreditPhase.PROFILING
             )
-            if phase_stats.total_records == self._previous_realtime_records:
-                continue  # No new records, skip the rebuild.
-            self._previous_realtime_records = phase_stats.total_records
-            await self._report_realtime_metrics()
+            server_snapshot = self._collect_realtime_server_snapshot()
+            if not self._has_realtime_update(phase_stats, server_snapshot):
+                continue  # No changed records or server metrics; skip the rebuild.
+            emitted = await self._report_realtime_metrics(
+                server_snapshot=server_snapshot
+            )
+            if emitted:
+                self._previous_realtime_records = phase_stats.total_records
+                self._previous_realtime_server_snapshot = dict(server_snapshot)
 
     @on_command(CommandType.START_REALTIME_TELEMETRY)
     async def _on_start_realtime_telemetry_command(
@@ -877,7 +880,38 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 
-    async def _report_realtime_metrics(self) -> None:
+    def _collect_realtime_server_snapshot(self) -> dict[str, float]:
+        """Return the current live server metrics snapshot, if available."""
+        server_snapshot: dict[str, float] = {}
+        if self._server_metrics_accumulator is None:
+            return server_snapshot
+        try:
+            snapshot_fn = getattr(
+                self._server_metrics_accumulator,
+                "realtime_snapshot",
+                None,
+            )
+            if callable(snapshot_fn):
+                server_snapshot = snapshot_fn() or {}
+        except Exception as exc:  # noqa: BLE001
+            self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
+        return server_snapshot
+
+    def _has_realtime_update(
+        self,
+        phase_stats: PhaseRecordsStats,
+        server_snapshot: dict[str, float],
+    ) -> bool:
+        """Return whether realtime metrics need rebuilding for the current tick."""
+        return (
+            phase_stats.total_records != self._previous_realtime_records
+            or server_snapshot != self._previous_realtime_server_snapshot
+        )
+
+    async def _report_realtime_metrics(
+        self,
+        server_snapshot: dict[str, float] | None = None,
+    ) -> bool:
         """Report inference metrics (used by command handler).
 
         Filters out hidden metrics (INTERNAL/EXPERIMENTAL) and converts all
@@ -888,11 +922,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # GPU telemetry / server metrics live on separate fan-outs.
         raw_metrics = await generate_realtime_metrics(self._metric_record_accumulators)
         if not raw_metrics:
-            return
+            return False
 
         display_metrics = filter_display_metrics(raw_metrics)
         if not display_metrics:
-            return
+            return False
         await self.publish(
             RealtimeMetricsMessage(
                 service_id=self.service_id,
@@ -903,26 +937,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_stats = self._records_tracker.create_stats_for_phase(
             CreditPhase.PROFILING
         )
-        # Server-side live snapshot from the ServerMetricsAccumulator.
-        # Best-effort: silently falls back to empty when the accumulator
-        # isn't enabled (--no-server-metrics) or hasn't received any
-        # records yet, so the realtime block stays usable in either case.
-        server_snapshot: dict[str, float] = {}
-        if self._server_metrics_accumulator is not None:
-            try:
-                snapshot_fn = getattr(
-                    self._server_metrics_accumulator,
-                    "realtime_snapshot",
-                    None,
-                )
-                if callable(snapshot_fn):
-                    server_snapshot = snapshot_fn() or {}
-            except Exception as exc:  # noqa: BLE001
-                # Lazy lambda — only formatted when debug logging is enabled,
-                # so this swallows realtime_snapshot failures silently in
-                # production. Bind ``exc`` correctly so debug builds actually
-                # surface the error instead of raising NameError on render.
-                self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
+        if server_snapshot is None:
+            server_snapshot = self._collect_realtime_server_snapshot()
 
         # Realtime block uses the *raw* (unfiltered) metric set so per-user
         # throughput rows can show ``prefill_throughput_per_user`` etc. —
@@ -941,6 +957,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             if self.service_config.ui_type != UIType.DASHBOARD:
                 self.info(rendered)
+        return True
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
         """Return the orchestrator-published BranchStats for ``phase``.
@@ -988,6 +1005,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             error_tracker=self._error_tracker,
             cancelled=cancelled,
             branch_stats=self._snapshot_branch_stats(phase),
+            context_overflow_count=self._skipped_context_overflow_count,
         )
         self.debug(lambda: f"Process records result: {result}")
         self.debug("Publishing ProcessRecordsResultMessage...")
@@ -1093,8 +1111,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             error_results.append(summary)
         else:
             self.debug(
-                lambda s=summary,
-                a=acc_type: f"Accumulator {a} returned unrecognized shape: {type(s).__name__}"
+                lambda s=summary, a=acc_type: (
+                    f"Accumulator {a} returned unrecognized shape: {type(s).__name__}"
+                )
             )
         return timeslices
 

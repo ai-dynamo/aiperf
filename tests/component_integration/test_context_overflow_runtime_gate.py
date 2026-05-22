@@ -108,7 +108,14 @@ def test_metric_aggregates_overflow_records_end_to_end():
 
 
 def test_sum_runtime_counts_single_run():
-    runs = [_make_run(valid=485, errors=15, overflow=11)]
+    runs = [_make_run(valid=485, errors=4, overflow=11)]
+    total, overflow = _sum_runtime_response_counts(runs)
+    assert total == 500
+    assert overflow == 11
+
+
+def test_sum_runtime_counts_includes_skipped_overflows_in_total_denominator():
+    runs = [_make_run(valid=489, errors=0, overflow=11)]
     total, overflow = _sum_runtime_response_counts(runs)
     assert total == 500
     assert overflow == 11
@@ -118,8 +125,8 @@ def test_sum_runtime_counts_multi_run():
     """Confidence reporting: counts sum across all successful runs."""
     runs = [
         _make_run(valid=200, errors=0, overflow=0),
-        _make_run(valid=190, errors=10, overflow=8),
-        _make_run(valid=205, errors=5, overflow=4),
+        _make_run(valid=190, errors=2, overflow=8),
+        _make_run(valid=205, errors=1, overflow=4),
     ]
     total, overflow = _sum_runtime_response_counts(runs)
     assert total == 200 + 200 + 210
@@ -174,14 +181,14 @@ def test_runtime_overflow_rate_above_threshold_flips_submission_valid_false(tmp_
     md = data["metadata"]
     assert md["submission_valid"] is False
     assert CONTEXT_OVERFLOW_REASON in md["submission_invalid_reasons"]
-    # Sanity: rate is 11/500 = 2.2%, well over the 1% threshold.
+    # Sanity: rate is 11/511 ≈ 2.2%, well over the 1% threshold.
     assert overflow / total > 0.01
 
 
 def test_runtime_overflow_rate_at_one_percent_boundary_remains_valid(tmp_path):
     """N/(N+M) == 0.01 (strict greater-than rule) -> submission_valid=true."""
     # Precisely 5 overflow / 500 total = 1.0% boundary.
-    runs = [_make_run(valid=495, errors=5, overflow=5)]
+    runs = [_make_run(valid=495, errors=0, overflow=5)]
     total, overflow = _sum_runtime_response_counts(runs)
     assert total == 500 and overflow == 5
     aggregate = AggregateResult(
