@@ -293,9 +293,9 @@ class TestSpeedBenchLoaderStreaming:
 
 @pytest.mark.asyncio
 class TestSpeedBenchLoaderMultiTurn:
-    async def test_multi_turn_produces_all_turns(self, user_config):
+    async def test_multi_turn_produces_all_turns(self, cli_config):
         loader = SpeedBenchLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",
@@ -324,9 +324,9 @@ class TestSpeedBenchLoaderMultiTurn:
         assert len(conversations[0].turns) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "First turn"
 
-    async def test_multi_turn_skips_empty_turns_in_array(self, user_config):
+    async def test_multi_turn_skips_empty_turns_in_array(self, cli_config):
         loader = SpeedBenchLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",
@@ -343,9 +343,9 @@ class TestSpeedBenchLoaderMultiTurn:
         assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
         assert conversations[0].turns[1].texts[0].contents[0] == "Also valid"
 
-    async def test_multi_turn_with_category_filter(self, user_config):
+    async def test_multi_turn_with_category_filter(self, cli_config):
         loader = SpeedBenchLoader(
-            user_config=user_config,
+            run=make_run_from_cli(cli_config),
             hf_dataset_name="nvidia/SPEED-Bench",
             hf_split="test",
             hf_subset="qualitative",

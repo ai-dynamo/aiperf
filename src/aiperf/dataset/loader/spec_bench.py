@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class SpecBenchLoader(BasePublicDatasetLoader):
@@ -25,13 +29,13 @@ class SpecBenchLoader(BasePublicDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun | None = None,
         *,
         multi_turn: bool = False,
         **kwargs,
     ) -> None:
         self.multi_turn = multi_turn
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """Load the SpecBench JSONL file from cache or download it."""

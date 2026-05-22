@@ -622,9 +622,7 @@ class TestHFConversationDatasetLoader:
         assert len(conversations) == 1
         assert len(conversations[0].turns) == 1
 
-    async def test_multi_turn_sets_max_tokens_when_tokenizer_provided(
-        self, cli_config
-    ):
+    async def test_multi_turn_sets_max_tokens_when_tokenizer_provided(self, cli_config):
         tok = MagicMock()
         tok.encode.side_effect = lambda s: list(range(max(1, len(s))))
 

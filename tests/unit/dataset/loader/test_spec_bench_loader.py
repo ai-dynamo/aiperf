@@ -133,8 +133,8 @@ class TestSpecBenchLoader:
 
 @pytest.mark.asyncio
 class TestSpecBenchLoaderMultiTurn:
-    async def test_multi_turn_produces_all_turns(self, user_config):
-        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+    async def test_multi_turn_produces_all_turns(self, cli_config):
+        loader = SpecBenchLoader(run=make_run_from_cli(cli_config), multi_turn=True)
         data = {
             "dataset": [{"turns": ["First turn prompt.", "Second follow-up turn."]}]
         }
@@ -155,8 +155,8 @@ class TestSpecBenchLoaderMultiTurn:
         assert len(conversations[0].turns) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "First turn prompt."
 
-    async def test_multi_turn_skips_empty_entries(self, user_config):
-        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+    async def test_multi_turn_skips_empty_entries(self, cli_config):
+        loader = SpecBenchLoader(run=make_run_from_cli(cli_config), multi_turn=True)
         data = {"dataset": [{"turns": ["Valid", "", "Also valid"]}]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 1
@@ -164,14 +164,14 @@ class TestSpecBenchLoaderMultiTurn:
         assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
         assert conversations[0].turns[1].texts[0].contents[0] == "Also valid"
 
-    async def test_multi_turn_empty_turns_skipped(self, user_config):
-        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+    async def test_multi_turn_empty_turns_skipped(self, cli_config):
+        loader = SpecBenchLoader(run=make_run_from_cli(cli_config), multi_turn=True)
         data = {"dataset": [{"turns": [""]}]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 0
 
-    async def test_multi_turn_null_values_in_turns(self, user_config):
-        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+    async def test_multi_turn_null_values_in_turns(self, cli_config):
+        loader = SpecBenchLoader(run=make_run_from_cli(cli_config), multi_turn=True)
         data = {"dataset": [{"turns": [None, "Valid turn", None]}]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 1
