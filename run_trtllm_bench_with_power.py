@@ -191,11 +191,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--warmup-num-requests",
         type=int,
-        default=0,
+        default=10,
         help="If > 0, slice the first N JSONL lines from the warmup source "
         "dataset (--warmup-dataset if set, else --dataset) into "
         "<output-dir>/warmup-dataset.jsonl and use that for the warmup "
-        "invocation. (default: 0 = use the warmup source dataset as-is)",
+        "invocation. Pass 0 to use the warmup source dataset as-is. "
+        "(default: 10)",
     )
     parser.add_argument(
         "--skip-warmup",
