@@ -304,6 +304,22 @@ class ConversationMetadata(AIPerfBaseModel):
         default_factory=list,
         description="The metadata of the turns in the conversation.",
     )
+    system_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional shared system message prepended to the first request. "
+            "Timing strategies use this to decide whether an otherwise empty "
+            "per-turn raw-message delta can still start a valid request."
+        ),
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional per-conversation user context prepended to the first request. "
+            "Timing strategies use this to decide whether an otherwise empty "
+            "per-turn raw-message delta can still start a valid request."
+        ),
+    )
     branches: list[ConversationBranchInfo] = Field(
         default_factory=list,
         description="Branch descriptors for this conversation (DAG projection).",
@@ -488,6 +504,8 @@ class Conversation(AIPerfBaseModel):
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=turn_metas,
+            system_message=self.system_message,
+            user_context_message=self.user_context_message,
             branches=self.branches,
             is_root=self.is_root,
             agent_depth=self.agent_depth,
@@ -506,6 +524,8 @@ class Conversation(AIPerfBaseModel):
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=[t.metadata() for t in self.turns],
+            system_message=self.system_message,
+            user_context_message=self.user_context_message,
             branches=list(self.branches),
             is_root=self.is_root,
             agent_depth=self.agent_depth,

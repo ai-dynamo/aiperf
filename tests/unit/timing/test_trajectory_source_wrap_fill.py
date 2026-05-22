@@ -233,6 +233,34 @@ def test_conversation_metadata_preserves_raw_message_count_without_payload_copy(
     assert counts == [None, 0, 1]
 
 
+def test_conversation_metadata_preserves_prefix_messages():
+    conv = Conversation(
+        session_id="trace_0",
+        system_message="system",
+        user_context_message="context",
+        turns=[Turn(raw_messages=[])],
+    )
+
+    meta = conv.metadata()
+
+    assert meta.system_message == "system"
+    assert meta.user_context_message == "context"
+
+
+def test_conversation_to_metadata_preserves_prefix_messages():
+    conv = Conversation(
+        session_id="trace_0",
+        system_message="system",
+        user_context_message="context",
+        turns=[Turn(raw_messages=[])],
+    )
+
+    meta = conv.to_metadata()
+
+    assert meta.system_message == "system"
+    assert meta.user_context_message == "context"
+
+
 def test_init_samples_only_warmup_profile_pairs_with_nonempty_first_payloads():
     def turn(raw_messages_count):
         t = MagicMock()
