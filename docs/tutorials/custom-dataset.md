@@ -334,7 +334,7 @@ Use random_pool when you need **random sampling with replacement** for unpredict
 
 ### Basic Single-File Sampling
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=250 -->
 ```bash
 cat > pool.jsonl << 'EOF'
 {"text": "What is machine learning?"}

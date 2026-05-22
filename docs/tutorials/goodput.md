@@ -40,7 +40,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 #### Run AIPerf with Goodput Constraints
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=350 -->
 ```bash
 aiperf profile \
     -m Qwen/Qwen3-0.6B \

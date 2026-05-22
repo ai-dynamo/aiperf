@@ -196,7 +196,7 @@ The turn delays simulate realistic pauses as users read responses and formulate 
 
 Test how your server handles many simultaneous multi-turn conversations:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=250 -->
 ```bash
 # Run 50 concurrent conversations with variable lengths
 aiperf profile \
@@ -254,7 +254,7 @@ This approach is ideal for:
 
 Simulate realistic customer support interactions with varying conversation lengths:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=350 -->
 ```bash
 # Model customer support conversations:
 # - Average 6-8 turns per conversation
@@ -285,7 +285,7 @@ aiperf profile \
 
 Test model performance with long conversations that accumulate substantial context:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=500 -->
 ```bash
 # Test long conversations with growing context
 aiperf profile \

@@ -47,7 +47,10 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
             sweep_dict = envelope_dict.pop("sweep", None)
         else:
             envelope_dict = config.model_dump(
-                mode="json", exclude_none=True, exclude_unset=True
+                mode="python",
+                exclude_none=True,
+                exclude_unset=True,
+                context={"include_secrets": True},
             )
             sweep_dict = envelope_dict.pop("sweep", None)
         configs, variations = _expand_envelope_variations(envelope_dict, sweep_dict)
