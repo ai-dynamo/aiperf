@@ -6,7 +6,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
+from aiperf.common.enums import (
+    ConversationContextMode,
+    ModelSelectionStrategy,
+    PromptCorpus,
+)
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.sequence_distribution import (
@@ -30,6 +34,7 @@ if TYPE_CHECKING:
     )
     from aiperf.config.distributions import SamplingDistribution
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.dataset.generator.coding_content import CodingContentGenerator
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
@@ -66,14 +71,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         )
 
         # Create generators (prompt generator requires a tokenizer)
-        self.prompt_generator: PromptGenerator | None = (
-            PromptGenerator(
-                prompts=self._synthetic_prompts,
-                prefix_prompts=self._synthetic_prefix_prompts,
-                tokenizer=tokenizer,
-            )
-            if tokenizer
-            else None
+        self.prompt_generator: PromptGenerator | CodingContentGenerator | None = (
+            self._create_prompt_generator(tokenizer) if tokenizer else None
         )
         self.image_generator = ImageGenerator(self._synthetic_images)
         self.audio_generator = AudioGenerator(self._synthetic_audio)
@@ -94,6 +93,27 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
+
+    def _create_prompt_generator(
+        self, tokenizer: Tokenizer
+    ) -> PromptGenerator | CodingContentGenerator:
+        if (
+            self._synthetic_prompts is not None
+            and self._synthetic_prompts.corpus == PromptCorpus.CODING
+        ):
+            from aiperf.dataset.generator.coding_content import CodingContentGenerator
+
+            return CodingContentGenerator(
+                config=self._synthetic_prompts,
+                prefix_prompts=self._synthetic_prefix_prompts,
+                tokenizer=tokenizer,
+            )
+
+        return PromptGenerator(
+            prompts=self._synthetic_prompts,
+            prefix_prompts=self._synthetic_prefix_prompts,
+            tokenizer=tokenizer,
+        )
 
     @abstractmethod
     def create_dataset(self) -> list[Conversation]:

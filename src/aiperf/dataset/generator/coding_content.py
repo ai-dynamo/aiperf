@@ -25,10 +25,14 @@ Generation uses window slicing from pre-built token pools, same as PromptGenerat
 from __future__ import annotations
 
 from aiperf.common import random_generator as rng
-from aiperf.common.exceptions import ConfigurationError, NotInitializedError
+from aiperf.common.exceptions import (
+    ConfigurationError,
+    InvalidStateError,
+    NotInitializedError,
+)
 from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.config.dataset.content import PromptConfig
+from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.base import BaseGenerator
 from aiperf.dataset.generator.prompt import sample_tokens_from_corpus
 
@@ -695,10 +699,12 @@ class CodingContentGenerator(BaseGenerator):
         self,
         config: PromptConfig,
         tokenizer: Tokenizer,
+        prefix_prompts: PrefixPromptConfig | None = None,
         pool_tokens_target: int | None = None,
         **kwargs,
     ):
         self.config = config
+        self.prefix_prompts = prefix_prompts
         self.tokenizer = tokenizer
         self._pool_scale = max(
             1.0, (pool_tokens_target or _BASELINE_POOL_TOKENS) / _BASELINE_POOL_TOKENS
@@ -707,6 +713,7 @@ class CodingContentGenerator(BaseGenerator):
         self._template_rng = rng.derive("dataset.coding_content.template")
         self._corpus_rng = rng.derive("dataset.coding_content.corpus")
         self._length_rng = rng.derive("dataset.coding_content.length")
+        self._prefix_rng = rng.derive("dataset.coding_content.prefix")
 
         # Hash-ID-based RNG for deterministic per-hash_id generation.
         # Required by BaseTraceDatasetLoader for parallel conversion.
@@ -716,6 +723,9 @@ class CodingContentGenerator(BaseGenerator):
 
         self._text_pool: list[int] | None = None
         self._tool_pool: list[int] = []
+        self._prefix_prompts: list[str] = []
+        self._shared_system_prompt: str | None = None
+        self._user_context_prompts: list[str] = []
         self._cache: dict[int, list[int]] = {}
         self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
         # No stable terminator probe for the coding corpus; segment synthesis
@@ -728,6 +738,17 @@ class CodingContentGenerator(BaseGenerator):
         # Alias for BaseTraceDatasetLoader compatibility (parallel_convert reads this)
         self._tokenized_corpus = self._tool_pool
         self._corpus_size = len(self._tool_pool)
+
+        pool_size = (
+            self.prefix_prompts.pool_size if self.prefix_prompts is not None else 0
+        ) or 0
+        if pool_size > 0:
+            self._create_prefix_prompt_pool()
+        if (
+            self.prefix_prompts is not None
+            and self.prefix_prompts.shared_system_length is not None
+        ):
+            self._generate_shared_system_prompt()
 
     def generate(
         self,
@@ -747,6 +768,51 @@ class CodingContentGenerator(BaseGenerator):
     def generate_prompt(self, num_tokens: int) -> str:
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
+
+    def _create_prefix_prompt_pool(self) -> None:
+        if self.prefix_prompts is None:
+            return
+        length = self.prefix_prompts.length or 0
+        pool_size = self.prefix_prompts.pool_size or 0
+        self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
+
+    def get_random_prefix_prompt(self) -> str:
+        if not self._prefix_prompts:
+            raise InvalidStateError(
+                "Attempted to sample a prefix prompt but the prefix prompts pool is empty. "
+                "Please ensure that the prefix prompts pool is initialized."
+            )
+        return self._prefix_rng.choice(self._prefix_prompts)
+
+    def _generate_shared_system_prompt(self) -> None:
+        if self.prefix_prompts is None:
+            return
+        length = self.prefix_prompts.shared_system_length
+        if length is not None:
+            self._shared_system_prompt = self.generate_prompt(length)
+
+    def get_shared_system_prompt(self) -> str:
+        if self._shared_system_prompt is None:
+            raise InvalidStateError(
+                "Shared system prompt is not initialized. "
+                "Ensure --shared-system-prompt-length is specified."
+            )
+        return self._shared_system_prompt
+
+    def generate_user_context_prompt(self, session_index: int) -> str:
+        length = (
+            self.prefix_prompts.user_context_length
+            if self.prefix_prompts is not None
+            else None
+        )
+        if length is None:
+            raise InvalidStateError(
+                "User context prompt length is not configured. "
+                "Ensure --user-context-prompt-length is specified."
+            )
+        while session_index >= len(self._user_context_prompts):
+            self._user_context_prompts.append(self.generate_prompt(length))
+        return self._user_context_prompts[session_index]
 
     def calculate_num_tokens(
         self,

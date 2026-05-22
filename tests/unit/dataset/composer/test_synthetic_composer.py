@@ -6,9 +6,11 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
+from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from tests.unit.dataset.composer.conftest import make_run
 
 
@@ -27,6 +29,38 @@ class TestSyntheticDatasetComposer:
         assert composer.prompt_generator is not None
         assert composer.include_image is False
         assert composer.include_audio is False
+
+    def test_initialization_with_coding_corpus(self, mock_tokenizer):
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=1,
+            prompt_input_tokens_mean=10,
+            prompt_corpus=PromptCorpus.CODING,
+        )
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
+
+        assert isinstance(composer.prompt_generator, CodingContentGenerator)
+
+    def test_coding_corpus_generates_context_prompts(self, mock_tokenizer):
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num_dataset_entries=1,
+            prompt_input_tokens_mean=10,
+            prompt_corpus=PromptCorpus.CODING,
+            prompt_prefix_shared_system_length=5,
+            prompt_prefix_user_context_length=5,
+        )
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
+        conversations = composer.create_dataset()
+
+        assert isinstance(composer.prompt_generator, CodingContentGenerator)
+        assert conversations[0].system_message
+        assert conversations[0].user_context_message
+        assert conversations[0].turns[0].texts[0].contents[0]
 
     def test_initialization_with_images(self, image_config, mock_tokenizer):
         """Test initialization with image generation enabled."""
