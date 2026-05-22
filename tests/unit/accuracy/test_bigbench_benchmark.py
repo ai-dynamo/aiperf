@@ -172,7 +172,7 @@ class TestPromptByteEqualWithDeepEval:
         )
 
     @pytest.mark.asyncio
-    async def test_query_appended_at_end(self) -> None:
+    async def test_query_appended_before_confinement(self) -> None:
         per_task = {"boolean_expressions": [_make_row("True and False is", "False")]}
         with patch(
             "aiperf.accuracy.benchmarks.bigbench.load_dataset",
@@ -185,8 +185,14 @@ class TestPromptByteEqualWithDeepEval:
                 enable_cot=True,
             )
         prompt = problems[0].prompt
-        # DeepEval's template appends "\n\nQ: <input>\nA: " at the end.
-        assert prompt.endswith("Q: True and False is\nA: ")
+        # DeepEval's template appends "\n\nQ: <input>\nA: " at the end of
+        # its output. The loader then appends the per-task confinement
+        # statement so the LLM sees the constraint as part of the prompt
+        # (matches the trt-llm benchmark recipe's flow). For
+        # boolean_expressions that confinement starts with "\n\nOutput
+        # 'True' or 'False'." so the Q/A pair sits immediately before it.
+        assert "Q: True and False is\nA: \n\nOutput 'True' or 'False'." in prompt
+        assert prompt.endswith("Full answer not needed.")
 
     @pytest.mark.asyncio
     async def test_cot_vs_no_cot_use_different_prompt_files(self) -> None:

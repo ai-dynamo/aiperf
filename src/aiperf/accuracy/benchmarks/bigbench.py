@@ -199,12 +199,13 @@ class BigBenchBenchmark(AIPerfLoggerMixin):
     ) -> list[BenchmarkProblem]:
         problems: list[BenchmarkProblem] = []
         for row in ds:
-            prompt = BigBenchHardTemplate.generate_output(
+            template_prompt = BigBenchHardTemplate.generate_output(
                 input=row[INPUT_FIELD],
                 task=task,
                 n_shots=n_shots,
                 enable_cot=enable_cot,
             )
+            prompt = f"{template_prompt}{bbh_confinement_statements_dict[task]}"
             messages: list[AccuracyChatMessage] = [{"role": "user", "content": prompt}]
             problems.append(
                 BenchmarkProblem(
