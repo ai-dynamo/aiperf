@@ -14,9 +14,14 @@ Pins:
 4. Per-task task field so the accuracy CSV breaks down per BBH
    subtask.
 
-These tests run against the real ``deepeval`` install (it's in the
-``[accuracy]`` extras), so ``BigBenchHardTemplate`` is available and
-can read its bundled CoT/shot prompt files.
+Most tests in this file run against ``tests.harness.fake_deepeval`` — a
+small stand-in that mirrors the 27-task enum and confinement dict
+exactly but generates a synthetic (non-byte-equal) prompt template.
+Tests that pin the real upstream prompt bytes are marked
+``@pytest.mark.requires_deepeval`` and skip when only the fake is
+registered. The fake is wired in ``tests/unit/accuracy/conftest.py``
+(autouse, function scope) so the ``aiperf[accuracy]`` extras are no
+longer a hard prerequisite for running this file.
 """
 
 from __future__ import annotations
@@ -26,17 +31,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ``BigBenchBenchmark`` calls into
-# ``deepeval.benchmarks.BigBenchHard``'s bundled CoT/shot prompt files;
-# without the ``[accuracy]`` extras installed the constructor raises
-# ``RuntimeError`` and every test in this file would fail. Skip the
-# whole module when deepeval is missing so CI environments that
-# intentionally don't install the heavy extras still pass.
-pytest.importorskip(
-    "deepeval", reason="BigBench tests require the [accuracy] extras (deepeval)"
-)
-
-from aiperf.accuracy.benchmarks.bigbench import (  # noqa: E402
+from aiperf.accuracy.benchmarks.bigbench import (
     DEFAULT_ENABLE_COT,
     DEFAULT_GENERATION_SIZE,
     DEFAULT_N_SHOTS,
@@ -44,8 +39,8 @@ from aiperf.accuracy.benchmarks.bigbench import (  # noqa: E402
     BigBenchBenchmark,
     _resolve_tasks,
 )
-from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType  # noqa: E402
-from tests.unit.conftest import make_benchmark_run  # noqa: E402
+from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.unit.conftest import make_benchmark_run
 
 
 def _make_run():
@@ -129,10 +124,19 @@ class TestResolveTasks:
         assert "object_counting" in str(exc_info.value)
 
 
+@pytest.mark.requires_deepeval
 class TestPromptByteEqualWithDeepEval:
     """The flat prompt must be byte-equal to what
     ``BigBenchHardTemplate.generate_output`` produces — same template,
-    same CoT files, same n_shots, same enable_cot."""
+    same CoT files, same n_shots, same enable_cot.
+
+    These assertions read specific strings out of DeepEval's bundled CoT
+    and shot prompt ``.txt`` files (e.g. ``"Task description: Evaluate
+    the result of a random Boolean expression."``). The fake harness
+    cannot reproduce those bytes, so the class is tagged
+    ``requires_deepeval``; the marker skips it when only the fake is
+    registered (i.e. when the ``[accuracy]`` extras aren't installed).
+    """
 
     @pytest.mark.asyncio
     async def test_cot_prompt_starts_with_task_description(self) -> None:
@@ -587,11 +591,11 @@ class TestPathologicalRowContent:
 
     @pytest.mark.asyncio
     async def test_numeric_target_coerced_to_string(self) -> None:
-        """A numeric ``target`` (e.g. an int from a future schema
-        change) is coerced to ``str`` by Pydantic since
-        ``BenchmarkProblem.ground_truth`` is typed ``str`` and the base
-        model runs in lax-validation mode. Pin the contract so callers
-        can rely on string equality in graders."""
+        """A numeric ``target`` (e.g. an int from a future BBH schema
+        change) is coerced to ``str`` by the loader before constructing
+        the ``BenchmarkProblem``. ``BenchmarkProblem.ground_truth`` is
+        in strict mode, so the loader's defensive ``str(...)`` is the
+        contract callers rely on for string equality in graders."""
         per_task = {"object_counting": [{"input": "Count items", "target": 42}]}
         with patch(
             "aiperf.accuracy.benchmarks.bigbench.load_dataset",

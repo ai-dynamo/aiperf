@@ -219,6 +219,7 @@ markers = [
     "server_unit: marks tests as unit tests for the mock server",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
     "network: marks tests that require network access",
+    "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
 ]
 # Better console output
 console_output_style = "progress"

@@ -209,7 +209,12 @@ class BigBenchBenchmark(AIPerfLoggerMixin):
             problems.append(
                 BenchmarkProblem(
                     prompt=prompt,
-                    ground_truth=row[TARGET_FIELD],
+                    # ``BenchmarkProblem.ground_truth`` is typed ``str`` in
+                    # strict mode; the upstream BBH schema stores targets
+                    # as strings today, but coerce defensively so a future
+                    # numeric column doesn't break the loader. Mirrors
+                    # DeepEval's ``str(expected_output)`` in its grader.
+                    ground_truth=str(row[TARGET_FIELD]),
                     task=task.value,
                     metadata={
                         "bbh_task": task.value,
