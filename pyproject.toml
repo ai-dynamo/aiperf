@@ -124,7 +124,7 @@ accuracy = [
     # ``BigBenchHardTemplate.generate_output`` on the BigBench branch)
     # directly so prompts are byte-equal to what the trt-llm benchmark
     # recipe ships.
-    "deepeval>=2.9.0",
+    "deepeval>=2.9.0,<5.0.0",
 ]
 
 [dependency-groups]
