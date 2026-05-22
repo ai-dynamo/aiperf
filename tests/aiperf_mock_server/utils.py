@@ -437,13 +437,18 @@ def _maybe_record_request(
     if recorder is None:
         return
     fingerprint = _extract_osl_fingerprint(request)
+    # TGIGenerateRequest has no `stream` field, so `/generate_stream` would
+    # otherwise record as `stream: null` and never increment `streamed_count`.
+    stream: bool | None = (
+        True if endpoint == "/generate_stream" else getattr(request, "stream", None)
+    )
     recorder.record_request(
         ts=time.time(),
         endpoint=endpoint,
         request_id=request_id,
         model=model,
         request=request,
-        stream=getattr(request, "stream", None),
+        stream=stream,
         osl_fingerprint=fingerprint,
     )
 

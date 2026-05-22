@@ -799,6 +799,57 @@ class TestRecorderTokenIdTracking:
         assert vd["total_tokens"] == 3
 
 
+class TestMaybeRecordRequest:
+    """`_maybe_record_request` derives `stream` from the request body, but
+    `TGIGenerateRequest` has no `stream` field — so streaming TGI runs would
+    record `stream: null` and never increment `streamed_count` unless the
+    helper handles the `/generate_stream` endpoint explicitly.
+    """
+
+    def test_generate_stream_endpoint_records_stream_true(self, tmp_path) -> None:
+        from aiperf_mock_server.models import TGIGenerateRequest
+        from aiperf_mock_server.request_recorder import set_global_recorder
+        from aiperf_mock_server.utils import _maybe_record_request
+
+        tok = _FakeTokenizer(vocab_size=100, encodings={"hi": [1, 2, 3]})
+        r = _make_recorder(tmp_path, tok)
+        set_global_recorder(r)
+        try:
+            req = TGIGenerateRequest(inputs="hi")
+            _maybe_record_request(req, "/generate_stream", "cmpl-x", "tgi")
+        finally:
+            set_global_recorder(None)
+        r._file.flush()
+
+        row = _read_jsonl(r.path)[0]
+        assert row["endpoint"] == "/generate_stream"
+        assert row["stream"] is True
+        r.close()
+
+    def test_generate_endpoint_records_stream_falsy(self, tmp_path) -> None:
+        """Sanity check: the non-streaming `/generate` endpoint stays falsy
+        (TGIGenerateRequest has no `stream` field so it records as `None`).
+        """
+        from aiperf_mock_server.models import TGIGenerateRequest
+        from aiperf_mock_server.request_recorder import set_global_recorder
+        from aiperf_mock_server.utils import _maybe_record_request
+
+        tok = _FakeTokenizer(vocab_size=100, encodings={"hi": [1, 2, 3]})
+        r = _make_recorder(tmp_path, tok)
+        set_global_recorder(r)
+        try:
+            req = TGIGenerateRequest(inputs="hi")
+            _maybe_record_request(req, "/generate", "cmpl-x", "tgi")
+        finally:
+            set_global_recorder(None)
+        r._file.flush()
+
+        row = _read_jsonl(r.path)[0]
+        assert row["endpoint"] == "/generate"
+        assert not row["stream"]
+        r.close()
+
+
 class TestComputeShape80:
     def test_length_is_always_80(self) -> None:
         assert len(_compute_shape_80(Counter({0: 1, 99999: 1}), 100000)) == 80
