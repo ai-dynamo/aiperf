@@ -54,6 +54,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.environment import Environment
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.dataset.mmap_cache_lock import acquire_cache_lock as _acquire_cache_lock
+from aiperf.plugin import plugins
 
 if TYPE_CHECKING:
     from aiperf.common.config import UserConfig
@@ -445,6 +446,31 @@ def _tokenizer_identity_from_user_config(
     }
 
 
+def _public_dataset_source_from_user_config(
+    user_config: UserConfig,
+) -> dict[str, object] | None:
+    inp = user_config.input
+    if inp.public_dataset is None:
+        return None
+
+    public_dataset = str(inp.public_dataset)
+    metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
+    hf_dataset_name = inp.hf_weka_repo or metadata.hf_dataset_name
+    if hf_dataset_name is None:
+        return {"plugin": public_dataset}
+
+    hf_subset = (
+        inp.hf_dataset_subset
+        if inp.hf_dataset_subset is not None
+        else metadata.hf_subset
+    )
+    source = metadata.model_dump(mode="json", exclude_none=True)
+    source["hf_dataset_name"] = hf_dataset_name
+    source["hf_split"] = metadata.hf_split
+    source["hf_subset"] = hf_subset
+    return source
+
+
 def _settings_payload_from_user_config(
     user_config: UserConfig,
 ) -> dict[str, object]:
@@ -465,9 +491,7 @@ def _settings_payload_from_user_config(
             if inp.custom_dataset_type is not None
             else None
         ),
-        "public_dataset": (
-            str(inp.public_dataset) if inp.public_dataset is not None else None
-        ),
+        "public_dataset_source": _public_dataset_source_from_user_config(user_config),
         "prompt": prompt_dump,
         "endpoint_type": str(user_config.endpoint.type),
         "model_name": user_config.endpoint.model_names[0],
@@ -505,9 +529,7 @@ def compute_cache_key_from_user_config(user_config: UserConfig) -> str | None:
 
     return compute_cache_key(
         input_file=input_file,
-        public_dataset=str(inp.public_dataset)
-        if inp.public_dataset is not None
-        else None,
+        public_dataset=None,
         custom_dataset_type=(
             str(inp.custom_dataset_type)
             if inp.custom_dataset_type is not None

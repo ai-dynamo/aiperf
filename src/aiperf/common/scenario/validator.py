@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+_AGENTX_SCENARIO = "inferencex-agentx-mvp"
+_AGENTX_WEKA_HF_REPO = "semianalysisai/cc-traces-weka-with-subagents-051926"
+
 
 @dataclass
 class ValidationOutcome:
@@ -261,6 +264,20 @@ def validate_scenario(
                     message=f"scenario {spec.name!r} requires loader={display}",
                 )
             )
+        if spec.name == _AGENTX_SCENARIO and detected == "weka_hf":
+            hf_weka_repo = getattr(user_config.input, "hf_weka_repo", None)
+            if hf_weka_repo != _AGENTX_WEKA_HF_REPO:
+                violations.append(
+                    ScenarioViolation(
+                        flag="--hf-weka-repo",
+                        current_value=hf_weka_repo,
+                        required_value=_AGENTX_WEKA_HF_REPO,
+                        message=(
+                            f"scenario {spec.name!r} only allows --public-dataset "
+                            f"weka_hf with hf_weka_repo={_AGENTX_WEKA_HF_REPO}"
+                        ),
+                    )
+                )
 
     if spec.require_cache_bust is not None:
         cache_bust_cfg = getattr(

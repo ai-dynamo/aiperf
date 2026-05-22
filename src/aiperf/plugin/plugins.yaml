@@ -1823,6 +1823,20 @@ public_dataset_loader:
       default_block_size: 64
       default_prompt_corpus: coding
 
+  weka_hf:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      Generic HuggingFace-backed Weka trace dataset loader. Use this for newly
+      published compatible semianalysisai/cc-traces-weka-* corpora without
+      adding a pinned alias for each release. Requires --hf-weka-repo to provide
+      the HuggingFace dataset repo name.
+      Usage: --public-dataset weka_hf --hf-weka-repo semianalysisai/cc-traces-weka-...
+    metadata:
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
   # ---------------------------------------------------------------------------
   # ASR (Automatic Speech Recognition) datasets
   # ---------------------------------------------------------------------------

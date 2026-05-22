@@ -12,6 +12,7 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     require_loader=(
         "semianalysis_cc_traces_weka_with_subagents",
         "weka_trace",
+        "weka_hf",
     ),
     min_benchmark_duration_seconds=900,
     trace_idle_gap_cap_seconds=60.0,

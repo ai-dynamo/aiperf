@@ -65,6 +65,8 @@ class _WekaChildDict(TypedDict):
 
     session_id: str
     turns: list[_WekaParentTurnDict]
+    is_root: bool
+    agent_depth: int
 
 
 class _WekaProcessTaskResult(TypedDict):
@@ -427,13 +429,15 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         oi: req.get("effective_t", req["t"]) for oi, req in normals
     }
     dropped_agent_ids: set[str] = set()
-    for sa_outer_idx, sa_entry in parent["subagents"]:
+    dropped_subagent_indices: set[int] = set()
+    for subagent_index, (sa_outer_idx, sa_entry) in enumerate(parent["subagents"]):
         preceding = max(
             (pos for oi, pos in outer_to_turn_pos.items() if oi < sa_outer_idx),
             default=None,
         )
         if preceding is None:
             dropped_agent_ids.add(sa_entry["agent_id"])
+            dropped_subagent_indices.add(subagent_index)
             continue
 
         join_turn: int | None = None
@@ -471,7 +475,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
 
     children_out: list[_WekaChildDict] = []
     for cp in task.children:
-        if cp["agent_id"] in dropped_agent_ids:
+        if cp["subagent_index"] in dropped_subagent_indices:
             continue
 
         child_decode, child_partial, child_decode_text = _make_scope_helpers(
@@ -537,6 +541,8 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             {
                 "session_id": cp["session_id"],
                 "turns": child_turns,
+                "is_root": False,
+                "agent_depth": 1,
             }
         )
 

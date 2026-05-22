@@ -266,6 +266,26 @@ def _expand_subagent_to_child_plans(
     return plans
 
 
+def _dropped_subagent_indices(plan: _ParentPlan) -> set[int]:
+    normal_outer_indices = [outer_idx for outer_idx, _ in plan.normals]
+    dropped: set[int] = set()
+    for subagent_index, (sa_outer_idx, _) in enumerate(plan.subagents):
+        if not any(outer_idx < sa_outer_idx for outer_idx in normal_outer_indices):
+            dropped.add(subagent_index)
+    return dropped
+
+
+def _child_plans_for_active_subagents(
+    plan: _ParentPlan, child_plans: list[_ChildPlan]
+) -> list[_ChildPlan]:
+    dropped = _dropped_subagent_indices(plan)
+    return [
+        cp
+        for cp in child_plans
+        if cp.parent_trace_id == plan.trace_id and cp.subagent_index not in dropped
+    ]
+
+
 def _build_trace_idle_timing(
     *,
     plan: _ParentPlan,
@@ -292,9 +312,7 @@ def _build_trace_idle_timing(
     for _, req in plan.normals:
         request_starts.append(req.t)
 
-    child_plans_for_trace = [
-        cp for cp in child_plans if cp.parent_trace_id == plan.trace_id
-    ]
+    child_plans_for_trace = _child_plans_for_active_subagents(plan, child_plans)
     for cp in child_plans_for_trace:
         for req in cp.stream_requests:
             request_starts.append(_subagent_request_absolute_t(cp.entry, req))
@@ -766,7 +784,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         # Track subagents whose branch was dropped during the second pass;
         # their child conversations must also be pruned.
-        dropped_per_trace: dict[str, set[str]] = {}
+        dropped_per_trace: dict[str, set[int]] = {}
 
         max_ctx = self.user_config.input.max_context_length
         if max_ctx is not None:
@@ -867,7 +885,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         parent_plans: list[_ParentPlan],
         child_plans: list[_ChildPlan],
         data: dict[str, list[WekaTrace]],
-        dropped_per_trace: dict[str, set[str]],
+        dropped_per_trace: dict[str, set[int]],
         ignore_delays: bool,
         think_time_only: bool,
         cap_seconds: float | None,
@@ -1024,11 +1042,15 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             #     subagent A ends t=10
             #     parent[1] t=10
             #     => A joins parent[1] within _JOIN_EPSILON_SECONDS.
-            groups: dict[tuple[int, int | None], list[WekaSubagentEntry]] = defaultdict(
-                list
-            )
+            groups: dict[
+                tuple[int, int | None], list[tuple[int, WekaSubagentEntry]]
+            ] = defaultdict(list)
             group_order: list[tuple[int, int | None]] = []
-            dropped_sa_agent_ids: set[str] = set()
+            dropped_subagent_indices: set[int] = set()
+            child_sids_by_subagent: dict[int, list[str]] = defaultdict(list)
+            for cp in child_plans:
+                if cp.parent_trace_id == plan.trace_id:
+                    child_sids_by_subagent[cp.subagent_index].append(cp.session_id)
             if trace_idle_timing is not None:
                 outer_to_t: dict[int, float] = {
                     outer_idx: trace_idle_timing.parent_by_outer_idx[
@@ -1039,7 +1061,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             else:
                 outer_to_t = {outer_idx: req.t for outer_idx, req in plan.normals}
 
-            for sa_outer_idx, sa_entry in plan.subagents:
+            for subagent_index, (sa_outer_idx, sa_entry) in enumerate(plan.subagents):
                 preceding = max(
                     (pos for oi, pos in outer_to_turn_pos.items() if oi < sa_outer_idx),
                     default=None,
@@ -1049,7 +1071,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         f"Dropping subagent '{sa_entry.agent_id}' from trace "
                         f"{plan.trace_id}: no preceding parent turn"
                     )
-                    dropped_sa_agent_ids.add(sa_entry.agent_id)
+                    dropped_subagent_indices.add(subagent_index)
                     continue
 
                 if trace_idle_timing is not None:
@@ -1067,26 +1089,21 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 key = (preceding, join_turn)
                 if key not in groups:
                     group_order.append(key)
-                groups[key].append(sa_entry)
+                groups[key].append((subagent_index, sa_entry))
 
             for preceding, join_turn in group_order:
                 entries = groups[(preceding, join_turn)]
                 child_sids: list[str] = []
-                for e in entries:
-                    e_streams = _pack_into_streams(list(e.requests))
-                    if len(e_streams) == 1:
-                        child_sids.append(f"{plan.trace_id}::sa:{e.agent_id}")
-                    else:
-                        for stream_idx in range(len(e_streams)):
-                            child_sids.append(
-                                f"{plan.trace_id}::sa:{e.agent_id}:s{stream_idx}"
-                            )
+                for subagent_index, e in entries:
+                    subagent_child_sids = child_sids_by_subagent[subagent_index]
+                    child_sids.extend(subagent_child_sids)
+                    if len(subagent_child_sids) > 1:
                         _logger.info(
                             f"Trace {plan.trace_id}: subagent '{e.agent_id}' has "
-                            f"{len(e_streams)} parallel inner-request streams; emitting "
-                            f"as sibling child conversations."
+                            f"{len(subagent_child_sids)} parallel inner-request streams; "
+                            f"emitting as sibling child conversations."
                         )
-                branch_id = f"{plan.trace_id}:spawn:{entries[0].agent_id}"
+                branch_id = f"{plan.trace_id}:spawn:{entries[0][1].agent_id}"
                 is_background = join_turn is None
                 conv.branches.append(
                     ConversationBranchInfo(
@@ -1104,7 +1121,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             branch_id=branch_id,
                         )
                     )
-            dropped_per_trace[plan.trace_id] = dropped_sa_agent_ids
+            dropped_per_trace[plan.trace_id] = dropped_subagent_indices
             conversations.append(conv)
             if _plan_idx % log_every_plan == 0 or _plan_idx == n_plans:
                 elapsed = _time.monotonic() - t_start
@@ -1117,7 +1134,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
 
         for cp in child_plans:
-            if cp.entry.agent_id in dropped_per_trace.get(cp.parent_trace_id, set()):
+            if cp.subagent_index in dropped_per_trace.get(cp.parent_trace_id, set()):
                 continue
             child_model_map = model_map_per_trace.get(cp.parent_trace_id, {})
             # Subagent has its own scope: tool_tokens/system_tokens differ from
@@ -1139,6 +1156,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             child_conv = Conversation(
                 session_id=cp.session_id,
                 context_mode=self._resolved_context_mode(),
+                is_root=False,
+                agent_depth=1,
             )
             for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
@@ -1460,6 +1479,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 child_conv = Conversation(
                     session_id=child["session_id"],
                     context_mode=self._resolved_context_mode(),
+                    is_root=child["is_root"],
+                    agent_depth=child["agent_depth"],
                 )
                 for t_dict in child["turns"]:
                     child_conv.turns.append(

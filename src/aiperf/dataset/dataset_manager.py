@@ -237,6 +237,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         is_weka_format = (
             dataset_type == CustomDatasetType.WEKA_TRACE
             or self.user_config.input.detected_loader == "weka_trace"
+            or public_dataset == "weka_hf"
             or (
                 public_dataset is not None
                 and str(public_dataset).startswith("semianalysis_cc_traces_weka")

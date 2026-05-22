@@ -22,7 +22,7 @@ Each trace file is a single JSON object describing one coding conversation:
 AIPerf maps the format directly onto its DAG datastructure:
 
 - One root `Conversation` per trace file.
-- One child `Conversation` per `type: "subagent"` entry (session id `<trace_id>::sa:<agent_id>`).
+- One or more child `Conversation`s per `type: "subagent"` entry. Single-stream subagents use session id `<trace_id>::sa:<agent_id>`; subagents whose inner requests overlap are split into sibling streams with `<trace_id>::sa:<agent_id>:s0`, `<trace_id>::sa:<agent_id>:s1`, ... .
 - A `SPAWN` branch on the parent's preceding turn; a `SPAWN_JOIN` prerequisite on the parent's following turn. Three nuances: (a) subagents with no preceding parent turn are dropped (logged at load time); (b) subagents with no following parent turn become `is_background=True` branches with no `SPAWN_JOIN` prerequisite (the parent doesn't wait); (c) adjacent subagents sharing the same `(preceding, following)` anchors collapse into one multi-child branch.
 
 ---
@@ -49,7 +49,7 @@ The `--fixed-schedule` flag replays requests at their recorded timestamps; subag
 Both work:
 
 ```bash
-# Directory (739 traces in the shipped corpus)
+# Directory of trace JSON files
 aiperf profile ... --input-file artifacts/kv-cache-tester/traces/
 
 # Single trace
@@ -68,10 +68,10 @@ Standard trace filters apply:
 
 ## Loading From HuggingFace (No Download Required)
 
-If you don't already have the trace corpus on disk, two SemiAnalysis-published HuggingFace mirrors are available and can be pulled directly by AIPerf with a single flag:
+If you don't already have the trace corpus on disk, SemiAnalysis-published HuggingFace mirrors are available and can be pulled directly by AIPerf with a single flag:
 
-- [`semianalysisai/cc-traces-weka-042026`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-042026) — 739 traces, full subagent fan-out (parent + child SPAWN/JOIN topology).
-- [`semianalysisai/cc-traces-weka-no-subagents-051226`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-no-subagents-051226) — 949 traces, **main-agent only** (all `WekaSubagentEntry` blocks stripped at publication time). This is the AgentX MVP default.
+- [`semianalysisai/cc-traces-weka-no-subagents-051826`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-no-subagents-051826) — pinned no-subagents current corpus: 98 traces, **main-agent only** (all `WekaSubagentEntry` blocks stripped at publication time). This is also the legacy/default target for the plain `semianalysis_cc_traces_weka` alias.
+- [`semianalysisai/cc-traces-weka-with-subagents-051926`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-with-subagents-051926) — pinned with-subagents corpus: 219 traces with full subagent fan-out (parent + child SPAWN/JOIN topology).
 
 ```bash
 aiperf profile \
@@ -80,15 +80,15 @@ aiperf profile \
     --model claude-haiku-4-5-20251001 \
     --endpoint-type chat \
     --streaming \
-    --public-dataset semianalysis_cc_traces_weka_no_subagents \
+    --public-dataset semianalysis_cc_traces_weka_with_subagents \
     --fixed-schedule
 ```
 
-Swap `_no_subagents` for the plain `semianalysis_cc_traces_weka` tag if you want the with-subagents corpus instead.
+Use `semianalysis_cc_traces_weka_no_subagents` if you want the main-agent-only corpus instead. The plain `semianalysis_cc_traces_weka` tag is a legacy/default pinned alias for the current no-subagents corpus.
 
-On first run, the full corpus downloads upfront and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. Both datasets are public — no HuggingFace authentication or token is required. The 042026 mirror is ~657 MB compressed; the 051226 no-subagents mirror is smaller.
+On first run, the full corpus downloads upfront and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. Both datasets are public — no HuggingFace authentication or token is required.
 
-> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full corpus, pass `--num-dataset-entries N` where N is the variant's trace count (739 for 042026, 949 for 051226). The loader logs `Loading <n>/<total> traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
+> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full corpus, pass `--num-dataset-entries N` where N is the variant's trace count (98 for the no-subagents/current corpus, 219 for the with-subagents corpus). The loader logs `Loading <n>/<total> traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
 
 The HuggingFace path and the file-based `--input-file` path produce **byte-identical conversations** for the same source rows because the public-dataset loader is a thin wrapper that delegates 100% of trace reconstruction (hash_id replay, per-trace model mapping, branch + spawn-join topology, delay capping, parallel reconstruction) to the same `WekaTraceLoader.convert_to_conversations()` used by `--input-file`. There is one source of truth for trace reconstruction.
 
@@ -97,10 +97,25 @@ The HuggingFace path and the file-based `--input-file` path produce **byte-ident
 | Path | When to use |
 |---|---|
 | `--input-file <dir-or-file>` (file-based) | You already have a local trace directory, you need offline runs (no outbound network), or you're developing/debugging the loader against a specific subset of traces. |
-| `--public-dataset semianalysis_cc_traces_weka_no_subagents` (HuggingFace, no subagents) | AgentX MVP runs, or any benchmark where you want a single linear agent stream per trace and don't care about parent/child fan-out. 949 traces. |
-| `--public-dataset semianalysis_cc_traces_weka` (HuggingFace, with subagents) | You want zero-setup against the canonical 739-trace corpus with full subagent SPAWN/JOIN topology and don't mind a one-time ~657 MB download (cached afterward). |
+| `--public-dataset semianalysis_cc_traces_weka_no_subagents` (HuggingFace, no subagents) | Pinned no-subagents current corpus for benchmarks where you want a single linear agent stream per trace and don't care about parent/child fan-out. 98 traces. |
+| `--public-dataset semianalysis_cc_traces_weka` (HuggingFace, legacy/default no-subagents alias) | Legacy/default pinned alias for the same current no-subagents corpus as `semianalysis_cc_traces_weka_no_subagents`. |
+| `--public-dataset semianalysis_cc_traces_weka_with_subagents` (HuggingFace, with subagents) | Pinned with-subagents corpus for zero-setup runs with full subagent SPAWN/JOIN topology. 219 traces. |
 
-All existing tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--scenario inferencex-agentx-mvp`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire.
+Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts the with-subagents alias, an explicit local `weka_trace` loader, or `weka_hf` constrained to `semianalysisai/cc-traces-weka-with-subagents-051926`; it does not accept the no-subagents aliases.
+
+For newly published compatible HuggingFace Weka trace corpora, use the neutral `weka_hf` public dataset and provide the repo explicitly:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --public-dataset weka_hf \
+    --hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926 \
+    --streaming \
+    --url localhost:8000
+```
+
+Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926`; other `weka_hf` repos are rejected by the scenario validator.
 
 A tokenizer is required in both paths (the prompt is reconstructed from `hash_ids`); pass `--tokenizer <name-or-path>` if your `--model` doesn't resolve a default tokenizer.
 
@@ -142,7 +157,7 @@ AIPerf can prepend a unique per-conversation marker to every prompt, so that rec
 
 The marker looks like `[rid:8a3f2c1b9e7d]` and is derived deterministically within a run from the auto-generated benchmark ID, the trace's recycle count, the trajectory index, and the trace ID — same trace, same recycle pass, same marker for every turn in that play. Markers differ across runs (the benchmark ID is a fresh UUID each time).
 
-This is locked on for the AgentX MVP scenario — auto-injected as `system_prefix` when you don't pass `--cache-bust` yourself, and any explicit conflicting value is rejected at startup. Outside that scenario it's optional and defaults to `none`.
+This is locked on for the AgentX MVP scenario — auto-injected as `first_turn_prefix` when you don't pass `--cache-bust` yourself, and any explicit conflicting value is rejected at startup. Outside that scenario it's optional and defaults to `none`.
 
 A few details worth knowing if you're using `--cache-bust` outside the scenario:
 

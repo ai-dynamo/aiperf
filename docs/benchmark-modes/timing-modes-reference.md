@@ -238,15 +238,15 @@ aiperf profile \
     --model your-model \
     --endpoint-type chat \
     --streaming \
-    --input-file path/to/kv-cache-tester/traces/ \
+    --public-dataset semianalysis_cc_traces_weka_with_subagents \
     --concurrency 100 \
     --benchmark-duration 900 \
     --num-profile-runs 3
 ```
 
-**How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` somewhere in roughly the first 70% of each conversation (clamped to leave at least one profile turn after warmup), and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded inter-turn delays. The default `--inter-turn-delay-cap-seconds` is `None` (no clamp); the `inferencex-agentx-mvp` scenario locks it to `60` so coffee-break gaps don't distort steady-state. When a trajectory finishes its conversation, its trace ID is recycled FIFO-style and a fresh session starts from turn 0 of the next queued trace.
+**How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` somewhere in roughly the first 70% of each conversation (clamped to leave at least one profile turn after warmup), and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded request-start schedule after applying the per-trace idle-gap rule. The default `--trace-idle-gap-cap-seconds` is `None` (no compression); the `inferencex-agentx-mvp` scenario locks it to `60` so coffee-break request-start gaps don't distort steady-state while preserving local subagent overlap. When a trajectory finishes its conversation, its trace ID is recycled FIFO-style and a fresh session starts from turn 0 of the next queued trace.
 
-**When to use:** A scenario-locked timing mode for multi-turn agentic-coding traces (currently WEKA), especially long runs where you want steady-state metrics rather than first-turn-only metrics. Pairs naturally with `--cache-bust system_prefix` (auto-injected by the `inferencex-agentx-mvp` scenario) so recycled plays don't progressively warm the server's KV-cache prefix on identical content.
+**When to use:** A scenario-locked timing mode for multi-turn agentic-coding traces (currently WEKA), especially long runs where you want steady-state metrics rather than first-turn-only metrics. Pairs naturally with `--cache-bust first_turn_prefix` (auto-injected by the `inferencex-agentx-mvp` scenario) so recycled plays don't progressively warm the server's KV-cache prefix on identical content.
 
 **Tutorials:** [Weka Traces](../tutorials/weka-trace.md) for the underlying corpus; [InferenceX AgentX MVP](../tutorials/agentx-mvp.md) for the locked-rules submission flow.
 
