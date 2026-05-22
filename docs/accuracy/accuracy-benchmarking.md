@@ -73,6 +73,7 @@ system message).
 | `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
 | `aime` | `math` | 8 | `Maxwell-Jia/AIME_2024` (trt-llm reference, 8-shot CoT) |
 | `hellaswag` | `exact_match` | 10 | `Rowan/hellaswag` (trt-llm/DeepEval reference; one few-shot per unique activity_label) |
+| `bigbench` | `exact_match` | 3 | `lukaemon/bbh` (trt-llm/DeepEval reference; 27 subtasks, canonical CoT/non-CoT prompt files) |
 
 ## CLI Flags
 
