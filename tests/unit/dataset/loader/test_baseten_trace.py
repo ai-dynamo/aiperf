@@ -308,7 +308,9 @@ class TestBasetenTraceDatasetLoader:
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2
-        assert sorted(trace.text_input for traces in dataset.values() for trace in traces) == [
+        assert sorted(
+            trace.text_input for traces in dataset.values() for trace in traces
+        ) == [
             "row-1",
             "row-2",
         ]

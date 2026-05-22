@@ -122,7 +122,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         session_key = self._choose_session_key(items)
         if session_key is None:
-            self.info("No repeated Baseten trace session key found; generating session IDs.")
+            self.info(
+                "No repeated Baseten trace session key found; generating session IDs."
+            )
         else:
             self.info(f"Using Baseten trace session key: {session_key}")
 
