@@ -85,19 +85,33 @@ def _resolve_tasks(tasks: list[str] | None) -> list[Any]:
     """Convert ``--accuracy-tasks`` strings to ``BigBenchHardTask`` enums.
 
     DeepEval evaluates one task at a time. Aiperf accepts either:
-      - ``None`` / empty / ``["all"]`` → every BigBenchHardTask enum
-        (27 subtasks).
+      - ``None`` / empty / ``["all"]`` (case-insensitive) → every
+        BigBenchHardTask enum (27 subtasks).
       - Lower-snake-case strings matching the enum's ``value``
         (e.g. ``"boolean_expressions"``).
       - Upper-snake-case enum names (e.g. ``"BOOLEAN_EXPRESSIONS"``)
         for parity with the recipe's ``getattr(BigBenchHardTask,
         task_name.upper(), None)`` lookup.
 
+    Mixing ``"all"`` with other task names is rejected so typos like
+    ``["all", "NOT_A_TASK"]`` don't silently bypass validation — that
+    used to slip through and return every task while swallowing the
+    invalid entry (the parallel HellaSwag bug fixed in AIP-877).
+
     Unknown names raise ``ValueError`` with the full valid list so
     typos fail loudly.
     """
-    if not tasks or "all" in {t.lower() for t in tasks}:
+    if not tasks:
         return list(BigBenchHardTask)
+    lowered = [t.lower() for t in tasks]
+    if "all" in lowered:
+        if lowered == ["all"]:
+            return list(BigBenchHardTask)
+        raise ValueError(
+            "'all' cannot be mixed with other task names. Pass 'all' "
+            "by itself (or omit --accuracy-tasks) to select every BBH "
+            f"subtask, or list specific subtasks. Got: {tasks!r}"
+        )
     valid_values = {t.value for t in BigBenchHardTask}
     resolved: list[Any] = []
     unknown: list[str] = []
