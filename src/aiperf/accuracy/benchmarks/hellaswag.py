@@ -258,10 +258,16 @@ class HellaSwagBenchmark(AIPerfLoggerMixin):
         val_set = ds["validation"]
         problems: list[BenchmarkProblem] = []
         choices = ["A", "B", "C", "D"]
+        # Pre-bucket validation rows by activity_label so the per-task
+        # loop is O(val_rows + tasks) instead of O(tasks × val_rows).
+        # With --accuracy-tasks=all (~190 tasks) over the ~10K-row
+        # validation split the naive nested scan does ~1.9M dict
+        # lookups; one pass over val_set is enough.
+        by_label: dict[str, list[dict[str, Any]]] = {}
+        for row in val_set:
+            by_label.setdefault(row.get(ACTIVITY_LABEL_FIELD), []).append(row)
         for task in tasks:
-            for row in val_set:
-                if row.get(ACTIVITY_LABEL_FIELD) != task.value:
-                    continue
+            for row in by_label.get(task.value, ()):
                 label_raw = row.get(LABEL_FIELD)
                 if label_raw == "" or label_raw is None:
                     continue
