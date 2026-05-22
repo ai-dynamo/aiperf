@@ -223,12 +223,13 @@ class TestFastAPIServiceStartStop:
         completed = asyncio.Event()
 
         async def fake_serve():
+            """Pretend to be uvicorn.serve(): block until completed is set."""
             await completed.wait()
 
-        sleep_calls: list[float] = []
+        sleep_calls: list[tuple[float, bool]] = []
 
         async def fake_sleep(seconds: float) -> None:
-            # Snapshot should_exit at sleep time to prove listener was still open.
+            """Record sleep duration and the listener's open/closed state."""
             sleep_calls.append((seconds, bool(mock_server.should_exit)))
 
         mock_server.should_exit = False
@@ -261,6 +262,7 @@ class TestFastAPIServiceStartStop:
         completed = asyncio.Event()
 
         async def fake_serve():
+            """Pretend to be uvicorn.serve(): block until completed is set."""
             await completed.wait()
 
         task = asyncio.create_task(fake_serve())

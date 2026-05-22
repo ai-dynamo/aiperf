@@ -462,6 +462,7 @@ class TestShutdownDeliveryGrace:
         sleeps: list[float] = []
 
         async def fake_sleep(seconds: float) -> None:
+            """Record each asyncio.sleep duration without actually sleeping."""
             sleeps.append(seconds)
 
         monkeypatch.setattr(sc_module.asyncio, "sleep", fake_sleep)
