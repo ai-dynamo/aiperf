@@ -186,6 +186,8 @@ def _build_images(cli: CLIConfig) -> dict[str, Any]:
         out["batch_size"] = cli.image_batch_size
     if "image_format" in s:
         out["format"] = cli.image_format
+    if "image_source" in s:
+        out["source"] = cli.image_source
     return out
 
 
@@ -426,6 +428,7 @@ def _apply_implicit_media_batch(d: dict[str, Any], cli: CLIConfig) -> None:
             "image_height_mean",
             "image_height_stddev",
             "image_batch_size",
+            "image_source",
         ),
         "audio": ("audio_length_mean", "audio_length_stddev", "audio_batch_size"),
         "video": (
@@ -483,6 +486,7 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
     ("image_batch_size", "--image-batch-size"),
+    ("image_source", "--image-source"),
     ("audio_batch_size", "--audio-batch-size"),
     ("video_batch_size", "--video-batch-size"),
 )
