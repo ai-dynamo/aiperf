@@ -386,6 +386,30 @@ class TestDatasetResolverEdgeCases:
         assert detected == CustomDatasetType.BURST_GPT_TRACE
         assert first_record is None
 
+    def test_detect_type_does_not_warn_on_csv_first_line(
+        self, tmp_path, caplog
+    ) -> None:
+        """Auto-detecting a CSV must not emit a JSON-parse warning.
+
+        ``load_json_str`` logs ``WARNING: Failed to parse JSON string``
+        before re-raising, so probing the first line with it would
+        produce a misleading warning on every successful BurstGPT CSV
+        auto-detect. The helper uses ``orjson.loads`` directly to keep
+        the expected non-JSON path silent.
+        """
+        import logging
+
+        csv_file = tmp_path / "burst.csv"
+        csv_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "5,ChatGPT,472,18,490,Conversation log\n"
+        )
+
+        with caplog.at_level(logging.WARNING):
+            DatasetResolver._detect_type(str(csv_file))
+
+        assert not any("Failed to parse JSON" in rec.message for rec in caplog.records)
+
     def test_burst_gpt_csv_auto_detected_with_timing(self, tmp_path) -> None:
         """End-to-end resolver pass: BurstGPT CSV with no explicit format
         is recognized and reports has_timing=True so fixed_schedule can run.
