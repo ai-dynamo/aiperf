@@ -26,7 +26,8 @@ longer a hard prerequisite for running this file.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,8 +43,11 @@ from aiperf.accuracy.benchmarks.bigbench import (
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
-def _make_run():
+
+def _make_run() -> BenchmarkRun:
     return make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.COMPLETIONS,
@@ -65,11 +69,19 @@ def _make_fake_dataset(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"test": test_split}
 
 
-def _per_task_loader(per_task: dict[str, list[dict[str, Any]]]):
+def _per_task_loader(
+    per_task: dict[str, list[dict[str, Any]]],
+) -> Callable[..., dict[str, Any]]:
     """``load_dataset`` patch that dispatches by task name."""
 
-    def loader(_dataset_name, task_name=None, **_kwargs):
-        return _make_fake_dataset(per_task.get(task_name, []))
+    def loader(
+        _dataset_name: str,
+        task_name: str | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        return _make_fake_dataset(
+            per_task.get(task_name, []) if task_name is not None else []
+        )
 
     return loader
 
