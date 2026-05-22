@@ -17,6 +17,7 @@ def test_inferencex_agentx_mvp_registered():
     assert spec.require_loader == (
         "semianalysis_cc_traces_weka_with_subagents",
         "weka_trace",
+        "weka_hf",
     )
     assert spec.min_benchmark_duration_seconds == 900
     assert spec.inter_turn_delay_cap_seconds is None

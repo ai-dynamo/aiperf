@@ -49,8 +49,8 @@ def _stub_prompt_generator_for_reconstructor(loader) -> None:
     loader.prompt_generator._tokenized_corpus = list(range(10000, 11000))
     loader.prompt_generator._corpus_size = 1000
     stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = (
-        lambda toks: f"<dec:{len(toks)}>"
+    loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: (
+        f"<dec:{len(toks)}>"
     )
 
 
@@ -262,6 +262,288 @@ def test_terminal_subagent_becomes_background_branch_no_prereq(monkeypatch):
     assert branch.mode == ConversationBranchMode.SPAWN
     # Only one parent turn exists -> no prereq anywhere.
     assert all(not t.prerequisites for t in parent.turns)
+
+
+def test_weka_zero_request_subagent_branch_targets_empty_child(tmp_path):
+    model = "claude-opus-4-5-20251101"
+    child_model = "claude-haiku-4-5-20251001"
+    trace = {
+        "id": "zero_child",
+        "models": [model, child_model],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "requests": [
+            {
+                "t": 0.0,
+                "type": "n",
+                "model": model,
+                "in": 64,
+                "out": 10,
+                "hash_ids": [1],
+                "input_types": ["text"],
+                "output_types": ["text"],
+                "stop": "end_turn",
+                "api_time": 1.0,
+                "think_time": 0.0,
+            },
+            {
+                "t": 1.0,
+                "type": "subagent",
+                "agent_id": "empty",
+                "subagent_type": "Explore",
+                "duration_ms": 100,
+                "total_tokens": 0,
+                "tool_use_count": 0,
+                "status": "completed",
+                "requests": [],
+                "models": [child_model],
+                "tool_tokens": 0,
+                "system_tokens": 0,
+            },
+            {
+                "t": 2.0,
+                "type": "n",
+                "model": model,
+                "in": 128,
+                "out": 10,
+                "hash_ids": [1, 2],
+                "input_types": ["text"],
+                "output_types": ["text"],
+                "stop": "end_turn",
+                "api_time": 1.0,
+                "think_time": 0.0,
+            },
+        ],
+    }
+    path = tmp_path / "zero_child.json"
+    path.write_text(json.dumps(trace))
+    loader = WekaTraceLoader(filename=str(path), user_config=_mk_user_config())
+    _stub_prompt_generator_for_reconstructor(loader)
+    loader._tokenizer_name = "t"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 64
+
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+
+    root = next(c for c in conversations if c.session_id == "zero_child")
+    child = next(c for c in conversations if c.session_id == "zero_child::sa:empty")
+    assert root.branches[0].child_conversation_ids == ["zero_child::sa:empty"]
+    assert child.turns == []
+    assert child.is_root is False
+    assert child.agent_depth == 1
+
+
+def test_weka_trace_idle_gap_cap_ignores_dropped_orphan_subagent(tmp_path):
+    model = "claude-opus-4-5-20251101"
+    child_model = "claude-haiku-4-5-20251001"
+
+    def normal(t: float, hash_ids: list[int], input_length: int) -> dict:
+        return {
+            "t": t,
+            "type": "n",
+            "model": model,
+            "in": input_length,
+            "out": 10,
+            "hash_ids": hash_ids,
+            "input_types": ["text"],
+            "output_types": ["text"],
+            "stop": "end_turn",
+            "api_time": 1.0,
+            "think_time": 0.0,
+        }
+
+    trace = {
+        "id": "orphan_gap",
+        "models": [model, child_model],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "requests": [
+            {
+                "t": 10.0,
+                "type": "subagent",
+                "agent_id": "orphan",
+                "subagent_type": "Explore",
+                "duration_ms": 1000,
+                "total_tokens": 10,
+                "tool_use_count": 1,
+                "status": "completed",
+                "requests": [
+                    {
+                        "t": 10.0,
+                        "type": "n",
+                        "model": child_model,
+                        "in": 64,
+                        "out": 10,
+                        "hash_ids": [8],
+                        "input_types": ["text"],
+                        "output_types": ["text"],
+                        "stop": "end_turn",
+                        "api_time": 1.0,
+                        "think_time": 0.0,
+                    }
+                ],
+                "models": [child_model],
+                "tool_tokens": 0,
+                "system_tokens": 0,
+            },
+            normal(1000.0, [1], 64),
+            normal(2000.0, [1, 2], 128),
+        ],
+    }
+    path = tmp_path / "orphan_gap.json"
+    path.write_text(json.dumps(trace))
+    uc = _mk_user_config()
+    uc.loadgen.trace_idle_gap_cap_seconds = 60.0
+    loader = WekaTraceLoader(filename=str(path), user_config=uc)
+    _stub_prompt_generator_for_reconstructor(loader)
+    loader._tokenizer_name = "t"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 64
+
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+
+    root = next(c for c in conversations if c.session_id == "orphan_gap")
+    assert [c.session_id for c in conversations] == ["orphan_gap"]
+    assert root.turns[0].timestamp == 1000.0 * 1000.0
+    assert root.turns[1].timestamp == 1060.0 * 1000.0
+    assert root.turns[1].delay == 60.0 * 1000.0
+
+
+def test_weka_parallel_child_conversation_metadata_is_non_root(monkeypatch):
+    import aiperf.dataset.loader.weka_parallel_convert as parallel_convert
+
+    loader = WekaTraceLoader(
+        filename=str(FIXTURES / "one_subagent.json"), user_config=_mk_user_config()
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    data = loader.load_dataset()
+    parent_plans, child_plans = loader._build_reconstruction_plans(data)
+
+    def fake_run_parallel_weka_reconstruction(*args, **kwargs):
+        return [
+            {
+                "trace_id": "trace_sa",
+                "parent_turns": [],
+                "branches": [],
+                "children": [
+                    {
+                        "session_id": "trace_sa::sa:agent_001",
+                        "turns": [],
+                        "is_root": False,
+                        "agent_depth": 1,
+                    }
+                ],
+                "dropped_agent_ids": [],
+                "capped_count": 0,
+                "max_observed_ms": 0.0,
+            }
+        ]
+
+    monkeypatch.setattr(
+        parallel_convert,
+        "run_parallel_weka_reconstruction",
+        fake_run_parallel_weka_reconstruction,
+    )
+
+    conversations = loader._reconstruct_parallel(
+        parent_plans=parent_plans,
+        child_plans=child_plans,
+        data=data,
+        ignore_delays=False,
+        think_time_only=False,
+        cap_seconds=None,
+        configured_workers=1,
+        t_start=0.0,
+        model_map_per_trace={"trace_sa": {}},
+        trace_idle_timing_by_trace={},
+    )
+
+    child = next(c for c in conversations if c.session_id == "trace_sa::sa:agent_001")
+    assert child.is_root is False
+    assert child.agent_depth == 1
+
+
+def test_duplicate_agent_id_orphan_does_not_drop_later_valid_subagent(tmp_path):
+    model = "claude-opus-4-5-20251101"
+    child_model = "claude-haiku-4-5-20251001"
+
+    def normal(t, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": model,
+            "in": 100,
+            "out": 20,
+            "hash_ids": hash_ids,
+            "input_types": ["text"],
+            "output_types": ["text"],
+            "stop": "end_turn",
+            "api_time": 1.0,
+            "think_time": 0.0,
+        }
+
+    def subagent(t, hash_ids):
+        return {
+            "t": t,
+            "type": "subagent",
+            "agent_id": "dup_agent",
+            "subagent_type": "Explore",
+            "duration_ms": 100,
+            "total_tokens": 10,
+            "tool_use_count": 1,
+            "status": "completed",
+            "requests": [
+                {
+                    "t": t,
+                    "type": "n",
+                    "model": child_model,
+                    "in": 10,
+                    "out": 5,
+                    "hash_ids": hash_ids,
+                    "input_types": ["text"],
+                    "output_types": ["text"],
+                    "stop": "end_turn",
+                    "api_time": 0.1,
+                    "think_time": 0.0,
+                }
+            ],
+            "models": [child_model],
+            "tool_tokens": 1,
+            "system_tokens": 1,
+        }
+
+    trace = {
+        "id": "trace_dup",
+        "models": [model, child_model],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "requests": [
+            subagent(0.5, [10]),
+            normal(1.0, [1, 2]),
+            subagent(2.0, [11]),
+            normal(3.0, [1, 2, 3]),
+        ],
+    }
+    path = tmp_path / "dup.json"
+    path.write_text(json.dumps(trace))
+
+    loader = WekaTraceLoader(filename=str(path), user_config=_mk_user_config())
+    _stub_prompt_generator_for_reconstructor(loader)
+    loader._tokenizer_name = "test-tok"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 64
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    assert {c.session_id for c in convs} == {
+        "trace_dup",
+        "trace_dup::sa:dup_agent",
+    }
+    parent = next(c for c in convs if c.session_id == "trace_dup")
+    assert parent.branches[0].child_conversation_ids == ["trace_dup::sa:dup_agent"]
 
 
 def test_mixed_duration_subagents_emit_tiered_join_branches(tmp_path, monkeypatch):

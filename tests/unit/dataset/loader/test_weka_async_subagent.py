@@ -54,8 +54,8 @@ def _make_loader(filename, uc, monkeypatch):
     from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
 
     stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = (
-        lambda toks: f"<dec:{len(toks)}>"
+    loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: (
+        f"<dec:{len(toks)}>"
     )
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False
@@ -402,10 +402,11 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
         with TWO overlapping inner requests (api_time ~237s each)
 
     Expected loader output:
-      - 1 SPAWN branch with is_background=True (sa_end ~279.75 > 36.54)
+      - 1 SPAWN branch with is_background=False because the subagent end
+        joins the later parent turn at t=280.18
       - 2 sibling child conversations with session ids
         '<trace>::sa:codex_subagent_001:s0' and ':s1'
-      - No SPAWN_JOIN prerequisite on parent turn 4 (the t=36.54 turn)
+      - No SPAWN_JOIN prerequisite on the immediate t=36.54 parent turn
     """
     src = FIXTURES / "async_subagent_with_parallel_inner.json"
     assert src.exists(), f"regression fixture missing: {src}"
@@ -424,18 +425,20 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
     assert len(parent.branches) == 1
     branch = parent.branches[0]
     assert branch.mode == ConversationBranchMode.SPAWN
-    assert branch.is_background is True
+    assert branch.is_background is False
     assert set(branch.child_conversation_ids) == {
         "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s0",
         "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s1",
     }
-    # No SPAWN_JOIN on any parent turn for this branch.
-    for turn in parent.turns:
-        for prereq in turn.prerequisites:
-            assert not (
-                prereq.kind == PrerequisiteKind.SPAWN_JOIN
-                and prereq.branch_id == branch.branch_id
-            )
+
+    join_turns = [
+        idx
+        for idx, turn in enumerate(parent.turns)
+        for prereq in turn.prerequisites
+        if prereq.kind == PrerequisiteKind.SPAWN_JOIN
+        and prereq.branch_id == branch.branch_id
+    ]
+    assert join_turns == [6]
 
     # Both children exist and each has exactly one turn.
     sid_s0 = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s0"

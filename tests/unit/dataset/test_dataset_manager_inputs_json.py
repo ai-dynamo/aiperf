@@ -477,3 +477,18 @@ class TestSkipInputsJsonForPreBuiltPayloads:
         ) as mock_gen:
             await mgr._profile_configure_command(Mock())
             mock_gen.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_inputs_json_for_generic_weka_hf(self, tmp_path: Path):
+        mgr = self._make_dataset_manager(tmp_path, None)
+        mgr.user_config.input.public_dataset = "weka_hf"
+        mgr.user_config.input.detected_loader = "weka_hf"
+        mgr._configure_dataset = AsyncMock()
+        mgr._configure_tokenizer = AsyncMock()
+        mgr._configure_dataset_client_and_free_memory = AsyncMock()
+
+        with patch.object(
+            mgr, "_generate_inputs_json_file", new_callable=AsyncMock
+        ) as mock_gen:
+            await mgr._profile_configure_command(Mock())
+            mock_gen.assert_not_called()

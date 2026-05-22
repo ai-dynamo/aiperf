@@ -11,6 +11,8 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, PublicDatasetType
 
+_WEKA_HF_PUBLIC_DATASET = "weka_hf"
+
 
 class PublicDatasetComposer(BaseDatasetComposer):
     """Composer for public benchmark datasets loaded from remote sources.
@@ -84,9 +86,11 @@ class PublicDatasetComposer(BaseDatasetComposer):
         """
         loader_metadata = plugins.get_public_dataset_loader_metadata(dataset_type)
         kwargs: dict[str, Any] = {}
+        hf_weka_repo = self._validate_hf_weka_repo(dataset_type)
 
-        if loader_metadata.hf_dataset_name is not None:
-            kwargs["hf_dataset_name"] = loader_metadata.hf_dataset_name
+        hf_dataset_name = hf_weka_repo or loader_metadata.hf_dataset_name
+        if hf_dataset_name is not None:
+            kwargs["hf_dataset_name"] = hf_dataset_name
             kwargs["hf_split"] = loader_metadata.hf_split
             cli_subset = self.config.input.hf_dataset_subset
             subset = cli_subset if cli_subset is not None else loader_metadata.hf_subset
@@ -120,6 +124,24 @@ class PublicDatasetComposer(BaseDatasetComposer):
             self._inject_trace_kwargs(loader_metadata, kwargs)
 
         return kwargs
+
+    def _validate_hf_weka_repo(self, dataset_type: PublicDatasetType) -> str | None:
+        hf_weka_repo = self.config.input.hf_weka_repo
+        if hf_weka_repo is not None and str(dataset_type) != _WEKA_HF_PUBLIC_DATASET:
+            raise ValueError(
+                "--hf-weka-repo can only be used with --public-dataset weka_hf"
+            )
+        if str(dataset_type) != _WEKA_HF_PUBLIC_DATASET:
+            return None
+        if hf_weka_repo is None:
+            raise ValueError("--public-dataset weka_hf requires --hf-weka-repo")
+        hf_weka_repo = hf_weka_repo.strip()
+        if not hf_weka_repo:
+            raise ValueError(
+                "--hf-weka-repo must be a non-empty HuggingFace dataset repo"
+            )
+        self.config.input.hf_weka_repo = hf_weka_repo
+        return hf_weka_repo
 
     def _inject_trace_kwargs(
         self, loader_metadata: Any, kwargs: dict[str, Any]

@@ -44,7 +44,7 @@ from aiperf.plugin.enums import (
 # ============================================================================
 
 
-_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-051226"
+_NO_SUBAGENTS_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-051826"
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ async def loader(user_config: UserConfig) -> SemiAnalysisCCTracesWekaLoader:
     pg = MagicMock()
     return SemiAnalysisCCTracesWekaLoader(
         user_config=user_config,
-        hf_dataset_name=_HF_DATASET_NAME,
+        hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
         hf_split="train",
         prompt_generator=pg,
         default_block_size=64,
@@ -105,7 +105,7 @@ class TestConstructorWiring:
         pg = MagicMock()
         loader = SemiAnalysisCCTracesWekaLoader(
             user_config=user_config,
-            hf_dataset_name=_HF_DATASET_NAME,
+            hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
             prompt_generator=pg,
             default_block_size=64,
         )
@@ -114,7 +114,7 @@ class TestConstructorWiring:
     async def test_propagates_default_block_size(self, user_config: UserConfig) -> None:
         loader = SemiAnalysisCCTracesWekaLoader(
             user_config=user_config,
-            hf_dataset_name=_HF_DATASET_NAME,
+            hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
             prompt_generator=MagicMock(),
             default_block_size=64,
         )
@@ -125,7 +125,7 @@ class TestConstructorWiring:
     ) -> None:
         loader = SemiAnalysisCCTracesWekaLoader(
             user_config=user_config,
-            hf_dataset_name=_HF_DATASET_NAME,
+            hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
             prompt_generator=MagicMock(),
             default_block_size=64,
             streaming=True,
@@ -135,7 +135,7 @@ class TestConstructorWiring:
     async def test_records_hf_dataset_name(
         self, loader: SemiAnalysisCCTracesWekaLoader
     ) -> None:
-        assert loader.hf_dataset_name == _HF_DATASET_NAME
+        assert loader.hf_dataset_name == _NO_SUBAGENTS_HF_DATASET_NAME
         assert loader.hf_split == "train"
 
 
@@ -284,14 +284,30 @@ class TestPluginRegistry:
         )
         assert meta.default_prompt_corpus == PromptCorpus.CODING
 
+    def test_metadata_weka_hf_is_trace(self) -> None:
+        meta = plugins.get_public_dataset_loader_metadata(PublicDatasetType.WEKA_HF)
+        assert meta.is_trace is True
+
+    def test_metadata_weka_hf_has_no_pinned_dataset_name(self) -> None:
+        meta = plugins.get_public_dataset_loader_metadata(PublicDatasetType.WEKA_HF)
+        assert meta.hf_dataset_name is None
+
+    def test_metadata_weka_hf_carries_default_block_size(self) -> None:
+        meta = plugins.get_public_dataset_loader_metadata(PublicDatasetType.WEKA_HF)
+        assert meta.default_block_size == 64
+
+    def test_metadata_weka_hf_default_prompt_corpus_is_coding(self) -> None:
+        meta = plugins.get_public_dataset_loader_metadata(PublicDatasetType.WEKA_HF)
+        assert meta.default_prompt_corpus == PromptCorpus.CODING
+
     def test_metadata_hf_dataset_name_pinned(self) -> None:
         meta = plugins.get_public_dataset_loader_metadata(
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_NO_SUBAGENTS
         )
-        assert meta.hf_dataset_name == _HF_DATASET_NAME
+        assert meta.hf_dataset_name == _NO_SUBAGENTS_HF_DATASET_NAME
 
-    def test_metadata_original_variant_hf_dataset_name_pinned(self) -> None:
+    def test_metadata_default_weka_alias_hf_dataset_name_pinned(self) -> None:
         meta = plugins.get_public_dataset_loader_metadata(
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA
         )
-        assert meta.hf_dataset_name == "semianalysisai/cc-traces-weka-042026"
+        assert meta.hf_dataset_name == _NO_SUBAGENTS_HF_DATASET_NAME

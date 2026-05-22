@@ -26,16 +26,16 @@ sessions* — long conversations with KV-cache reuse and inter-turn think time.
 Sessions come from the public **WEKA agentic-coding trace corpus** captured by
 Callan Fox ([kv-cache-tester](https://github.com/callanjfox/kv-cache-tester)),
 which records real Claude Code sessions byte-for-byte. AgentX MVP runs against
-the **no-subagents variant** of that corpus, where each trace is a single
-linear main-agent stream (subagent fan-out blocks have been stripped); see
-[the Weka tutorial](weka-trace.md) for the source format and the with-subagents
-companion corpus.
+the current **with-subagents** corpus, where parent coding sessions can spawn
+helper conversations that rejoin the parent before it resumes; see
+[the Weka tutorial](weka-trace.md) for the source format and the SPAWN/JOIN
+mapping.
 
 AgentX MVP is essentially a *recipe* on top of those traces: a fixed set of
 replay rules so two different teams running on two different servers produce
-results you can actually compare. Things like "inter-turn delays cap at 60
-seconds", "the server must be allowed to generate full responses (no early
-stop)", "warm up the cache before measuring", and so on.
+results you can actually compare. Things like "long request-start idle gaps are
+compressed to 60 seconds", "the server must be allowed to generate full
+responses (no early stop)", "warm up the cache before measuring", and so on.
 
 AIPerf bundles every one of those rules into a single CLI flag:
 `--scenario inferencex-agentx-mvp`. When you pass that flag, AIPerf locks the
@@ -54,9 +54,8 @@ You'll need:
 - AIPerf installed (`make first-time-setup` if you're working from this repo).
 
 The trace corpus is fetched automatically from HuggingFace
-(`semianalysisai/cc-traces-weka-no-subagents-051226`, public, no auth, 949
-traces, 136.1k requests) — no manual clone required. HF caches it locally so
-re-runs are near-instant.
+(`semianalysisai/cc-traces-weka-with-subagents-051926`, public, no auth) — no
+manual clone required. HF caches it locally so re-runs are near-instant.
 
 Then:
 
@@ -69,8 +68,8 @@ uv run aiperf profile \
     --endpoint-type chat \
     --streaming \
     --use-server-token-count \
-    --public-dataset semianalysis_cc_traces_weka_no_subagents \
-    --num-dataset-entries 949 \
+    --public-dataset semianalysis_cc_traces_weka_with_subagents \
+    --num-dataset-entries 219 \
     --benchmark-duration 900 \
     --concurrency 32 \
     --ui simple
@@ -105,17 +104,19 @@ That's the whole thing. A few notes:
   `--num-profile-runs >= 2`, the aggregate file). With a single run you still
   get the validity stamp on the per-run file; multi-run adds the aggregate. See
   [Reading the Result](#reading-the-result-submission_valid) below.
-- **`--num-dataset-entries 949`** loads the full 949-trace corpus. Without
-  this flag, the loader caps at the AIPerf default of 100 rows and you'll
-  benchmark against a 100-trace subset (the loader logs `Loading 100/949
-  traces` at INFO so you can spot it). For a canonical AgentX MVP submission,
-  use 949 (or higher — extra rows are silently ignored).
+- **`--num-dataset-entries 219`** loads the full pinned with-subagents corpus.
+  Without this flag, the loader caps at the AIPerf default of 100 rows and
+  you'll benchmark against a 100-trace subset (the loader logs the loaded and
+  total trace counts at INFO so you can spot it). For a canonical AgentX MVP
+  submission, use 219 (or higher — extra rows are silently ignored).
 
-You don't need to pass `--ignore-trace-delays`, `--use-think-time-only`,
-`--inter-turn-delay-cap-seconds`, `--fixed-schedule`, or anything related to
-warmup. The scenario sets all of those for you. If you *do* pass one of them
-with the wrong value, AIPerf will tell you up front rather than silently
-producing an invalid result.
+You don't need to pass `--ignore-trace-delays`,
+`--trace-idle-gap-cap-seconds=60`, `--fixed-schedule`, or anything related to
+warmup. The scenario sets those for you. The idle-gap cap compresses recorded
+request-start gaps over 60 seconds within each trace; it is not a
+think-time-only mode or a blanket clamp on every individual parent-turn delay.
+If you *do* pass a locked option with the wrong value, AIPerf will tell you up
+front rather than silently producing an invalid result.
 
 > **Optional: `--apply-chat-template`.** The scenario doesn't lock this
 > either way. Pass it if you want AIPerf's reported ISL to count the full
@@ -152,23 +153,17 @@ flag.
 
 | Locked setting | What it means | Why it matters |
 |---|---|---|
-| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state, FIFO trace recycle, 60s clamp). |
+| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state, FIFO trace recycle, trace idle-gap compression). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
-| `--use-think-time-only` is on | Inter-turn delays use the agent's recorded "think time" only, not "send-to-send time" | Send-to-send delays include the *previous* server's response time, which would unfairly slow your replay if your server is faster than the recording. |
-| `--ignore-trace-delays` is off | Trace-derived inter-turn delays (the recorded `think_time`, see the row above) are not stripped — only clamped (see below) | The whole point of replay is to preserve the agent's pacing. |
-| `--inter-turn-delay-cap-seconds = 60` | Any single inter-turn delay over 60s is clamped to 60s | Real coding sessions have 10-minute coffee-break gaps that would distort steady-state measurement. |
+| `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
+| `--trace-idle-gap-cap-seconds = 60` | Gaps between recorded request starts over 60s are compressed to 60s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
 | `--cache-bust first_turn_prefix` | Inject a unique per-conversation marker at the start of the first user turn for every play | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
-| Loader is `semianalysis_cc_traces_weka_no_subagents` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-no-subagents-051226` HF dataset (via `--public-dataset semianalysis_cc_traces_weka_no_subagents`) or a local copy of any compatible Weka-format corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; `--input-file` alone won't auto-detect, you must pass the explicit type). Both produce byte-identical conversations when given the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
+| Loader is `semianalysis_cc_traces_weka_with_subagents`, `weka_trace`, or constrained `weka_hf` | The dataset is the public `semianalysisai/cc-traces-weka-with-subagents-051926` HF dataset (via `--public-dataset semianalysis_cc_traces_weka_with_subagents`), a local compatible Weka-format corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; under the scenario, pass the explicit type so the scenario validator sees `detected_loader=weka_trace` before dataset auto-detection runs), or generic `--public-dataset weka_hf` only when paired with `--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926`. These paths produce byte-identical conversations when given the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
 | `--benchmark-duration ≥ 900` | The run lasts at least 15 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
 
-If you forgot to pass `ignore_eos`, `--use-think-time-only`, `--cache-bust`,
-or `--random-seed`, AIPerf injects the locked value and tells you at INFO log
-level. The same goes for `--inter-turn-delay-cap-seconds` when you didn't set
-it explicitly. If you *did* pass one of these explicitly with a value that
-conflicts with the scenario, AIPerf errors with all the violations listed at
-once — you don't have to fix them one at a time.
+If you forgot to pass `ignore_eos`, `--cache-bust`, or `--random-seed`, AIPerf injects the locked value and tells you at INFO log level. The same goes for `--trace-idle-gap-cap-seconds` when you didn't set it explicitly. If you did pass one of these explicitly with a value that conflicts with the scenario, AIPerf errors with all the violations listed at once — you don't have to fix them one at a time.
 
 ---
 
@@ -223,14 +218,16 @@ Before AIPerf measures anything, it runs a **warmup phase** that primes the
 server's KV cache. This isn't the standard generic AIPerf warmup — it's a
 trajectory-based warmup specific to the agentic-replay scheduler.
 
-Here's the picture. You set `--concurrency 100`. The scheduler picks 100
-distinct conversations (call them *trajectories*) from the trace pool. For
-each trajectory, it samples a random "starting turn" `k_i` somewhere in
-roughly the first 70% of that conversation's turns (clamped to leave at
-least one profile turn after warmup). Then, in the warmup phase, it
-dispatches exactly *one* request per trajectory: turn `k_i` of conversation
-`i`, with the full prefix history (turns 0 through `k_i-1`) attached as
-message context.
+Here's the picture. You set `--concurrency 100`. The scheduler builds 100
+active trajectory lanes. It uses distinct conversations when enough usable
+traces exist; if the usable pool is smaller than the requested concurrency,
+it wrap-fills the remaining lanes by cycling through the usable traces with
+deterministic per-lane start positions. For each lane, it samples a random
+"starting turn" `k_i` somewhere in roughly the first 70% of that
+conversation's turns (clamped to leave at least one profile turn after
+warmup). Then, in the warmup phase, it dispatches exactly *one* request per
+lane: turn `k_i`, with the full prefix history (turns 0 through `k_i-1`)
+attached as message context.
 
 The point is that the server's prefix cache fills with a realistic mix of
 multi-turn coding contexts before any measurement starts. When the profiling
@@ -250,12 +247,15 @@ period defaults to no limit, so the run will wait until every warmup
 request resolves. If the warmup is taking longer than you expect, that's a
 signal worth investigating in the server logs.
 
-### Profiling Phase: Replay, Recycle, 60s Clamp
+### Profiling Phase: Replay, Recycle, Idle-Gap Compression
 
 After warmup, the profiling phase opens. Now you're measuring. Each trajectory
 keeps replaying its conversation from turn `k_i + 1` onward, honoring the
-trace's recorded inter-turn think times — except any single delay over 60
-seconds is silently clamped to 60 seconds.
+trace's recorded request-start schedule after applying the 60-second idle-gap
+compression rule. When a recorded gap between consecutive request starts in the
+same trace exceeds 60 seconds, the later request and everything after it are
+shifted earlier so that idle gap becomes 60 seconds while local subagent overlap
+is preserved.
 
 When a trajectory finishes its conversation (last turn dispatched and
 acknowledged), its trace ID goes back into a **FIFO recycle queue**, and the
@@ -293,30 +293,33 @@ A few wrinkles worth knowing:
   KV-cache prefix work done during warmup transfers into measurement
   instead of being thrown away. (If `phase` were folded into the digest,
   warmup would prime a prefix the profiling phase never sees.)
-- **Concurrency must fit your corpus.** AIPerf rejects runs at startup when
-  `--concurrency` exceeds the number of usable trajectories (pool size minus
-  traces too short to split into a warmup + profiling turn): each lane is
-  pinned to a distinct trajectory, so the requested concurrency simply cannot
-  be honoured. Pick a `--concurrency` that fits your corpus, or use a larger
-  trace corpus.
+- **Concurrency can exceed your distinct usable trajectories.** AIPerf first
+  builds the distinct usable trajectory pool (skipping traces too short to
+  split into a warmup + profiling turn), then wrap-fills extra lanes by
+  cycling through that pool until it reaches `--concurrency`. Reused lanes keep
+  deterministic start selection and recycle behavior, so the requested
+  concurrency is honoured even when multiple lanes share a source trace. A
+  too-small usable pool is only invalid when it is empty.
 - **Profiling ends** when `--benchmark-duration` elapses. Anything in flight
   finishes during a cooldown window and is included in the metrics; nothing
   *new* starts after the duration ends.
 
 ### Subagents
 
-The AgentX MVP corpus is the **no-subagents** variant: every trace is a single
-linear stream of main-agent turns, and `WekaSubagentEntry` blocks have been
-stripped at dataset-publication time. So during an AgentX MVP run no SPAWN /
-SPAWN_JOIN branches are constructed, no helper conversations run alongside the
-parent, and in-flight request count never exceeds `--concurrency` because of
-subagents. Steady-state load is one in-flight request per trajectory.
+The AgentX MVP corpus is the current **with-subagents** variant. Parent turns
+can spawn one or more helper conversations, and the parent's next anchored turn
+waits on the corresponding `SPAWN_JOIN` prerequisite before resuming. During an
+AgentX MVP run, those helper conversations can run alongside their parent and
+increase instantaneous in-flight request count above `--concurrency`; the
+concurrency setting controls the number of active parent trajectories, not a
+hard cap on every parent-plus-subagent request.
 
-The underlying SPAWN/JOIN machinery is still in the AIPerf code path — it's
-exercised by the original `semianalysis_cc_traces_weka` corpus (042026, with
-subagents) and by any file-based Weka trace replay that retains them. AgentX
-MVP just doesn't use it. For the format details and SPAWN/JOIN mechanics, see
-the [Weka Traces tutorial](weka-trace.md).
+AIPerf constructs this topology from `WekaSubagentEntry` blocks in the trace:
+subagents with preceding and following parent anchors become SPAWN/JOIN
+branches, background subagents with no following anchor do not block the parent,
+and adjacent subagents sharing the same anchors collapse into one multi-child
+branch. For the format details and SPAWN/JOIN mechanics, see the
+[Weka Traces tutorial](weka-trace.md).
 
 ---
 
@@ -398,7 +401,8 @@ your local plugin registry is out of date.
 **`EmptyTracePoolError: Loader produced 0 traces; trajectories cannot be built.`**
 The HF dataset download or row validation produced no usable traces. Check
 your network connectivity to `huggingface.co` and confirm the dataset name
-is `semianalysis_cc_traces_weka_no_subagents`. The shipped corpus has 949 traces.
+is `semianalysis_cc_traces_weka_with_subagents` or `weka_hf` with
+`--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926`.
 
 **`TrajectoryWarmupFailedError: Trajectory warmup failed for N trace(s): …`**
 Your inference server rejected one or more warmup requests after AIPerf's
@@ -418,21 +422,19 @@ see how close you were to the threshold.
 
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …"**
 The AgentX MVP scenario is defined against the public
-`semianalysisai/cc-traces-weka-no-subagents-051226` corpus, replayed via either the
-HuggingFace loader (`semianalysis_cc_traces_weka_no_subagents`, selected by
-`--public-dataset`) or the explicit local file-based loader (`weka_trace`,
-selected by `--custom-dataset-type weka_trace --input-file <dir>` of the
-same JSON traces). Pass one of:
+`semianalysisai/cc-traces-weka-with-subagents-051926` corpus, replayed via the
+pinned HuggingFace loader (`semianalysis_cc_traces_weka_with_subagents`,
+selected by `--public-dataset`), the explicit local file-based loader
+(`weka_trace`, selected by `--custom-dataset-type weka_trace --input-file
+<dir>`), or the generic HuggingFace Weka loader constrained to the same repo.
+Pass one of:
 
-- `--public-dataset semianalysis_cc_traces_weka_no_subagents` (zero-setup; HF download), or
+- `--public-dataset semianalysis_cc_traces_weka_with_subagents` (zero-setup; HF download),
 - `--custom-dataset-type weka_trace --input-file <local-trace-dir>` (offline;
-  the dir must contain the same Weka trace JSON files). `--input-file` alone
-  does NOT auto-detect weka trace directories — you have to pass the explicit
-  `--custom-dataset-type weka_trace`.
+  the dir must contain compatible Weka trace JSON files), or
+- `--public-dataset weka_hf --hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926`.
 
-If you're trying to replay a *different* corpus under this scenario, that's
-not a supported submission — but you can pass `--unsafe-override` to run
-anyway; the result will be marked `submission_valid=false`.
+`--input-file` alone can auto-detect Weka trace directories in ordinary custom-dataset runs, but it does not populate the scenario validator's `detected_loader` field before AgentX MVP locks are checked. Under `--scenario inferencex-agentx-mvp`, pass the explicit `--custom-dataset-type weka_trace`. If you're trying to replay a *different* corpus under this scenario, that's not a supported submission — but you can pass `--unsafe-override` to run anyway; the result will be marked `submission_valid=false`.
 
 **"scenario requires `cache_bust.target=first_turn_prefix`; got `<other>`"**
 You explicitly passed `--cache-bust <other>` (e.g. `system_suffix` or `none`)
@@ -461,11 +463,11 @@ the per-run `profile_export.json` (under `metadata`). If you also passed
 
 **Run is slower than I expected**
 The warmup phase replays one full conversation prefix per trajectory before
-profiling starts; with deep histories (some no-subagents traces exceed 1000
-turns and 700k-token contexts) that's a meaningful chunk of wall time on its
-own. If your server is concurrency-limited and you raised `--concurrency`
-above its limit, you'll also see queueing. Drop `--concurrency` or raise the
-server's limit.
+profiling starts; with deep histories in real coding traces, that's a meaningful
+chunk of wall time on its own. Subagent fan-out can also create additional
+in-flight requests beyond the active parent trajectory count. If your server is
+concurrency-limited and you raised `--concurrency` above its limit, you'll also
+see queueing. Drop `--concurrency` or raise the server's limit.
 
 **Results vary run-to-run on the same server**
 Two runs with different `--random-seed` values will land on different
