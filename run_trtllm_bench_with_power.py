@@ -1,29 +1,17 @@
 #!/usr/bin/env python3
 """Run trtllm-bench while recording GPU energy via the debug pynvml REST API.
 
-Two warmup modes:
-  - --warmup-dataset SET: run a SEPARATE trtllm-bench warmup invocation against
-    that dataset (optionally sliced via --warmup-num-requests). The energy
-    baseline is captured AFTER warmup completes, so the measured energy
-    excludes warmup work.
-  - --warmup-dataset UNSET: no separate warmup invocation. The official
-    trtllm-bench invocation handles warmup internally via its --warmup flag.
-    The baseline is captured BEFORE the official invocation runs, so the
-    measured energy INCLUDES trtllm-bench's internal warmup.
-
-Flow when --warmup-dataset is set:
-  1. Launch tools/debug_pynvml_server.py and wait for /status.
-  2. Run the separate warmup trtllm-bench invocation (--warmup args.warmup).
-  3. POST /start; POST /sample → baseline (post-warmup).
-  4. Run the official trtllm-bench with --warmup 0.
-  5. POST /sample → final; POST /stop.
-
-Flow when --warmup-dataset is NOT set:
-  1. Launch tools/debug_pynvml_server.py and wait for /status.
-  2. POST /start; POST /sample → baseline (pre-bench).
-  3. Run the official trtllm-bench with --warmup args.warmup (internal warmup
-     happens inside this single invocation before the measured workload).
-  4. POST /sample → final; POST /stop.
+Flow:
+  1. Launch tools/debug_pynvml_server.py in a subprocess and wait for /status.
+  2. Run a separate warmup trtllm-bench invocation (skip with --skip-warmup).
+     Dataset: --warmup-dataset if set, otherwise --dataset. Optionally sliced
+     to the first N JSONL lines via --warmup-num-requests.
+  3. POST /start to begin sampling and capture an energy baseline (steady state).
+  4. POST /sample to record the explicit post-warmup baseline snapshot.
+  5. Run the official trtllm-bench (always --warmup 0).
+  6. POST /sample to record the post-official snapshot.
+  7. POST /stop to release NVML.
+  8. Print energy used = final.total_energy_delta_j - baseline.total_energy_delta_j.
 
 All snapshots and logs are written under --output-dir for later inspection.
 """
@@ -121,18 +109,11 @@ def build_warmup_cmd(args: argparse.Namespace, warmup_dataset: Path) -> list[str
     )
 
 
-def build_official_cmd(
-    args: argparse.Namespace, *, in_process_warmup: int
-) -> list[str]:
-    """trtllm-bench command for the measured official run.
-
-    in_process_warmup is passed as trtllm-bench's --warmup. Set to 0 when a
-    separate warmup invocation already ran, or to args.warmup when no separate
-    warmup happened and trtllm-bench should warm itself up before measuring.
-    """
+def build_official_cmd(args: argparse.Namespace) -> list[str]:
+    """trtllm-bench command for the measured official run; no in-process warmup."""
     return _build_cmd(
         args,
-        warmup_iters=in_process_warmup,
+        warmup_iters=0,
         dataset=args.dataset,
         concurrency=args.concurrency,
     )
@@ -185,10 +166,8 @@ def parse_args() -> argparse.Namespace:
         "--warmup",
         type=int,
         default=10,
-        help="trtllm-bench internal warmup iterations (--warmup). Applied to "
-        "the separate warmup invocation when --warmup-dataset is set; "
-        "otherwise applied to the official invocation so trtllm-bench warms "
-        "itself up before measurement.",
+        help="Warmup iterations passed to the warmup trtllm-bench call only "
+        "(the official call always runs with --warmup 0)",
     )
     parser.add_argument(
         "--concurrency",
@@ -206,21 +185,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--warmup-dataset",
         default=None,
-        help="If set, run a SEPARATE trtllm-bench warmup invocation against "
-        "this JSONL dataset (use --warmup-num-requests to slice it to N "
-        "lines). If unset, no separate warmup runs and trtllm-bench's "
-        "--warmup is applied to the official invocation; the energy baseline "
-        "then includes that internal warmup.",
+        help="Optional override for --dataset during the warmup run "
+        "(default: same as --dataset).",
     )
     parser.add_argument(
         "--warmup-num-requests",
         type=int,
         default=0,
-        help="If > 0 and --warmup-dataset is set, slice the first N JSONL "
-        "lines from --warmup-dataset (written to "
-        "<output-dir>/warmup-dataset.jsonl) and use that for the separate "
-        "warmup invocation. Ignored when --warmup-dataset is not set. "
-        "(default: 0 = use --warmup-dataset as-is)",
+        help="If > 0, slice the first N JSONL lines from the warmup source "
+        "dataset (--warmup-dataset if set, else --dataset) into "
+        "<output-dir>/warmup-dataset.jsonl and use that for the warmup "
+        "invocation. (default: 0 = use the warmup source dataset as-is)",
     )
     parser.add_argument(
         "--skip-warmup",
@@ -281,16 +256,6 @@ def main() -> int:
         )
         return 2
 
-    if args.warmup_num_requests > 0 and args.warmup_dataset is None:
-        print(
-            "[run] warning: --warmup-num-requests is ignored because "
-            "--warmup-dataset is not set",
-            file=sys.stderr,
-        )
-
-    do_separate_warmup = (args.warmup_dataset is not None) and not args.skip_warmup
-    in_process_warmup = 0 if (do_separate_warmup or args.skip_warmup) else args.warmup
-
     print(f"[run] launching pynvml server: {args.python} {server_path}", flush=True)
     server_proc = subprocess.Popen(
         [args.python, str(server_path), "--host", args.host, "--port", str(args.port)],
@@ -308,14 +273,8 @@ def main() -> int:
 
         if args.skip_warmup:
             print("[run] skipping warmup (per --skip-warmup)", flush=True)
-        elif not do_separate_warmup:
-            print(
-                f"[run] no --warmup-dataset; trtllm-bench will warm up internally "
-                f"with --warmup {args.warmup} (baseline energy will include warmup)",
-                flush=True,
-            )
         else:
-            src_warmup_dataset = Path(args.warmup_dataset)
+            src_warmup_dataset = Path(args.warmup_dataset or args.dataset)
             if args.warmup_num_requests > 0:
                 sliced = output_dir / "warmup-dataset.jsonl"
                 n_written = _slice_jsonl(
@@ -370,7 +329,7 @@ def main() -> int:
             flush=True,
         )
 
-        cmd = build_official_cmd(args, in_process_warmup=in_process_warmup)
+        cmd = build_official_cmd(args)
         print(f"[run] official benchmark: {' '.join(cmd)}", flush=True)
         print(f"[run] bench log: {bench_log}", flush=True)
         bench_start = time.monotonic()
