@@ -184,7 +184,7 @@ When server metrics are enabled and the inference server actually serves Prometh
 | `kv_usage=X%` | `vllm:kv_cache_usage_perc` (with `vllm:gpu_cache_usage_perc` v0 fallback) | Latest gauge value, max across endpoints. |
 | `cpu_kv_usage=X%` | `vllm:cpu_cache_usage_perc` | Only emitted when `SimpleCPUOffloadConnector` is active; lets you see the CPU tier filling up before the GPU tier preempts. |
 | `queue=Nr/Mw` | `vllm:num_requests_running` / `vllm:num_requests_waiting` | Scheduler running/waiting depth — useful for spotting backpressure mid-run. |
-| `preemptions=N` | `vllm:num_preemptions` (or `sglang:num_retracted_reqs` on SGLang) | Cumulative since the first scrape; any nonzero value = backpressure. |
+| `preemptions=N` | `vllm:num_preemptions` (or `sglang:num_retracted_requests_total` on SGLang) | Cumulative since the first scrape; any nonzero value = backpressure. |
 
 The full set of scraped metrics is always written to `server_metrics_export.{json,csv,jsonl,parquet}` regardless of what surfaces in this row.
 

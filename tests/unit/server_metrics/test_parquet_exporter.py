@@ -504,6 +504,51 @@ class TestTimeFilteringEdgeCases:
         assert result.export_type == "Server Metrics Parquet Export"
 
     @pytest.mark.asyncio
+    async def test_histogram_end_before_first_sample_skips_rows(self, mock_user_config):
+        """Histogram export skips metrics with no samples before the filter end."""
+        hierarchy = build_hierarchy(
+            {
+                "http://localhost:8081/metrics": [
+                    (
+                        "test_histogram",
+                        None,
+                        build_metric_entry(
+                            PrometheusMetricType.HISTOGRAM,
+                            build_histogram_time_series(
+                                [1_000_000_000],
+                                [1.0],
+                                [10.0],
+                                ("0.1", "+Inf"),
+                                [[8.0, 10.0]],
+                            ),
+                        ),
+                    ),
+                    (
+                        "test_gauge",
+                        None,
+                        build_metric_entry(
+                            PrometheusMetricType.GAUGE,
+                            build_scalar_time_series([500_000_000], [50.0]),
+                        ),
+                    ),
+                ],
+            }
+        )
+        mock_accumulator = create_mock_accumulator(mock_user_config, hierarchy)
+        time_filter = TimeRangeFilter(start_ns=0, end_ns=500_000_000)
+
+        exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
+        await exporter.export()
+
+        table = pq.read_table(
+            mock_user_config.output.server_metrics_export_parquet_file
+        )
+        df = table.to_pandas()
+
+        assert len(df[df["metric_type"] == "histogram"]) == 0
+        assert len(df) == 1
+
+    @pytest.mark.asyncio
     async def test_single_timestamp_in_filter(self, mock_user_config):
         """Test with only one timestamp within filter range."""
         hierarchy = build_hierarchy(

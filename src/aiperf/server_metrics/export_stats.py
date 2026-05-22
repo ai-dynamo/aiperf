@@ -572,6 +572,20 @@ def _compute_gauge_stats(
 # =============================================================================
 
 
+def _histogram_bucket_deltas(
+    final_buckets: dict[str, float] | dict[str, int],
+    reference_buckets: dict[str, float] | dict[str, int],
+) -> dict[str, int] | None:
+    bucket_deltas: dict[str, int] = {}
+    for le_bound, final_bucket_count in final_buckets.items():
+        reference_bucket_count = reference_buckets.get(le_bound, 0.0)
+        bucket_delta = final_bucket_count - reference_bucket_count
+        if bucket_delta < 0:
+            return None
+        bucket_deltas[le_bound] = int(bucket_delta)
+    return bucket_deltas
+
+
 def _compute_histogram_timeslices(
     time_series: HistogramTimeSeries,
     slice_duration: float,
@@ -602,6 +616,8 @@ def _compute_histogram_timeslices(
         raise ValueError("slice_duration must be positive")
 
     reference_idx, final_idx = time_series.get_indices_for_filter(time_filter)
+    if final_idx is None:
+        return None
 
     timestamps = time_series.timestamps
     sums = time_series.sums
@@ -650,18 +666,13 @@ def _compute_histogram_timeslices(
         # Compute bucket deltas for this timeslice
         bucket_deltas: dict[str, int] | None = None
         if len(bucket_les) > 0 and len(bucket_counts) > 0:
-            start_buckets = bucket_counts[boundary_start_idx]
-            end_buckets = bucket_counts[boundary_end_idx]
-            bucket_deltas: dict[str, int] = {}
-            has_reset = False
-            for i, le in enumerate(bucket_les):
-                delta = end_buckets[i] - start_buckets[i]
-                if delta < 0:
-                    has_reset = True
-                    break
-                bucket_deltas[le] = int(delta)
-            if has_reset:
-                bucket_deltas = None
+            start_buckets = dict(
+                zip(bucket_les, bucket_counts[boundary_start_idx], strict=True)
+            )
+            end_buckets = dict(
+                zip(bucket_les, bucket_counts[boundary_end_idx], strict=True)
+            )
+            bucket_deltas = _histogram_bucket_deltas(end_buckets, start_buckets)
 
         results.append(
             HistogramTimeslice(
@@ -711,6 +722,8 @@ def _compute_histogram_stats(
         return None
 
     reference_idx, final_idx = time_series.get_indices_for_filter(time_filter)
+    if final_idx is None:
+        return None
 
     # Reference values
     if reference_idx is not None:
@@ -755,15 +768,7 @@ def _compute_histogram_stats(
             else {}
         )
 
-        bucket_deltas: dict[str, int] = {}
-        for le_bound, final_bucket_count in final_buckets.items():
-            reference_bucket_count = reference_buckets.get(le_bound, 0.0)
-            bucket_delta = final_bucket_count - reference_bucket_count
-            if bucket_delta < 0:
-                # Counter reset - omit buckets
-                bucket_deltas = None
-                break
-            bucket_deltas[le_bound] = int(bucket_delta)
+        bucket_deltas = _histogram_bucket_deltas(final_buckets, reference_buckets)
 
         return HistogramSeries(
             labels=labels,
@@ -784,18 +789,9 @@ def _compute_histogram_stats(
         else {}
     )
 
-    bucket_deltas: dict[str, int] | None = {}
-    bucket_reset_detected = False
-    for le_bound, final_bucket_count in final_buckets.items():
-        reference_bucket_count = reference_buckets.get(le_bound, 0.0)
-        bucket_delta = final_bucket_count - reference_bucket_count
-        if bucket_delta < 0:
-            bucket_reset_detected = True
-            bucket_deltas = None
-            break
-        bucket_deltas[le_bound] = int(bucket_delta)
+    bucket_deltas = _histogram_bucket_deltas(final_buckets, reference_buckets)
 
-    if bucket_reset_detected:
+    if bucket_deltas is None:
         metric_label = "histogram metric" + (f" with labels {labels}" if labels else "")
         _logger.warning(
             f"Detected bucket counter reset in {metric_label}. "
