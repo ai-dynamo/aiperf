@@ -214,6 +214,11 @@ class HellaSwagBenchmark(AIPerfLoggerMixin):
             the selected tasks. ``ground_truth`` is a bare ``A``/``B``/
             ``C``/``D`` letter (DeepEval's convention).
         """
+        if enable_cot:
+            self.info(
+                "--accuracy-enable-cot is ignored for HellaSwag "
+                "(DeepEval's HellaSwag has no CoT variant)."
+            )
         if n_shots > MAX_N_SHOTS:
             raise ValueError(
                 f"HellaSwag supports at most {MAX_N_SHOTS} few-shot "
