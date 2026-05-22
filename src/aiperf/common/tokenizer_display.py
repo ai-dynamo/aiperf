@@ -192,18 +192,27 @@ def _detect_error(
     # (e.g. ``TokenizersBackend`` is v5-only) before type-specific matching.
     if error_message and (match := _MISSING_TOKENIZER_CLASS_RE.search(error_message)):
         missing = match.group(1)
+        try:
+            import transformers
+
+            version = transformers.__version__
+        except (ImportError, AttributeError):
+            version = "<unknown>"
+        fixes: list[str] = []
+        if version.split(".", 1)[0] == "4":
+            fixes.append(
+                f"Upgrade transformers (e.g. [green]pip install -U 'transformers>=5'[/green] for [cyan]{missing}[/cyan])"
+            )
         return TokenizerErrorInsight(
             title="Unsupported Tokenizer Class",
             causes=[
                 f"Tokenizer references class [cyan]{missing}[/cyan] which is "
-                "not registered in your installed transformers",
+                f"not registered in your installed transformers [cyan]{version}[/cyan]",
             ],
             investigation=[
                 "Check installed version: [cyan]pip show transformers[/cyan]",
             ],
-            fixes=[
-                f"Upgrade transformers (e.g. [green]pip install -U 'transformers>=5'[/green] for [cyan]{missing}[/cyan])",
-            ],
+            fixes=fixes,
         )
 
     # Check for backend tokenizer instantiation failure before type-specific matching

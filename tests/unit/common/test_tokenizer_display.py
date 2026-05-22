@@ -204,7 +204,7 @@ class TestDisplayTokenizerValidationError:
                 ["TokenizerError", "ValueError"],
                 "Tokenizer class TokenizersBackend does not exist or is not currently imported.",
                 "Unsupported Tokenizer Class",
-                ["TokenizersBackend", "pip install -U 'transformers>=5'"],
+                ["TokenizersBackend", "not registered"],
             ),
             # Fallback for unknown error
             (
@@ -282,6 +282,38 @@ class TestDisplayTokenizerValidationError:
         result = output.getvalue()
         assert "client-side token counting" in result
         assert "synthetic prompt generation" in result
+
+    @pytest.mark.parametrize(
+        ("version", "expect_v5_upgrade"),
+        [
+            pytest.param("4.57.3", True, id="v4-suggests-upgrade"),
+            pytest.param("4.56.0", True, id="v4-floor-suggests-upgrade"),
+            pytest.param("5.0.1", False, id="v5-omits-suggestion"),
+            pytest.param("5.8.0", False, id="v5-omits-suggestion-later"),
+            pytest.param("<unknown>", False, id="unknown-omits-suggestion"),
+        ],
+    )
+    def test_missing_tokenizer_class_upgrade_only_on_v4(
+        self, console_output, version, expect_v5_upgrade
+    ):
+        """Upgrade-to-v5 hint only appears when running transformers v4."""
+        from unittest.mock import patch
+
+        console, output = console_output
+        with patch("transformers.__version__", version):
+            display_tokenizer_validation_error(
+                "test-model",
+                cause_chain=["TokenizerError", "ValueError"],
+                error_message=(
+                    "Tokenizer class TokenizersBackend does not exist or is not "
+                    "currently imported."
+                ),
+                console=console,
+            )
+        result = output.getvalue()
+        assert "Unsupported Tokenizer Class" in result
+        assert version in result
+        assert ("transformers>=5" in result) is expect_v5_upgrade
 
     def test_reverse_cause_chain_priority(self, console_output):
         """Test that root cause (end of chain) takes priority over wrapper errors."""
