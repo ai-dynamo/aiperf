@@ -108,8 +108,9 @@ def _build_aiperf_cmd(
     request_count: int,
     concurrency: int,
     artifact_dir: Path,
+    aiperf_warmup_count: int = 0,
 ) -> list[str]:
-    return [
+    cmd = [
         "aiperf",
         "profile",
         "-m",
@@ -131,8 +132,6 @@ def _build_aiperf_cmd(
         "0",
         "--request-count",
         str(request_count),
-        "--warmup-request-count",
-        "0",
         "--concurrency",
         str(concurrency),
         "--extra-inputs",
@@ -149,6 +148,12 @@ def _build_aiperf_cmd(
         "--extra-inputs",
         f"max_tokens:{args.osl}",
     ]
+    # aiperf's --warmup-request-count requires > 0; the driver does its own
+    # wrapper-level warmup via a separate aiperf invocation, so this flag is
+    # only emitted when a caller explicitly opts into aiperf's internal warmup.
+    if aiperf_warmup_count > 0:
+        cmd += ["--warmup-request-count", str(aiperf_warmup_count)]
+    return cmd
 
 
 def build_aiperf_warmup_cmd(args: argparse.Namespace, artifact_dir: Path) -> list[str]:
