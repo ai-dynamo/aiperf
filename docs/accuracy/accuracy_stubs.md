@@ -7,7 +7,7 @@
 
 This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
 
-**Status summary:** As of the AIME loader landing on top of PR #815, `MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `MMLUBenchmark`, and `AIMEBenchmark` are fully implemented; the remaining grader (`exact_match`) and benchmarks (`hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`) are still stubs and ship behind `NotImplementedError` until each follow-up branch lands. Use the implemented classes as canonical references when filling in the remaining stubs.
+**Status summary:** With the HellaSwag loader landing on top of AIP-874, `MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `ExactMatchGrader`, `MMLUBenchmark`, `AIMEBenchmark`, and `HellaSwagBenchmark` are fully implemented; the remaining benchmarks (`bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`) are still stubs and ship behind `NotImplementedError` until each follow-up branch lands. Use the implemented classes as canonical references when filling in the remaining stubs.
 
 ## Table of Contents
 
@@ -146,11 +146,11 @@ class BaseGrader(AIPerfLoggerMixin):
 | 5 | `LightevalLatexGrader` | `graders/lighteval_grader.py` | `lighteval_latex` | **IMPLEMENTED with the AIME loader.** Same shape as `LightevalExprGrader` but the gold extractor uses `LatexExtractionConfig` — matches the trt-llm recipe's `latex_gold_metric`. Used by AIP-879 (MATH-500). Requires the `[accuracy]` extras. |
 | 6 | `LightevalGPQAGrader` | `graders/lighteval_grader.py` | `lighteval_gpqa` | **IMPLEMENTED with the AIME loader.** Wraps `MultilingualExtractiveMatchMetric` with `IndicesExtractionConfig(prefix_for_extraction="NativeLetters")` to extract A/B/C/D in both gold and prediction — matches the trt-llm recipe's `gpqa_metric`. Used by AIP-880 (GPQA-Diamond). Requires the `[accuracy]` extras. |
 
+| 7 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | **IMPLEMENTED with the HellaSwag loader.** Strict `pred.strip() == gold.strip()` grader matching DeepEval's `Scorer.exact_match_score` (case-sensitive, no normalization). Used by HellaSwag and BigBench-Hard for trt-llm reference parity. |
+
 ### Still Stubbed
 
-| # | Class | File | Plugin Key | Description |
-|---|-------|------|------------|-------------|
-| 1 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | Exact string matching against ground truth |
+_All graders are now implemented._
 
 **Each grader has 2 methods to implement:**
 
@@ -171,18 +171,18 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 |---|-------|------|------------|----------------|-----------------|-------|
 | 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 | **IMPLEMENTED in PR #815** — canonical reference for new benchmarks. Downloads via HuggingFace datasets, handles few-shot formatting and CoT. |
 | 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 8 | **IMPLEMENTED.** Loads `Maxwell-Jia/AIME_2024`, instructs the model to wrap its final integer in `\boxed{}`, supports few-shot priming and chain-of-thought. `default_enable_cot=true`. |
+| 3 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `exact_match` | 10 | **IMPLEMENTED.** Loads `Rowan/hellaswag` (validation split filtered per task by `activity_label`; train split feeds the "one few-shot per unique activity_label" rule). Prompt rendering delegates to `deepeval.benchmarks.HellaSwag`'s `HellaSwagTemplate.generate_output`, so output is byte-equal to the trt-llm recipe's DeepEval-backed path. Pairs with `exact_match` for strict `Scorer.exact_match_score` semantics. Requires the `[accuracy]` extras (deepeval). |
 
 ### Still Stubbed
 
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots |
 |---|-------|------|------------|----------------|-----------------|
-| 1 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
-| 2 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
-| 3 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
-| 4 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
-| 5 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
-| 6 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
-| 7 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
+| 1 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
+| 2 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
+| 3 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
+| 4 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
+| 5 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
+| 6 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
 
 **Each benchmark has 1 method to implement:**
 
