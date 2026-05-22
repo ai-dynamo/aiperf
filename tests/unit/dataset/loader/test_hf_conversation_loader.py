@@ -763,3 +763,37 @@ class TestHFConversationDatasetLoader:
         }
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 0
+
+    async def test_multi_turn_warns_when_no_tokenizer(self, cli_config, caplog):
+        """When multi_turn=True but no tokenizer is configured, validation is
+        silently disabled and Turn.max_tokens=None for every turn. Surface this
+        as a warning so users learn their filter settings are being skipped."""
+        import logging
+
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+            tokenizer=None,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "Q"},
+                        {"role": "assistant", "content": "A"},
+                    ]
+                }
+            ]
+        }
+        with caplog.at_level(logging.WARNING):
+            conversations = await loader.convert_to_conversations(data)
+
+        assert any(
+            "multi_turn=True but no tokenizer" in record.message
+            for record in caplog.records
+        ), f"expected warning, got records: {[r.message for r in caplog.records]}"
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].max_tokens is None

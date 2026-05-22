@@ -209,6 +209,13 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         conversations = []
         skipped = 0
         max_conversations = self._max_conversations()
+        if self.multi_turn and self.tokenizer is None:
+            self.warning(
+                "multi_turn=True but no tokenizer is configured; sequence-length "
+                "validation will be skipped and Turn.max_tokens will be None for "
+                "every turn. Configure a tokenizer to enable prompt/output-length "
+                "filtering and max_tokens propagation."
+            )
 
         for row in dataset:
             if (
