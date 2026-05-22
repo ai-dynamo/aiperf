@@ -335,3 +335,27 @@ def test_mutate_base_preserves_sensitive_headers() -> None:
     assert mutated.endpoint.headers["Authorization"] == "Api-Key real-secret-value"
     # Non-sensitive header must round-trip too.
     assert mutated.endpoint.headers["X-Trace-Id"] == "trace-001"
+
+
+def test_mutate_base_preserves_url_userinfo() -> None:
+    """REGRESSION-LOCK (PR #982 dynamo-ops): ``EndpointConfig.urls`` has an
+    unconditional ``_redact_urls`` serializer (no ``when_used="json"`` guard),
+    so even ``mode="python"`` dumps strip ``user:pass@`` userinfo. The fix
+    pairs ``mode="python"`` with ``context={"include_secrets": True}`` so
+    the urls serializer's context-aware bypass fires for the planner's
+    in-pipeline dump too. URL-credentialed endpoints (e.g. database URIs,
+    proxy URLs) would otherwise lose their userinfo in every iteration's
+    config and fail to authenticate.
+    """
+    cfg_dict = _base_config_with_credentials().model_dump(
+        mode="python", exclude_none=True, context={"include_secrets": True}
+    )
+    cfg_dict["endpoint"]["urls"] = [
+        "http://alice:s3cret@host1.example.com/v1/chat/completions"
+    ]
+    base = BenchmarkConfig.model_validate(cfg_dict)
+    planner = SmoothIsotonicSLAPlanner(base, _adaptive_cfg())
+    mutated = planner._mutate_base(42)
+    assert mutated.endpoint.urls == [
+        "http://alice:s3cret@host1.example.com/v1/chat/completions"
+    ]

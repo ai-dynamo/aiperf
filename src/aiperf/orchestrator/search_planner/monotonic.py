@@ -412,11 +412,16 @@ class MonotonicSLASearchPlanner(SearchPlanner):
     def _mutate_base(self, value: int) -> BenchmarkConfig:
         """Return a deep-copied BenchmarkConfig with ``value`` patched in at the dim path.
 
-        mode="python" (not "json") so JSON-only field_serializers don't fire
-        and bake "<redacted>" into credential fields. See ``smooth_isotonic``
+        mode="python" + context={"include_secrets": True} so neither the
+        when_used="json" credential redactors nor the unconditional
+        _redact_urls serializer fire mid-pipeline. See ``smooth_isotonic``
         for the full rationale.
         """
-        cfg_dict = self._base.model_dump(mode="python", exclude_none=True)
+        cfg_dict = self._base.model_dump(
+            mode="python",
+            exclude_none=True,
+            context={"include_secrets": True},
+        )
         _set_nested_value(cfg_dict, self._dim.path, value)
         return BenchmarkConfig.model_validate(cfg_dict)
 

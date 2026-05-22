@@ -373,12 +373,19 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         return out
 
     def _mutate_base(self, value: int) -> BenchmarkConfig:
-        # mode="python" (not "json") so JSON-only field_serializers don't fire
-        # mid-pipeline. The redactors on EndpointConfig.api_key / .headers
-        # would otherwise replace credentials with "<redacted>" in the dict,
-        # and re-validation would bake that literal into the iteration's
-        # config — causing 401/403 against any auth-validating endpoint.
-        cfg_dict = self._base.model_dump(mode="python", exclude_none=True)
+        # mode="python" silences the when_used="json" credential redactors
+        # (api_key / headers). context={"include_secrets": True} silences
+        # the unconditional _redact_urls serializer that strips userinfo
+        # (user:pass@host) from endpoint.urls regardless of mode. Both
+        # are needed; without the context flag, URL-credentialed sweeps
+        # like postgres / MLflow URIs would hit "<redacted>" in the
+        # iteration's config and fail to authenticate. Mirrors the
+        # pattern in config/loader/plan.py (PR #972).
+        cfg_dict = self._base.model_dump(
+            mode="python",
+            exclude_none=True,
+            context={"include_secrets": True},
+        )
         _set_nested_value(cfg_dict, self._dim.path, value)
         self._apply_sla_precision(cfg_dict)
         self._apply_sla_warmup(cfg_dict, value)

@@ -27,6 +27,44 @@ _INJECTED_API_KEY_ENV = "AIPERF_INJECTED_API_KEY"
 # normally and are not duplicated here.
 _INJECTED_HEADERS_ENV = "AIPERF_INJECTED_HEADERS"
 
+# Endpoint URLs that carry userinfo (``user:pass@host``) are forwarded via
+# this env var. ``EndpointConfig.urls`` has an unconditional _redact_urls
+# serializer (no when_used="json" guard), so even non-JSON dumps strip
+# userinfo. The parent sets this only when at least one URL would be
+# redacted, so plain http(s)://host URLs never round-trip through env vars.
+_INJECTED_ENDPOINT_URLS_ENV = "AIPERF_INJECTED_ENDPOINT_URLS"
+
+
+def _parse_injected_dict(name: str, raw: str | None) -> dict[str, str] | None:
+    """Decode a JSON-object IPC env-var payload, validating shape.
+
+    Used for ``AIPERF_INJECTED_HEADERS``. Returns ``None`` when ``raw`` is
+    unset. Raises ``ValueError`` on shape mismatch so main()'s structured
+    error envelope handles it uniformly with config-file errors.
+    """
+    if not raw:
+        return None
+    decoded = orjson.loads(raw)
+    if not isinstance(decoded, dict):
+        raise ValueError(
+            f"{name} must decode to a JSON object, got {type(decoded).__name__}"
+        )
+    return decoded
+
+
+def _parse_injected_str_list(name: str, raw: str | None) -> list[str] | None:
+    """Decode a JSON-list-of-strings IPC env-var payload, validating shape.
+
+    Used for ``AIPERF_INJECTED_ENDPOINT_URLS``. Returns ``None`` when
+    ``raw`` is unset. Raises ``ValueError`` on shape mismatch.
+    """
+    if not raw:
+        return None
+    decoded = orjson.loads(raw)
+    if not isinstance(decoded, list) or not all(isinstance(u, str) for u in decoded):
+        raise ValueError(f"{name} must decode to a JSON list of strings")
+    return decoded
+
 
 def main() -> None:
     """Run a single benchmark from a BenchmarkRun JSON file.
@@ -49,16 +87,24 @@ def main() -> None:
 
     # Pop (don't just read) so child processes the benchmark spawns
     # don't inherit the secret. Restore onto the loaded config below.
+    # Parsing of the JSON-encoded vars is deferred into the try block so
+    # malformed payloads surface via the structured error envelope rather
+    # than an unguarded JSONDecodeError.
     injected_api_key = os.environ.pop(_INJECTED_API_KEY_ENV, None)
     injected_headers_raw = os.environ.pop(_INJECTED_HEADERS_ENV, None)
-    injected_headers = (
-        orjson.loads(injected_headers_raw) if injected_headers_raw else None
-    )
+    injected_urls_raw = os.environ.pop(_INJECTED_ENDPOINT_URLS_ENV, None)
 
     from aiperf.cli_runner import _run_single_benchmark
     from aiperf.config import BenchmarkRun
 
     try:
+        injected_headers = _parse_injected_dict(
+            _INJECTED_HEADERS_ENV, injected_headers_raw
+        )
+        injected_urls = _parse_injected_str_list(
+            _INJECTED_ENDPOINT_URLS_ENV, injected_urls_raw
+        )
+
         with open(config_file, "rb") as f:
             data = orjson.loads(f.read())
 
@@ -67,6 +113,8 @@ def main() -> None:
             run.cfg.endpoint.api_key = injected_api_key
         if injected_headers:
             run.cfg.endpoint.headers.update(injected_headers)
+        if injected_urls:
+            run.cfg.endpoint.urls = injected_urls
         _run_single_benchmark(run)
 
     except KeyError as e:

@@ -598,3 +598,22 @@ def test_ask_preserves_credentials() -> None:
     assert cfg.endpoint.headers["Authorization"] == "Api-Key real-secret-value"
     # Non-sensitive header must round-trip too.
     assert cfg.endpoint.headers["X-Trace-Id"] == "trace-001"
+
+
+def test_ask_preserves_url_userinfo() -> None:
+    """REGRESSION-LOCK (PR #982 dynamo-ops): URL userinfo survives
+    ``ask()`` via ``context={"include_secrets": True}``. See
+    ``smooth_isotonic`` for the full rationale.
+    """
+    cfg_dict = _base_config_with_credentials().model_dump(
+        mode="python", exclude_none=True, context={"include_secrets": True}
+    )
+    cfg_dict["endpoint"]["urls"] = [
+        "http://alice:s3cret@host1.example.com/v1/chat/completions"
+    ]
+    base = BenchmarkConfig.model_validate(cfg_dict)
+    planner = OptunaSearchPlanner(base, _cfg())
+    cfg, _ = planner.ask()
+    assert cfg.endpoint.urls == [
+        "http://alice:s3cret@host1.example.com/v1/chat/completions"
+    ]
