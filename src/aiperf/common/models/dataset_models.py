@@ -133,6 +133,14 @@ class TurnMetadata(AIPerfBaseModel):
         default_factory=list,
         description="Conditions gating dispatch of this turn (DAG projection).",
     )
+    raw_messages_count: int | None = Field(
+        default=None,
+        description=(
+            "Number of OpenAI-compatible raw messages on the source Turn. "
+            "None means Turn.raw_messages is None; zero means an explicit empty "
+            "messages delta."
+        ),
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -229,6 +237,9 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             branch_ids=self.branch_ids,
             prerequisites=self.prerequisites,
+            raw_messages_count=None
+            if self.raw_messages is None
+            else len(self.raw_messages),
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -469,6 +480,9 @@ class Conversation(AIPerfBaseModel):
                     delay_ms=turn.delay,
                     branch_ids=turn.branch_ids,
                     has_forks=has_forks,
+                    raw_messages_count=None
+                    if turn.raw_messages is None
+                    else len(turn.raw_messages),
                 )
             )
         return ConversationMetadata(

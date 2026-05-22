@@ -266,14 +266,24 @@ class TrajectorySource(ConversationSource):
         original assistant segment has ``raw_messages=[]``. That turn is valid
         after prior live responses have been accumulated, but invalid as the
         first request of a fresh OpenAI chat session: vLLM/Kimi rejects an
-        empty ``messages`` array in the chat template.
+        empty ``messages`` array in the chat template. Metadata stores only
+        ``raw_messages_count`` instead of duplicating full OpenAI payloads.
         """
         if turn_index < 0 or turn_index >= len(meta.turns):
             return False
         turn = meta.turns[turn_index]
-        if turn.raw_messages is None:
+
+        raw_messages_count = getattr(turn, "raw_messages_count", None)
+        if raw_messages_count is not None:
+            if raw_messages_count > 0:
+                return True
+            return bool(meta.system_message or meta.user_context_message)
+
+        # Backwards compatibility for old metadata and lightweight tests.
+        raw_messages = getattr(turn, "raw_messages", None)
+        if raw_messages is None:
             return True
-        if turn.raw_messages:
+        if raw_messages:
             return True
         return bool(meta.system_message or meta.user_context_message)
 
