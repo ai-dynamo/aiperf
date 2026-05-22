@@ -735,7 +735,6 @@ These metric families are emitted only when the corresponding feature is enabled
 | `sglang:prefill_delayer_wait_forward_passes` | histogram | passes | scheduler labels | Forward passes spent waiting in the prefill delayer. |
 | `sglang:prefill_delayer_wait_seconds` | histogram | seconds | scheduler labels | Time spent waiting in the prefill delayer. |
 | `sglang:prefill_delayer_outcomes` | counter | outcomes | scheduler labels + `input_estimation`, `output_allow`, `output_reason`, `actual_execution` | Prefill-delayer scheduling outcomes. |
-| `sglang:eplb_balancedness` | summary | ratio | scheduler labels + `forward_mode` | Expert-parallel load-balancing score. |
 | `sglang:eplb_gpu_physical_count` | histogram | GPUs | scheduler labels + `layer` | Physical GPU count distribution for expert-parallel load balancing. |
 | `sglang:prefetched_tokens` | counter | tokens | scheduler labels | Prompt tokens prefetched from storage. |
 | `sglang:backuped_tokens` | counter | tokens | scheduler labels | Tokens backed up to storage. |
