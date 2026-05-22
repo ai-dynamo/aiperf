@@ -228,18 +228,22 @@ class DatasetResolver:
 
         Returns ``None`` for an empty file or a non-JSON first line (e.g.
         BurstGPT's CSV header) so the caller can fall through to
-        structural detection. Lets ``OSError`` propagate so callers can
+        structural detection. Uses ``orjson.loads`` directly rather than
+        ``load_json_str`` because a non-JSON first line is an expected
+        outcome here — ``load_json_str`` would log a misleading "Failed
+        to parse JSON string" warning on every successful CSV
+        auto-detect. Lets ``OSError`` propagate so callers can
         distinguish "can't read the file at all" from "read it but the
         first line isn't JSON".
         """
-        from aiperf.common.utils import load_json_str
+        import orjson
 
         with open(file_path) as f:
             for line in f:
                 if line := line.strip():
                     try:
-                        return load_json_str(line)
-                    except ValueError:
+                        return orjson.loads(line)
+                    except orjson.JSONDecodeError:
                         return None
         return None
 
