@@ -22,6 +22,8 @@ def _user_config(
     ignore_trace_delays: bool = False,
     synthesis_max_isl: int | None = None,
     loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
+    public_dataset: str | None = None,
+    hf_weka_repo: str | None = None,
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = None,
     trace_idle_gap_cap_seconds: float | None = 60.0,
@@ -39,6 +41,8 @@ def _user_config(
     cfg.input.random_seed = random_seed
     cfg.input.synthesis.max_isl = synthesis_max_isl
     cfg.input.detected_loader = loader
+    cfg.input.public_dataset = public_dataset
+    cfg.input.hf_weka_repo = hf_weka_repo
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
     cfg.loadgen.trace_idle_gap_cap_seconds = trace_idle_gap_cap_seconds
@@ -125,6 +129,48 @@ def test_wrong_loader_raises() -> None:
     cfg = _user_config(loader="dag_jsonl", extra_inputs={"ignore_eos": True})
     with pytest.raises(ScenarioLockError):
         validate_scenario(cfg)
+
+
+def test_agentx_allows_generic_weka_hf_loader_for_explicit_weka_repo() -> None:
+    cfg = _user_config(
+        loader="weka_hf",
+        public_dataset="weka_hf",
+        hf_weka_repo="semianalysisai/cc-traces-weka-with-subagents-051926",
+        extra_inputs={"ignore_eos": True},
+    )
+
+    outcome = validate_scenario(cfg)
+
+    assert outcome.violations == []
+    assert cfg.input.public_dataset == "weka_hf"
+
+
+def test_agentx_rejects_generic_weka_hf_loader_without_repo() -> None:
+    cfg = _user_config(
+        loader="weka_hf",
+        public_dataset="weka_hf",
+        hf_weka_repo=None,
+        extra_inputs={"ignore_eos": True},
+    )
+
+    with pytest.raises(ScenarioLockError) as exc_info:
+        validate_scenario(cfg)
+
+    assert "hf_weka_repo" in str(exc_info.value)
+
+
+def test_agentx_rejects_generic_weka_hf_loader_for_arbitrary_repo() -> None:
+    cfg = _user_config(
+        loader="weka_hf",
+        public_dataset="weka_hf",
+        hf_weka_repo="example/not-agentx-corpus",
+        extra_inputs={"ignore_eos": True},
+    )
+
+    with pytest.raises(ScenarioLockError) as exc_info:
+        validate_scenario(cfg)
+
+    assert "semianalysisai/cc-traces-weka-with-subagents-051926" in str(exc_info.value)
 
 
 def test_duration_below_floor_raises() -> None:

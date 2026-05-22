@@ -18,7 +18,11 @@ from pathlib import Path
 import orjson
 import pytest
 
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.dataset import mmap_cache
+from aiperf.plugin.enums import PublicDatasetType
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +56,23 @@ def _stable_tokenizer() -> dict[str, object]:
 
 
 class TestComputeCacheKey:
+    def test_public_dataset_key_distinguishes_loader_metadata(self) -> None:
+        qualitative = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(public_dataset=PublicDatasetType.SPEED_BENCH_QUALITATIVE),
+        )
+        coding = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(public_dataset=PublicDatasetType.SPEED_BENCH_CODING),
+        )
+
+        qualitative_key = mmap_cache.compute_cache_key_from_user_config(qualitative)
+        coding_key = mmap_cache.compute_cache_key_from_user_config(coding)
+
+        assert qualitative_key is not None
+        assert coding_key is not None
+        assert qualitative_key != coding_key
+
     def test_key_is_deterministic_for_identical_inputs(self, tmp_path: Path) -> None:
         f = _write_input_file(tmp_path, b"hello world")
         k1 = mmap_cache.compute_cache_key(

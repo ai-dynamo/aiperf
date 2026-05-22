@@ -27,7 +27,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.dataset import mmap_cache
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
 
 
 def _write_legacy_cache_entry_with_inputs_json(
@@ -174,6 +174,50 @@ class TestDatasetManagerCacheRoundtrip:
         key_b = mmap_cache.compute_cache_key_from_user_config(cfg_b)
         assert key_a is not None and key_b is not None
         assert key_a != key_b
+
+    @pytest.mark.asyncio
+    async def test_hf_weka_repo_change_invalidates_cache(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        trace = _write_trace(tmp_path)
+        cfg_a = _make_config(file_path=trace, benchmark_id="weka-a")
+        cfg_a.input.file = None
+        cfg_a.input.custom_dataset_type = None
+        cfg_a.input.public_dataset = PublicDatasetType.WEKA_HF
+        cfg_a.input.hf_weka_repo = "semianalysisai/cc-traces-weka-051826"
+        cfg_b = _make_config(file_path=trace, benchmark_id="weka-b")
+        cfg_b.input.file = None
+        cfg_b.input.custom_dataset_type = None
+        cfg_b.input.public_dataset = PublicDatasetType.WEKA_HF
+        cfg_b.input.hf_weka_repo = "semianalysisai/cc-traces-weka-with-subagents-051826"
+
+        key_a = mmap_cache.compute_cache_key_from_user_config(cfg_a)
+        key_b = mmap_cache.compute_cache_key_from_user_config(cfg_b)
+
+        assert key_a is not None and key_b is not None
+        assert key_a != key_b
+
+    @pytest.mark.asyncio
+    async def test_public_dataset_aliases_with_same_hf_source_share_cache(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        trace = _write_trace(tmp_path)
+        cfg_a = _make_config(file_path=trace, benchmark_id="alias-a")
+        cfg_a.input.file = None
+        cfg_a.input.custom_dataset_type = None
+        cfg_a.input.public_dataset = PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA
+        cfg_b = _make_config(file_path=trace, benchmark_id="alias-b")
+        cfg_b.input.file = None
+        cfg_b.input.custom_dataset_type = None
+        cfg_b.input.public_dataset = (
+            PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_NO_SUBAGENTS
+        )
+
+        key_a = mmap_cache.compute_cache_key_from_user_config(cfg_a)
+        key_b = mmap_cache.compute_cache_key_from_user_config(cfg_b)
+
+        assert key_a is not None and key_b is not None
+        assert key_a == key_b
 
     @pytest.mark.asyncio
     async def test_cache_disabled_skips_lookup(

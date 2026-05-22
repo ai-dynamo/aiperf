@@ -382,10 +382,7 @@ class InputConfig(BaseConfig):
             "Run `aiperf plugins public_dataset_loader` to list available datasets. "
             "Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.",
         ),
-        CLIParameter(
-            name=("--public-dataset"),
-            group=Groups.INPUT,
-        ),
+        CLIParameter(name=("--public-dataset"), group=Groups.INPUT),
     ] = InputDefaults.PUBLIC_DATASET
 
     hf_dataset_subset: Annotated[
@@ -395,10 +392,16 @@ class InputConfig(BaseConfig):
             "Only applies when using `--public-dataset` with a HuggingFace-backed loader. "
             "Takes priority over the subset defined in the plugin registry.",
         ),
-        CLIParameter(
-            name=("--hf-subset",),
-            group=Groups.INPUT,
+        CLIParameter(name=("--hf-subset",), group=Groups.INPUT),
+    ] = None
+
+    hf_weka_repo: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace dataset repo override for `--public-dataset weka_hf` (e.g. `semianalysisai/cc-traces-weka-with-subagents-051926`). "
+            "Only valid with `--public-dataset weka_hf`; pinned Weka public dataset aliases keep their registry-defined repo names.",
         ),
+        CLIParameter(name=("--hf-weka-repo",), group=Groups.INPUT),
     ] = None
 
     custom_dataset_type: Annotated[
@@ -412,10 +415,7 @@ class InputConfig(BaseConfig):
             "per-entry associations — use `single_turn` if paired modalities must stay together). "
             "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
         ),
-        CLIParameter(
-            name=("--custom-dataset-type"),
-            group=Groups.INPUT,
-        ),
+        CLIParameter(name=("--custom-dataset-type"), group=Groups.INPUT),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
     dataset_sampling_strategy: Annotated[

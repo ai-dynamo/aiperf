@@ -139,7 +139,7 @@ Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/log
 - [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
 - [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay
-- [Weka Agentic Coding Traces](docs/tutorials/weka-trace.md) - Replay real Claude Code sessions with subagent SPAWN/JOIN topology and KV-cache hash IDs (local files or HuggingFace: `semianalysisai/cc-traces-weka-042026` with subagents, `semianalysisai/cc-traces-weka-no-subagents-051226` without; the latter is the AgentX MVP default)
+- [Weka Agentic Coding Traces](docs/tutorials/weka-trace.md) - Replay real Claude Code sessions with subagent SPAWN/JOIN topology and KV-cache hash IDs (local files or HuggingFace: `semianalysisai/cc-traces-weka-with-subagents-051926` with subagents, `semianalysisai/cc-traces-weka-no-subagents-051826` without; AgentX MVP uses the with-subagents corpus or an explicit `weka_trace` local corpus)
 - [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis multi-turn agentic-coding benchmark scenario (work-in-progress MVP)
 - [SageMaker Data Capture](docs/tutorials/sagemaker-data-capture.md) - Replay production traffic from SageMaker endpoints
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
