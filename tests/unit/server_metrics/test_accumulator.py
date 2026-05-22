@@ -111,6 +111,71 @@ class TestServerMetricsResultsProcessor:
 
         assert result is None
 
+    async def test_realtime_snapshot_suppresses_single_sample_counter_deltas(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        """Test realtime counter deltas require two samples."""
+        processor = ServerMetricsAccumulator(mock_user_config)
+        await processor.process_server_metrics_record(
+            ServerMetricsRecord(
+                endpoint_url="http://127.0.0.1:8000/metrics",
+                timestamp_ns=1_000_000_000,
+                metrics={
+                    "vllm:prefix_cache_hits": MetricFamily(
+                        type=PrometheusMetricType.COUNTER,
+                        description="Prefix cache hits.",
+                        samples=[MetricSample(value=500.0)],
+                    ),
+                    "vllm:prefix_cache_queries": MetricFamily(
+                        type=PrometheusMetricType.COUNTER,
+                        description="Prefix cache queries.",
+                        samples=[MetricSample(value=1000.0)],
+                    ),
+                    "vllm:num_preemptions": MetricFamily(
+                        type=PrometheusMetricType.COUNTER,
+                        description="Preemptions.",
+                        samples=[MetricSample(value=7.0)],
+                    ),
+                },
+            )
+        )
+
+        snapshot = processor.realtime_snapshot()
+
+        assert "prefix_cache_hit_rate" not in snapshot
+        assert "num_preemptions" not in snapshot
+
+    async def test_realtime_snapshot_uses_sglang_retracted_total_counter(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        processor = ServerMetricsAccumulator(mock_user_config)
+        for timestamp_ns, gauge_value, counter_value in (
+            (1_000_000_000, 5.0, 10.0),
+            (2_000_000_000, 3.0, 12.0),
+        ):
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://127.0.0.1:8000/metrics",
+                    timestamp_ns=timestamp_ns,
+                    metrics={
+                        "sglang:num_retracted_reqs": MetricFamily(
+                            type=PrometheusMetricType.GAUGE,
+                            description="Current retracted requests.",
+                            samples=[MetricSample(value=gauge_value)],
+                        ),
+                        "sglang:num_retracted_requests_total": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Total retracted requests.",
+                            samples=[MetricSample(value=counter_value)],
+                        ),
+                    },
+                )
+            )
+
+        snapshot = processor.realtime_snapshot()
+
+        assert snapshot["num_preemptions"] == 2.0
+
     async def test_export_results_with_data(
         self,
         mock_user_config: UserConfig,
@@ -208,6 +273,47 @@ class TestServerMetricsResultsProcessor:
         assert result is not None
         # Per-endpoint filters used, not a single global filter
         assert result.aggregation_time_filter is None
+
+    async def test_export_results_extends_parquet_filter_to_endpoint_last_update(
+        self,
+        mock_user_config: UserConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test Parquet export uses the same final-collection end window as summaries."""
+        processor = ServerMetricsAccumulator(mock_user_config)
+        exported_filters = []
+
+        async def capture_export_filter(time_filter):
+            exported_filters.append(time_filter)
+
+        monkeypatch.setattr(
+            processor, "_export_parquet_if_enabled", capture_export_filter
+        )
+
+        for timestamp_ns in (1_000_000_000, 3_000_000_000):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="Cache usage",
+                samples=[MetricSample(labels=None, value=0.5)],
+            )
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://node1:8081/metrics",
+                    timestamp_ns=timestamp_ns,
+                    endpoint_latency_ns=5_000_000,
+                    metrics={"cache_usage": gauge},
+                )
+            )
+
+        result = await processor.export_results(
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+        )
+
+        assert result is not None
+        assert len(exported_filters) == 1
+        assert exported_filters[0].start_ns == 1_000_000_000
+        assert exported_filters[0].end_ns == 3_000_000_000
 
     async def test_export_results_multiple_endpoints(
         self,

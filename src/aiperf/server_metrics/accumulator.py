@@ -186,8 +186,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
 
         # Export Parquet file directly from accumulator if format is enabled
+        export_end_ns = max(
+            end_ns,
+            *(
+                time_series.last_update_ns
+                for time_series in self._server_metrics_hierarchy.endpoints.values()
+            ),
+        )
         await self._export_parquet_if_enabled(
-            TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+            TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
         )
 
         return results
@@ -391,7 +398,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
           ``vllm:cpu_cache_usage_perc`` — i.e. CPU offload is active).
         - ``num_running`` / ``num_waiting`` (vLLM scheduler queue depth).
         - ``num_preemptions`` (cumulative total since first sample; vLLM
-          ``vllm:num_preemptions`` or SGLang ``sglang:num_retracted_reqs``).
+          ``vllm:num_preemptions`` or SGLang ``sglang:num_retracted_requests_total``).
 
         Returns ``{}`` when no server metrics have been received yet, so
         callers can suppress the row on early ticks.
@@ -441,11 +448,12 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             out["num_waiting"] = waiting
 
         # Preemptions — vLLM retracts running requests on KV exhaustion;
-        # SGLang exposes the same concept under num_retracted_reqs. Cumulative
-        # since first observed sample (any nonzero = backpressure).
+        # SGLang exposes the same concept as a total counter.
         preempt = self._counter_delta(endpoints, "vllm:num_preemptions")
         if preempt is None:
-            preempt = self._counter_delta(endpoints, "sglang:num_retracted_reqs")
+            preempt = self._counter_delta(
+                endpoints, "sglang:num_retracted_requests_total"
+            )
         if preempt is not None:
             out["num_preemptions"] = preempt
 
@@ -468,9 +476,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     def _counter_delta(endpoints: list, metric_name: str) -> float | None:
         """Sum (last - first) across endpoints for a counter metric.
 
-        Returns None if no endpoint observed the metric. Single-sample
-        endpoints contribute their lone value (treating "first observed"
-        as the start of the window).
+        Returns None if no endpoint has at least two samples for the metric.
         """
         total = 0.0
         found = False
@@ -481,9 +487,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 vals = entry.data.values
                 if len(vals) >= 2:
                     total += float(vals[-1] - vals[0])
-                    found = True
-                elif len(vals) == 1:
-                    total += float(vals[-1])
                     found = True
         return total if found else None
 

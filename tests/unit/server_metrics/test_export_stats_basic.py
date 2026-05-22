@@ -334,6 +334,27 @@ class TestHistogramExportStats:
         with pytest.raises(KeyError):
             _ = ts.metrics[ServerMetricKey("nonexistent", ())]
 
+    def test_histogram_end_before_first_sample_returns_none(self):
+        """Test histogram filtering before the first sample returns no data."""
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "ttft",
+            [
+                (
+                    NANOS_PER_SECOND,
+                    hist({"0.1": 10.0, "1.0": 50.0, "+Inf": 100.0}, 25.0, 100.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "ttft"),
+            TimeRangeFilter(start_ns=0, end_ns=NANOS_PER_SECOND // 2),
+        )
+
+        assert result is None
+
     def test_histogram_bucket_counter_reset(self):
         """Test histogram returns None for buckets when counter reset detected.
 
