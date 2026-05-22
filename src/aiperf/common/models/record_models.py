@@ -303,6 +303,12 @@ class ProfileResults(AIPerfBaseModel):
         "(children spawned/completed/errored, parents suspended/resumed). "
         "None for non-DAG runs where no orchestrator was active.",
     )
+    context_overflow_count: int = Field(
+        default=0,
+        description="Count of AGENTIC_REPLAY context-overflow records skipped from "
+        "normal metric accumulation and stream export, retained only for "
+        "aggregate runtime submission validation.",
+    )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""

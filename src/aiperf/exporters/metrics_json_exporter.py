@@ -24,7 +24,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
         self._file_path = exporter_config.user_config.output.profile_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}",
-            lambda: f"Initializing MetricsJsonExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing MetricsJsonExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:
@@ -71,6 +73,30 @@ class MetricsJsonExporter(MetricsBaseExporter):
             branch_stats=getattr(self._results, "branch_stats", None),
         )
 
+        context_overflow_count = int(
+            getattr(self._results, "context_overflow_count", 0) or 0
+        )
+        if context_overflow_count:
+            existing_context_overflow = prepared_json_metrics.get(
+                "context_overflow_count"
+            )
+            if existing_context_overflow is None:
+                prepared_json_metrics["context_overflow_count"] = JsonMetricResult(
+                    unit="requests",
+                    avg=float(context_overflow_count),
+                )
+            else:
+                prepared_json_metrics["context_overflow_count"] = (
+                    existing_context_overflow.model_copy(
+                        update={
+                            "avg": float(
+                                (existing_context_overflow.avg or 0)
+                                + context_overflow_count
+                            )
+                        }
+                    )
+                )
+
         # Add all prepared metrics dynamically
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
@@ -101,10 +127,12 @@ class MetricsJsonExporter(MetricsBaseExporter):
                     return 0
                 return int(m.avg)
 
-            total_responses = _metric_avg("request_count") + _metric_avg(
-                "error_request_count"
-            )
             context_overflow_count = _metric_avg("context_overflow_count")
+            total_responses = (
+                _metric_avg("request_count")
+                + _metric_avg("error_request_count")
+                + context_overflow_count
+            )
 
             submission_valid, submission_invalid_reasons = compute_submission_outcome(
                 scenario_name=scenario_name,

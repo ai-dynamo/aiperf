@@ -203,10 +203,12 @@ def _sum_runtime_response_counts(
     holds the per-run total. We sum across runs to get the
     confidence-reporting aggregate.
 
-    Total responses = ``request_count`` (valid) + ``error_request_count``,
-    matching the spec §4.8 / §7 denominator (all responses received,
-    success + failure). ``context_overflow_count`` is the dedicated
-    counter for context-overflow errors detected by the runtime classifier.
+    Total responses = ``request_count`` (valid) + ``error_request_count``
+    (non-overflow failures) + ``context_overflow_count`` (AGENTIC_REPLAY
+    overflow records skipped from normal metrics), matching the spec §4.8 / §7
+    denominator (all responses received). ``context_overflow_count`` is the
+    dedicated counter for context-overflow errors detected by the runtime
+    classifier.
 
     Returns ``(0, 0)`` when no successful runs exist.
     """
@@ -220,7 +222,9 @@ def _sum_runtime_response_counts(
                 total_responses += int(metric.avg)
         overflow_metric = metrics.get("context_overflow_count")
         if overflow_metric is not None and overflow_metric.avg is not None:
-            context_overflow_count += int(overflow_metric.avg)
+            overflow_count = int(overflow_metric.avg)
+            context_overflow_count += overflow_count
+            total_responses += overflow_count
     return total_responses, context_overflow_count
 
 
