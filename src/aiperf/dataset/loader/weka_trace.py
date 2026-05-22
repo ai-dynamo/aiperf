@@ -78,15 +78,27 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     return entry.t
 
 
-def _trace_peak_input_length(trace: WekaTrace) -> int:
-    """Peak recorded context length across parent and subagent requests."""
+def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> int:
+    """Peak requested context length across parent and subagent requests.
+
+    vLLM validates prompt tokens plus requested output tokens against the
+    model context window. Filtering only ``input_length`` leaves deterministic
+    4xxs for traces whose prompt fits but ``prompt + max_tokens`` exceeds the
+    server's max model length.
+    """
+
+    def capped_output(req: _NormalRequestT) -> int:
+        if max_osl is not None and req.output_length > max_osl:
+            return max_osl
+        return req.output_length
+
     peak = 0
     for req in trace.requests:
         if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
-            peak = max(peak, req.input_length)
+            peak = max(peak, req.input_length + capped_output(req))
         elif isinstance(req, WekaSubagentEntry):
             for child_req in req.requests:
-                peak = max(peak, child_req.input_length)
+                peak = max(peak, child_req.input_length + capped_output(child_req))
     return peak
 
 
@@ -589,18 +601,18 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     def _filter_traces_by_max_context(
         self, data: dict[str, list[WekaTrace]], max_ctx: int
     ) -> dict[str, list[WekaTrace]]:
-        """Drop traces whose peak recorded ``input_length`` exceeds ``max_ctx``.
+        """Drop traces whose peak requested context length exceeds ``max_ctx``.
 
-        Uses the per-request ``input_length`` recorded in the WEKA trace
-        (cumulative context at that turn) so no client-side re-tokenization
-        is required. The peak across parent and subagent requests is the
-        trace's worst case; any conversation branch exceeding it would 4xx
-        mid-run.
+        Uses the per-request ``input_length`` and ``output_length`` recorded
+        in the WEKA trace so no client-side re-tokenization is required. The
+        peak across parent and subagent requests is the trace's worst case;
+        any conversation branch exceeding it would 4xx mid-run.
         """
         kept: dict[str, list[WekaTrace]] = {}
         max_seen = 0
+        max_osl = self.user_config.input.synthesis.max_osl
         for trace_id, wekas in data.items():
-            peak = _trace_peak_input_length(wekas[0])
+            peak = _trace_peak_context_length(wekas[0], max_osl=max_osl)
             if peak > max_seen:
                 max_seen = peak
             if peak <= max_ctx:

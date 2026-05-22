@@ -164,6 +164,23 @@ def test_max_context_length_drops_trace_with_oversized_subagent(tmp_path, monkey
     assert [conv.session_id for conv in convs] == ["good"]
 
 
+def test_max_context_length_includes_requested_output(tmp_path, monkeypatch):
+    """The context cap must account for prompt tokens plus max_tokens."""
+    good = _base_trace([_normal(0.0, 900, 99, [1, 2])], trace_id="good")
+    bad = _base_trace([_normal(0.0, 900, 101, [1, 2])], trace_id="bad")
+    traces_dir = tmp_path / "traces"
+    traces_dir.mkdir()
+    _write_trace(traces_dir, good, name="good.json")
+    _write_trace(traces_dir, bad, name="bad.json")
+
+    uc = _mk_user_config()
+    uc.input.max_context_length = 1000
+    loader = _make_loader(traces_dir, uc, monkeypatch)
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    assert [conv.session_id for conv in convs] == ["good"]
+
+
 def test_max_osl_zero_caps_all_outputs_to_zero(monkeypatch):
     """`max_osl=0` caps every turn's max_tokens to zero (not falsy-skipped)."""
     uc = _mk_user_config(max_osl=0)

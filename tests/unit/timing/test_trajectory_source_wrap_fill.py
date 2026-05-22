@@ -184,3 +184,61 @@ def test_init_does_not_log_info_when_no_wrap_fill_needed(caplog):
         _build_source(num_traces=4, turns_per_trace=10, concurrency=4)
     msgs = [r.getMessage() for r in caplog.records]
     assert not any("Trajectory reuse" in m for m in msgs), msgs
+
+
+def test_sendable_start_rejects_empty_raw_messages_without_prefix():
+    meta = MagicMock()
+    meta.system_message = None
+    meta.user_context_message = None
+    turn = MagicMock()
+    turn.raw_messages = []
+    meta.turns = [turn]
+
+    assert TrajectorySource._trajectory_start_is_sendable(meta, 0) is False
+
+
+def test_sendable_start_accepts_empty_raw_messages_with_system_prefix():
+    meta = MagicMock()
+    meta.system_message = "system"
+    meta.user_context_message = None
+    turn = MagicMock()
+    turn.raw_messages = []
+    meta.turns = [turn]
+
+    assert TrajectorySource._trajectory_start_is_sendable(meta, 0) is True
+
+
+def test_init_samples_only_warmup_profile_pairs_with_nonempty_first_payloads():
+    def turn(raw_messages):
+        t = MagicMock()
+        t.raw_messages = raw_messages
+        return t
+
+    conv = MagicMock()
+    conv.conversation_id = "trace_0"
+    conv.system_message = None
+    conv.user_context_message = None
+    conv.turns = [
+        turn([{"role": "user", "content": "0"}]),
+        turn([]),
+        turn([{"role": "user", "content": "2"}]),
+        turn([{"role": "user", "content": "3"}]),
+    ]
+    md = MagicMock()
+    md.conversations = [conv]
+    sampler = _FakeSampler(["trace_0"])
+
+    src = TrajectorySource(
+        dataset_metadata=md,
+        dataset_sampler=sampler,
+        concurrency=1,
+        random_seed=42,
+        start_min_ratio=0.0,
+        start_max_ratio=1.0,
+    )
+
+    # k=0 is invalid because profiling would start on empty turn 1.
+    # k=1 is invalid because warmup would start on empty turn 1.
+    assert src.trajectories == [
+        Trajectory(conversation_id="trace_0", start_turn_index=2)
+    ]

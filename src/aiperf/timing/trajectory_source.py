@@ -230,16 +230,52 @@ class TrajectorySource(ConversationSource):
                 continue
             rng = np.random.default_rng(_seed_for_trace(self._random_seed, cid))
             if n == 2:
-                k_i = 0
+                candidates = [0]
             else:
                 k_min = min(int(self._start_min_ratio * n), n - 2)
                 k_max = min(int(self._start_max_ratio * n), n - 2)
                 if k_min > k_max:
                     k_min = k_max
-                k_i = int(rng.integers(low=k_min, high=k_max + 1))
+                candidates = list(range(k_min, k_max + 1))
+
+            candidates = [
+                k
+                for k in candidates
+                if self._trajectory_start_is_sendable(meta, k)
+                and self._trajectory_start_is_sendable(meta, k + 1)
+            ]
+            if not candidates:
+                _logger.warning(
+                    "Skipping trace %r at trajectory selection: no valid "
+                    "warmup/profile start pair in configured range.",
+                    cid,
+                )
+                continue
+            k_i = int(rng.choice(candidates))
             trajectories.append(Trajectory(conversation_id=cid, start_turn_index=k_i))
 
         return trajectories
+
+    @staticmethod
+    def _trajectory_start_is_sendable(meta, turn_index: int) -> bool:
+        """Return whether ``turn_index`` can be the first request of a session.
+
+        Agentic replay starts a fresh session at ``k_i`` during WARMUP and at
+        ``k_i + 1`` during PROFILING. In live-assistant mode the loader emits
+        user-only deltas, so a mid-trace turn whose delta contains only the
+        original assistant segment has ``raw_messages=[]``. That turn is valid
+        after prior live responses have been accumulated, but invalid as the
+        first request of a fresh OpenAI chat session: vLLM/Kimi rejects an
+        empty ``messages`` array in the chat template.
+        """
+        if turn_index < 0 or turn_index >= len(meta.turns):
+            return False
+        turn = meta.turns[turn_index]
+        if turn.raw_messages is None:
+            return True
+        if turn.raw_messages:
+            return True
+        return bool(meta.system_message or meta.user_context_message)
 
     def _wrap_fill_lanes(
         self, distinct: list[Trajectory], extra_count: int
@@ -265,13 +301,27 @@ class TrajectorySource(ConversationSource):
                 )
             )
             if n == 2:
-                k_i = 0
+                candidates = [0]
             else:
                 k_min = min(int(self._start_min_ratio * n), n - 2)
                 k_max = min(int(self._start_max_ratio * n), n - 2)
                 if k_min > k_max:
                     k_min = k_max
-                k_i = int(rng.integers(low=k_min, high=k_max + 1))
+                candidates = list(range(k_min, k_max + 1))
+            candidates = [
+                k
+                for k in candidates
+                if self._trajectory_start_is_sendable(meta, k)
+                and self._trajectory_start_is_sendable(meta, k + 1)
+            ]
+            if not candidates:
+                _logger.warning(
+                    "Skipping wrap-fill lane for trace %r: no valid "
+                    "warmup/profile start pair in configured range.",
+                    source.conversation_id,
+                )
+                continue
+            k_i = int(rng.choice(candidates))
             extras.append(
                 Trajectory(conversation_id=source.conversation_id, start_turn_index=k_i)
             )
