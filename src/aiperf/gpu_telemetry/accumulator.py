@@ -404,7 +404,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         )
         total_output_tokens = tokens_result.avg if tokens_result is not None else None
         total_power_w, power_count = self._sum_gpu_power_watts(time_filter)
-        total_energy_j, energy_count = self._sum_gpu_energy_joules(time_filter)
+        # Energy is a counter; the final telemetry scrape often lands after
+        # requests_end_ns, so widen end_ns to capture the full bench-window delta.
+        energy_filter = TimeRangeFilter(start_ns=time_filter.start_ns, end_ns=None)
+        total_energy_j, energy_count = self._sum_gpu_energy_joules(energy_filter)
         self.debug(
             lambda: (
                 f"compute_efficiency_metrics totals: "
