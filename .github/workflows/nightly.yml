@@ -1001,19 +1001,19 @@ jobs:
     steps:
       - name: Trigger GitLab pipeline
         env:
-          GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
-          GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
-          NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
-          WHEEL_FILENAME:         ${{ needs.prepare-nightly.outputs.wheel_filename }}
-          NIGHTLY_WHEEL_FILENAME: ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
-          CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
-          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
-          RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
-          TIMESTAMP:              ${{ needs.prepare-nightly.outputs.run_timestamp }}
-          STAGE_SUBPATH:          ${{ needs.prepare-nightly.outputs.stage_subpath }}
-          ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
-          ARTIFACTORY_REPO_NAME:  ${{ secrets.ARTIFACTORY_REPO_NAME }}
+          GITLAB_TRIGGER_TOKEN:       ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_TRIGGER_URL:         ${{ secrets.GITLAB_PIPELINE_URL }}
+          NIGHTLY_TAG:                ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          WHEEL_VERSION:              ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_FILENAME:             ${{ needs.prepare-nightly.outputs.wheel_filename }}
+          NIGHTLY_WHEEL_FILENAME:     ${{ needs.prepare-nightly.outputs.nightly_wheel_filename }}
+          CONTAINER_TAG:              ${{ needs.prepare-nightly.outputs.container_tag }}
+          NGC_STAGING_IMAGE_BASE:     ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          RESOLVED_SHA:               ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          TIMESTAMP:                  ${{ needs.prepare-nightly.outputs.run_timestamp }}
+          STAGE_SUBPATH:              ${{ needs.prepare-nightly.outputs.stage_subpath }}
+          ARTIFACTORY_PYPI_URL:       ${{ secrets.ARTIFACTORY_PYPI_URL }}
+          ARTIFACTORY_PYPI_REPO_NAME: ${{ secrets.ARTIFACTORY_PYPI_REPO_NAME }}
         run: |
           set -euo pipefail
 
@@ -1059,7 +1059,7 @@ jobs:
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
             --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
-            --form "variables[ARTIFACTORY_REPO_NAME]=${ARTIFACTORY_REPO_NAME}" \
+            --form "variables[ARTIFACTORY_PYPI_REPO_NAME]=${ARTIFACTORY_PYPI_REPO_NAME}" \
             --form "variables[ARTIFACTORY_WHEEL_PATH]=${ARTIFACTORY_WHEEL_PATH}" \
             --form "variables[ARTIFACTORY_NIGHTLY_WHEEL_PATH]=${ARTIFACTORY_NIGHTLY_WHEEL_PATH}" \
             --form "variables[TIMESTAMP]=${TIMESTAMP}" \
