@@ -149,7 +149,18 @@ async def lifespan(_: FastAPI):
         recorder.open()
         set_global_recorder(recorder)
 
-    await init_scheduler(server_config)
+    try:
+        await init_scheduler(server_config)
+    except BaseException:
+        # init_scheduler raised after recorder.open() — the `try: yield ...
+        # finally:` cleanup below is never entered, so we have to close the
+        # recorder and unregister the global handle here or the summary is
+        # silently never written.
+        if recorder is not None:
+            set_global_recorder(None)
+            recorder.close()
+        raise
+
     try:
         yield
     finally:

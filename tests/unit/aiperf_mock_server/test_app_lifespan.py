@@ -58,3 +58,60 @@ async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
         "recorder.close() did not run after scheduler shutdown failed — "
         "summary.json was not written"
     )
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_recorder_when_scheduler_init_raises(
+    tmp_path, monkeypatch
+) -> None:
+    """If `init_scheduler()` raises during startup *after* `recorder.open()`
+    has already run, the recorder must still be closed and the global
+    handle unregistered.
+
+    Without this, the `try: yield ... finally:` cleanup block is never
+    entered (the exception propagates out of `lifespan` before `yield`),
+    so the global recorder stays installed, the JSONL file handle leaks,
+    and `<path>.summary.json` is never written.
+
+    Symmetric to `test_lifespan_closes_recorder_when_scheduler_shutdown_raises`
+    above; this one covers the startup side.
+    """
+    from aiperf_mock_server.app import lifespan
+    from aiperf_mock_server.request_recorder import get_global_recorder
+
+    rec_path = tmp_path / "rec.jsonl"
+    summary_path = tmp_path / "rec.jsonl.summary.json"
+
+    test_cfg = MockServerConfig(
+        record_requests=str(rec_path),
+        tokenizer="builtin",
+        fast=True,
+        dcgm_auto_load=False,
+    )
+    monkeypatch.setattr("aiperf_mock_server.app.server_config", test_cfg)
+
+    async def boom_init_scheduler(_cfg) -> None:
+        raise RuntimeError("simulated scheduler init failure")
+
+    async def noop_shutdown_scheduler() -> None:
+        return None
+
+    monkeypatch.setattr("aiperf_mock_server.app.init_scheduler", boom_init_scheduler)
+    monkeypatch.setattr(
+        "aiperf_mock_server.app.shutdown_scheduler", noop_shutdown_scheduler
+    )
+
+    assert not summary_path.exists()
+
+    fastapi_app = FastAPI()
+    with pytest.raises(RuntimeError, match="simulated scheduler init failure"):
+        async with lifespan(fastapi_app):
+            pytest.fail("yield should not have been reached")  # pragma: no cover
+
+    assert summary_path.exists(), (
+        "recorder.close() did not run after init_scheduler failed — "
+        "summary.json was not written"
+    )
+    assert get_global_recorder() is None, (
+        "global recorder was left installed after init_scheduler failed"
+    )
