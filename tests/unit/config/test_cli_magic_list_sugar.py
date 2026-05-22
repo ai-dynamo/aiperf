@@ -15,6 +15,7 @@ from pytest import param
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.config.loader import build_benchmark_plan
 from aiperf.config.loader.parsing import (
     parse_float_or_float_list,
     parse_int_or_int_list,
@@ -95,6 +96,25 @@ class TestPrefillConcurrencyMagicList:
             "phases.profiling.concurrency": [4, 8],
             "phases.profiling.prefill_concurrency": [1, 2],
         }
+
+    def test_concurrency_sweep_preserves_api_key_in_expanded_plan(self):
+        cli = CLIConfig(
+            model_names=["m"],
+            api_key="sk-real-prod-key",
+            concurrency="1,2",
+            request_count=1,
+        )
+
+        plan = build_benchmark_plan(convert_cli_to_aiperf(cli))
+
+        assert [c.endpoint.api_key for c in plan.configs] == [
+            "sk-real-prod-key",
+            "sk-real-prod-key",
+        ]
+        assert [
+            next(p for p in c.phases if p.name == "profiling").concurrency
+            for c in plan.configs
+        ] == [1, 2]
 
 
 class TestRequestRateMagicList:

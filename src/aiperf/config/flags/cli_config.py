@@ -44,6 +44,7 @@ from aiperf.common.enums import (
     ExportLevel,
     GPUTelemetryMode,
     ImageFormat,
+    ImageSource,
     ModelSelectionStrategy,
     RequestContentType,
     ServerMetricsFormat,
@@ -1243,6 +1244,24 @@ class CLIConfig(BaseConfig):
             group=Groups.IMAGE_INPUT,
         ),
     ] = ImageFormat.PNG
+
+    image_source: Annotated[
+        ImageSource | Path,
+        Field(
+            default=ImageSource.NOISE,
+            description="Source image generation mode (default `noise`). "
+            "`noise` generates random noise images on the fly at the requested dimensions — no files on disk required, "
+            "and the pool is effectively unbounded so servers cannot dedupe on identical inputs. "
+            "`assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
+            "and resizes them to the requested dimensions. "
+            "A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). "
+            "Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
+        ),
+        CLIParameter(
+            name=("--image-source",),
+            group=Groups.IMAGE_INPUT,
+        ),
+    ]
 
     ##############################################################################
     # Video Input
