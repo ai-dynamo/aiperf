@@ -12,7 +12,7 @@ from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.models import MetricResult
 from aiperf.common.models.branch_stats import BranchStats
-from aiperf.common.models.export_models import JsonExportData
+from aiperf.common.models.export_models import JsonExportData, JsonMetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 from aiperf.plugin.enums import EndpointType
@@ -152,6 +152,71 @@ class TestMetricsJsonExporter:
             # assert data["input_config"]["output"]["artifact_directory"] == str(
             #     output_dir
             # )
+
+    @pytest.mark.asyncio
+    async def test_json_export_includes_profile_context_overflow_count_side_channel(
+        self, mock_user_config
+    ):
+        class _Results:
+            records = []
+            start_ns = None
+            end_ns = None
+            was_cancelled = False
+            error_summary = []
+            context_overflow_count = 3
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+            exporter_config = ExporterConfig(
+                results=_Results(),
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                raw = json.load(f)
+
+        assert raw["context_overflow_count"] == {"unit": "requests", "avg": 3.0}
+
+    @pytest.mark.asyncio
+    async def test_json_export_merges_profile_context_overflow_count_side_channel(
+        self, mock_user_config
+    ):
+        class _Results:
+            records = []
+            start_ns = None
+            end_ns = None
+            was_cancelled = False
+            error_summary = []
+            context_overflow_count = 3
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+            exporter_config = ExporterConfig(
+                results=_Results(),
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            with patch.object(
+                exporter,
+                "_prepare_metrics_for_json",
+                return_value={
+                    "context_overflow_count": JsonMetricResult(unit="requests", avg=0.0)
+                },
+            ):
+                await exporter.export()
+
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                raw = json.load(f)
+
+        assert raw["context_overflow_count"] == {"unit": "requests", "avg": 3.0}
 
     @pytest.mark.asyncio
     async def test_json_export_count_sum_per_metric_type(self, mock_user_config):

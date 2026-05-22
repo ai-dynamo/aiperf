@@ -134,6 +134,35 @@ async def test_report_realtime_metrics_dashboard_skips_log_but_publishes() -> No
 
 
 @pytest.mark.asyncio
+async def test_report_realtime_metrics_uses_precomputed_snapshot_without_rescrape() -> (
+    None
+):
+    rm = _make_manager(_phase_stats(completed=1903, sent=2031))
+    server_metrics_accumulator = MagicMock()
+    server_metrics_accumulator.realtime_snapshot.return_value = {"num_running": 99.0}
+    rm._server_metrics_accumulator = server_metrics_accumulator
+    with (
+        patch.object(
+            rm_module,
+            "generate_realtime_metrics",
+            new=AsyncMock(return_value=_metrics()),
+        ),
+        patch.object(
+            rm_module,
+            "filter_display_metrics",
+            side_effect=lambda m: m,
+        ),
+    ):
+        await rm_module.RecordsManager._report_realtime_metrics(
+            rm,
+            server_snapshot={"num_running": 2.0},
+        )
+
+    server_metrics_accumulator.realtime_snapshot.assert_not_called()
+    rm.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_zero_interval_short_circuits_task(monkeypatch) -> None:
     rm = _make_manager(_phase_stats(completed=1, sent=1))
     monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.0)
