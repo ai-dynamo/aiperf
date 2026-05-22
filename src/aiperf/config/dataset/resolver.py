@@ -224,27 +224,36 @@ class DatasetResolver:
 
     @staticmethod
     def _read_first_jsonl_record(file_path: str) -> dict | None:
-        """Return the first JSON-parseable line of ``file_path`` as a dict.
+        """Return the first JSON-object line of ``file_path`` as a dict.
 
-        Returns ``None`` for an empty file or a non-JSON first line (e.g.
-        BurstGPT's CSV header) so the caller can fall through to
-        structural detection. Uses ``orjson.loads`` directly rather than
-        ``load_json_str`` because a non-JSON first line is an expected
-        outcome here — ``load_json_str`` would log a misleading "Failed
-        to parse JSON string" warning on every successful CSV
-        auto-detect. Lets ``OSError`` propagate so callers can
-        distinguish "can't read the file at all" from "read it but the
-        first line isn't JSON".
+        Returns ``None`` for any of: an empty file, a binary or non-UTF-8
+        file (the text iterator raises ``UnicodeDecodeError``), a
+        non-JSON first line (e.g. BurstGPT's CSV header), or a first
+        line that parses as valid JSON but isn't an object (a list,
+        string, or number). All of these are expected probe outcomes —
+        the caller falls through to structural detection so each
+        loader's ``can_load`` gets a chance.
+
+        Uses ``orjson.loads`` directly rather than ``load_json_str``
+        because the non-JSON case is expected here; ``load_json_str``
+        would log a misleading "Failed to parse JSON string" warning on
+        every successful CSV auto-detect. Lets ``OSError`` propagate so
+        callers can distinguish "can't read the file at all" from "read
+        it but the first line isn't a JSON object".
         """
         import orjson
 
-        with open(file_path) as f:
-            for line in f:
-                if line := line.strip():
-                    try:
-                        return orjson.loads(line)
-                    except orjson.JSONDecodeError:
-                        return None
+        try:
+            with open(file_path) as f:
+                for line in f:
+                    if line := line.strip():
+                        try:
+                            parsed = orjson.loads(line)
+                        except orjson.JSONDecodeError:
+                            return None
+                        return parsed if isinstance(parsed, dict) else None
+        except UnicodeDecodeError:
+            return None
         return None
 
     @staticmethod

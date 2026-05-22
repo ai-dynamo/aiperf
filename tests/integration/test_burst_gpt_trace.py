@@ -48,7 +48,7 @@ class TestBurstGPTTraceIntegration:
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
-    ):
+    ) -> None:
         """``--custom-dataset-type burst_gpt_trace --fixed-schedule`` runs end-to-end.
 
         Regresses the resolver bug where ``_check_timing_data`` JSON-parsed
@@ -83,7 +83,7 @@ class TestBurstGPTTraceIntegration:
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
-    ):
+    ) -> None:
         """No ``--custom-dataset-type`` flag — the loader's ``can_load``
         recognizes the BurstGPT CSV header on its own. Regresses the
         ``_detect_type`` bug where a ValueError from JSON-parsing the CSV
@@ -109,3 +109,4 @@ class TestBurstGPTTraceIntegration:
 
         assert result.exit_code == 0
         assert result.request_count == len(rows)
+        assert result.has_all_outputs
