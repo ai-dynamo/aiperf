@@ -358,3 +358,247 @@ class TestPathologicalDatasetRows:
         assert msgs is not None
         assert len(msgs) == 1
         assert msgs[0]["role"] == "user"
+
+
+class TestResolveTasksAdversarial:
+    """Edge cases on ``--accuracy-tasks`` parsing not covered by
+    ``TestResolveTasks``."""
+
+    def test_empty_list_returns_all_27_subtasks(self) -> None:
+        """A bare ``--accuracy-tasks`` with no values reaches the resolver
+        as ``[]`` (falsy) — equivalent to ``None`` / ``["all"]``."""
+        assert len(_resolve_tasks([])) == 27
+
+    def test_mixed_case_all_returns_all_27_subtasks(self) -> None:
+        """``"All"`` / ``"ALL"`` must match case-insensitively. The
+        docstring promises this; pin it so a future case-sensitive
+        refactor breaks the test loudly."""
+        assert len(_resolve_tasks(["All"])) == 27
+        assert len(_resolve_tasks(["ALL"])) == 27
+
+    def test_all_mixed_with_typo_raises(self) -> None:
+        """``["all", "NOT_A_REAL_TASK"]`` used to silently return every
+        subtask and swallow the typo (the parallel HellaSwag bug AIP-877
+        fixed). Must now raise so a user typo fails loudly instead of
+        running the whole 27-task benchmark."""
+        with pytest.raises(ValueError, match="'all' cannot be mixed"):
+            _resolve_tasks(["all", "not_a_real_task"])
+
+    def test_all_mixed_with_valid_name_also_raises(self) -> None:
+        """Even when both names would individually be accepted, mixing
+        ``"all"`` with anything else is ambiguous and must fail."""
+        with pytest.raises(ValueError, match="'all' cannot be mixed"):
+            _resolve_tasks(["all", "navigate"])
+
+    def test_whitespace_in_task_name_raises(self) -> None:
+        """A whitespace-bearing name is not silently trimmed — pin the
+        loud-failure mode so accidental YAML spacing is caught."""
+        with pytest.raises(ValueError, match="Unknown BBH subtask"):
+            _resolve_tasks([" boolean_expressions "])
+
+    def test_hyphenated_task_name_raises(self) -> None:
+        """Hyphens aren't normalized. ``"boolean-expressions"`` upper-
+        cases to ``"BOOLEAN-EXPRESSIONS"`` which is not a valid enum
+        attribute, so the resolver raises."""
+        with pytest.raises(ValueError, match="Unknown BBH subtask"):
+            _resolve_tasks(["boolean-expressions"])
+
+    def test_mixed_valid_and_invalid_lists_only_invalid(self) -> None:
+        """When some names resolve and others don't, the unknown-list
+        portion of the error must contain only the unknown name — no
+        false positive on the valid one."""
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_tasks(["navigate", "not_a_real"])
+        msg = str(exc_info.value)
+        assert "not_a_real" in msg
+        # The error also lists the full valid set after "Valid subtasks:"
+        # for guidance, so narrow the check to the unknown-list portion.
+        unknown_portion = msg.split("Valid subtasks:")[0]
+        assert "'navigate'" not in unknown_portion
+
+    def test_duplicate_task_names_resolve_to_duplicate_enums(self) -> None:
+        """The resolver does not deduplicate. Passing the same task
+        twice yields two entries and will trigger ``load_dataset``
+        twice for the same subtask — pin the behavior so callers know
+        the cost."""
+        result = _resolve_tasks(["navigate", "navigate"])
+        assert len(result) == 2
+        assert result[0] is result[1]
+
+
+class TestConstructorWithoutDeepEval:
+    """The constructor refuses to build when the ``[accuracy]`` extras
+    aren't available — otherwise downstream ``BigBenchHardTemplate``
+    calls would crash with an unhelpful ``NameError``."""
+
+    def test_missing_deepeval_raises_with_install_hint(self) -> None:
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench._HAS_DEEPEVAL", False
+        ):
+            with pytest.raises(RuntimeError, match=r"aiperf\[accuracy\]"):
+                BigBenchBenchmark(run=_make_run())
+
+
+class TestOutputInvariants:
+    """Per-problem fields that should always agree do agree."""
+
+    @pytest.mark.asyncio
+    async def test_prompt_equals_first_chat_message_content(self) -> None:
+        """``prompt`` (the flat completions string) and the lone chat
+        message's ``content`` must be byte-equal — drift here would
+        mean completions vs chat endpoints render different prompts
+        for the same problem."""
+        per_task = {"navigate": [_make_row("Q?", "Yes")]}
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ):
+            bench = BigBenchBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["navigate"], n_shots=3, enable_cot=True
+            )
+        msgs = problems[0].raw_messages
+        assert msgs is not None
+        assert problems[0].prompt == msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_metadata_bbh_task_matches_task_field(self) -> None:
+        """``problem.task`` and ``problem.metadata['bbh_task']`` must
+        match for every problem — the accuracy CSV reads the former,
+        downstream tooling the latter, and both refer to the same
+        subtask."""
+        per_task = {
+            "navigate": [_make_row("Q1", "Yes")],
+            "object_counting": [_make_row("Q2", "5")],
+        }
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ):
+            bench = BigBenchBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["navigate", "object_counting"],
+                n_shots=3,
+                enable_cot=True,
+            )
+        for p in problems:
+            assert p.task == p.metadata["bbh_task"]
+
+    @pytest.mark.asyncio
+    async def test_generation_size_is_plumbed_through_metadata(self) -> None:
+        """``DEFAULT_GENERATION_SIZE=1024`` is carried in per-problem
+        metadata so request-level overrides can read it without
+        round-tripping the module constant."""
+        per_task = {"navigate": [_make_row("Q?", "Yes")]}
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ):
+            bench = BigBenchBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["navigate"], n_shots=3, enable_cot=True
+            )
+        assert problems[0].metadata["generation_size"] == DEFAULT_GENERATION_SIZE
+
+    @pytest.mark.asyncio
+    async def test_multitask_order_preserves_task_input_order(self) -> None:
+        """When ``tasks=[A, B]``, every problem for A precedes every
+        problem for B in the output list. The accuracy CSV's per-task
+        grouping depends on this contiguity."""
+        per_task = {
+            "navigate": [_make_row("nav-q", "Yes")],
+            "object_counting": [
+                _make_row("oc-q1", "1"),
+                _make_row("oc-q2", "2"),
+            ],
+        }
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ):
+            bench = BigBenchBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["navigate", "object_counting"],
+                n_shots=3,
+                enable_cot=True,
+            )
+        assert [p.task for p in problems] == [
+            "navigate",
+            "object_counting",
+            "object_counting",
+        ]
+
+
+class TestLoadDatasetInvocation:
+    """Pin the ``load_dataset(DATASET_NAME, task.value)`` call shape so
+    a rename of ``DATASET_NAME`` or an accidental kwarg/positional
+    reorder is caught."""
+
+    @pytest.mark.asyncio
+    async def test_load_dataset_called_once_per_task_with_canonical_args(
+        self,
+    ) -> None:
+        per_task = {
+            "navigate": [_make_row("Q1", "Yes")],
+            "object_counting": [_make_row("Q2", "1")],
+        }
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ) as mock_load:
+            bench = BigBenchBenchmark(run=_make_run())
+            await bench.load_problems(
+                tasks=["navigate", "object_counting"],
+                n_shots=3,
+                enable_cot=True,
+            )
+        # Two requested tasks → exactly two load_dataset calls, each
+        # with the canonical dataset name positional and the subtask
+        # value positional. Asserting via call_args_list catches both a
+        # rename of DATASET_NAME and a future swap to kwargs.
+        assert [c.args for c in mock_load.call_args_list] == [
+            ("lukaemon/bbh", "navigate"),
+            ("lukaemon/bbh", "object_counting"),
+        ]
+
+
+class TestPathologicalRowContent:
+    """Hostile row content the upstream dataset could theoretically
+    ship."""
+
+    @pytest.mark.asyncio
+    async def test_empty_input_string_still_renders_prompt(self) -> None:
+        """A blank ``input`` is unusual but shouldn't crash — DeepEval's
+        template just appends it verbatim. Pin the passthrough so we
+        notice if DeepEval ever rejects empty inputs."""
+        per_task = {"navigate": [_make_row(input_text="", target="Yes")]}
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ):
+            bench = BigBenchBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["navigate"], n_shots=3, enable_cot=True
+            )
+        # Prompt still rendered — the task description and shot
+        # examples are always present even when the input is empty.
+        assert len(problems) == 1
+        assert len(problems[0].prompt) > 0
+
+    @pytest.mark.asyncio
+    async def test_numeric_target_coerced_to_string(self) -> None:
+        """A numeric ``target`` (e.g. an int from a future schema
+        change) is coerced to ``str`` by Pydantic since
+        ``BenchmarkProblem.ground_truth`` is typed ``str`` and the base
+        model runs in lax-validation mode. Pin the contract so callers
+        can rely on string equality in graders."""
+        per_task = {"object_counting": [{"input": "Count items", "target": 42}]}
+        with patch(
+            "aiperf.accuracy.benchmarks.bigbench.load_dataset",
+            side_effect=_per_task_loader(per_task),
+        ):
+            bench = BigBenchBenchmark(run=_make_run())
+            problems = await bench.load_problems(
+                tasks=["object_counting"], n_shots=3, enable_cot=True
+            )
+        assert problems[0].ground_truth == "42"
