@@ -406,6 +406,15 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default="content",
         description="Key inside each message dict for the text content. Used with conversation_column (e.g. 'content', 'value').",
     )
+    multi_turn: bool = Field(
+        default=False,
+        description=(
+            "When true, each row becomes one Conversation with multiple Turn objects. "
+            "For HFConversationDatasetLoader: user→assistant (OpenAI roles) or human→gpt "
+            "(ShareGPT-style ``from`` fields) pairs. For SpeedBenchLoader and SpecBenchLoader: "
+            "all entries in the ``turns`` array. Default false preserves single-turn behavior."
+        ),
+    )
     streaming: bool = Field(
         default=False,
         description=(

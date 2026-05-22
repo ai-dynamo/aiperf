@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image as PILImage
@@ -93,6 +94,55 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations[0].turns) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "First message"
+
+    async def test_single_turn_skips_system_message(self, loader):
+        """Single-turn extraction should prefer the first user message, not a system preamble."""
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "system", "content": "You are helpful"},
+                        {"role": "user", "content": "What is 2+2?"},
+                        {"role": "assistant", "content": "4"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "What is 2+2?"
+
+    async def test_single_turn_skips_assistant_first_message(self, loader):
+        """Single-turn extraction should skip a leading assistant message."""
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "assistant", "content": "Hello!"},
+                        {"role": "user", "content": "Tell me a joke"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "Tell me a joke"
+
+    async def test_single_turn_fallback_when_no_roles(self, loader):
+        """When messages have no role tags, fall back to the literal first message."""
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"content": "What is AI?"},
+                        {"content": "Artificial intelligence"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "What is AI?"
 
     async def test_each_row_becomes_one_conversation(self, loader):
         data = {
@@ -490,3 +540,260 @@ class TestHFConversationDatasetLoader:
             streaming=True,
         )
         assert loader.streaming is True
+
+    async def test_multi_turn_openai_user_assistant_pairs(self, cli_config):
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            message_content_key="content",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "First?"},
+                        {"role": "assistant", "content": "First reply."},
+                        {"role": "user", "content": "Second?"},
+                        {"role": "assistant", "content": "Second reply."},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].texts[0].contents[0] == "First?"
+        assert conversations[0].turns[1].texts[0].contents[0] == "Second?"
+
+    async def test_multi_turn_sharegpt_human_gpt_pairs(self, cli_config):
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversations",
+            message_content_key="value",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversations": [
+                        {"from": "human", "value": "Hi"},
+                        {"from": "gpt", "value": "Hello"},
+                        {"from": "human", "value": "Bye"},
+                        {"from": "gpt", "value": "Goodbye"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].texts[0].contents[0] == "Hi"
+        assert conversations[0].turns[1].texts[0].contents[0] == "Bye"
+
+    async def test_multi_turn_skips_row_when_no_pairs(self, cli_config):
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "Only user, no assistant"},
+                    ]
+                },
+                {
+                    "conversation": [
+                        {"role": "user", "content": "Q"},
+                        {"role": "assistant", "content": "A"},
+                    ]
+                },
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+
+    async def test_multi_turn_sets_max_tokens_when_tokenizer_provided(self, cli_config):
+        tok = MagicMock()
+        tok.encode.side_effect = lambda s: list(range(max(1, len(s))))
+
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+            tokenizer=tok,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "What is four plus four?"},
+                        {"role": "assistant", "content": "The answer is eight."},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations[0].turns) == 1
+        assert conversations[0].turns[0].max_tokens == len("The answer is eight.")
+
+    async def test_multi_turn_skips_system_messages_between_pairs(self, cli_config):
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "system", "content": "You are helpful"},
+                        {"role": "user", "content": "Q1"},
+                        {"role": "system", "content": "reminder"},
+                        {"role": "assistant", "content": "A1"},
+                        {"role": "user", "content": "Q2"},
+                        {"role": "assistant", "content": "A2"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].texts[0].contents[0] == "Q1"
+        assert conversations[0].turns[1].texts[0].contents[0] == "Q2"
+
+    async def test_multi_turn_skips_row_with_empty_assistant(self, cli_config):
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "Q"},
+                        {"role": "assistant", "content": ""},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 0
+
+    async def test_multi_turn_image_only_on_first_turn(self, cli_config):
+        pil_img = _make_pil_image()
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            image_column="image",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "Describe this"},
+                        {"role": "assistant", "content": "It is a red square"},
+                        {"role": "user", "content": "What color?"},
+                        {"role": "assistant", "content": "Red"},
+                    ],
+                    "image": pil_img,
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations[0].turns) == 2
+        assert len(conversations[0].turns[0].images) == 1
+        assert conversations[0].turns[1].images == []
+
+    async def test_multi_turn_validation_rejection_drops_entire_row(self, cli_config):
+        tok = MagicMock()
+        tok.encode.side_effect = lambda s: list(range(len(s)))
+
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+            tokenizer=tok,
+        )
+
+        orig_is_valid = loader.is_valid_sequence
+        call_count = {"n": 0}
+
+        def reject_second_pair(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                return False
+            return orig_is_valid(**kwargs)
+
+        loader.is_valid_sequence = reject_second_pair
+
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "First question here"},
+                        {"role": "assistant", "content": "First answer here"},
+                        {"role": "user", "content": "Second question here"},
+                        {"role": "assistant", "content": "Second answer here"},
+                    ]
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 0
+
+    async def test_multi_turn_warns_when_no_tokenizer(self, cli_config, caplog):
+        """When multi_turn=True but no tokenizer is configured, validation is
+        silently disabled and Turn.max_tokens=None for every turn. Surface this
+        as a warning so users learn their filter settings are being skipped."""
+        import logging
+
+        loader = HFConversationDatasetLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            multi_turn=True,
+            tokenizer=None,
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [
+                        {"role": "user", "content": "Q"},
+                        {"role": "assistant", "content": "A"},
+                    ]
+                }
+            ]
+        }
+        with caplog.at_level(logging.WARNING):
+            conversations = await loader.convert_to_conversations(data)
+
+        assert any(
+            "multi_turn=True but no tokenizer" in record.message
+            for record in caplog.records
+        ), f"expected warning, got records: {[r.message for r in caplog.records]}"
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].max_tokens is None
