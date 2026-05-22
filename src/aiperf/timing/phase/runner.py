@@ -315,7 +315,10 @@ class PhaseRunner(TaskManagerMixin):
             # begins issuing root turn-0 credits, so those children's first
             # requests are in flight alongside the root's own turn 0.
             # Fire-and-forget by contract (validator guarantees background).
-            if self._branch_orchestrator is not None:
+            if (
+                self._branch_orchestrator is not None
+                and self._config.phase != CreditPhase.WARMUP
+            ):
                 await self._branch_orchestrator.dispatch_pre_session_branches()
 
             self._execution_task = self.execute_async(strategy.execute_phase())
@@ -324,11 +327,23 @@ class PhaseRunner(TaskManagerMixin):
 
             if self._was_cancelled:
                 if not self._lifecycle.is_complete:
-                    self._lifecycle.mark_complete(grace_period_triggered=True)
+                    self._lifecycle.mark_complete(grace_period_triggered=False)
                     self._progress.freeze_completed_counts()
                 self._progress.all_credits_returned_event.set()
+                if self._progress_task is not None:
+                    self._progress_task.cancel()
+                for ramper in self._rampers:
+                    ramper.stop()
+                self._scheduler.cancel_all()
                 self._branch_orchestrator.cleanup()
-                return self._progress.create_stats(self._lifecycle)
+                stats = self._progress.create_stats(self._lifecycle)
+                self.notice(self._format_phase_complete(stats))
+                await self._phase_publisher.publish_progress(stats)
+                branch_stats = self._snapshot_branch_stats()
+                await self._phase_publisher.publish_phase_complete(
+                    stats, branch_stats=branch_stats
+                )
+                return stats
 
             # 11. Seamless mode: phase flows into next without waiting for returns
             #     Progress task continues in background until phase complete
