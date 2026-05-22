@@ -120,6 +120,32 @@ def create_sagemaker_capture_file(
     return capture_file
 
 
+def create_burst_gpt_csv_file(
+    tmp_path: Path,
+    rows: list[dict],
+    filename: str = "burst_gpt.csv",
+) -> Path:
+    """Create a BurstGPT trace CSV file for testing.
+
+    Each row dict must carry ``Timestamp``, ``Request tokens``, and
+    ``Response tokens``; any additional keys (``Model``, ``Total tokens``,
+    ``Log Type``) are written verbatim so the fixture mirrors real BurstGPT.
+    """
+    import csv
+
+    if not rows:
+        raise ValueError("rows must not be empty")
+
+    fieldnames = list(rows[0].keys())
+    csv_path = tmp_path / filename
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+    return csv_path
+
+
 def create_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
     """Create a rankings dataset for testing.
 
