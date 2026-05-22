@@ -28,6 +28,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - YAML plugin registry for extensible features (`src/aiperf/plugin/plugins.yaml`).
 - Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
 - Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
+- Reading filesystem paths: use `aiperf.common.path_safety.safe_read_template_path` instead of inline `Path().read_text()` / `open().read()`. Returns `None` on safety-check failure; caller picks the fallback semantic. See `docs/dev/patterns.md` § "Safe Filesystem Reads Pattern".
 - No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
 - Comments only for "why?" not "what".
 - Enums are string-based - use `MessageType.X` directly, never `.value`.
