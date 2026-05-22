@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aiperf.common.enums import ImageSource
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.config.flags._converter_dataset import build_dataset
@@ -48,3 +50,12 @@ def test_cli_image_source_path_flows_to_synthetic_dataset(tmp_path: Path) -> Non
     main_dataset = aiperf_config.benchmark.get_default_dataset()
     assert isinstance(main_dataset, SyntheticDataset)
     assert main_dataset.images.source == source_dir
+
+
+def test_cli_image_source_rejected_for_file_dataset(tmp_path: Path) -> None:
+    input_file = tmp_path / "inputs.jsonl"
+    input_file.write_text("{}\n")
+    user = CLIConfig(input_file=str(input_file), image_source="assets")
+
+    with pytest.raises(ValueError, match="--image-source is only supported"):
+        build_dataset(user)

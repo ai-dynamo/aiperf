@@ -486,6 +486,7 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
     ("image_batch_size", "--image-batch-size"),
+    ("image_source", "--image-source"),
     ("audio_batch_size", "--audio-batch-size"),
     ("video_batch_size", "--video-batch-size"),
 )
