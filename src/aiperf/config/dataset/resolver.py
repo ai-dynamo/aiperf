@@ -244,7 +244,7 @@ class DatasetResolver:
         import orjson
 
         try:
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 for line in f:
                     if line := line.strip():
                         try:
