@@ -432,11 +432,11 @@ class TestConstructorWithoutDeepEval:
     calls would crash with an unhelpful ``NameError``."""
 
     def test_missing_deepeval_raises_with_install_hint(self) -> None:
-        with patch(
-            "aiperf.accuracy.benchmarks.bigbench._HAS_DEEPEVAL", False
+        with (
+            patch("aiperf.accuracy.benchmarks.bigbench._HAS_DEEPEVAL", False),
+            pytest.raises(RuntimeError, match=r"aiperf\[accuracy\]"),
         ):
-            with pytest.raises(RuntimeError, match=r"aiperf\[accuracy\]"):
-                BigBenchBenchmark(run=_make_run())
+            BigBenchBenchmark(run=_make_run())
 
 
 class TestOutputInvariants:
