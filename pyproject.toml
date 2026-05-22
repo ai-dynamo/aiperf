@@ -118,6 +118,13 @@ accuracy = [
     "latex2sympy2-extended>=1.0.6",
     "lighteval>=0.13.0",
     "sympy>=1.14.0",
+    # deepeval is the upstream reference for the HellaSwag and
+    # BigBench-Hard benchmark prompt templates. Aiperf calls
+    # ``HellaSwagTemplate.generate_output`` (and
+    # ``BigBenchHardTemplate.generate_output`` on the BigBench branch)
+    # directly so prompts are byte-equal to what the trt-llm benchmark
+    # recipe ships.
+    "deepeval>=2.9.0,<5.0.0",
 ]
 
 [dependency-groups]
