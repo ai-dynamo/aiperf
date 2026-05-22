@@ -60,7 +60,7 @@ Each row is treated as an independent single-turn request. AIPerf synthesizes pr
 
 Download a trace file from the BurstGPT repository and run a benchmark:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=700 -->
 ```bash
 # Download a trace file
 curl -Lo burst_gpt.csv \

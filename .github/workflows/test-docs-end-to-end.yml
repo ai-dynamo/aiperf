@@ -36,12 +36,12 @@ jobs:
     outputs:
       run_test: ${{ steps.compare.outputs.run_test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ inputs.source_ref || github.sha }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -93,14 +93,49 @@ jobs:
             echo "run_test=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # Sharded across 8 GPU runners: 4 shards for vllm-default-openai (the
+  # chat server with 35+ tutorial commands, the wall-clock bottleneck) and
+  # one shard each for the smaller modality-specific servers. The runner
+  # pool (prod-aiperf-tester-amd-gpu-v1) caps at maxRunners=16, so 8 in
+  # parallel fits comfortably; see velonix/flux-apps/.../prod-tester-v1/.
+  # Each shard pays its own ~5-10 min vLLM boot + AIPerf docker build, so
+  # going past ~8 shards has diminishing returns.
   test-docs-end-to-end:
-    name: Test Docs End-to-End
+    name: Test Docs End-to-End (${{ matrix.shard.id }})
     needs: detect-changes
     if: needs.detect-changes.outputs.run_test == 'true'
     runs-on: prod-aiperf-tester-amd-gpu-v1
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - id: vllm-default-openai-1of4
+            server: vllm-default-openai
+            shard_index: 0
+            shard_total: 4
+          - id: vllm-default-openai-2of4
+            server: vllm-default-openai
+            shard_index: 1
+            shard_total: 4
+          - id: vllm-default-openai-3of4
+            server: vllm-default-openai
+            shard_index: 2
+            shard_total: 4
+          - id: vllm-default-openai-4of4
+            server: vllm-default-openai
+            shard_index: 3
+            shard_total: 4
+          - id: vllm-audio-openai
+            server: vllm-audio-openai
+          - id: vllm-vision-openai
+            server: vllm-vision-openai
+          - id: vllm-video-openai
+            server: vllm-video-openai
+          - id: vllm-embeddings-openai
+            server: vllm-embeddings-openai
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
@@ -109,6 +144,12 @@ jobs:
           AIPERF_SOURCE_DIR: ${{ github.workspace }}
           CI_JOB_NAME: test_docs_end_to_end
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Matrix-shard params. SHARD_INDEX/SHARD_TOTAL are unset for the
+          # single-shard servers; setup_test.sh treats their absence as
+          # "no slicing" and runs all commands for the named server.
+          SERVER_NAME: ${{ matrix.shard.server }}
+          SHARD_INDEX: ${{ matrix.shard.shard_index }}
+          SHARD_TOTAL: ${{ matrix.shard.shard_total }}
         run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
 
       - name: Cleanup Docker containers

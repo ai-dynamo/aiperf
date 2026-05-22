@@ -50,7 +50,7 @@ AIPerf loads the AIMO dataset from HuggingFace and uses each problem as a single
 AIMO problems elicit long chain-of-thought responses. Use `--prompt-output-tokens-mean` to cap
 output length and reduce benchmark duration:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=350 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
