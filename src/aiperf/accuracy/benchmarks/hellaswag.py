@@ -33,6 +33,16 @@ The grammar in line 1 ("questions (with answers) are sentence
 completion") is verbatim from DeepEval — we don't fix it; reproducing
 the bug is part of reference parity.
 
+Dataset revision policy:
+    ``load_dataset("Rowan/hellaswag")`` is intentionally **not** pinned
+    to a commit ``revision=``. The trt-llm benchmark recipe also leaves
+    this unpinned, and matching the recipe's resolution behavior is
+    part of reference parity. If Rowan/hellaswag is re-uploaded or
+    rebased upstream, downstream callers should expect the byte-equal
+    pin against ``HellaSwagTemplate.generate_output`` to drift in
+    lockstep with whatever the recipe would resolve. Pin a SHA here
+    only if/when the recipe pins one.
+
 Reference:
     deepeval/benchmarks/hellaswag/hellaswag.py
     deepeval/benchmarks/hellaswag/template.py
