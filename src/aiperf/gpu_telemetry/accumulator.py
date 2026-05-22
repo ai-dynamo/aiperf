@@ -406,9 +406,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         total_power_w, power_count = self._sum_gpu_power_watts(time_filter)
         total_energy_j, energy_count = self._sum_gpu_energy_joules(time_filter)
         self.debug(
-            f"compute_efficiency_metrics totals: power={total_power_w:.2f}W "
-            f"({power_count} GPUs), energy={total_energy_j:.2f}J ({energy_count} GPUs), "
-            f"total_output_tokens={total_output_tokens}"
+            lambda: (
+                f"compute_efficiency_metrics totals: "
+                f"power={total_power_w:.2f}W ({power_count} GPUs), "
+                f"energy={total_energy_j:.2f}J ({energy_count} GPUs), "
+                f"total_output_tokens={total_output_tokens}"
+            )
         )
 
         results: list[MetricResult] = []
@@ -435,8 +438,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             ))  # fmt: skip
         else:
             self.debug(
-                f"Skipping output_tokens_per_joule: "
-                f"total_output_tokens={total_output_tokens}, "
-                f"total_energy_j={total_energy_j:.2f}"
+                lambda: (
+                    f"Skipping output_tokens_per_joule: "
+                    f"total_output_tokens={total_output_tokens}, "
+                    f"total_energy_j={total_energy_j:.2f}"
+                )
             )
         return results
