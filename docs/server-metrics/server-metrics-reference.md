@@ -377,7 +377,8 @@ SGLang is a fast inference engine with RadixAttention for efficient prefix cachi
 | `sglang:num_used_tokens` | gauge | tokens | `engine_type`, `model_name`, `pp_rank`, `tp_rank` | Total tokens currently in use across all requests. |
 | `sglang:num_running_reqs_offline_batch` | gauge | requests | `engine_type`, `model_name`, `pp_rank`, `tp_rank` | Low-priority offline batch requests running. |
 | `sglang:num_paused_reqs` | gauge | requests | `engine_type`, `model_name`, `pid`, `pp_rank`, `tp_rank` | Requests paused by async weight sync. |
-| `sglang:num_retracted_reqs` | gauge | requests | `engine_type`, `model_name`, `pid`, `pp_rank`, `tp_rank` | Requests that were retracted/preempted. |
+| `sglang:num_retracted_reqs` | gauge | requests | `engine_type`, `model_name`, `pid`, `pp_rank`, `tp_rank` | Requests retracted in the current scheduler reporting interval. |
+| `sglang:num_retracted_requests_total` | counter | requests | `engine_type`, `model_name`, `pid`, `pp_rank`, `tp_rank` | Total requests retracted/preempted. |
 | `sglang:num_grammar_queue_reqs` | gauge | requests | `engine_type`, `model_name`, `pp_rank`, `tp_rank` | Requests waiting for grammar processing. |
 
 ### Disaggregated Inference Queues
