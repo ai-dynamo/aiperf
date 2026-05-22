@@ -323,11 +323,12 @@ Processors and exporters raise their `Disabled` exception **in `__init__`** when
 
 ### Suggested Implementation Order
 
-The processors, exporters, and one grader/benchmark pair are already wired end-to-end. Start from the already-working pipeline:
+The processors, exporters, all graders, and four benchmarks (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`) are already wired end-to-end. The remaining work is the five stub benchmarks; mirror the existing loader whose grader matches:
 
-1. **Graders** — use `MultipleChoiceGrader` as reference; implement `ExactMatchGrader` next (simplest), then `MathGrader`
-2. **Benchmarks** — use `MMLUBenchmark` as reference; implement dataset loading for each remaining benchmark
-3. **Stub-plugin validator** — update `AccuracyConfig._reject_stub_plugins()` when a benchmark or grader moves from stubbed to supported
+1. **`aime24`, `aime25`, `math_500`** — mirror `AIMEBenchmark` (`benchmarks/aime.py`); pair with the `math` grader.
+2. **`gpqa_diamond`** — mirror `MMLUBenchmark` (`benchmarks/mmlu.py`); pair with the `multiple_choice` grader.
+3. **`lcb_codegeneration`** — mirror `MMLUBenchmark`'s scaffolding; pair with the `code_execution` grader.
+4. **Stub-plugin validator** — update `AccuracyConfig._reject_stub_plugins()` whenever a benchmark moves from stubbed to supported.
 
 ### Key Files for Reference
 
