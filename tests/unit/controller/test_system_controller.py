@@ -447,3 +447,68 @@ class TestSSLVerificationWarning:
             await system_controller._profile_configure_all_services()
 
             mock_warning.assert_not_called()
+
+
+class TestShutdownDeliveryGrace:
+    """Test that _stop_system_controller respects POST_COMPLETE_GRACE when API enabled."""
+
+    @staticmethod
+    async def _drive_stop(
+        controller: SystemController, monkeypatch: pytest.MonkeyPatch
+    ) -> list[float]:
+        """Invoke _stop_system_controller and return all asyncio.sleep call durations."""
+        import aiperf.controller.system_controller as sc_module
+
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(sc_module.asyncio, "sleep", fake_sleep)
+        # _stop_system_controller ends in os._exit(); mute it so the test process survives.
+        monkeypatch.setattr(sc_module.os, "_exit", lambda code: None)
+
+        controller.publish = AsyncMock()
+        controller.ui = AsyncMock()
+        controller.comms = AsyncMock()
+        controller.proxy_manager = AsyncMock()
+        controller._print_post_benchmark_info_and_metrics = AsyncMock()
+        controller._print_exit_errors_and_log_file = MagicMock()
+
+        await controller._stop_system_controller()
+        return sleeps
+
+    @pytest.mark.asyncio
+    async def test_uses_default_05s_when_api_disabled(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When API is disabled, the original 0.5s ZMQ-delivery wait is preserved."""
+        system_controller._api_enabled = False
+        sleeps = await self._drive_stop(system_controller, monkeypatch)
+        assert sleeps[0] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_extends_to_grace_when_api_enabled(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When API is enabled, wait stretches to POST_COMPLETE_GRACE."""
+        system_controller._api_enabled = True
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+        sleeps = await self._drive_stop(system_controller, monkeypatch)
+        assert sleeps[0] == 7.0
+
+    @pytest.mark.asyncio
+    async def test_floors_at_05s_when_api_enabled_with_small_grace(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Even with grace < 0.5s, ZMQ-delivery floor of 0.5s is preserved."""
+        system_controller._api_enabled = True
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 0.1)
+        sleeps = await self._drive_stop(system_controller, monkeypatch)
+        assert sleeps[0] == 0.5

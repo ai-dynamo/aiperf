@@ -163,6 +163,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
+        self._api_enabled = False
         self._telemetry_endpoints_configured: list[str] = []
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
@@ -264,6 +265,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         if api_port is not None and api_host is not None:
             self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
             await self.service_manager.run_service(ServiceType.API)
+            self._api_enabled = True
 
         async with self.try_operation_or_stop("Register Services"):
             await self.service_manager.wait_for_all_services_registration(
@@ -912,7 +914,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         # time to deliver the broadcast to every subscriber before we start joining
         # processes. 500ms is empirically sufficient under normal load and well
         # under the per-process join timeout in _wait_for_process.
-        await asyncio.sleep(0.5)
+        # When the API server is enabled, extend the wait so the API process can
+        # honor its POST_COMPLETE_GRACE window before _wait_for_process SIGKILLs it.
+        delivery_grace = 0.5
+        if self._api_enabled:
+            delivery_grace = max(
+                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
+            )
+        await asyncio.sleep(delivery_grace)
 
         await self.service_manager.shutdown_all_services()
         await self.comms.stop()
