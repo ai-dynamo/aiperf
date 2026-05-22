@@ -308,14 +308,14 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 
 | Component | Implemented | Still Stubbed | Methods per Stub | Remaining Methods |
 |-----------|-------------|---------------|------------------|-------------------|
-| Graders | 1 (`MultipleChoiceGrader`) | 3 | 2 (`grade`, `extract_answer`) | 6 |
-| Benchmarks | 1 (`MMLUBenchmark`) | 8 | 1 (`load_problems`) | 8 |
+| Graders | 7 (all) | 0 | — | 0 |
+| Benchmarks | 4 (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`) | 5 | 1 (`load_problems`) | 5 |
 | Record Processor | 1 (`AccuracyRecordProcessor`) | 0 | — | 0 |
 | Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
 | Stub-plugin Validator | 0 | 1 | 1 (`AccuracyConfig._reject_stub_plugins`) | 1 |
-| **Total** | **6** | **13** | | **15** |
+| **Total** | **15** | **6** | | **6** |
 
 ### Self-Disabling Pattern
 
