@@ -266,6 +266,34 @@ class TestTextCompletions:
         data = resp.json()
         assert "choices" in data
 
+    async def test_text_completion_token_id_prompt(self, client: AsyncClient):
+        """Test text completion with token-id prompt."""
+        resp = await client.post(
+            "/v1/completions",
+            json={
+                "model": "test-model",
+                "prompt": [11, 22, 33],
+                "max_tokens": 4,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["usage"]["prompt_tokens"] == 3
+
+    async def test_text_completion_batched_token_id_prompt(self, client: AsyncClient):
+        """Test text completion with batched token-id prompt."""
+        resp = await client.post(
+            "/v1/completions",
+            json={
+                "model": "test-model",
+                "prompt": [[11, 22], [33, 44]],
+                "max_tokens": 4,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["usage"]["prompt_tokens"] == 4
+
     async def test_text_completion_streaming(self, client: AsyncClient):
         """Test streaming text completion."""
         resp = await client.post(
