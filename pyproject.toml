@@ -242,7 +242,7 @@ filterwarnings = [
     "ignore:Argument ``constraints_func`` is an experimental feature.*:optuna.exceptions.ExperimentalWarning",
     "ignore:ORJSONResponse is deprecated.*:fastapi.exceptions.FastAPIDeprecationWarning",
     "ignore:CUDA initialization.*The NVIDIA driver on your system is too old.*:UserWarning",
-    "ignore:The model inputs are of type torch.float32.*:botorch.exceptions.warnings.InputDataWarning",
+    "ignore:The model inputs are of type torch.float32.*",
     "ignore:Optimization failed in `gen_candidates_scipy`.*:RuntimeWarning",
     "ignore:Optimization failed on the second try.*:RuntimeWarning",
     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
