@@ -203,13 +203,13 @@ class TestAPIServerSettings:
         "bad_value",
         [
             param("-0.1", id="below_minimum"),
-            param("61", id="above_maximum"),
+            param("301", id="above_maximum"),
         ],
     )  # fmt: skip
     def test_api_server_settings_post_complete_grace_out_of_range_raises(
         self, bad_value: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Values outside [0.0, 60.0] are rejected at settings construction."""
+        """Values outside [0.0, 300.0] are rejected at settings construction."""
         monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", bad_value)
         with pytest.raises(ValueError):
             _APIServerSettings()

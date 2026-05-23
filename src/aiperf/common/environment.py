@@ -87,7 +87,7 @@ class _APIServerSettings(BaseSettings):
     )
     POST_COMPLETE_GRACE: float = Field(
         ge=0.0,
-        le=60.0,
+        le=300.0,
         default=5.0,
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
