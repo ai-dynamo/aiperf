@@ -84,20 +84,22 @@ otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
-dev = [
-  "aiperf[mlflow,otel]",
-  "black>=25.1.0",
+test = [
   "httpx>=0.27.0",
   "hypothesis>=6.0.0",
   "jsonschema>=4.0.0",
   "looptime>=0.5",
-  "pre-commit>=4.2.0",
+  "pytest>=7.0.0",
   "pytest-asyncio",
   "pytest-cov",
-  "pytest>=7.0.0",
   "pytest-xdist>=3.8.0",
-  "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
+]
+dev = [
+  "aiperf[mlflow,otel,test]",
+  "black>=25.1.0",
+  "pre-commit>=4.2.0",
+  "ruff>=0.14.0,<0.15.0",
 ]
 botorch = [
   "optuna-integration>=3.6",
@@ -122,6 +124,20 @@ accuracy = [
 dev = [
     "hypothesis>=6.152.4",
     "pre-commit>=4.6.0",
+]
+
+# uv resolver constraints. ``required-environments`` makes uv refuse
+# to resolve to any package version that lacks a wheel or sdist for
+# every platform listed, which auto-backtracks past partial-upload
+# PyPI releases (e.g. yarl 1.24.0 + greenlet 3.5.1 on 2026-05-{19,20}
+# both shipped without cp313/linux wheels and broke cold builds).
+# Sdist counts as installable — crick ships only sdist on Linux
+# aarch64 and is unaffected (env-builder compiles it from source).
+[tool.uv]
+required-environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [tool.ruff]
