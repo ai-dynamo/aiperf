@@ -88,9 +88,78 @@ class TestShareGPTLoader:
         assert turn.max_tokens == len(["This", "is", "test", "output"])
         assert turn.model == "test-model"
 
+    async def test_convert_multi_turn_sharegpt_roles(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """Entries with human/gpt roles beyond the first pair become extra turns."""
+        dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": "Hello how are you"},
+                    {"from": "gpt", "value": "This is test output"},
+                    {"from": "human", "value": "Follow up question here"},
+                    {"from": "gpt", "value": "Second assistant reply text"},
+                ]
+            }
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+
+        assert len(conversations) == 1
+        conv = conversations[0]
+        assert len(conv.turns) == 2
+        assert conv.turns[0].texts[0].contents[0] == "Hello how are you"
+        assert conv.turns[0].max_tokens == len(["This", "is", "test", "output"])
+        assert conv.turns[1].texts[0].contents[0] == "Follow up question here"
+        assert conv.turns[1].max_tokens == len(["Second", "assistant", "reply", "text"])
+
+    async def test_skips_pair_with_missing_value_key(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """Pairs where a message lacks the 'value' key are silently skipped."""
+        dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": "Hello how are you"},
+                    {"from": "gpt"},
+                    {"from": "human", "value": "Follow up question here"},
+                    {"from": "gpt", "value": "Second assistant reply text"},
+                ]
+            }
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+        assert (
+            conversations[0].turns[0].texts[0].contents[0] == "Follow up question here"
+        )
+
     async def test_get_preferred_sampling_strategy(
         self, sharegpt_loader: ShareGPTLoader
     ):
         """Test that ShareGPTLoader returns the correct preferred sampling strategy."""
         strategy = ShareGPTLoader.get_preferred_sampling_strategy()
         assert strategy == DatasetSamplingStrategy.SEQUENTIAL
+
+    async def test_skips_row_with_non_dict_messages_without_crashing(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """A malformed row whose 'conversations' list contains non-dict items
+        (strings, None, ints) must be skipped — not abort the whole load via
+        AttributeError on the next .get() call. Also covers the case where a
+        row has one valid dict + non-dict noise (fewer than two usable dicts)."""
+        dataset = [
+            {"conversations": ["raw_string", None, 42]},
+            {"conversations": [None, {"from": "gpt", "value": "orphan reply text"}]},
+            {
+                "conversations": [
+                    {"from": "human", "value": "Hello can you help me with a question"},
+                    {"from": "gpt", "value": "Yes I can help you with that question"},
+                ]
+            },
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        assert len(conversations) == 1
+        assert (
+            conversations[0].turns[0].texts[0].contents[0]
+            == "Hello can you help me with a question"
+        )

@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from aiperf import __version__ as aiperf_version
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.orchestrator.models import RunResult
@@ -404,7 +405,7 @@ def test_project_summary_dict_to_sla_filter_end_to_end() -> None:
     # with full percentile dicts.
     payload: dict[str, Any] = {
         "schema_version": "1.1",
-        "aiperf_version": "0.8.0",
+        "aiperf_version": aiperf_version,
         "request_throughput": {"unit": "req/sec", "avg": 1.5, "p95": 1.6},
         "request_latency": {"unit": "ms", "avg": 1500.0, "p95": 2000.0},
         "time_to_first_token": {
