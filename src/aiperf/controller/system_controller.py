@@ -18,6 +18,7 @@ from aiperf.common.base_service import BaseService
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
+    LifecycleState,
     MessageType,
     ServiceRegistrationStatus,
 )
@@ -688,6 +689,22 @@ class SystemController(SignalHandlerMixin, BaseService):
             self._should_wait_for_server_metrics = False
             await self._check_and_trigger_shutdown()
 
+    def _is_api_service_alive(self) -> bool:
+        """Return True iff the API service is registered and not in a terminal state.
+
+        Used to gate the POST_COMPLETE_GRACE extension at shutdown: if the API
+        never registered (startup failure) or has transitioned to FAILED/STOPPED,
+        there is no listener for clients to reach, so the extended wait would
+        only delay shutdown without serving anyone.
+        """
+        api_services = self.service_manager.service_map.get(ServiceType.API, [])
+        terminal_states = (LifecycleState.STOPPED, LifecycleState.FAILED)
+        return any(
+            info.registration_status == ServiceRegistrationStatus.REGISTERED
+            and info.state not in terminal_states
+            for info in api_services
+        )
+
     async def _check_and_trigger_shutdown(self) -> None:
         """Check if all required results are received and trigger unified export + shutdown.
 
@@ -914,10 +931,13 @@ class SystemController(SignalHandlerMixin, BaseService):
         # time to deliver the broadcast to every subscriber before we start joining
         # processes. 500ms is empirically sufficient under normal load and well
         # under the per-process join timeout in _wait_for_process.
-        # When the API server is enabled, extend the wait so the API process can
-        # honor its POST_COMPLETE_GRACE window before _wait_for_process SIGKILLs it.
+        # When the API server is enabled AND still alive, extend the wait so the
+        # API process can honor its POST_COMPLETE_GRACE window before
+        # _wait_for_process SIGKILLs it. If the API never registered or has
+        # already failed/stopped, the extension would only delay shutdown without
+        # serving any client, so skip it.
         delivery_grace = 0.5
-        if self._api_enabled:
+        if self._api_enabled and self._is_api_service_alive():
             delivery_grace = max(
                 delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
             )
