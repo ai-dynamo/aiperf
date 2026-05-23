@@ -110,28 +110,40 @@ class ShareGPTLoader(BasePublicDatasetLoader):
                 skipped_entries += 1
                 continue
 
-            prompt, completion = conversations[0]["value"], conversations[1]["value"]
-            prompt_length = len(self.tokenizer.encode(prompt))
-            completion_length = len(self.tokenizer.encode(completion))
-
-            if not self.is_valid_sequence(
-                prompt_len=prompt_length,
-                output_len=completion_length,
-                skip_min_output_len_check=self.output_tokens_mean is not None,
-            ):
+            pairs = self._sharegpt_prompt_completion_pairs(conversations)
+            if not pairs:
                 skipped_entries += 1
                 continue
 
+            validated: list[tuple[str, int]] = []
+            rejected = False
+            for prompt, completion in pairs:
+                prompt_length = len(self.tokenizer.encode(prompt))
+                completion_length = len(self.tokenizer.encode(completion))
+                if not self.is_valid_sequence(
+                    prompt_len=prompt_length,
+                    output_len=completion_length,
+                    skip_min_output_len_check=self.output_tokens_mean is not None,
+                ):
+                    rejected = True
+                    break
+                validated.append((prompt, completion_length))
+            if rejected or not validated:
+                skipped_entries += 1
+                continue
+
+            turns = [
+                Turn(
+                    model=self._select_model_name(),
+                    texts=[Text(contents=[prompt])],
+                    max_tokens=completion_length,
+                )
+                for prompt, completion_length in validated
+            ]
             filtered_dataset.append(
                 Conversation(
                     session_id=self.session_id_generator.next(),
-                    turns=[
-                        Turn(
-                            model=self._select_model_name(),
-                            texts=[Text(contents=[prompt])],
-                            max_tokens=completion_length,
-                        )
-                    ],
+                    turns=turns,
                 )
             )
 
@@ -139,6 +151,45 @@ class ShareGPTLoader(BasePublicDatasetLoader):
             lambda: f"Filtered to {len(filtered_dataset)} dataset entries out of {len(dataset)} (skipped {skipped_entries})"
         )
         return filtered_dataset
+
+    @staticmethod
+    def _sharegpt_prompt_completion_pairs(
+        conversations: list[Any],
+    ) -> list[tuple[str, str]]:
+        """Pair prompts with completions from ShareGPT ``conversations`` entries.
+
+        When messages include ``from: human`` / ``from: gpt`` (typical ShareGPT
+        JSON), every adjacent human→gpt pair becomes one turn. Otherwise the
+        first two ``value`` fields are treated as a single pair (minimal JSON
+        and unit tests without role fields).
+        """
+        message_dicts = [c for c in conversations if isinstance(c, dict)]
+        if len(message_dicts) < 2:
+            return []
+        uses_roles = any(c.get("from") in ("human", "gpt") for c in message_dicts)
+        if not uses_roles:
+            prompt = message_dicts[0].get("value")
+            completion = message_dicts[1].get("value")
+            if not prompt or not completion:
+                return []
+            return [(prompt, completion)]
+
+        role_msgs = [c for c in message_dicts if c.get("from") in ("human", "gpt")]
+        pairs: list[tuple[str, str]] = []
+        i = 0
+        while i < len(role_msgs) - 1:
+            if (
+                role_msgs[i].get("from") == "human"
+                and role_msgs[i + 1].get("from") == "gpt"
+            ):
+                prompt = role_msgs[i].get("value")
+                completion = role_msgs[i + 1].get("value")
+                if prompt and completion:
+                    pairs.append((prompt, completion))
+                i += 2
+            else:
+                i += 1
+        return pairs
 
     def _select_model_name(self) -> str:
         models_cfg = self.run.cfg.models
