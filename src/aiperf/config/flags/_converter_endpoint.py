@@ -10,9 +10,9 @@ the dict shape consumed by ``AIPerfConfig``.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.flags._section_fields import ENDPOINT_FIELDS
 
 if TYPE_CHECKING:
@@ -29,8 +29,9 @@ def _endpoint_template_from_extra(
     payload_template = extra.pop("payload_template", None)
     if payload_template is None:
         return
-    path = Path(payload_template)
-    body = path.read_text() if path.is_file() else payload_template
+    body = safe_read_template_path(payload_template)
+    if body is None:
+        body = payload_template
     endpoint["template"] = {
         "body": body,
         "response_field": extra.pop("response_field", "text"),
@@ -49,8 +50,8 @@ def _endpoint_template_fallback(endpoint: dict[str, Any]) -> None:
     ts = ex.get("payload_template")
     if ts is None:
         return
-    tp = Path(ts)
-    endpoint["template"] = {"body": tp.read_text() if tp.is_file() else ts}
+    body = safe_read_template_path(ts)
+    endpoint["template"] = {"body": body if body is not None else ts}
 
 
 # Map (CLIConfig endpoint field name) -> (AIPerfConfig endpoint key).
