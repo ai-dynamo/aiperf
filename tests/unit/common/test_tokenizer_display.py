@@ -297,10 +297,21 @@ class TestDisplayTokenizerValidationError:
         self, console_output, version, expect_v5_upgrade
     ):
         """Upgrade-to-v5 hint only appears when running transformers v4."""
+        from importlib.metadata import PackageNotFoundError
         from unittest.mock import patch
 
         console, output = console_output
-        with patch("transformers.__version__", version):
+        if version == "<unknown>":
+            patcher = patch(
+                "aiperf.common.tokenizer_display._pkg_version",
+                side_effect=PackageNotFoundError("transformers"),
+            )
+        else:
+            patcher = patch(
+                "aiperf.common.tokenizer_display._pkg_version",
+                return_value=version,
+            )
+        with patcher:
             display_tokenizer_validation_error(
                 "test-model",
                 cause_chain=["TokenizerError", "ValueError"],

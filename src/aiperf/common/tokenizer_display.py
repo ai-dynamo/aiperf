@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -177,10 +179,8 @@ def _missing_tokenizer_class_insight(
         return None
     missing = match.group(1)
     try:
-        import transformers
-
-        version = transformers.__version__
-    except (ImportError, AttributeError):
+        version = _pkg_version("transformers")
+    except PackageNotFoundError:
         version = "<unknown>"
     fixes: list[str] = []
     if version.split(".", 1)[0] == "4":
