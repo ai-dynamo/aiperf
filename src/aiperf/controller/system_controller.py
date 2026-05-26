@@ -690,19 +690,37 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self._check_and_trigger_shutdown()
 
     def _is_api_service_alive(self) -> bool:
-        """Return True iff the API service is registered and not in a terminal state.
+        """Return True iff the API service is registered and its process is live.
 
         Used to gate the POST_COMPLETE_GRACE extension at shutdown: if the API
         never registered (startup failure) or has transitioned to FAILED/STOPPED,
         there is no listener for clients to reach, so the extended wait would
         only delay shutdown without serving anyone.
+
+        BaseComponentService._on_state_change suppresses StatusMessage publishes
+        once stop_requested is set, so service_map[ServiceType.API][*].state
+        stays frozen at RUNNING even after the API process self-stopped, crashed,
+        or transitioned to FAILED. On the multiprocess backend we cross-check
+        process.is_alive() as the authoritative signal; other backends fall back
+        to the registration/state check.
         """
         api_services = self.service_manager.service_map.get(ServiceType.API, [])
         terminal_states = (LifecycleState.STOPPED, LifecycleState.FAILED)
-        return any(
+        registered = any(
             info.registration_status == ServiceRegistrationStatus.REGISTERED
             and info.state not in terminal_states
             for info in api_services
+        )
+        if not registered:
+            return False
+        mp_info = getattr(self.service_manager, "multi_process_info", None)
+        if not isinstance(mp_info, list):
+            return True
+        return any(
+            rec.service_type == ServiceType.API
+            and rec.process is not None
+            and rec.process.is_alive()
+            for rec in mp_info
         )
 
     async def _check_and_trigger_shutdown(self) -> None:

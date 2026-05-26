@@ -575,3 +575,50 @@ class TestShutdownDeliveryGrace:
         monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
         sleeps = await self._drive_stop(system_controller, monkeypatch)
         assert sleeps[0] == 0.5
+
+    @staticmethod
+    def _set_api_process_liveness(controller: SystemController, alive: bool) -> None:
+        """Populate multi_process_info with an API process record reporting `alive`."""
+        from aiperf.plugin.enums import ServiceType
+
+        proc = MagicMock()
+        proc.is_alive.return_value = alive
+        rec = MagicMock()
+        rec.service_type = ServiceType.API
+        rec.process = proc
+        controller.service_manager.multi_process_info = [rec]
+
+    @pytest.mark.asyncio
+    async def test_skips_grace_when_api_process_dead_despite_running_state(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """API process exited but service_map state stayed at RUNNING.
+
+        BaseComponentService._on_state_change suppresses StatusMessage publishes
+        once stop_requested is set, so the controller's view of the API service
+        state is frozen at RUNNING even after the API process self-stopped,
+        crashed, or transitioned to FAILED. Cross-check process.is_alive() so
+        we do not extend the grace on a dead listener.
+        """
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller, LifecycleState.RUNNING)
+        self._set_api_process_liveness(system_controller, alive=False)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+        sleeps = await self._drive_stop(system_controller, monkeypatch)
+        assert sleeps[0] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_extends_grace_when_api_process_alive_and_running(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """API service RUNNING and process is alive: extend grace as before."""
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller, LifecycleState.RUNNING)
+        self._set_api_process_liveness(system_controller, alive=True)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+        sleeps = await self._drive_stop(system_controller, monkeypatch)
+        assert sleeps[0] == 7.0
