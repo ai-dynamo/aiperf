@@ -33,7 +33,7 @@ from typing import Any
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-DEFAULT_SERVER = Path(__file__).resolve().parent / "tools" / "debug_pynvml_server.py"
+DEFAULT_SERVER = Path(__file__).resolve().parent / "debug_pynvml_server.py"
 
 
 def http_get(url: str, timeout: float = 5.0) -> dict[str, Any]:

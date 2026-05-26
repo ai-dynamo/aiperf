@@ -45,9 +45,7 @@ from typing import Any
 
 DEFAULT_POWER_HOST = "127.0.0.1"
 DEFAULT_POWER_PORT = 8765
-DEFAULT_POWER_SERVER = (
-    Path(__file__).resolve().parent / "tools" / "debug_pynvml_server.py"
-)
+DEFAULT_POWER_SERVER = Path(__file__).resolve().parent / "debug_pynvml_server.py"
 DEFAULT_SERVE_HOST = "0.0.0.0"
 DEFAULT_SERVE_PORT = 8000
 
