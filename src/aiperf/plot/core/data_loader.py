@@ -1628,6 +1628,7 @@ class DataLoader(AIPerfLoggerMixin):
             ):
                 return items[0]["name"]
 
+        # Legacy: pre-YAML-v2 artifacts stored the model list on the endpoint block.
         endpoint = config.get("endpoint")
         if isinstance(endpoint, dict):
             names = endpoint.get("model_names")
