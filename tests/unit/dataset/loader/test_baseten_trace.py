@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 from aiperf.common.enums import ConversationContextMode
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
-from aiperf.dataset.loader.models import BasetenTrace
+from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
 from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
 

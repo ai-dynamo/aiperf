@@ -1,12 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
+
+if TYPE_CHECKING:
+    from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
 
 
 def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
@@ -369,115 +372,6 @@ class BailianTrace(AIPerfBaseModel):
     )
 
 
-class BasetenTrace(AIPerfBaseModel):
-    """Schema for Baseten completion traces exported as Parquet.
-
-    Each row represents one completion request with its recorded prompt, timing,
-    and optional hash-based cache metadata. Session replay is built by grouping
-    rows on a session key and sorting by ``timestamp_start_unix_ms``.
-    """
-
-    timestamp_start_unix_ms: int = Field(
-        description="Recorded request start timestamp in Unix milliseconds."
-    )
-    prompt: str = Field(description="Literal completion prompt sent to the server.")
-    input_tokens: int = Field(description="Recorded prompt token count.")
-    output_tokens: int = Field(description="Recorded completion token count.")
-    total_hashes: list[int] = Field(
-        default_factory=list,
-        description="Optional KV-cache block hashes aligned to block_size.",
-    )
-    provided_session_id: str | int | None = Field(
-        default=None,
-        description="Session identifier exported directly from the source trace.",
-    )
-    poor_man_session_id: int | None = Field(
-        default=None,
-        description="Fallback derived session identifier when provided_session_id is not useful.",
-    )
-    duration_e2e_ms: int | None = Field(
-        default=None,
-        description="Recorded end-to-end request duration in milliseconds.",
-    )
-    duration_ttft_ms: int | None = Field(
-        default=None,
-        description="Recorded time to first token in milliseconds.",
-    )
-    request_canceled: int | None = Field(
-        default=None,
-        description="Trace metadata indicating whether the source request was canceled.",
-    )
-    cached_tokens_reference: int | None = Field(
-        default=None,
-        description="Recorded reference cached-token count from the source trace.",
-    )
-    model_name: str | None = Field(
-        default=None,
-        description="Model name recorded in the source trace, when present.",
-    )
-    org_id: str | int | None = Field(
-        default=None,
-        description="Organization identifier recorded in the source trace, when present.",
-    )
-    block_size: int | None = Field(
-        default=None,
-        description="KV-cache block size associated with total_hashes.",
-    )
-    features: str | None = Field(
-        default=None,
-        description="Opaque source trace feature metadata.",
-    )
-    speculation_ratio: float | None = Field(
-        default=None,
-        description="Average tokens per decode iteration recorded in the source trace.",
-    )
-    output_text: str | None = Field(
-        default=None,
-        description="Recorded completion text retained for offline validation.",
-    )
-    dataset_version: str | None = Field(
-        default=None,
-        alias="__version__",
-        description="Source dataset version, aliased from __version__.",
-    )
-    total_hashes_len: int | None = Field(
-        default=None,
-        description="Recorded total_hashes length, when exported separately.",
-    )
-
-    timestamp: int | float | None = Field(
-        default=None,
-        description="Normalized timestamp in milliseconds since the first event in the file.",
-    )
-    input_length: int | None = Field(
-        default=None,
-        description="Alias field used by shared trace filtering logic.",
-    )
-    output_length: int | None = Field(
-        default=None,
-        description="Alias field used by shared trace filtering logic.",
-    )
-    text_input: str | None = Field(
-        default=None,
-        description="Alias field used by shared trace conversation conversion logic.",
-    )
-    hash_ids: list[int] | None = Field(
-        default=None,
-        description="Alias field used by optional per-turn request-body forwarding.",
-    )
-    request_body: dict[str, Any] | None = Field(
-        default=None,
-        description="Optional per-row payload fields to merge into the outgoing request.",
-    )
-
-    @field_validator("total_hashes", mode="before")
-    @classmethod
-    def _coerce_null_hashes(cls, value: Any) -> Any:
-        if value is None:
-            return []
-        return value
-
-
 class BurstGPTTrace(AIPerfBaseModel):
     """Defines the schema for BurstGPT real-world LLM traffic trace data.
 
@@ -572,17 +466,21 @@ class SageMakerDataCaptureTrace(AIPerfBaseModel):
     )
 
 
-CustomDatasetT = TypeVar(
-    "CustomDatasetT",
-    bound=SingleTurn
-    | MultiTurn
-    | RandomPool
-    | MooncakeTrace
-    | BailianTrace
-    | BasetenTrace
-    | BurstGPTTrace
-    | RawPayload
-    | InputsJsonSession
-    | SageMakerDataCaptureTrace,
-)
+if TYPE_CHECKING:
+    _CustomDatasetBound = (
+        SingleTurn
+        | MultiTurn
+        | RandomPool
+        | MooncakeTrace
+        | BailianTrace
+        | BasetenTrace
+        | BurstGPTTrace
+        | RawPayload
+        | InputsJsonSession
+        | SageMakerDataCaptureTrace
+    )
+else:
+    _CustomDatasetBound = AIPerfBaseModel
+
+CustomDatasetT = TypeVar("CustomDatasetT", bound=_CustomDatasetBound)
 """A union type of all custom data types."""

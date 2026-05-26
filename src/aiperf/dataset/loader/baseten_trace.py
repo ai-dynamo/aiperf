@@ -18,7 +18,7 @@ from aiperf.dataset.loader.base_trace_loader import (
     BaseTraceDatasetLoader,
     _has_meaningful_synthesis,
 )
-from aiperf.dataset.loader.models import BasetenTrace
+from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
 
 _METADATA_COLUMNS_TIME = "timestamp_start_unix_ms"
 _METADATA_COLUMNS_SESSION = "provided_session_id"
