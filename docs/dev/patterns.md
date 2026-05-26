@@ -342,6 +342,56 @@ reject all three patterns for new code; see
 [`global-invariants.md`](global-invariants.md) for the full contract and
 the baseline-ratchet mechanism.
 
+## Safe Filesystem Reads Pattern
+
+User-supplied filesystem paths reaching AIPerf (e.g. `--extra-inputs
+payload_template=<path>`, `endpoint.template.body` in a YAML config) must
+go through `aiperf.common.path_safety.safe_read_template_path` rather than
+inline `Path(...).read_text()` / `open(...).read()`. The helper is the
+canonical CWE-22 path-traversal sanitizer recognized by SAST tools — every
+inline read regenerates that finding.
+
+### What the helper does
+
+```python
+from aiperf.common.path_safety import safe_read_template_path
+
+body = safe_read_template_path(user_string)
+if body is None:
+    # safety check failed — caller picks the fallback semantic
+    body = user_string          # template "path or inline" idiom
+    # or: raise ValueError(f"Template file not readable: {user_string!r}")
+```
+
+Sanitizer chain (in the order SAST engines walk it):
+
+1. `Path(ts).expanduser()` — catches `TypeError` / `ValueError` /
+   `RuntimeError` (the last fires on unresolvable `~user` prefixes).
+2. Reject if `path` or any component in `path.parents` is a symlink.
+   `resolve()` alone is insufficient because it follows symlinked parent
+   directories silently.
+3. `path.resolve(strict=True)` — the canonical sanitizer that
+   Snyk/CodeQL/Semgrep recognize; raises on missing paths.
+4. Require `resolved.is_file()` — rejects directories, devices, fifos.
+5. `read_text(encoding="utf-8")` — explicit decode; no platform default. Catches `UnicodeError` alongside `OSError` so non-UTF-8 files fall back to the literal-string branch rather than crashing config conversion.
+
+Returning `None` on any failure preserves the existing "treat as a literal
+value" fallback that both call sites (`_converter_endpoint` and
+`TemplateEndpoint.__init__`) already implement.
+
+### When this pattern does NOT apply
+
+- **Path joining of trusted strings** — `Path(__file__).parent / "data.yaml"`,
+  `artifact_dir / "inputs.json"`. These never resolve untrusted input; no
+  sanitizer needed.
+- **Binary reads** — `open(p, "rb")` for parquet/orjson/etc. The helper is
+  UTF-8-text only. If a hardened binary variant is needed, add it to
+  `aiperf.common.path_safety` alongside the existing helper rather than
+  inlining `read_bytes()`.
+- **Reads where missing-file should hard-fail rather than fall back** — the
+  helper still works (returns `None`); the caller is responsible for
+  raising instead of substituting a literal.
+
 ## Testing Pattern
 
 ```python

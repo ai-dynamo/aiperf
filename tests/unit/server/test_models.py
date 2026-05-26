@@ -37,6 +37,18 @@ class TestCompletionRequest:
         req = CompletionRequest(model="test", prompt=["Line 1", "", "Line 2"])
         assert req.prompt_text == "Line 1\nLine 2"
 
+    @pytest.mark.parametrize(
+        "prompt,expected_text",
+        [
+            ([11, 22, 33], "11 22 33"),
+            ([[11, 22], [33]], "11 22 33"),
+        ],
+    )
+    def test_token_id_prompt_is_accepted(self, prompt, expected_text):
+        req = CompletionRequest(model="test", prompt=prompt)
+        assert req.prompt == prompt
+        assert req.prompt_text == expected_text
+
 
 class TestChatCompletionRequest:
     """Tests for ChatCompletionRequest model."""
