@@ -298,6 +298,16 @@ def _child_plans_for_active_subagents(
     ]
 
 
+def _count_seen_prefix_blocks(hash_ids: list[int], seen: set[int]) -> int:
+    """Return leading blocks already present in ``seen`` for prefix-cache math."""
+    hits = 0
+    for hash_id in hash_ids:
+        if hash_id not in seen:
+            break
+        hits += 1
+    return hits
+
+
 def _build_trace_idle_timing(
     *,
     plan: _ParentPlan,
@@ -959,6 +969,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
             outer_to_turn_pos: dict[int, int] = {}
+            parent_seen_hash_ids: set[int] = set()
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
                 if k == 0:
@@ -996,6 +1007,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 if delay_ms is not None:
                     delay_ms = self._delay_cap_tracker.clamp(delay_ms)
                 delta = recon.turn_delta()
+                theoretical_hit_blocks = _count_seen_prefix_blocks(
+                    req.hash_ids, parent_seen_hash_ids
+                )
+                theoretical_total_blocks = len(req.hash_ids)
+                parent_seen_hash_ids.update(req.hash_ids)
                 conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
@@ -1004,6 +1020,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=self._cap_output(req),
                         raw_messages=delta.delta_messages,
                         reset_context=delta.reset_context,
+                        theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
+                        theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
@@ -1171,6 +1189,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 is_root=False,
                 agent_depth=1,
             )
+            child_seen_hash_ids: set[int] = set()
             for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 if k == 0:
@@ -1207,6 +1226,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
+                theoretical_hit_blocks = _count_seen_prefix_blocks(
+                    creq.hash_ids, child_seen_hash_ids
+                )
+                theoretical_total_blocks = len(creq.hash_ids)
+                child_seen_hash_ids.update(creq.hash_ids)
                 child_conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
@@ -1215,6 +1239,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=creq.output_length,
                         raw_messages=child_delta.delta_messages,
                         reset_context=child_delta.reset_context,
+                        theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
+                        theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
                     )
                 )
             conversations.append(child_conv)
@@ -1462,6 +1488,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=t_dict["max_tokens"],
                         raw_messages=t_dict["raw_messages"],
                         reset_context=t_dict["reset_context"],
+                        theoretical_prefix_cache_hit_blocks=t_dict[
+                            "theoretical_prefix_cache_hit_blocks"
+                        ],
+                        theoretical_prefix_cache_total_blocks=t_dict[
+                            "theoretical_prefix_cache_total_blocks"
+                        ],
                     )
                 )
             for branch in result["branches"]:
@@ -1503,6 +1535,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             max_tokens=t_dict["max_tokens"],
                             raw_messages=t_dict["raw_messages"],
                             reset_context=t_dict["reset_context"],
+                            theoretical_prefix_cache_hit_blocks=t_dict[
+                                "theoretical_prefix_cache_hit_blocks"
+                            ],
+                            theoretical_prefix_cache_total_blocks=t_dict[
+                                "theoretical_prefix_cache_total_blocks"
+                            ],
                         )
                     )
                 conversations.append(child_conv)

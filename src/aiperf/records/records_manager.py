@@ -240,6 +240,15 @@ def _render_realtime_block(
         out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
         rows.append(f"{indent}tot  in={in_str:<14} out={out_str}")
 
+    theoretical_prefix_mr = by_tag.get("theoretical_prefix_cache_hit")
+    theoretical_prefix_hit = getattr(theoretical_prefix_mr, "current", None)
+    if theoretical_prefix_hit is None:
+        theoretical_prefix_hit = getattr(theoretical_prefix_mr, "avg", None)
+    if theoretical_prefix_hit is not None:
+        rows.append(
+            f"{indent}trace theoretical_prefix_cache_hit={theoretical_prefix_hit:.1f}%"
+        )
+
     # Server-side row — cumulative cache hit rate, KV usage, and scheduler
     # queue depth from the live ServerMetricsAccumulator snapshot. Sourced
     # from the /metrics scrape, so populates only when server-metrics
