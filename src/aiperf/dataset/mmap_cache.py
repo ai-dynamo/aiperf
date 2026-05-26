@@ -61,10 +61,10 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
-# Bump when cached side-data changes. Version 3 adds ConversationMetadata
-# system/user-context prefixes, which trajectory sampling needs to decide
-# whether an empty per-turn messages delta can still start a valid request.
-MANIFEST_VERSION = 3
+# Bump when cached side-data changes. Version 4 adds per-turn theoretical
+# prefix-cache block counts, which realtime profiling needs to report the
+# trace-level infinite-cache hit rate.
+MANIFEST_VERSION = 4
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
