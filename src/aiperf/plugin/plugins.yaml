@@ -1506,12 +1506,13 @@ accuracy_benchmark:
   math_500:
     class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
     description: |
-      MATH-500 benchmark with 500 curated mathematical reasoning problems
-      spanning algebra, geometry, number theory, and combinatorics.
+      MATH-500 benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (HuggingFaceH4/MATH-500 + lighteval
+      ``latex_gold_metric``). Gold is the full ``solution`` text;
+      ``LightevalLatexGrader`` extracts the boxed expression at grade time.
     metadata:
-      default_grader: math
+      default_grader: lighteval_latex
       default_n_shots: 0
-      is_implemented: false
 
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
