@@ -6,6 +6,8 @@ This module tests the create_tcp_connector function, which is used to create a
 TCP connector for use with aiohttp.ClientSession.
 """
 
+import errno
+import logging
 import socket
 import ssl
 import sys
@@ -19,7 +21,11 @@ from aiohttp import web
 from aiperf.common.enums import IPVersion
 from aiperf.common.environment import Environment, _HTTPSettings
 from aiperf.transports.aiohttp_client import create_tcp_connector
-from aiperf.transports.http_defaults import AioHttpDefaults, _get_socket_family
+from aiperf.transports.http_defaults import (
+    AioHttpDefaults,
+    SocketDefaults,
+    _get_socket_family,
+)
 
 ################################################################################
 # Test create_tcp_connector
@@ -133,6 +139,40 @@ class TestCreateTcpConnector:
     # Linux-only signal: Python 3.13 added it to Windows. ``TCP_QUICKACK``
     # remains Linux-only, so gate on it instead.
     if hasattr(socket, "TCP_QUICKACK"):
+    def test_socket_buffer_falls_back_when_os_rejects_large_value(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test socket buffer setup retries smaller values after ENOBUFS."""
+        mock_socket = Mock()
+        mock_socket.setsockopt.side_effect = [
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            None,
+        ]
+
+        with caplog.at_level(logging.WARNING):
+            SocketDefaults._set_socket_buffer(mock_socket, socket.SO_RCVBUF, 4096)
+
+        assert mock_socket.setsockopt.call_args_list == [
+            ((socket.SOL_SOCKET, socket.SO_RCVBUF, 4096),),
+            ((socket.SOL_SOCKET, socket.SO_RCVBUF, 2048),),
+            ((socket.SOL_SOCKET, socket.SO_RCVBUF, 1024),),
+        ]
+        assert (
+            "SO_RCVBUF=4096 was rejected by the OS with ENOBUFS; "
+            "using 1024 instead"
+        ) in caplog.text
+
+    def test_socket_buffer_reraises_non_buffer_errors(self) -> None:
+        """Test socket buffer setup only handles ENOBUFS."""
+        mock_socket = Mock()
+        mock_socket.setsockopt.side_effect = OSError(errno.EPERM, "blocked")
+
+        with pytest.raises(OSError):
+            SocketDefaults._set_socket_buffer(mock_socket, socket.SO_RCVBUF, 4096)
+
+    # Only run these tests on Linux
+    if hasattr(socket, "TCP_KEEPIDLE"):
 
         @pytest.mark.parametrize(
             "has_attribute,attribute_name,tcp_option,expected_value",
