@@ -889,7 +889,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 
-    def _collect_realtime_server_snapshot(self) -> dict[str, float]:
+    def _collect_realtime_server_snapshot(
+        self, start_ns: int | None = None
+    ) -> dict[str, float]:
         """Return the current live server metrics snapshot, if available."""
         server_snapshot: dict[str, float] = {}
         if self._server_metrics_accumulator is None:
@@ -901,7 +903,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 None,
             )
             if callable(snapshot_fn):
-                server_snapshot = snapshot_fn() or {}
+                server_snapshot = snapshot_fn(start_ns=start_ns) or {}
         except Exception as exc:  # noqa: BLE001
             self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
         return server_snapshot
@@ -946,13 +948,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_stats = self._records_tracker.create_stats_for_phase(
             CreditPhase.PROFILING
         )
-        if server_snapshot is None:
-            server_snapshot = self._collect_realtime_server_snapshot()
-
         # Realtime block uses the *raw* (unfiltered) metric set so per-user
         # throughput rows can show ``prefill_throughput_per_user`` etc. —
         # those have ``console_group=NONE`` (hidden from the dashboard table)
         # and ``filter_display_metrics`` strips them, leaving the row blank.
+        if server_snapshot is None:
+            server_snapshot = self._collect_realtime_server_snapshot(
+                start_ns=phase_stats.start_ns
+            )
+
         rendered = _render_realtime_block(
             raw_metrics,
             phase_stats,

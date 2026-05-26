@@ -145,6 +145,41 @@ class TestServerMetricsResultsProcessor:
         assert "prefix_cache_hit_rate" not in snapshot
         assert "num_preemptions" not in snapshot
 
+    async def test_realtime_snapshot_can_exclude_warmup_counters(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        """Test realtime counter deltas can use the profiling-start baseline."""
+        processor = ServerMetricsAccumulator(mock_user_config)
+        for timestamp_ns, hits, queries in (
+            (1_000_000_000, 0.0, 0.0),
+            (2_000_000_000, 10.0, 1000.0),
+            (3_000_000_000, 9010.0, 10000.0),
+        ):
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://127.0.0.1:8000/metrics",
+                    timestamp_ns=timestamp_ns,
+                    metrics={
+                        "vllm:prefix_cache_hits": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Prefix cache hits.",
+                            samples=[MetricSample(value=hits)],
+                        ),
+                        "vllm:prefix_cache_queries": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Prefix cache queries.",
+                            samples=[MetricSample(value=queries)],
+                        ),
+                    },
+                )
+            )
+
+        full_snapshot = processor.realtime_snapshot()
+        profiling_snapshot = processor.realtime_snapshot(start_ns=2_500_000_000)
+
+        assert full_snapshot["prefix_cache_hit_rate"] == pytest.approx(90.1)
+        assert profiling_snapshot["prefix_cache_hit_rate"] == pytest.approx(100.0)
+
     async def test_realtime_snapshot_uses_sglang_retracted_total_counter(
         self, mock_user_config: UserConfig
     ) -> None:
