@@ -389,6 +389,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         - ``prefix_cache_hit_rate`` (% across all endpoints; counter-delta from
           ``start_ns`` when supplied, otherwise since the first observed sample;
           ``vllm:prefix_cache_hits`` / ``vllm:prefix_cache_queries``).
+        - ``unique_input_tokens_srv`` (prompt tokens that were not prefix-cache
+          hits, derived as ``vllm:prefix_cache_queries - vllm:prefix_cache_hits``).
         - ``external_prefix_cache_hit_rate`` (% same shape, when CPU
           offload is active and ``vllm:external_prefix_cache_*`` are present).
         - ``kv_cache_usage_pct`` (latest gauge value, max across endpoints;
@@ -413,6 +415,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         queries = self._counter_delta(endpoints, "vllm:prefix_cache_queries", start_ns)
         if hits is not None and queries and queries > 0:
             out["prefix_cache_hit_rate"] = 100.0 * hits / queries
+            out["unique_input_tokens_srv"] = max(queries - hits, 0.0)
 
         # External (CPU-offload) prefix cache. Only emit when there has been
         # any query against the external tier — a 0/0 division otherwise

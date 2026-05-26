@@ -178,7 +178,9 @@ class TestServerMetricsResultsProcessor:
         profiling_snapshot = processor.realtime_snapshot(start_ns=2_500_000_000)
 
         assert full_snapshot["prefix_cache_hit_rate"] == pytest.approx(90.1)
+        assert full_snapshot["unique_input_tokens_srv"] == pytest.approx(990.0)
         assert profiling_snapshot["prefix_cache_hit_rate"] == pytest.approx(100.0)
+        assert profiling_snapshot["unique_input_tokens_srv"] == pytest.approx(0.0)
 
     async def test_realtime_snapshot_uses_sglang_retracted_total_counter(
         self, mock_user_config: UserConfig

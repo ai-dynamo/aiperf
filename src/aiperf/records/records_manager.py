@@ -262,6 +262,10 @@ def _render_realtime_block(
             srv_parts.append(
                 f"prefix_cache_hit={server_snapshot['prefix_cache_hit_rate']:.1f}%"
             )
+        if "unique_input_tokens_srv" in server_snapshot:
+            srv_parts.append(
+                f"unique_in_srv={int(round(server_snapshot['unique_input_tokens_srv'])):,}"
+            )
         if "external_prefix_cache_hit_rate" in server_snapshot:
             srv_parts.append(
                 f"ext_cache_hit={server_snapshot['external_prefix_cache_hit_rate']:.1f}%"

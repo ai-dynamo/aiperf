@@ -174,17 +174,18 @@ When server metrics are enabled and the inference server actually serves Prometh
 ```text
 [realtime 02:30 profiling] rps=12.4 (avg 11.8) tput_in=15234/s tput_out=812/s done=...
                             ...
-                            srv  prefix_cache_hit=68.3% ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
+                            srv  prefix_cache_hit=68.3% unique_in_srv=123,456 ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
 ```
 
 | Token | Source metric(s) | Notes |
 |-------|------------------|-------|
-| `prefix_cache_hit=X%` | `vllm:prefix_cache_hits` / `vllm:prefix_cache_queries` | Cumulative hit rate since the first scrape. |
+| `prefix_cache_hit=X%` | `vllm:prefix_cache_hits` / `vllm:prefix_cache_queries` | Cumulative hit rate over the profiling window. |
+| `unique_in_srv=N` | `vllm:prefix_cache_queries - vllm:prefix_cache_hits` | Prompt tokens not served from prefix cache over the profiling window. |
 | `ext_cache_hit=X%` | `vllm:external_prefix_cache_hits` / `vllm:external_prefix_cache_queries` | Only emitted when the external (CPU offload) tier has been queried, so the row stays clean on offload=none runs. |
 | `kv_usage=X%` | `vllm:kv_cache_usage_perc` (with `vllm:gpu_cache_usage_perc` v0 fallback) | Latest gauge value, max across endpoints. |
 | `cpu_kv_usage=X%` | `vllm:cpu_cache_usage_perc` | Only emitted when `SimpleCPUOffloadConnector` is active; lets you see the CPU tier filling up before the GPU tier preempts. |
 | `queue=Nr/Mw` | `vllm:num_requests_running` / `vllm:num_requests_waiting` | Scheduler running/waiting depth — useful for spotting backpressure mid-run. |
-| `preemptions=N` | `vllm:num_preemptions` (or `sglang:num_retracted_requests_total` on SGLang) | Cumulative since the first scrape; any nonzero value = backpressure. |
+| `preemptions=N` | `vllm:num_preemptions` (or `sglang:num_retracted_requests_total` on SGLang) | Cumulative over the profiling window; any nonzero value = backpressure. |
 
 The full set of scraped metrics is always written to `server_metrics_export.{json,csv,jsonl,parquet}` regardless of what surfaces in this row.
 
@@ -572,4 +573,3 @@ with open('server_metrics_export.json') as f:
 latency = data['metrics']['vllm:e2e_request_latency_seconds']['series'][0]['stats']
 assert latency['p99_estimate'] < 5.0, f"P99 latency too high: {latency['p99_estimate']}"
 ```
-
