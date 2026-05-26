@@ -1,5 +1,6 @@
 **/.preview
 **/.definition
+.local-preview/
 
 # Include logos
 !*.svg

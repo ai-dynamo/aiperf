@@ -25,7 +25,7 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
-		generate-all-docs test-stress stress-tests test-fern-docs internal-help help \
+		generate-all-docs test-stress stress-tests test-fern-docs fern-preview internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -311,6 +311,18 @@ test-fern-docs: #? validate Fern documentation (check, strict check, dev server)
 	@printf "$(bold)$(blue)Running Fern documentation checks...$(reset)\n"
 	$(activate_venv) && pytest tests/unit/fern/ -m fern -v --tb=short $(args)
 	@printf "$(bold)$(green)Fern documentation checks passed!$(reset)\n"
+
+fern-preview: #? local Fern docs preview (mirrors the CI md_to_mdx conversion in .github/workflows/fern-docs.yml).
+	@command -v fern >/dev/null || { printf "$(bold)$(red)fern CLI not found. Install with: npm i -g fern-api$(reset)\n"; exit 1; }
+	@printf "$(bold)$(blue)Staging docs into fern/.local-preview/...$(reset)\n"
+	@rm -rf fern/.local-preview
+	@mkdir -p fern/.local-preview/fern fern/.local-preview/docs
+	@rsync -a --exclude='.local-preview' fern/ fern/.local-preview/fern/
+	@rsync -a docs/ fern/.local-preview/docs/
+	@printf "$(bold)$(blue)Converting Markdown to Fern MDX...$(reset)\n"
+	@python3 fern/md_to_mdx.py --dir fern/.local-preview/docs
+	@printf "$(bold)$(green)Starting fern docs dev (Ctrl-C to stop)...$(reset)\n"
+	@cd fern/.local-preview && fern docs dev $(args)
 
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && ./tools/generate_cli_docs.py
