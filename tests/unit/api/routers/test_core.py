@@ -95,6 +95,38 @@ class TestRunEndpoint:
         assert "--api-key" in cli_command
         assert "<redacted>" in cli_command
 
+    def test_run_omits_unset_optional_fields(self, api_test_client: TestClient) -> None:
+        """The endpoint promises shape parity with ``run_info`` in
+        ``profile_export_aiperf.json``, which uses ``exclude_none=True``.
+        Optional ``RunInfo`` fields that the fixture doesn't populate
+        (``sweep_id``, ``random_seed``, ``variation_*``) must be omitted from
+        the response — not serialized as ``null``."""
+        data = api_test_client.get("/api/run").json()
+        for field in (
+            "sweep_id",
+            "random_seed",
+            "variation_label",
+            "variation_index",
+            "variation_values",
+        ):
+            assert field not in data, (
+                f"{field} should be omitted when unset, not serialized as null"
+            )
+
+    def test_run_returns_503_when_no_active_run(
+        self,
+        api_test_client: TestClient,
+        mock_fastapi_service: FastAPIService,
+    ) -> None:
+        """The router has an explicit 503 branch for missing run context. The
+        type system says ``svc.run`` is non-Optional, so this branch is
+        effectively defensive — the test locks the contract for any future
+        change that makes ``run`` optional or nullable."""
+        mock_fastapi_service.run = None
+        response = api_test_client.get("/api/run")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "No active benchmark run."}
+
 
 class TestHealthzEndpoint:
     """Test Kubernetes liveness probe /healthz."""

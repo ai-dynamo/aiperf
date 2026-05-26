@@ -39,12 +39,18 @@ async def get_config(svc: ServiceDep) -> dict[str, Any]:
     )
 
 
-@core_router.get("/api/run", response_model=RunInfo, tags=["API"])
+@core_router.get(
+    "/api/run",
+    response_model=RunInfo,
+    response_model_exclude_none=True,
+    tags=["API"],
+)
 async def get_run(svc: ServiceDep) -> RunInfo:
     """Get run-identity metadata for the currently executing benchmark run.
 
-    Same shape as ``run_info`` in ``profile_export_aiperf.json``, so a live
-    reader sees identical fields to the on-disk export. Includes the redacted
+    Same shape as ``run_info`` in ``profile_export_aiperf.json`` — including
+    the matching exclude-None projection, so unset optional fields are omitted
+    from the response rather than serialized as ``null``. Includes the redacted
     ``cli_command``, ``benchmark_id``, ``sweep_id``, ``trial``, ``random_seed``,
     and sweep variation coordinates.
     """
