@@ -500,6 +500,9 @@ def _settings_payload_from_user_config(
         "model_name": user_config.endpoint.model_names[0],
         "fixed_schedule_start_offset": inp.fixed_schedule_start_offset,
         "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
+        "weka_live_assistant_responses": (
+            Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
+        ),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
         "max_context_length": inp.max_context_length,
