@@ -9,8 +9,11 @@ import pyarrow.parquet as pq
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
-from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
+from aiperf.dataset.loader.baseten_trace import (
+    BasetenTrace,
+    BasetenTraceDatasetLoader,
+    count_baseten_parquet_records_and_sessions,
+)
 from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
 
@@ -366,6 +369,47 @@ class TestBasetenTraceDatasetLoader:
         assert len(dataset) == 1
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
+
+    def test_resolver_session_count_uses_same_key_as_loader(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-1",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-2",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-3",
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-4",
+                    "poor_man_session_id": 200,
+                },
+            ],
+        )
+
+        assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 2)
 
     def test_fixed_schedule_offsets_filter_relative_window_on_unix_timestamps(
         self, tmp_path: Path

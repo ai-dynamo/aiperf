@@ -7,35 +7,144 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pydantic import Field, field_validator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode
+from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.loader.base_trace_loader import (
     BaseTraceDatasetLoader,
     _has_meaningful_synthesis,
 )
-from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
 
-_METADATA_COLUMNS_TIME = "timestamp_start_unix_ms"
-_METADATA_COLUMNS_SESSION = "provided_session_id"
-_METADATA_COLUMNS_POOR_MAN_SESSION = "poor_man_session_id"
-_METADATA_COLUMNS = {
-    _METADATA_COLUMNS_TIME,
-    _METADATA_COLUMNS_SESSION,
-    _METADATA_COLUMNS_POOR_MAN_SESSION,
+METADATA_COLUMNS_TIME = "timestamp_start_unix_ms"
+METADATA_COLUMNS_SESSION = "provided_session_id"
+METADATA_COLUMNS_POOR_MAN_SESSION = "poor_man_session_id"
+METADATA_COLUMNS = {
+    METADATA_COLUMNS_TIME,
+    METADATA_COLUMNS_SESSION,
+    METADATA_COLUMNS_POOR_MAN_SESSION,
 }
 
 _REQUIRED_COLUMNS = {
-    _METADATA_COLUMNS_TIME,
+    METADATA_COLUMNS_TIME,
     "prompt",
     "input_tokens",
     "output_tokens",
 }
 _SESSION_KEY_PROBE_ROWS = 10_000
+
+NonNegativeInt = Annotated[int, Field(ge=0)]
+PositiveInt = Annotated[int, Field(gt=0)]
+NonNegativeFloat = Annotated[float, Field(ge=0)]
+RequestCanceledInt = Annotated[int, Field(ge=0, le=1)]
+
+
+class BasetenTrace(AIPerfBaseModel):
+    """Schema for Baseten completion traces exported as Parquet."""
+
+    timestamp_start_unix_ms: NonNegativeInt = Field(
+        description="Recorded request start timestamp in Unix milliseconds."
+    )
+    prompt: str = Field(description="Literal completion prompt sent to the server.")
+    input_tokens: NonNegativeInt = Field(description="Recorded prompt token count.")
+    output_tokens: NonNegativeInt = Field(
+        description="Recorded completion token count."
+    )
+    total_hashes: list[NonNegativeInt] = Field(
+        default_factory=list,
+        description="Optional KV-cache block hashes aligned to block_size.",
+    )
+    provided_session_id: str | NonNegativeInt | None = Field(
+        default=None,
+        description="Session identifier exported directly from the source trace.",
+    )
+    poor_man_session_id: NonNegativeInt | None = Field(
+        default=None,
+        description="Fallback derived session identifier.",
+    )
+    duration_e2e_ms: NonNegativeInt | None = Field(
+        default=None,
+        description="Recorded end-to-end request duration in milliseconds.",
+    )
+    duration_ttft_ms: NonNegativeInt | None = Field(
+        default=None,
+        description="Recorded time to first token in milliseconds.",
+    )
+    request_canceled: RequestCanceledInt | None = Field(
+        default=None,
+        description="Whether the source request was canceled.",
+    )
+    cached_tokens_reference: NonNegativeInt | None = Field(
+        default=None,
+        description="Recorded reference cached-token count.",
+    )
+    model_name: str | None = Field(
+        default=None,
+        description="Model name recorded in the source trace.",
+    )
+    org_id: str | NonNegativeInt | None = Field(
+        default=None,
+        description="Organization identifier recorded in the source trace.",
+    )
+    block_size: PositiveInt | None = Field(
+        default=None,
+        description="KV-cache block size associated with total_hashes.",
+    )
+    features: str | None = Field(default=None, description="Opaque feature metadata.")
+    speculation_ratio: NonNegativeFloat | None = Field(
+        default=None,
+        description="Average tokens per decode iteration.",
+    )
+    output_text: str | None = Field(
+        default=None,
+        description="Recorded completion text retained for offline validation.",
+    )
+    dataset_version: str | None = Field(
+        default=None,
+        alias="__version__",
+        description="Source dataset version.",
+    )
+    total_hashes_len: NonNegativeInt | None = Field(
+        default=None,
+        description="Recorded total_hashes length, when exported separately.",
+    )
+
+    timestamp: NonNegativeInt | NonNegativeFloat | None = Field(
+        default=None,
+        description="Normalized timestamp in milliseconds since the first event.",
+    )
+    input_length: NonNegativeInt | None = Field(
+        default=None,
+        description="Alias field used by shared trace filtering logic.",
+    )
+    output_length: NonNegativeInt | None = Field(
+        default=None,
+        description="Alias field used by shared trace filtering logic.",
+    )
+    text_input: str | None = Field(
+        default=None,
+        description="Alias field used by shared trace conversation conversion logic.",
+    )
+    hash_ids: list[NonNegativeInt] | None = Field(
+        default=None,
+        description="Alias field used by per-turn request-body forwarding.",
+    )
+    request_body: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional per-row payload fields to merge into the outgoing request.",
+    )
+
+    @field_validator("total_hashes", mode="before")
+    @classmethod
+    def _coerce_null_hashes(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value
 
 
 def _score_session_groups(
@@ -46,20 +155,50 @@ def _score_session_groups(
     return (sum(repeated_group_sizes), len(repeated_group_sizes))
 
 
-def _choose_repeated_session_key(
+def choose_baseten_session_key(
     provided_session_ids: list[str | int | None],
     poor_man_session_ids: list[int | None],
 ) -> str | None:
+    """Return the session column with the strongest repeated-session signal."""
     provided_score = _score_session_groups(provided_session_ids)
     poor_score = _score_session_groups(poor_man_session_ids)
 
     if provided_score > poor_score and provided_score[0] > 0:
-        return _METADATA_COLUMNS_SESSION
+        return METADATA_COLUMNS_SESSION
     if poor_score > provided_score and poor_score[0] > 0:
-        return _METADATA_COLUMNS_POOR_MAN_SESSION
+        return METADATA_COLUMNS_POOR_MAN_SESSION
     if provided_score == poor_score and provided_score[0] > 0:
-        return _METADATA_COLUMNS_SESSION
+        return METADATA_COLUMNS_SESSION
     return None
+
+
+def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int]:
+    """Return row and session counts for a Baseten Parquet trace file."""
+    try:
+        parquet_file = pq.ParquetFile(file_path)
+        row_count = parquet_file.metadata.num_rows
+        schema_names = set(pq.read_schema(file_path).names)
+        session_columns = {
+            METADATA_COLUMNS_SESSION,
+            METADATA_COLUMNS_POOR_MAN_SESSION,
+        } & schema_names
+        if not session_columns:
+            return row_count, row_count
+
+        table = pq.read_table(file_path, columns=sorted(session_columns))
+    except (OSError, pa.ArrowException):
+        return 0, 0
+
+    rows = table.to_pylist()
+    session_key = choose_baseten_session_key(
+        [row.get(METADATA_COLUMNS_SESSION) for row in rows],
+        [row.get(METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows],
+    )
+    if session_key is None:
+        return row_count, row_count
+
+    values = {str(row[session_key]) for row in rows if row.get(session_key) is not None}
+    return row_count, len(values) if values else row_count
 
 
 class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
@@ -131,12 +270,12 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         groups: dict[str, list[BasetenTrace]] = defaultdict(list)
         for trace in items:
             if (
-                session_key == _METADATA_COLUMNS_SESSION
+                session_key == METADATA_COLUMNS_SESSION
                 and trace.provided_session_id is not None
             ):
                 session_id = str(trace.provided_session_id)
             elif (
-                session_key == _METADATA_COLUMNS_POOR_MAN_SESSION
+                session_key == METADATA_COLUMNS_POOR_MAN_SESSION
                 and trace.poor_man_session_id is not None
             ):
                 session_id = str(trace.poor_man_session_id)
@@ -168,16 +307,16 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _read_metadata_table(self) -> pa.Table:
         schema = pq.read_schema(self.filename)
         metadata_columns = [
-            column for column in _METADATA_COLUMNS if column in set(schema.names)
+            column for column in METADATA_COLUMNS if column in set(schema.names)
         ]
         return pq.read_table(self.filename, columns=metadata_columns)
 
     def _choose_session_key_from_metadata_rows(
         self, rows: list[dict[str, Any]]
     ) -> str | None:
-        return _choose_repeated_session_key(
-            [row.get(_METADATA_COLUMNS_SESSION) for row in rows],
-            [row.get(_METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows],
+        return choose_baseten_session_key(
+            [row.get(METADATA_COLUMNS_SESSION) for row in rows],
+            [row.get(METADATA_COLUMNS_POOR_MAN_SESSION) for row in rows],
         )
 
     def _sample_session_ids(
@@ -197,7 +336,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         session_first_ts: dict[str | int, int] = {}
 
         for row in metadata_rows:
-            timestamp = int(row[_METADATA_COLUMNS_TIME])
+            timestamp = int(row[METADATA_COLUMNS_TIME])
             min_timestamp = (
                 timestamp if min_timestamp is None else min(min_timestamp, timestamp)
             )
@@ -299,7 +438,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         return data
 
     def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
-        return _choose_repeated_session_key(
+        return choose_baseten_session_key(
             [trace.provided_session_id for trace in items],
             [trace.poor_man_session_id for trace in items],
         )

@@ -352,7 +352,7 @@ class DatasetResolver:
         from aiperf.plugin.enums import CustomDatasetType
 
         if dataset_type == CustomDatasetType.BASETEN_TRACE:
-            from aiperf.config.dataset.baseten_counts import (
+            from aiperf.dataset.loader.baseten_trace import (
                 count_baseten_parquet_records_and_sessions,
             )
 

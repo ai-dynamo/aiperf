@@ -9,7 +9,7 @@ from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
 if TYPE_CHECKING:
-    from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
+    from aiperf.dataset.loader.baseten_trace import BasetenTrace
 
 
 def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
