@@ -46,9 +46,7 @@ class SocketDefaults:
     SO_REUSEPORT = 1  # Enable reuse port
 
     @staticmethod
-    def _set_socket_buffer(
-        sock: socket.socket, option_name: int, value: int
-    ) -> None:
+    def _set_socket_buffer(sock: socket.socket, option_name: int, value: int) -> None:
         """Set a socket buffer, reducing it if the OS rejects the requested size"""
         candidate = value
         while candidate >= 1024:

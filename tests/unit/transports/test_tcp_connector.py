@@ -159,8 +159,7 @@ class TestCreateTcpConnector:
             ((socket.SOL_SOCKET, socket.SO_RCVBUF, 1024),),
         ]
         assert (
-            "SO_RCVBUF=4096 was rejected by the OS with ENOBUFS; "
-            "using 1024 instead"
+            "SO_RCVBUF=4096 was rejected by the OS with ENOBUFS; using 1024 instead"
         ) in caplog.text
 
     def test_socket_buffer_reraises_non_buffer_errors(self) -> None:
