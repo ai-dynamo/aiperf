@@ -61,7 +61,10 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
-MANIFEST_VERSION = 1
+# Bump when cached side-data changes. Version 5 fixes Conversation.metadata()
+# projection of per-turn theoretical prefix-cache block counts, which realtime
+# profiling needs to report the trace-level infinite-cache hit rate.
+MANIFEST_VERSION = 5
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
@@ -497,6 +500,9 @@ def _settings_payload_from_user_config(
         "model_name": user_config.endpoint.model_names[0],
         "fixed_schedule_start_offset": inp.fixed_schedule_start_offset,
         "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
+        "weka_live_assistant_responses": (
+            Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
+        ),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
         "max_context_length": inp.max_context_length,

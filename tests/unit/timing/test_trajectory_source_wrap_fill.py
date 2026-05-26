@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from aiperf.common.models.dataset_models import Conversation, Turn
 from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
 
 
@@ -184,3 +185,113 @@ def test_init_does_not_log_info_when_no_wrap_fill_needed(caplog):
         _build_source(num_traces=4, turns_per_trace=10, concurrency=4)
     msgs = [r.getMessage() for r in caplog.records]
     assert not any("Trajectory reuse" in m for m in msgs), msgs
+
+
+def test_sendable_start_rejects_empty_raw_messages_without_prefix():
+    meta = MagicMock()
+    meta.system_message = None
+    meta.user_context_message = None
+    turn = MagicMock()
+    turn.raw_messages_count = 0
+    meta.turns = [turn]
+
+    assert TrajectorySource._trajectory_start_is_sendable(meta, 0) is False
+
+
+def test_sendable_start_accepts_empty_raw_messages_with_system_prefix():
+    meta = MagicMock()
+    meta.system_message = "system"
+    meta.user_context_message = None
+    turn = MagicMock()
+    turn.raw_messages_count = 0
+    meta.turns = [turn]
+
+    assert TrajectorySource._trajectory_start_is_sendable(meta, 0) is True
+
+
+def test_sendable_start_accepts_old_metadata_without_raw_message_count():
+    meta = MagicMock()
+    meta.system_message = None
+    meta.user_context_message = None
+    turn = MagicMock(spec=[])
+    meta.turns = [turn]
+
+    assert TrajectorySource._trajectory_start_is_sendable(meta, 0) is True
+
+
+def test_conversation_metadata_preserves_raw_message_count_without_payload_copy():
+    conv = Conversation(
+        session_id="trace_0",
+        turns=[
+            Turn(raw_messages=None),
+            Turn(raw_messages=[]),
+            Turn(raw_messages=[{"role": "user", "content": "hello"}]),
+        ],
+    )
+
+    counts = [turn.raw_messages_count for turn in conv.metadata().turns]
+    assert counts == [None, 0, 1]
+
+
+def test_conversation_metadata_preserves_prefix_messages():
+    conv = Conversation(
+        session_id="trace_0",
+        system_message="system",
+        user_context_message="context",
+        turns=[Turn(raw_messages=[])],
+    )
+
+    meta = conv.metadata()
+
+    assert meta.system_message == "system"
+    assert meta.user_context_message == "context"
+
+
+def test_conversation_to_metadata_preserves_prefix_messages():
+    conv = Conversation(
+        session_id="trace_0",
+        system_message="system",
+        user_context_message="context",
+        turns=[Turn(raw_messages=[])],
+    )
+
+    meta = conv.to_metadata()
+
+    assert meta.system_message == "system"
+    assert meta.user_context_message == "context"
+
+
+def test_init_samples_only_warmup_profile_pairs_with_nonempty_first_payloads():
+    def turn(raw_messages_count):
+        t = MagicMock()
+        t.raw_messages_count = raw_messages_count
+        return t
+
+    conv = MagicMock()
+    conv.conversation_id = "trace_0"
+    conv.system_message = None
+    conv.user_context_message = None
+    conv.turns = [
+        turn(1),
+        turn(0),
+        turn(1),
+        turn(1),
+    ]
+    md = MagicMock()
+    md.conversations = [conv]
+    sampler = _FakeSampler(["trace_0"])
+
+    src = TrajectorySource(
+        dataset_metadata=md,
+        dataset_sampler=sampler,
+        concurrency=1,
+        random_seed=42,
+        start_min_ratio=0.0,
+        start_max_ratio=1.0,
+    )
+
+    # k=0 is invalid because profiling would start on empty turn 1.
+    # k=1 is invalid because warmup would start on empty turn 1.
+    assert src.trajectories == [
+        Trajectory(conversation_id="trace_0", start_turn_index=2)
+    ]

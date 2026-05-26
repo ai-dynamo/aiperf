@@ -78,15 +78,27 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     return entry.t
 
 
-def _trace_peak_input_length(trace: WekaTrace) -> int:
-    """Peak recorded context length across parent and subagent requests."""
+def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> int:
+    """Peak requested context length across parent and subagent requests.
+
+    vLLM validates prompt tokens plus requested output tokens against the
+    model context window. Filtering only ``input_length`` leaves deterministic
+    4xxs for traces whose prompt fits but ``prompt + max_tokens`` exceeds the
+    server's max model length.
+    """
+
+    def capped_output(req: _NormalRequestT) -> int:
+        if max_osl is not None and req.output_length > max_osl:
+            return max_osl
+        return req.output_length
+
     peak = 0
     for req in trace.requests:
         if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
-            peak = max(peak, req.input_length)
+            peak = max(peak, req.input_length + capped_output(req))
         elif isinstance(req, WekaSubagentEntry):
             for child_req in req.requests:
-                peak = max(peak, child_req.input_length)
+                peak = max(peak, child_req.input_length + capped_output(child_req))
     return peak
 
 
@@ -284,6 +296,16 @@ def _child_plans_for_active_subagents(
         for cp in child_plans
         if cp.parent_trace_id == plan.trace_id and cp.subagent_index not in dropped
     ]
+
+
+def _count_seen_prefix_blocks(hash_ids: list[int], seen: set[int]) -> int:
+    """Return leading blocks already present in ``seen`` for prefix-cache math."""
+    hits = 0
+    for hash_id in hash_ids:
+        if hash_id not in seen:
+            break
+        hits += 1
+    return hits
 
 
 def _build_trace_idle_timing(
@@ -589,18 +611,18 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     def _filter_traces_by_max_context(
         self, data: dict[str, list[WekaTrace]], max_ctx: int
     ) -> dict[str, list[WekaTrace]]:
-        """Drop traces whose peak recorded ``input_length`` exceeds ``max_ctx``.
+        """Drop traces whose peak requested context length exceeds ``max_ctx``.
 
-        Uses the per-request ``input_length`` recorded in the WEKA trace
-        (cumulative context at that turn) so no client-side re-tokenization
-        is required. The peak across parent and subagent requests is the
-        trace's worst case; any conversation branch exceeding it would 4xx
-        mid-run.
+        Uses the per-request ``input_length`` and ``output_length`` recorded
+        in the WEKA trace so no client-side re-tokenization is required. The
+        peak across parent and subagent requests is the trace's worst case;
+        any conversation branch exceeding it would 4xx mid-run.
         """
         kept: dict[str, list[WekaTrace]] = {}
         max_seen = 0
+        max_osl = self.user_config.input.synthesis.max_osl
         for trace_id, wekas in data.items():
-            peak = _trace_peak_input_length(wekas[0])
+            peak = _trace_peak_context_length(wekas[0], max_osl=max_osl)
             if peak > max_seen:
                 max_seen = peak
             if peak <= max_ctx:
@@ -947,6 +969,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
             outer_to_turn_pos: dict[int, int] = {}
+            parent_seen_hash_ids: set[int] = set()
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
                 if k == 0:
@@ -984,6 +1007,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 if delay_ms is not None:
                     delay_ms = self._delay_cap_tracker.clamp(delay_ms)
                 delta = recon.turn_delta()
+                theoretical_hit_blocks = _count_seen_prefix_blocks(
+                    req.hash_ids, parent_seen_hash_ids
+                )
+                theoretical_total_blocks = len(req.hash_ids)
+                parent_seen_hash_ids.update(req.hash_ids)
                 conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
@@ -992,6 +1020,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=self._cap_output(req),
                         raw_messages=delta.delta_messages,
                         reset_context=delta.reset_context,
+                        theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
+                        theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
@@ -1159,6 +1189,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 is_root=False,
                 agent_depth=1,
             )
+            child_seen_hash_ids: set[int] = set()
             for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 if k == 0:
@@ -1195,6 +1226,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
+                theoretical_hit_blocks = _count_seen_prefix_blocks(
+                    creq.hash_ids, child_seen_hash_ids
+                )
+                theoretical_total_blocks = len(creq.hash_ids)
+                child_seen_hash_ids.update(creq.hash_ids)
                 child_conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
@@ -1203,6 +1239,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=creq.output_length,
                         raw_messages=child_delta.delta_messages,
                         reset_context=child_delta.reset_context,
+                        theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
+                        theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
                     )
                 )
             conversations.append(child_conv)
@@ -1450,6 +1488,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         max_tokens=t_dict["max_tokens"],
                         raw_messages=t_dict["raw_messages"],
                         reset_context=t_dict["reset_context"],
+                        theoretical_prefix_cache_hit_blocks=t_dict[
+                            "theoretical_prefix_cache_hit_blocks"
+                        ],
+                        theoretical_prefix_cache_total_blocks=t_dict[
+                            "theoretical_prefix_cache_total_blocks"
+                        ],
                     )
                 )
             for branch in result["branches"]:
@@ -1491,6 +1535,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             max_tokens=t_dict["max_tokens"],
                             raw_messages=t_dict["raw_messages"],
                             reset_context=t_dict["reset_context"],
+                            theoretical_prefix_cache_hit_blocks=t_dict[
+                                "theoretical_prefix_cache_hit_blocks"
+                            ],
+                            theoretical_prefix_cache_total_blocks=t_dict[
+                                "theoretical_prefix_cache_total_blocks"
+                            ],
                         )
                     )
                 conversations.append(child_conv)

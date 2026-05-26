@@ -380,15 +380,17 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         """
         return []
 
-    def realtime_snapshot(self) -> dict[str, float]:
+    def realtime_snapshot(self, start_ns: int | None = None) -> dict[str, float]:
         """Live snapshot of key server metrics for the realtime stats block.
 
         Returns a flat ``{metric_name: value}`` dict with the metrics most
         useful to display mid-run:
 
-        - ``prefix_cache_hit_rate`` (% across all endpoints; counter-delta
-          since the first observed sample; ``vllm:prefix_cache_hits`` /
-          ``vllm:prefix_cache_queries``).
+        - ``prefix_cache_hit_rate`` (% across all endpoints; counter-delta from
+          ``start_ns`` when supplied, otherwise since the first observed sample;
+          ``vllm:prefix_cache_hits`` / ``vllm:prefix_cache_queries``).
+        - ``unique_input_tokens_srv`` (prompt tokens that were not prefix-cache
+          hits, derived as ``vllm:prefix_cache_queries - vllm:prefix_cache_hits``).
         - ``external_prefix_cache_hit_rate`` (% same shape, when CPU
           offload is active and ``vllm:external_prefix_cache_*`` are present).
         - ``kv_cache_usage_pct`` (latest gauge value, max across endpoints;
@@ -397,8 +399,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         - ``cpu_kv_cache_usage_pct`` (only present when the server emits
           ``vllm:cpu_cache_usage_perc`` — i.e. CPU offload is active).
         - ``num_running`` / ``num_waiting`` (vLLM scheduler queue depth).
-        - ``num_preemptions`` (cumulative total since first sample; vLLM
-          ``vllm:num_preemptions`` or SGLang ``sglang:num_retracted_requests_total``).
+        - ``num_preemptions`` (cumulative total from ``start_ns`` when supplied,
+          otherwise since first sample; vLLM ``vllm:num_preemptions`` or SGLang
+          ``sglang:num_retracted_requests_total``).
 
         Returns ``{}`` when no server metrics have been received yet, so
         callers can suppress the row on early ticks.
@@ -408,18 +411,21 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             return {}
         out: dict[str, float] = {}
 
-        hits = self._counter_delta(endpoints, "vllm:prefix_cache_hits")
-        queries = self._counter_delta(endpoints, "vllm:prefix_cache_queries")
+        hits = self._counter_delta(endpoints, "vllm:prefix_cache_hits", start_ns)
+        queries = self._counter_delta(endpoints, "vllm:prefix_cache_queries", start_ns)
         if hits is not None and queries and queries > 0:
             out["prefix_cache_hit_rate"] = 100.0 * hits / queries
+            out["unique_input_tokens_srv"] = max(queries - hits, 0.0)
 
         # External (CPU-offload) prefix cache. Only emit when there has been
         # any query against the external tier — a 0/0 division otherwise
         # produces a misleading "ext_cache_hit=0.0%" row on offload=none
         # configs that share the metric family with offload=cpu peers.
-        ext_hits = self._counter_delta(endpoints, "vllm:external_prefix_cache_hits")
+        ext_hits = self._counter_delta(
+            endpoints, "vllm:external_prefix_cache_hits", start_ns
+        )
         ext_queries = self._counter_delta(
-            endpoints, "vllm:external_prefix_cache_queries"
+            endpoints, "vllm:external_prefix_cache_queries", start_ns
         )
         if ext_hits is not None and ext_queries and ext_queries > 0:
             out["external_prefix_cache_hit_rate"] = 100.0 * ext_hits / ext_queries
@@ -449,10 +455,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         # Preemptions — vLLM retracts running requests on KV exhaustion;
         # SGLang exposes the same concept as a total counter.
-        preempt = self._counter_delta(endpoints, "vllm:num_preemptions")
+        preempt = self._counter_delta(endpoints, "vllm:num_preemptions", start_ns)
         if preempt is None:
             preempt = self._counter_delta(
-                endpoints, "sglang:num_retracted_requests_total"
+                endpoints, "sglang:num_retracted_requests_total", start_ns
             )
         if preempt is not None:
             out["num_preemptions"] = preempt
@@ -463,18 +469,26 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # (independent of aiperf's client-side accounting). Suppressed when
         # the counters are absent so SGLang / non-vLLM servers don't show
         # spurious zeroes.
-        in_rate = self._counter_rate(endpoints, "vllm:prompt_tokens_total")
+        in_rate = self._counter_rate(endpoints, "vllm:prompt_tokens_total", start_ns)
         if in_rate is not None:
             out["input_token_throughput_srv"] = in_rate
-        out_rate = self._counter_rate(endpoints, "vllm:generation_tokens_total")
+        out_rate = self._counter_rate(
+            endpoints, "vllm:generation_tokens_total", start_ns
+        )
         if out_rate is not None:
             out["output_token_throughput_srv"] = out_rate
 
         return out
 
     @staticmethod
-    def _counter_delta(endpoints: list, metric_name: str) -> float | None:
+    def _counter_delta(
+        endpoints: list, metric_name: str, start_ns: int | None = None
+    ) -> float | None:
         """Sum (last - first) across endpoints for a counter metric.
+
+        When ``start_ns`` is provided, use the last sample before ``start_ns`` as
+        the baseline when present. This mirrors final export accounting so
+        realtime rows can exclude warmup.
 
         Returns None if no endpoint has at least two samples for the metric.
         """
@@ -486,9 +500,30 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     continue
                 vals = entry.data.values
                 if len(vals) >= 2:
-                    total += float(vals[-1] - vals[0])
+                    baseline_idx = ServerMetricsAccumulator._counter_baseline_idx(
+                        entry.data, start_ns
+                    )
+                    if baseline_idx is None or baseline_idx == len(vals) - 1:
+                        continue
+                    total += float(vals[-1] - vals[baseline_idx])
                     found = True
         return total if found else None
+
+    @staticmethod
+    def _counter_baseline_idx(time_series: Any, start_ns: int | None) -> int | None:
+        """Return the counter baseline index for an optional realtime start."""
+        vals = time_series.values
+        if len(vals) < 2:
+            return None
+        if start_ns is None:
+            return 0
+
+        first_in_window = int(
+            np.searchsorted(time_series.timestamps, start_ns, side="left")
+        )
+        if first_in_window >= len(vals):
+            return None
+        return first_in_window - 1 if first_in_window > 0 else first_in_window
 
     @staticmethod
     def _gauge_latest_max(endpoints: list, metric_name: str) -> float | None:
@@ -505,15 +540,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         return best
 
     @staticmethod
-    def _counter_rate(endpoints: list, metric_name: str) -> float | None:
+    def _counter_rate(
+        endpoints: list, metric_name: str, start_ns: int | None = None
+    ) -> float | None:
         """Sum (last - first) across endpoints divided by elapsed wall seconds.
 
         Running-average rate for a Prometheus counter, in tokens/sec. Uses each
-        endpoint's first and last observed timestamps as the window so warmup
-        and post-stop samples are naturally excluded by the existing window
-        (this snapshot is realtime-only, so the data span equals the run-so-far
-        elapsed). Returns None if no endpoint observed the metric, or if every
-        endpoint has only one sample (no elapsed time to divide by).
+        endpoint's selected baseline and last observed timestamps as the window.
+        Returns None if no endpoint observed the metric, or if every endpoint has
+        only one usable sample.
         """
         total_delta = 0.0
         max_elapsed_ns: float = 0.0
@@ -526,8 +561,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 ts = entry.data.timestamps
                 if len(vals) < 2 or len(ts) < 2:
                     continue
-                total_delta += float(vals[-1] - vals[0])
-                max_elapsed_ns = max(max_elapsed_ns, float(ts[-1] - ts[0]))
+                baseline_idx = ServerMetricsAccumulator._counter_baseline_idx(
+                    entry.data, start_ns
+                )
+                if baseline_idx is None or baseline_idx == len(vals) - 1:
+                    continue
+                total_delta += float(vals[-1] - vals[baseline_idx])
+                max_elapsed_ns = max(max_elapsed_ns, float(ts[-1] - ts[baseline_idx]))
                 found = True
         if not found or max_elapsed_ns <= 0:
             return None

@@ -73,6 +73,27 @@ class TestComputeCacheKey:
         assert coding_key is not None
         assert qualitative_key != coding_key
 
+    def test_key_changes_when_weka_live_assistant_setting_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        cfg = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
+            ),
+        )
+
+        monkeypatch.setattr(Environment.DATASET, "WEKA_LIVE_ASSISTANT_RESPONSES", False)
+        pre_canned_key = mmap_cache.compute_cache_key_from_user_config(cfg)
+        monkeypatch.setattr(Environment.DATASET, "WEKA_LIVE_ASSISTANT_RESPONSES", True)
+        live_key = mmap_cache.compute_cache_key_from_user_config(cfg)
+
+        assert pre_canned_key is not None
+        assert live_key is not None
+        assert pre_canned_key != live_key
+
     def test_key_is_deterministic_for_identical_inputs(self, tmp_path: Path) -> None:
         f = _write_input_file(tmp_path, b"hello world")
         k1 = mmap_cache.compute_cache_key(

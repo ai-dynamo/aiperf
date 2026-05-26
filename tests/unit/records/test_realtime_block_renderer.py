@@ -188,3 +188,32 @@ def test_render_seq_rows_omitted_when_metrics_absent() -> None:
     )
     assert "isl " not in block
     assert "osl " not in block
+
+
+def test_render_server_snapshot_line_includes_unique_input_tokens() -> None:
+    block = _render_realtime_block(
+        _baseline_metrics(),
+        _phase_stats(),
+        prev_snapshot=None,
+        server_snapshot={
+            "prefix_cache_hit_rate": 68.3,
+            "unique_input_tokens_srv": 123456.0,
+            "external_prefix_cache_hit_rate": 11.2,
+            "kv_cache_usage_pct": 94.5,
+            "cpu_kv_cache_usage_pct": 37.0,
+            "num_running": 24,
+            "num_waiting": 0,
+            "input_token_throughput_srv": 98765.0,
+            "output_token_throughput_srv": 4321.0,
+        },
+    )
+
+    assert "srv  " in block
+    assert "prefix_cache_hit=68.3%" in block
+    assert "unique_in_srv=123,456" in block
+    assert "ext_cache_hit=11.2%" in block
+    assert "kv_usage=94.5%" in block
+    assert "cpu_kv_usage=37.0%" in block
+    assert "queue=24r/0w" in block
+    assert "tput_in_srv=98,765/s" in block
+    assert "tput_out_srv=4,321/s" in block

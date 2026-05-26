@@ -133,6 +133,31 @@ class TurnMetadata(AIPerfBaseModel):
         default_factory=list,
         description="Conditions gating dispatch of this turn (DAG projection).",
     )
+    raw_messages_count: int | None = Field(
+        default=None,
+        description=(
+            "Number of OpenAI-compatible raw messages on the source Turn. "
+            "None means Turn.raw_messages is None; zero means an explicit empty "
+            "messages delta."
+        ),
+    )
+    theoretical_prefix_cache_hit_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of leading hash-id blocks that would be prefix-cache hits "
+            "for this turn under an infinite per-session cache. None when the "
+            "dataset loader did not provide hash-block metadata."
+        ),
+    )
+    theoretical_prefix_cache_total_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of hash-id blocks considered for theoretical prefix-cache "
+            "hit accounting. Pairs with theoretical_prefix_cache_hit_blocks."
+        ),
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -221,6 +246,23 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    theoretical_prefix_cache_hit_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of leading hash-id blocks that would hit an infinite "
+            "per-session prefix cache for this turn. Set by trace loaders that "
+            "already walk hash_ids during reconstruction."
+        ),
+    )
+    theoretical_prefix_cache_total_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of hash-id blocks considered for theoretical prefix-cache "
+            "hit accounting for this turn."
+        ),
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -229,6 +271,15 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             branch_ids=self.branch_ids,
             prerequisites=self.prerequisites,
+            raw_messages_count=None
+            if self.raw_messages is None
+            else len(self.raw_messages),
+            theoretical_prefix_cache_hit_blocks=(
+                self.theoretical_prefix_cache_hit_blocks
+            ),
+            theoretical_prefix_cache_total_blocks=(
+                self.theoretical_prefix_cache_total_blocks
+            ),
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -279,6 +330,12 @@ class Turn(AIPerfBaseModel):
             branch_ids=list(self.branch_ids),
             prerequisites=list(self.prerequisites),
             audio_duration_seconds=self.audio_duration_seconds,
+            theoretical_prefix_cache_hit_blocks=(
+                self.theoretical_prefix_cache_hit_blocks
+            ),
+            theoretical_prefix_cache_total_blocks=(
+                self.theoretical_prefix_cache_total_blocks
+            ),
         )
 
 
@@ -292,6 +349,22 @@ class ConversationMetadata(AIPerfBaseModel):
     turns: list[TurnMetadata] = Field(
         default_factory=list,
         description="The metadata of the turns in the conversation.",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional shared system message prepended to the first request. "
+            "Timing strategies use this to decide whether an otherwise empty "
+            "per-turn raw-message delta can still start a valid request."
+        ),
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional per-conversation user context prepended to the first request. "
+            "Timing strategies use this to decide whether an otherwise empty "
+            "per-turn raw-message delta can still start a valid request."
+        ),
     )
     branches: list[ConversationBranchInfo] = Field(
         default_factory=list,
@@ -464,16 +537,13 @@ class Conversation(AIPerfBaseModel):
             ]
             has_forks = any(b.mode == ConversationBranchMode.FORK for b in triggered)
             turn_metas.append(
-                TurnMetadata(
-                    timestamp_ms=turn.timestamp,
-                    delay_ms=turn.delay,
-                    branch_ids=turn.branch_ids,
-                    has_forks=has_forks,
-                )
+                turn.metadata().model_copy(update={"has_forks": has_forks})
             )
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=turn_metas,
+            system_message=self.system_message,
+            user_context_message=self.user_context_message,
             branches=self.branches,
             is_root=self.is_root,
             agent_depth=self.agent_depth,
@@ -492,6 +562,8 @@ class Conversation(AIPerfBaseModel):
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=[t.metadata() for t in self.turns],
+            system_message=self.system_message,
+            user_context_message=self.user_context_message,
             branches=list(self.branches),
             is_root=self.is_root,
             agent_depth=self.agent_depth,
