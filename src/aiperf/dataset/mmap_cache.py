@@ -61,10 +61,10 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
-# Bump when cached side-data changes. Version 4 adds per-turn theoretical
-# prefix-cache block counts, which realtime profiling needs to report the
-# trace-level infinite-cache hit rate.
-MANIFEST_VERSION = 4
+# Bump when cached side-data changes. Version 5 fixes Conversation.metadata()
+# projection of per-turn theoretical prefix-cache block counts, which realtime
+# profiling needs to report the trace-level infinite-cache hit rate.
+MANIFEST_VERSION = 5
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 

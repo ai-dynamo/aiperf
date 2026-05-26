@@ -9,6 +9,7 @@ from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import (
+    Conversation,
     ConversationMetadata,
     DatasetMetadata,
     ErrorDetails,
@@ -52,6 +53,23 @@ def test_turn_metadata_carries_theoretical_prefix_counts() -> None:
     )
 
     metadata = turn.metadata()
+
+    assert metadata.theoretical_prefix_cache_hit_blocks == 3
+    assert metadata.theoretical_prefix_cache_total_blocks == 5
+
+
+def test_conversation_metadata_carries_theoretical_prefix_counts() -> None:
+    conversation = Conversation(
+        session_id="trace-a",
+        turns=[
+            Turn(
+                theoretical_prefix_cache_hit_blocks=3,
+                theoretical_prefix_cache_total_blocks=5,
+            )
+        ],
+    )
+
+    [metadata] = conversation.metadata().turns
 
     assert metadata.theoretical_prefix_cache_hit_blocks == 3
     assert metadata.theoretical_prefix_cache_total_blocks == 5

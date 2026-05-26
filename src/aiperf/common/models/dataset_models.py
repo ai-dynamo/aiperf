@@ -537,15 +537,7 @@ class Conversation(AIPerfBaseModel):
             ]
             has_forks = any(b.mode == ConversationBranchMode.FORK for b in triggered)
             turn_metas.append(
-                TurnMetadata(
-                    timestamp_ms=turn.timestamp,
-                    delay_ms=turn.delay,
-                    branch_ids=turn.branch_ids,
-                    has_forks=has_forks,
-                    raw_messages_count=None
-                    if turn.raw_messages is None
-                    else len(turn.raw_messages),
-                )
+                turn.metadata().model_copy(update={"has_forks": has_forks})
             )
         return ConversationMetadata(
             conversation_id=self.session_id,
