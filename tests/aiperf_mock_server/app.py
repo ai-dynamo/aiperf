@@ -53,6 +53,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     ImageRetrievalRequest,
     RankingRequest,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
@@ -625,29 +626,6 @@ async def _text_stream_wrapper(ctx: RequestCtx, req: CompletionRequest, endpoint
 # ============================================================================
 
 
-def _extract_responses_prompt(payload: dict[str, Any]) -> str:
-    input_value = payload.get("input", "")
-    if isinstance(input_value, str):
-        return input_value
-    if isinstance(input_value, list):
-        parts: list[str] = []
-        for item in input_value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                content = item.get("content", "")
-                if isinstance(content, str):
-                    parts.append(content)
-                elif isinstance(content, list):
-                    parts.extend(
-                        str(part.get("text", ""))
-                        for part in content
-                        if isinstance(part, dict)
-                    )
-        return "\n".join(part for part in parts if part)
-    return str(input_value)
-
-
 def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
     return {
         "id": ctx.request_id,
@@ -668,13 +646,13 @@ def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
 
 @app.post("/v1/responses", response_model=None)
 @with_error_injection
-async def responses(req: dict[str, Any], request: Request) -> ORJSONResponse:
+async def responses(req: ResponsesRequest, request: Request) -> ORJSONResponse:
     """Mock OpenAI Responses endpoint."""
     endpoint = "/v1/responses"
-    model = str(req.get("model") or "test-model")
+    model = req.model or "test-model"
     mock_req = ChatCompletionRequest(
         model=model,
-        messages=[{"role": "user", "content": _extract_responses_prompt(req)}],
+        messages=[{"role": "user", "content": req.prompt_text}],
     )
     ctx = make_ctx(mock_req, endpoint, request.state.start_time)
 

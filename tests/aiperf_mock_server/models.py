@@ -260,6 +260,61 @@ class AnthropicMessagesRequest(BaseCompletionRequest):
         return self.max_tokens
 
 
+class ResponsesRequest(BaseModel):
+    """Request model for OpenAI's /v1/responses endpoint.
+
+    The Responses API takes its prompt under `input` (which may be a string,
+    a list of strings, or a list of content-block dicts) and caps generation
+    via `max_output_tokens` rather than the chat API's `max_completion_tokens`.
+    Modeled here so the recorder can capture the real payload instead of the
+    synthetic ChatCompletionRequest the latency simulator drives off of.
+    """
+
+    model: str
+    input: str | list[Any] = ""
+    max_output_tokens: int | None = None
+    stream: bool = False
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+
+    # Mirrors BaseCompletionRequest so recorder/simulator share field semantics
+    # when the client supplies them via extras.
+    min_tokens: int | None = None
+    ignore_eos: bool = False
+
+    @property
+    def prompt_text(self) -> str:
+        """Flatten `input` (str | list[str|dict]) into a single string.
+
+        Matches the previous `_extract_responses_prompt` helper that lived in
+        the handler; moved here so the recorder and tokenizer dispatch sites
+        share one source of truth.
+        """
+        return _flatten_responses_input(self.input)
+
+
+def _flatten_responses_input(input_value: Any) -> str:
+    """Walk the Responses-API `input` shape and concatenate into text."""
+    if isinstance(input_value, str):
+        return input_value
+    if isinstance(input_value, list):
+        parts: list[str] = []
+        for item in input_value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                content = item.get("content", "")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    parts.extend(
+                        str(part.get("text", ""))
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+        return "\n".join(part for part in parts if part)
+    return str(input_value)
+
+
 # ============================================================================
 # Request Type Union
 # ============================================================================
@@ -276,4 +331,5 @@ RequestT = (
     | ImageRetrievalRequest
     | SolidoRAGRequest
     | AnthropicMessagesRequest
+    | ResponsesRequest
 )
