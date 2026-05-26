@@ -17,6 +17,8 @@ products:
       - display-name: dev
         path: ../docs/index.yml
 
+global-theme: nvidia
+
 redirects:
   - source: "/aiperf/index.html"
     destination: "/aiperf/"
