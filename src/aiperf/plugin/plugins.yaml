@@ -1517,12 +1517,14 @@ accuracy_benchmark:
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
     description: |
-      GPQA Diamond benchmark with graduate-level science questions in physics,
-      chemistry, and biology requiring expert-level reasoning.
+      GPQA Diamond benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (Idavidrein/gpqa subset gpqa_diamond
+      + lighteval ``gpqa_metric``). Uses the simple-evals prompt template
+      with SHA-256-seeded deterministic A/B/C/D shuffling so gold
+      positions are reproducible across runs.
     metadata:
-      default_grader: multiple_choice
+      default_grader: lighteval_gpqa
       default_n_shots: 0
-      is_implemented: false
 
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
