@@ -73,7 +73,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
             aiperf_version=aiperf_version,
             benchmark_id=self._run.benchmark_id if self._run is not None else None,
             input_config=self._cfg,
-            run_info=_build_run_metadata(self._run),
+            run_info=RunInfo.from_run(self._run),
             was_cancelled=self._results.was_cancelled,
             error_summary=self._results.error_summary,
             start_time=start_time,
@@ -124,24 +124,3 @@ class MetricsJsonExporter(MetricsBaseExporter):
         """
         prepared = self._prepare_metrics(metric_results)
         return {tag: result.to_json_result() for tag, result in prepared.items()}
-
-
-def _build_run_metadata(run) -> RunInfo | None:
-    # Why: surfacing per-run reproducibility in profile_export_aiperf.json
-    # eliminates the need for a downstream reader to also load the internal
-    # run_config.json handoff file (which is multi-run only and absent on
-    # single-run paths).
-    if run is None:
-        return None
-    variation = getattr(run, "variation", None)
-    return RunInfo(
-        benchmark_id=run.benchmark_id,
-        sweep_id=getattr(run, "sweep_id", None),
-        random_seed=run.random_seed,
-        trial=run.trial,
-        run_label=run.label or None,
-        variation_label=variation.label if variation is not None else None,
-        variation_index=variation.index if variation is not None else None,
-        variation_values=dict(variation.values) if variation is not None else None,
-        cli_command=getattr(run, "cli_command", None),
-    )
