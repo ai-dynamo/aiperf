@@ -28,6 +28,7 @@ products:
         path: ./versions/v0.7.0.yml
         slug: v0.7.0
         availability: stable
+global-theme: nvidia
 redirects:
   - source: "/aiperf/index.html"
     destination: "/aiperf/"
