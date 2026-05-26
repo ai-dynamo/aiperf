@@ -23,7 +23,6 @@ from aiperf.config.accuracy import AccuracyConfig
 # This branch (AIP-874) implements ``aime``, ``math``, and ``code_execution``,
 # so those names are absent from the stub lists.
 STUB_BENCHMARKS = (
-    "aime24",
     "aime25",
     "math_500",
     "gpqa_diamond",
