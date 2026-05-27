@@ -13,8 +13,10 @@ Flow:
   8. POST /stop to release NVML.
   9. Tear down trtllm-serve cleanly.
 
-OSL is the source of truth: --osl drives --output-tokens-mean AND the
-min_tokens / max_tokens extra-inputs (so generation runs at fixed OSL).
+In synthetic mode (no --input-file), OSL is the source of truth: --osl
+drives --output-tokens-mean AND the min_tokens / max_tokens extra-inputs.
+In --input-file mode, per-row max_tokens in the raw_payload JSONL dictates
+generation length; --isl/--osl are rejected as mutually exclusive.
 
 All snapshots, logs, and aiperf artifact dirs are written under --output-dir.
 """
@@ -120,14 +122,27 @@ def _build_aiperf_cmd(
         "--streaming",
         "--random-seed",
         str(args.random_seed),
-        "--synthetic-input-tokens-mean",
-        str(args.isl),
-        "--synthetic-input-tokens-stddev",
-        "0",
-        "--output-tokens-mean",
-        str(args.osl),
-        "--output-tokens-stddev",
-        "0",
+    ]
+    # Dataset source: synthetic generation (default) vs raw_payload from file.
+    if args.input_file is None:
+        cmd += [
+            "--synthetic-input-tokens-mean",
+            str(args.isl),
+            "--synthetic-input-tokens-stddev",
+            "0",
+            "--output-tokens-mean",
+            str(args.osl),
+            "--output-tokens-stddev",
+            "0",
+        ]
+    else:
+        cmd += [
+            "--custom-dataset-type",
+            "raw_payload",
+            "--input-file",
+            str(args.input_file),
+        ]
+    cmd += [
         "--request-count",
         str(request_count),
         "--concurrency",
@@ -141,11 +156,16 @@ def _build_aiperf_cmd(
         "simple",
         "--artifact_dir",
         str(artifact_dir),
-        "--extra-inputs",
-        f"min_tokens:{args.osl}",
-        "--extra-inputs",
-        f"max_tokens:{args.osl}",
     ]
+    # min/max_tokens clamp only applies when the dataset doesn't supply
+    # per-row max_tokens (synthetic mode).
+    if args.input_file is None:
+        cmd += [
+            "--extra-inputs",
+            f"min_tokens:{args.osl}",
+            "--extra-inputs",
+            f"max_tokens:{args.osl}",
+        ]
     # aiperf's --warmup-request-count requires > 0; the driver does its own
     # wrapper-level warmup via a separate aiperf invocation, so this flag is
     # only emitted when a caller explicitly opts into aiperf's internal warmup.
@@ -235,14 +255,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--isl",
         type=int,
-        default=1000,
-        help="Input sequence length (--synthetic-input-tokens-mean, stddev=0)",
+        default=None,
+        help="Input sequence length (--synthetic-input-tokens-mean, stddev=0). "
+        "Mutually exclusive with --input-file. Backfilled to 1000 when "
+        "--input-file is unset.",
     )
     parser.add_argument(
         "--osl",
         type=int,
-        default=1000,
-        help="Output sequence length (--output-tokens-mean and min/max_tokens, stddev=0)",
+        default=None,
+        help="Output sequence length (--output-tokens-mean and min/max_tokens, stddev=0). "
+        "Mutually exclusive with --input-file. Backfilled to 1000 when "
+        "--input-file is unset.",
+    )
+    parser.add_argument(
+        "--input-file",
+        default=None,
+        help="Path to a raw_payload JSONL file. When set, the driver passes "
+        "--custom-dataset-type raw_payload --input-file <path> to aiperf and "
+        "disables synthetic dataset generation. Mutually exclusive with --isl "
+        "and --osl. Note: the aiperf raw_payload loader requires `messages`-"
+        "shaped JSONL lines, so the operator must also pass --endpoint-type "
+        "chat (this driver does not auto-flip).",
     )
     parser.add_argument(
         "--random-seed", type=int, default=100, help="aiperf --random-seed"
@@ -374,12 +408,40 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    if args.isl <= 0 or args.osl <= 0:
-        print(
-            f"error: --isl and --osl must be > 0 (got isl={args.isl} osl={args.osl})",
-            file=sys.stderr,
-        )
-        return 2
+    if args.input_file is not None:
+        input_file_path = Path(args.input_file).resolve()
+        if not input_file_path.is_file():
+            print(
+                f"error: --input-file not found at {input_file_path}",
+                file=sys.stderr,
+            )
+            return 2
+        args.input_file = input_file_path
+        if args.isl is not None:
+            print(
+                "error: --isl and --input-file are mutually exclusive "
+                "(--input-file supplies the prompts directly)",
+                file=sys.stderr,
+            )
+            return 2
+        if args.osl is not None:
+            print(
+                "error: --osl and --input-file are mutually exclusive "
+                "(per-row max_tokens in the dataset dictates generation length)",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        if args.isl is None:
+            args.isl = 1000  # backfill original default
+        if args.osl is None:
+            args.osl = 1000  # backfill original default
+        if args.isl <= 0 or args.osl <= 0:
+            print(
+                f"error: --isl and --osl must be > 0 (got isl={args.isl} osl={args.osl})",
+                file=sys.stderr,
+            )
+            return 2
 
     power_server_path = Path(args.power_server).resolve()
     if not power_server_path.is_file():
@@ -548,6 +610,7 @@ def main() -> int:
             "osl": args.osl,
             "request_count": args.request_count,
             "concurrency": args.concurrency,
+            "input_file": str(args.input_file) if args.input_file is not None else None,
         }
         write_json(output_dir / "summary.json", summary)
 
