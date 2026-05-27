@@ -199,13 +199,33 @@ class TrajectorySource(ConversationSource):
         """
         rows: list[str] = []
         pcts: list[float] = []
+        has_snapshots = False
         # Sort by lane (insertion order = lane assignment in dispatch loops)
         # so the table reads in the same order it'll be dispatched.
         for lane, trajectory in enumerate(self.trajectories):
             meta = self._metadata_lookup.get(trajectory.conversation_id)
             n_turns = len(meta.turns) if meta is not None else 0
             k_i = trajectory.start_turn_index
-            pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
+            turn_pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
+            if trajectory.snapshot is not None:
+                has_snapshots = True
+                pct = self._trajectory_snapshot_pct(trajectory)
+                ready = sum(
+                    1
+                    for state in trajectory.snapshot.states
+                    if not state.waiting_on_children
+                )
+                rows.append(
+                    f"    lane={lane:02d}  sample_time={pct:>3.0f}%  "
+                    f"root_next={k_i:>3d}/{n_turns:<3d} "
+                    f"({turn_pct:>3.0f}% turns)  "
+                    f"live={len(trajectory.snapshot.states)} ready={ready}  "
+                    f"trace_id={trajectory.conversation_id}"
+                )
+                pcts.append(pct)
+                continue
+
+            pct = turn_pct
             pcts.append(pct)
             rows.append(
                 f"    lane={lane:02d}  start_turn={k_i:>3d}/{n_turns:<3d} "
@@ -221,7 +241,8 @@ class TrajectorySource(ConversationSource):
                 median = pcts_sorted[mid]
             obs_line = (
                 f"  range cfg=[{self._start_min_ratio:.2f}, "
-                f"{self._start_max_ratio:.2f}]  observed pct: "
+                f"{self._start_max_ratio:.2f}]  observed "
+                f"{'sample' if has_snapshots else 'turn'} pct: "
                 f"min={min(pcts):>3.0f}% median={median:>3.0f}% "
                 f"max={max(pcts):>3.0f}%"
             )
@@ -327,6 +348,20 @@ class TrajectorySource(ConversationSource):
             trajectories.append(Trajectory(conversation_id=cid, start_turn_index=k_i))
 
         return trajectories
+
+    def _trajectory_snapshot_pct(self, trajectory: Trajectory) -> float:
+        if trajectory.snapshot is None:
+            meta = self._metadata_lookup.get(trajectory.conversation_id)
+            n_turns = len(meta.turns) if meta is not None else 0
+            return trajectory.start_turn_index / n_turns * 100.0 if n_turns > 0 else 0.0
+        bounds = self._trace_time_bounds(trajectory.conversation_id)
+        if bounds is None:
+            return 0.0
+        start_ms, end_ms = bounds
+        duration_ms = end_ms - start_ms
+        if duration_ms <= 0:
+            return 0.0
+        return (trajectory.snapshot.t_star_ms - start_ms) / duration_ms * 100.0
 
     @staticmethod
     def _trajectory_start_is_sendable(meta, turn_index: int) -> bool:
@@ -441,22 +476,11 @@ class TrajectorySource(ConversationSource):
     def _build_timestamped_trajectory(
         self, root_id: str, lane_index: int | None = None
     ) -> Trajectory | None:
-        trace_ids = self._collect_trace_conversation_ids(root_id)
-        timestamps: list[float] = []
-        for cid in trace_ids:
-            meta = self._metadata_lookup.get(cid)
-            if meta is None:
-                continue
-            for turn in meta.turns:
-                t_ms = _as_timestamp_ms(getattr(turn, "timestamp_ms", None))
-                if t_ms is not None:
-                    timestamps.append(t_ms)
-
-        if not timestamps:
+        bounds = self._trace_time_bounds(root_id)
+        if bounds is None:
             return None
 
-        start_ms = min(timestamps)
-        end_ms = max(timestamps)
+        start_ms, end_ms = bounds
         duration_ms = end_ms - start_ms
         seed = (
             _seed_for_trace(self._random_seed, root_id)
@@ -476,11 +500,7 @@ class TrajectorySource(ConversationSource):
         self._warn_if_live_delta_snapshot_needs_prior_responses(root_id, snapshot)
 
         root_state = next(
-            (
-                state
-                for state in snapshot.states
-                if state.conversation_id == root_id
-            ),
+            (state for state in snapshot.states if state.conversation_id == root_id),
             None,
         )
         start_turn_index = root_state.next_turn_index if root_state is not None else 0
@@ -489,6 +509,20 @@ class TrajectorySource(ConversationSource):
             start_turn_index=start_turn_index,
             snapshot=snapshot,
         )
+
+    def _trace_time_bounds(self, root_id: str) -> tuple[float, float] | None:
+        timestamps: list[float] = []
+        for cid in self._collect_trace_conversation_ids(root_id):
+            meta = self._metadata_lookup.get(cid)
+            if meta is None:
+                continue
+            for turn in meta.turns:
+                t_ms = _as_timestamp_ms(getattr(turn, "timestamp_ms", None))
+                if t_ms is not None:
+                    timestamps.append(t_ms)
+        if not timestamps:
+            return None
+        return min(timestamps), max(timestamps)
 
     def _warn_if_live_delta_snapshot_needs_prior_responses(
         self, root_id: str, snapshot: TrajectorySnapshot
@@ -622,9 +656,7 @@ class TrajectorySource(ConversationSource):
 
         runtimes: list[_BranchRuntime] = []
         for branch in getattr(parent_meta, "branches", []) or []:
-            start_ts = _as_timestamp_ms(
-                getattr(branch, "start_timestamp_ms", None)
-            )
+            start_ts = _as_timestamp_ms(getattr(branch, "start_timestamp_ms", None))
             if start_ts is None:
                 child_starts = [
                     ts

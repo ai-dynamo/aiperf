@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,6 +30,50 @@ def _make_dataset_metadata(turn_counts_by_id: dict[str, int]):
         convs.append(c)
     md.conversations = convs
     return md
+
+
+def _make_timestamped_subagent_dataset() -> DatasetMetadata:
+    branch_id = "trace:spawn:agent_0"
+    return DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=12000.0, branch_ids=[branch_id]),
+                    TurnMetadata(
+                        timestamp_ms=20000.0,
+                        prerequisites=[
+                            TurnPrerequisite(
+                                kind=PrerequisiteKind.SPAWN_JOIN,
+                                branch_id=branch_id,
+                            )
+                        ],
+                    ),
+                ],
+                branches=[
+                    ConversationBranchInfo(
+                        branch_id=branch_id,
+                        child_conversation_ids=["trace::sa:agent_0"],
+                        mode=ConversationBranchMode.SPAWN,
+                        start_timestamp_ms=13000.0,
+                    )
+                ],
+            ),
+            ConversationMetadata(
+                conversation_id="trace::sa:agent_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=13000.0),
+                    TurnMetadata(timestamp_ms=14000.0),
+                    TurnMetadata(timestamp_ms=17000.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
 
 
 def test_trajectory_count_matches_min_concurrency_and_pool():
@@ -124,46 +169,7 @@ def test_single_turn_trace_skipped_with_warning(caplog):
 
 def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     branch_id = "trace:spawn:agent_0"
-    md = DatasetMetadata(
-        conversations=[
-            ConversationMetadata(
-                conversation_id="trace",
-                turns=[
-                    TurnMetadata(timestamp_ms=0.0),
-                    TurnMetadata(timestamp_ms=12000.0, branch_ids=[branch_id]),
-                    TurnMetadata(
-                        timestamp_ms=20000.0,
-                        prerequisites=[
-                            TurnPrerequisite(
-                                kind=PrerequisiteKind.SPAWN_JOIN,
-                                branch_id=branch_id,
-                            )
-                        ],
-                    ),
-                ],
-                branches=[
-                    ConversationBranchInfo(
-                        branch_id=branch_id,
-                        child_conversation_ids=["trace::sa:agent_0"],
-                        mode=ConversationBranchMode.SPAWN,
-                        start_timestamp_ms=13000.0,
-                    )
-                ],
-            ),
-            ConversationMetadata(
-                conversation_id="trace::sa:agent_0",
-                turns=[
-                    TurnMetadata(timestamp_ms=13000.0),
-                    TurnMetadata(timestamp_ms=14000.0),
-                    TurnMetadata(timestamp_ms=17000.0),
-                ],
-                is_root=False,
-                agent_depth=1,
-                parent_conversation_id="trace",
-            ),
-        ],
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
+    md = _make_timestamped_subagent_dataset()
     sampler = MagicMock()
     sampler.next_conversation_id.side_effect = ["trace"]
 
@@ -191,6 +197,28 @@ def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     assert child.branch_mode == ConversationBranchMode.SPAWN
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
     assert src.warmup_credit_count == 1
+
+
+def test_timestamped_summary_logs_sample_time_not_root_turn_pct(caplog):
+    md = _make_timestamped_subagent_dataset()
+    sampler = MagicMock()
+    sampler.next_conversation_id.side_effect = ["trace"]
+
+    with caplog.at_level(logging.INFO, logger="aiperf.timing.trajectory_source"):
+        TrajectorySource(
+            dataset_metadata=md,
+            dataset_sampler=sampler,
+            concurrency=1,
+            random_seed=123,
+            start_min_ratio=0.675,
+            start_max_ratio=0.675,
+        )
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "observed sample pct:" in log_text
+    assert "sample_time= 68%" in log_text
+    assert "root_next=  2/3" in log_text
+    assert "live=2 ready=1" in log_text
 
 
 def test_timestamped_snapshot_after_spawning_turn_schedules_future_child_start():
