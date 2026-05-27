@@ -392,6 +392,130 @@ class TestDataLoaderExtractMetadata:
 
         assert metadata.model == "legacy-model"
 
+    def test_extract_metadata_model_from_aggregate_metadata_block(
+        self, tmp_path: Path
+    ) -> None:
+        """Aggregate-only runs carry no input_config; model is stamped onto
+        ``aggregated["metadata"]["model"]`` by the sweep exporter."""
+        loader = DataLoader()
+        aggregated = {
+            "metadata": {
+                "aggregation_type": "confidence",
+                "model": "Qwen/Qwen3-0.6B",
+                "variation_label": "concurrency_10",
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "Qwen/Qwen3-0.6B"
+
+    def test_extract_metadata_input_config_model_takes_precedence_over_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """When both shapes carry a model, the input_config value wins because
+        per-trial artifacts are richer and the metadata-block stamp is a
+        fallback for aggregate-only runs."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "endpoint": {"model_names": ["from-input-config"]},
+            },
+            "metadata": {"model": "from-aggregate-metadata"},
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "from-input-config"
+
+    def test_extract_metadata_concurrency_from_yaml_v2_phases(
+        self, tmp_path: Path
+    ) -> None:
+        """YAML v2 stores concurrency on the profiling phase, not on loadgen."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "loadgen": None,
+                "phases": [
+                    {"name": "profiling", "concurrency": 15, "requests": 200},
+                ],
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.concurrency == 15
+        assert metadata.request_count == 200
+
+    def test_extract_metadata_concurrency_yaml_v2_prefers_profiling_phase(
+        self, tmp_path: Path
+    ) -> None:
+        """When multiple phases exist, the profiling phase wins over warmup."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "phases": [
+                    {"name": "warmup", "concurrency": 1, "requests": 10},
+                    {"name": "profiling", "concurrency": 25, "requests": 500},
+                ],
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.concurrency == 25
+        assert metadata.request_count == 500
+
+    def test_extract_metadata_concurrency_yaml_v2_takes_precedence_over_legacy(
+        self, tmp_path: Path
+    ) -> None:
+        """Mirror the model-name precedence: v2 phases win when both shapes are present."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "loadgen": {"concurrency": 1, "request_count": 1},
+                "phases": [{"name": "profiling", "concurrency": 42, "requests": 99}],
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.concurrency == 42
+        assert metadata.request_count == 99
+
+    def test_extract_metadata_concurrency_from_legacy_loadgen(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy artifacts with no phases still resolve via loadgen."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "loadgen": {"concurrency": 8, "request_count": 64},
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.concurrency == 8
+        assert metadata.request_count == 64
+
+    def test_extract_metadata_concurrency_handles_null_loadgen(
+        self, tmp_path: Path
+    ) -> None:
+        """``loadgen: null`` in v2 artifacts must not crash the lookup."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "loadgen": None,
+                "phases": [],
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.concurrency is None
+        assert metadata.request_count is None
+
 
 class TestDataLoaderReloadWithDetails:
     """Tests for DataLoader.reload_with_details method."""
