@@ -384,24 +384,36 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         """Live snapshot of key server metrics for the realtime stats block.
 
         Returns a flat ``{metric_name: value}`` dict with the metrics most
-        useful to display mid-run:
+        useful to display mid-run. Each field is sourced from vLLM first and
+        falls back to the SGLang equivalent when vLLM names are absent, so
+        the realtime ``srv`` row populates for both backends.
 
-        - ``prefix_cache_hit_rate`` (% across all endpoints; counter-delta from
-          ``start_ns`` when supplied, otherwise since the first observed sample;
-          ``vllm:prefix_cache_hits`` / ``vllm:prefix_cache_queries``).
-        - ``unique_input_tokens_srv`` (prompt tokens that were not prefix-cache
-          hits, derived as ``vllm:prefix_cache_queries - vllm:prefix_cache_hits``).
-        - ``external_prefix_cache_hit_rate`` (% same shape, when CPU
-          offload is active and ``vllm:external_prefix_cache_*`` are present).
-        - ``kv_cache_usage_pct`` (latest gauge value, max across endpoints;
-          v1 ``vllm:kv_cache_usage_perc`` with v0 ``vllm:gpu_cache_usage_perc``
-          fallback).
-        - ``cpu_kv_cache_usage_pct`` (only present when the server emits
-          ``vllm:cpu_cache_usage_perc`` — i.e. CPU offload is active).
-        - ``num_running`` / ``num_waiting`` (vLLM scheduler queue depth).
-        - ``num_preemptions`` (cumulative total from ``start_ns`` when supplied,
-          otherwise since first sample; vLLM ``vllm:num_preemptions`` or SGLang
-          ``sglang:num_retracted_requests_total``).
+        - ``prefix_cache_hit_rate`` — vLLM counter pair
+          ``vllm:prefix_cache_hits`` / ``vllm:prefix_cache_queries`` (delta
+          from ``start_ns`` when supplied), or SGLang gauge
+          ``sglang:cache_hit_rate`` (combined L1+L2+L3 hit rate via
+          RadixAttention; the L2/L3 portion is not separately exposed).
+        - ``unique_input_tokens_srv`` — derived from the vLLM counter pair
+          only; SGLang's gauge has no compatible decomposition.
+        - ``external_prefix_cache_hit_rate`` — vLLM
+          ``vllm:external_prefix_cache_*`` only. SGLang folds HiCache hits
+          into ``sglang:cache_hit_rate`` and exposes no separate hit rate.
+        - ``kv_cache_usage_pct`` — vLLM ``vllm:kv_cache_usage_perc`` (v0
+          fallback ``vllm:gpu_cache_usage_perc``) or SGLang
+          ``sglang:token_usage``.
+        - ``cpu_kv_cache_usage_pct`` — vLLM ``vllm:cpu_cache_usage_perc``
+          (SimpleCPUOffloadConnector) or SGLang derived ratio
+          ``sglang:hicache_host_used_tokens`` / ``sglang:hicache_host_total_tokens``
+          (HiCache-enabled runs only).
+        - ``num_running`` / ``num_waiting`` — vLLM ``vllm:num_requests_running``
+          / ``vllm:num_requests_waiting`` or SGLang ``sglang:num_running_reqs``
+          / ``sglang:num_queue_reqs``.
+        - ``num_preemptions`` — vLLM ``vllm:num_preemptions`` or SGLang
+          ``sglang:num_retracted_reqs_total`` (counter delta).
+        - ``input_token_throughput_srv`` / ``output_token_throughput_srv`` —
+          counter rate over the elapsed window from ``vllm:prompt_tokens_total``
+          / ``vllm:generation_tokens_total`` or SGLang
+          ``sglang:prompt_tokens_total`` / ``sglang:generation_tokens_total``.
 
         Returns ``{}`` when no server metrics have been received yet, so
         callers can suppress the row on early ticks.
@@ -411,16 +423,40 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             return {}
         out: dict[str, float] = {}
 
+        self._add_prefix_cache_hit_rate(out, endpoints, start_ns)
+        self._add_external_prefix_cache_hit_rate(out, endpoints, start_ns)
+        self._add_kv_cache_usage_pct(out, endpoints)
+        self._add_cpu_kv_cache_usage_pct(out, endpoints)
+        self._add_queue_depth(out, endpoints)
+        self._add_preemptions(out, endpoints, start_ns)
+        self._add_token_throughputs(out, endpoints, start_ns)
+
+        return out
+
+    def _add_prefix_cache_hit_rate(
+        self, out: dict[str, float], endpoints: list, start_ns: int | None
+    ) -> None:
         hits = self._counter_delta(endpoints, "vllm:prefix_cache_hits", start_ns)
         queries = self._counter_delta(endpoints, "vllm:prefix_cache_queries", start_ns)
         if hits is not None and queries and queries > 0:
             out["prefix_cache_hit_rate"] = 100.0 * hits / queries
             out["unique_input_tokens_srv"] = max(queries - hits, 0.0)
+            return
+        # SGLang exposes the rate directly as a 0–1 gauge; the underlying
+        # hits/queries split is not in Prometheus, so unique_input_tokens
+        # cannot be reconstructed here.
+        sgl_rate = self._gauge_latest_max(endpoints, "sglang:cache_hit_rate")
+        if sgl_rate is not None:
+            out["prefix_cache_hit_rate"] = self._to_pct(sgl_rate)
 
-        # External (CPU-offload) prefix cache. Only emit when there has been
-        # any query against the external tier — a 0/0 division otherwise
-        # produces a misleading "ext_cache_hit=0.0%" row on offload=none
-        # configs that share the metric family with offload=cpu peers.
+    def _add_external_prefix_cache_hit_rate(
+        self, out: dict[str, float], endpoints: list, start_ns: int | None
+    ) -> None:
+        # Only emit when there has been any query against the external tier
+        # — a 0/0 division otherwise produces a misleading "ext_cache_hit=0.0%"
+        # row on offload=none configs that share the metric family with
+        # offload=cpu peers. SGLang has no equivalent: HiCache hits are
+        # folded into sglang:cache_hit_rate and not broken out.
         ext_hits = self._counter_delta(
             endpoints, "vllm:external_prefix_cache_hits", start_ns
         )
@@ -430,55 +466,117 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if ext_hits is not None and ext_queries and ext_queries > 0:
             out["external_prefix_cache_hit_rate"] = 100.0 * ext_hits / ext_queries
 
-        # GPU KV cache fill (gauge, 0–1 fraction in vLLM v1 → normalize to %).
-        # v0 fallback: vllm:gpu_cache_usage_perc.
-        kv = self._gauge_latest_max(endpoints, "vllm:kv_cache_usage_perc")
-        if kv is None:
-            kv = self._gauge_latest_max(endpoints, "vllm:gpu_cache_usage_perc")
+    def _add_kv_cache_usage_pct(self, out: dict[str, float], endpoints: list) -> None:
+        kv = self._first_gauge(
+            endpoints,
+            "vllm:kv_cache_usage_perc",
+            "vllm:gpu_cache_usage_perc",
+            "sglang:token_usage",
+        )
         if kv is not None:
-            out["kv_cache_usage_pct"] = kv * 100.0 if kv <= 1.0 else kv
+            out["kv_cache_usage_pct"] = self._to_pct(kv)
 
-        # CPU KV cache fill — present only on CPU-offload runs
-        # (SimpleCPUOffloadConnector emits vllm:cpu_cache_usage_perc).
+    def _add_cpu_kv_cache_usage_pct(
+        self, out: dict[str, float], endpoints: list
+    ) -> None:
+        # vLLM emits a gauge directly (SimpleCPUOffloadConnector); SGLang
+        # HiCache only emits used/total token counts on the host tier, so
+        # the ratio is computed here.
         cpu_kv = self._gauge_latest_max(endpoints, "vllm:cpu_cache_usage_perc")
+        if cpu_kv is None:
+            host_used = self._gauge_latest_max(
+                endpoints, "sglang:hicache_host_used_tokens"
+            )
+            host_total = self._gauge_latest_max(
+                endpoints, "sglang:hicache_host_total_tokens"
+            )
+            if host_used is not None and host_total and host_total > 0:
+                cpu_kv = host_used / host_total
         if cpu_kv is not None:
-            out["cpu_kv_cache_usage_pct"] = cpu_kv * 100.0 if cpu_kv <= 1.0 else cpu_kv
+            out["cpu_kv_cache_usage_pct"] = self._to_pct(cpu_kv)
 
-        # vLLM scheduler queue depth — running + waiting. Catches backpressure
-        # before it shows up as preemptions / latency.
-        running = self._gauge_latest_max(endpoints, "vllm:num_requests_running")
+    def _add_queue_depth(self, out: dict[str, float], endpoints: list) -> None:
+        running = self._first_gauge(
+            endpoints, "vllm:num_requests_running", "sglang:num_running_reqs"
+        )
         if running is not None:
             out["num_running"] = running
-        waiting = self._gauge_latest_max(endpoints, "vllm:num_requests_waiting")
+        waiting = self._first_gauge(
+            endpoints, "vllm:num_requests_waiting", "sglang:num_queue_reqs"
+        )
         if waiting is not None:
             out["num_waiting"] = waiting
 
-        # Preemptions — vLLM retracts running requests on KV exhaustion;
-        # SGLang exposes the same concept as a total counter.
-        preempt = self._counter_delta(endpoints, "vllm:num_preemptions", start_ns)
-        if preempt is None:
-            preempt = self._counter_delta(
-                endpoints, "sglang:num_retracted_requests_total", start_ns
-            )
+    def _add_preemptions(
+        self, out: dict[str, float], endpoints: list, start_ns: int | None
+    ) -> None:
+        # SGLang exposes the same concept as `num_retracted_reqs_total`.
+        preempt = self._first_counter_delta(
+            endpoints,
+            start_ns,
+            "vllm:num_preemptions",
+            "sglang:num_retracted_reqs_total",
+        )
         if preempt is not None:
             out["num_preemptions"] = preempt
 
-        # Server-side running-average token throughput — counter delta over
-        # the elapsed window between first and last sample. Equals what the
-        # server itself observed across all in-flight + completed requests
-        # (independent of aiperf's client-side accounting). Suppressed when
-        # the counters are absent so SGLang / non-vLLM servers don't show
-        # spurious zeroes.
-        in_rate = self._counter_rate(endpoints, "vllm:prompt_tokens_total", start_ns)
+    def _add_token_throughputs(
+        self, out: dict[str, float], endpoints: list, start_ns: int | None
+    ) -> None:
+        # Counter delta over the elapsed window between first and last sample
+        # — what the server itself observed across all in-flight + completed
+        # requests (independent of aiperf's client-side accounting). Suppressed
+        # when the counters are absent so non-vLLM/non-SGLang servers don't
+        # show spurious zeroes.
+        in_rate = self._first_counter_rate(
+            endpoints,
+            start_ns,
+            "vllm:prompt_tokens_total",
+            "sglang:prompt_tokens_total",
+        )
         if in_rate is not None:
             out["input_token_throughput_srv"] = in_rate
-        out_rate = self._counter_rate(
-            endpoints, "vllm:generation_tokens_total", start_ns
+        out_rate = self._first_counter_rate(
+            endpoints,
+            start_ns,
+            "vllm:generation_tokens_total",
+            "sglang:generation_tokens_total",
         )
         if out_rate is not None:
             out["output_token_throughput_srv"] = out_rate
 
-        return out
+    def _first_gauge(self, endpoints: list, *names: str) -> float | None:
+        """First non-None gauge value across candidate metric names."""
+        for name in names:
+            v = self._gauge_latest_max(endpoints, name)
+            if v is not None:
+                return v
+        return None
+
+    def _first_counter_delta(
+        self, endpoints: list, start_ns: int | None, *names: str
+    ) -> float | None:
+        """First non-None counter delta across candidate metric names."""
+        for name in names:
+            v = self._counter_delta(endpoints, name, start_ns)
+            if v is not None:
+                return v
+        return None
+
+    def _first_counter_rate(
+        self, endpoints: list, start_ns: int | None, *names: str
+    ) -> float | None:
+        """First non-None counter rate across candidate metric names."""
+        for name in names:
+            v = self._counter_rate(endpoints, name, start_ns)
+            if v is not None:
+                return v
+        return None
+
+    @staticmethod
+    def _to_pct(fraction: float) -> float:
+        """Normalize a 0–1 gauge fraction to a 0–100 percentage."""
+        return fraction * 100.0 if fraction <= 1.0 else fraction
 
     @staticmethod
     def _counter_delta(
