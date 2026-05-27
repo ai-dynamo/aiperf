@@ -183,6 +183,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/endpoints/base_endpoint.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/exporters/mlflow_data_exporter.py",
       ""
     ],
