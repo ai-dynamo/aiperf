@@ -1681,6 +1681,17 @@ class DataLoader(AIPerfLoggerMixin):
             end_time = aggregated.get("end_time")
             was_cancelled = aggregated.get("was_cancelled", False)
 
+            # Aggregate-only runs (sweep cells) carry no ``input_config``; the
+            # sweep exporter stamps the resolved model into ``metadata.model``
+            # instead. See ``_resolve_model_name_for_variation`` in
+            # ``aiperf.cli_runner._sweep_aggregate``.
+            if model is None:
+                meta_block = aggregated.get("metadata")
+                if isinstance(meta_block, dict):
+                    stamped = meta_block.get("model")
+                    if isinstance(stamped, str) and stamped:
+                        model = stamped
+
         duration_seconds = None
         if (
             requests_df is not None

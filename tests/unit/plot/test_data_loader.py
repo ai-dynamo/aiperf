@@ -392,6 +392,42 @@ class TestDataLoaderExtractMetadata:
 
         assert metadata.model == "legacy-model"
 
+    def test_extract_metadata_model_from_aggregate_metadata_block(
+        self, tmp_path: Path
+    ) -> None:
+        """Aggregate-only runs carry no input_config; model is stamped onto
+        ``aggregated["metadata"]["model"]`` by the sweep exporter."""
+        loader = DataLoader()
+        aggregated = {
+            "metadata": {
+                "aggregation_type": "confidence",
+                "model": "Qwen/Qwen3-0.6B",
+                "variation_label": "concurrency_10",
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "Qwen/Qwen3-0.6B"
+
+    def test_extract_metadata_input_config_model_takes_precedence_over_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """When both shapes carry a model, the input_config value wins because
+        per-trial artifacts are richer and the metadata-block stamp is a
+        fallback for aggregate-only runs."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "endpoint": {"model_names": ["from-input-config"]},
+            },
+            "metadata": {"model": "from-aggregate-metadata"},
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "from-input-config"
+
 
 class TestDataLoaderReloadWithDetails:
     """Tests for DataLoader.reload_with_details method."""
