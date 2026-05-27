@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import NoReturn
+
 from aiperf.common.enums import (
     EnergyMetricUnit,
     GenericMetricUnit,
@@ -15,7 +17,11 @@ from aiperf.metrics.metric_dicts import MetricResultsDict
 class TotalGpuPowerMetric(BaseDerivedMetric[float]):
     """Sum of average GPU power across all GPUs during the benchmark phase, in watts.
 
-    Computed externally by the GPU telemetry accumulator and injected as a pre-computed result.
+    Invariant: externally injected by
+    `GPUTelemetryAccumulator.compute_efficiency_metrics` from gpu_power_usage
+    scrapes. `_derive_value` is intentionally non-functional;
+    `MetricResultsProcessor.update_derived_metrics` is expected to catch
+    NoMetricValue and skip the tag during its derivation walk.
     """
 
     tag = "total_gpu_power"
@@ -24,16 +30,25 @@ class TotalGpuPowerMetric(BaseDerivedMetric[float]):
     display_order = 900
     flags = MetricFlags.NONE
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> float:
+    def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
         raise NoMetricValue(
-            "total_gpu_power is computed by the GPU telemetry accumulator"
+            "Cannot derive 'total_gpu_power' from MetricResultsDict: this metric "
+            "is externally injected by "
+            "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
+            "surfaces, the derivation walk is missing its NoMetricValue handler "
+            "(see MetricResultsProcessor.update_derived_metrics)."
         )
 
 
 class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     """Sum of GPU energy consumed across all GPUs during the benchmark phase, in joules.
 
-    Computed externally by the GPU telemetry accumulator and injected as a pre-computed result.
+    Invariant: externally injected by
+    `GPUTelemetryAccumulator.compute_efficiency_metrics` from
+    energy_consumption counter deltas. `_derive_value` is intentionally
+    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    expected to catch NoMetricValue and skip the tag during its
+    derivation walk.
     """
 
     tag = "total_gpu_energy"
@@ -42,16 +57,25 @@ class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     display_order = 901
     flags = MetricFlags.NONE
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> float:
+    def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
         raise NoMetricValue(
-            "total_gpu_energy is computed by the GPU telemetry accumulator"
+            "Cannot derive 'total_gpu_energy' from MetricResultsDict: this metric "
+            "is externally injected by "
+            "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
+            "surfaces, the derivation walk is missing its NoMetricValue handler "
+            "(see MetricResultsProcessor.update_derived_metrics)."
         )
 
 
 class OutputTokensPerJouleMetric(BaseDerivedMetric[float]):
     """Total output tokens divided by total GPU energy consumed, in tokens per joule.
 
-    Computed externally by the GPU telemetry accumulator and injected as a pre-computed result.
+    Invariant: externally injected by
+    `GPUTelemetryAccumulator.compute_efficiency_metrics` as
+    `total_output_tokens / total_gpu_energy`. `_derive_value` is
+    intentionally non-functional;
+    `MetricResultsProcessor.update_derived_metrics` is expected to catch
+    NoMetricValue and skip the tag during its derivation walk.
     """
 
     tag = "output_tokens_per_joule"
@@ -60,7 +84,11 @@ class OutputTokensPerJouleMetric(BaseDerivedMetric[float]):
     display_order = 902
     flags = MetricFlags.LARGER_IS_BETTER | MetricFlags.PRODUCES_TOKENS_ONLY
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> float:
+    def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
         raise NoMetricValue(
-            "output_tokens_per_joule is computed by the GPU telemetry accumulator"
+            "Cannot derive 'output_tokens_per_joule' from MetricResultsDict: this "
+            "metric is externally injected by "
+            "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
+            "surfaces, the derivation walk is missing its NoMetricValue handler "
+            "(see MetricResultsProcessor.update_derived_metrics)."
         )
