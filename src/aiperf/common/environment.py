@@ -85,6 +85,14 @@ class _APIServerSettings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for graceful API server shutdown before force-cancelling",
     )
+    POST_COMPLETE_GRACE: float = Field(
+        ge=0.0,
+        le=300.0,
+        default=5.0,
+        description="Seconds the API listener stays open after a benchmark terminates "
+        "so polling clients can observe the final status before the server shuts down. "
+        "Set to 0 to skip the grace window and shut down immediately.",
+    )
 
 
 class _CompressionSettings(BaseSettings):

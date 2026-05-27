@@ -170,6 +170,20 @@ class FastAPIService(BaseComponentService):
     @on_stop
     async def _stop_api_server(self) -> None:
         """Stop the FastAPI server."""
+        # Keep the listener open for a grace window so clients polling /api/results
+        # can observe terminal status before connection-refused. See
+        # Environment.API_SERVER.POST_COMPLETE_GRACE. Skip when there's no live
+        # serve task (startup failure, server crashed, or already finished) — a
+        # closed listener can't be kept open.
+        grace = Environment.API_SERVER.POST_COMPLETE_GRACE
+        server_running = self._server_task is not None and not self._server_task.done()
+        if grace > 0 and server_running:
+            self.info(
+                f"Holding API listener open for {grace:.1f}s "
+                "to let polling clients observe terminal status."
+            )
+            await asyncio.sleep(grace)
+
         self.info("Stopping AIPerf FastAPI server...")
 
         if self._server:
