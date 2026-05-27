@@ -6,7 +6,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import EnergyMetricUnit, GPUTelemetryMode, PowerMetricUnit
+from aiperf.common.enums import (
+    EnergyMetricUnit,
+    GenericMetricUnit,
+    GPUTelemetryMode,
+    PowerMetricUnit,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.hooks import background_task
@@ -395,12 +400,11 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     ) -> list[MetricResult]:
         """Compute cross-boundary power efficiency totals for one profiling phase.
 
-        Aggregates avg(gpu_power_usage) and energy_consumption deltas across all
-        GPUs into 0-3 cross-GPU totals: `total_gpu_power` (W), `total_gpu_energy`
-        (J), and `output_tokens_per_joule`. Sync; called once per phase from
-        `RecordsManager._summarize_with_logging`. Sibling `summarize()` above is
-        async, runs periodically for the dashboard, and emits one MetricResult
-        per GPU per signal instead.
+        Aggregates avg(gpu_power_usage) and energy_consumption deltas across
+        all GPUs into 0-3 cross-GPU totals (W, J, tokens/J). Sync; called once
+        per phase from `RecordsManager._summarize_with_logging`. Sibling
+        `summarize()` above is async, periodic for the dashboard, and emits
+        one MetricResult per GPU per signal instead.
 
         Args:
             metric_results: Read-only; scanned only for the `total_output_tokens`
@@ -457,7 +461,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         if total_output_tokens is not None and total_energy_j > 0:
             results.append(MetricResult(
                 tag="output_tokens_per_joule", header="Output Tokens per Joule",
-                unit="tokens/J", avg=total_output_tokens / total_energy_j, count=None,
+                unit=str(GenericMetricUnit.TOKENS_PER_JOULE),
+                avg=total_output_tokens / total_energy_j, count=None,
             ))  # fmt: skip
         else:
             self.debug(

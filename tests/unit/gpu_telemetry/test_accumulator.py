@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import EnergyMetricUnit, PowerMetricUnit
+from aiperf.common.enums import EnergyMetricUnit, GenericMetricUnit, PowerMetricUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
@@ -480,7 +480,45 @@ class TestComputeEfficiencyMetrics:
 
         tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
         assert tpj.avg == pytest.approx(2.0)  # 2000 tokens / 1000 J
-        assert tpj.unit == "tokens/J"
+        assert tpj.unit == str(GenericMetricUnit.TOKENS_PER_JOULE)
+
+    def test_emitted_units_match_metric_class_units(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """Accumulator-emitted unit strings must equal str(MetricClass.unit) per tag.
+
+        Locks the relationship rather than the literal — a rename of any of
+        the unit enums would break this without needing per-test updates.
+        """
+        from aiperf.metrics.types.power_efficiency_metrics import (
+            OutputTokensPerJouleMetric,
+            TotalGpuEnergyMetric,
+            TotalGpuPowerMetric,
+        )
+
+        gpu = self._make_gpu_mock(power_avg=200.0, energy_delta_mj=0.001)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+        metric_results = [
+            MetricResult(
+                tag="total_output_tokens", header="h", unit="tokens", avg=2000.0
+            )
+        ]
+
+        results = accumulator.compute_efficiency_metrics(metric_results, time_filter)
+        by_tag = {r.tag: r for r in results}
+
+        expected = {
+            TotalGpuPowerMetric.tag: str(TotalGpuPowerMetric.unit),
+            TotalGpuEnergyMetric.tag: str(TotalGpuEnergyMetric.unit),
+            OutputTokensPerJouleMetric.tag: str(OutputTokensPerJouleMetric.unit),
+        }
+        for tag, expected_unit in expected.items():
+            assert by_tag[tag].unit == expected_unit, (
+                f"unit drift for {tag}: emitted={by_tag[tag].unit!r}, "
+                f"metric class={expected_unit!r}"
+            )
 
     def test_no_energy_data_omits_energy_and_tokens_per_joule(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
