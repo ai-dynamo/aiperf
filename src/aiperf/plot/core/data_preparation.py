@@ -319,15 +319,20 @@ def prepare_timeslice_metrics(
     return plot_df, unit
 
 
-def aggregate_gpu_telemetry(run: RunData) -> pd.DataFrame:
+def aggregate_gpu_telemetry(
+    run: RunData, output_col: str = "nvidia_gpu_utilization"
+) -> pd.DataFrame:
     """
     Aggregate GPU telemetry data by averaging across GPUs at each timestamp.
 
     Args:
         run: RunData object with gpu_telemetry DataFrame
+        output_col: Column name to use in the returned DataFrame. Plot specs that
+            still reference the legacy ``gpu_utilization`` name pass that through
+            so downstream lookups (``df[y2_metric]``) keyed on the spec name match.
 
     Returns:
-        DataFrame with timestamp_s and averaged NVIDIA GPU utilization
+        DataFrame with timestamp_s and averaged GPU utilization under ``output_col``
     """
     if run.gpu_telemetry is None or run.gpu_telemetry.empty:
         return pd.DataFrame()
@@ -347,6 +352,9 @@ def aggregate_gpu_telemetry(run: RunData) -> pd.DataFrame:
         gpu_df = (
             gpu_df.groupby("timestamp_s").agg({utilization_col: "mean"}).reset_index()
         )
+
+    if output_col != utilization_col:
+        gpu_df = gpu_df.rename(columns={utilization_col: output_col})
 
     return gpu_df
 
