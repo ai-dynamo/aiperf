@@ -329,6 +329,69 @@ class TestDataLoaderExtractMetadata:
         assert metadata.model is None
         assert metadata.concurrency is None
 
+    def test_extract_metadata_model_from_yaml_v2_models_items(
+        self, tmp_path: Path
+    ) -> None:
+        """YAML v2 stores model name at input_config.models.items[].name."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "models": {"items": [{"name": "Qwen/Qwen3-0.6B"}]},
+                "loadgen": {"concurrency": 5},
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "Qwen/Qwen3-0.6B"
+
+    def test_extract_metadata_model_yaml_v2_takes_precedence(
+        self, tmp_path: Path
+    ) -> None:
+        """When both YAML v2 and legacy shapes are present, YAML v2 wins."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "models": {"items": [{"name": "yaml-v2-model"}]},
+                "endpoint": {"model_names": ["legacy-model"]},
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "yaml-v2-model"
+
+    def test_extract_metadata_model_from_legacy_endpoint_model_names(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy artifacts without models.items still resolve via endpoint.model_names."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "endpoint": {"model_names": ["legacy-model"]},
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "legacy-model"
+
+    def test_extract_metadata_model_empty_yaml_v2_items_falls_back_to_legacy(
+        self, tmp_path: Path
+    ) -> None:
+        """Empty/malformed models.items must not shadow a valid legacy entry."""
+        loader = DataLoader()
+        aggregated = {
+            "input_config": {
+                "models": {"items": []},
+                "endpoint": {"model_names": ["legacy-model"]},
+            },
+        }
+
+        metadata = loader._extract_metadata(tmp_path / "run", None, aggregated)
+
+        assert metadata.model == "legacy-model"
+
 
 class TestDataLoaderReloadWithDetails:
     """Tests for DataLoader.reload_with_details method."""
