@@ -790,7 +790,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 error_results.append(ErrorDetails.from_exception(result))
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
-        len_records_results = len(records_results)
+        # Snapshot count BEFORE extending with efficiency metrics — `completed`
+        # reports the number of request-derived records, not derived aggregates.
+        records_completed = len(records_results)
 
         if self._gpu_telemetry_accumulator:
             time_filter = TimeRangeFilter(
@@ -809,7 +811,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             results=ProfileResults(
                 records=records_results,
                 timeslice_metric_results=timeslice_metric_results,
-                completed=len_records_results,
+                completed=records_completed,
                 start_ns=phase_stats.start_ns or time.time_ns(),
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),

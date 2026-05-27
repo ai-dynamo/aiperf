@@ -826,6 +826,82 @@ class TestRecordsManagerProcessorDispatch:
         manager.exception.assert_called_once()
 
 
+class TestRecordsManagerEfficiencyMetricsSnapshot:
+    """Pin the invariant that `completed` counts request-derived records only.
+
+    `_process_results` snapshots `len(records_results)` BEFORE extending it
+    with `compute_efficiency_metrics` output. If the snapshot is moved or
+    the extend is reordered, `completed` would silently bump by the number
+    of derived aggregates emitted (currently up to 3: total_gpu_power,
+    total_gpu_energy, output_tokens_per_joule).
+    """
+
+    @pytest.mark.asyncio
+    async def test_completed_excludes_efficiency_metrics(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+
+        manager.debug = MagicMock()
+        manager.info = MagicMock()
+        manager.error = MagicMock()
+        manager.exception = MagicMock()
+        manager.is_enabled_for = MagicMock(return_value=False)
+        manager.service_id = "records-manager-test"
+        manager._latest_branch_stats = None
+        manager._flush_metric_results_processors = AsyncMock()
+        manager.publish = AsyncMock()
+
+        manager.run = MagicMock()
+        manager.run.cfg.gpu_telemetry_disabled = True
+        manager.run.cfg.server_metrics_disabled = True
+
+        request_records = [
+            MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
+            MetricResult(tag="output_token_count", header="h", unit="tokens", avg=2.0),
+        ]
+        processor = MagicMock()
+        processor.summarize = AsyncMock(return_value=request_records)
+        manager._metric_results_processors = [processor]
+
+        efficiency_metrics = [
+            MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
+            MetricResult(tag="total_gpu_energy", header="h", unit="J", avg=1000.0),
+            MetricResult(
+                tag="output_tokens_per_joule", header="h", unit="tokens/J", avg=0.002
+            ),
+        ]
+        accumulator = MagicMock()
+        accumulator.compute_efficiency_metrics = MagicMock(
+            return_value=efficiency_metrics
+        )
+        manager._gpu_telemetry_accumulator = accumulator
+
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
+            start_ns=1_000_000_000,
+            requests_end_ns=2_000_000_000,
+            success_records=2,
+            error_records=0,
+        )
+        manager._error_tracker = MagicMock()
+        manager._error_tracker.get_error_summary_for_phase.return_value = []
+
+        result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
+
+        assert result.results.completed == len(request_records), (
+            "completed must reflect request-derived records only, not derived aggregates"
+        )
+        assert len(result.results.records) == len(request_records) + len(
+            efficiency_metrics
+        ), "records should include both request-derived and efficiency aggregates"
+        assert {r.tag for r in result.results.records} == {
+            "request_latency",
+            "output_token_count",
+            "total_gpu_power",
+            "total_gpu_energy",
+            "output_tokens_per_joule",
+        }
+
+
 class TestRecordsManagerInitialization:
     def test_otel_post_processor_disabled_logs_info(
         self,
