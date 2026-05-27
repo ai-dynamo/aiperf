@@ -372,7 +372,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                         )
                     )
                     continue
-                energy_j = result.avg * 1e6
+                energy_j = result.avg * EnergyMetricUnit.MEGAJOULE.joules
                 self.debug(
                     lambda uuid=gpu_uuid, ej=energy_j: (
                         f"GPU {uuid[:12]} energy delta={ej:.2f}J"

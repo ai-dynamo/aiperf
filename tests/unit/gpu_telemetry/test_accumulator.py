@@ -475,7 +475,7 @@ class TestComputeEfficiencyMetrics:
         assert power.unit == str(PowerMetricUnit.WATT)
 
         energy = next(r for r in results if r.tag == "total_gpu_energy")
-        assert energy.avg == pytest.approx(1000.0)  # 0.001 MJ * 1e6
+        assert energy.avg == pytest.approx(1000.0)  # 0.001 MJ → J
         assert energy.unit == str(EnergyMetricUnit.JOULE)
 
         tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
