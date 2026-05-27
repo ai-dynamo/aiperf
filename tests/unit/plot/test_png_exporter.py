@@ -873,6 +873,95 @@ class TestSingleRunPNGExporter:
         # Should return empty list when no data available
         assert len(generated_files) == 0
 
+    def test_single_run_missing_data_sources_helper(
+        self, single_run_exporter, tmp_path
+    ):
+        """Helper returns deduplicated sorted set of missing data sources."""
+        spec = PlotSpec(
+            name="needs_requests_and_gpu",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="time_to_first_token",
+                    source=DataSource.REQUESTS,
+                    axis="y",
+                ),
+                MetricSpec(
+                    name="gpu_utilization",
+                    source=DataSource.GPU_TELEMETRY,
+                    axis="y2",
+                ),
+            ],
+            title="t",
+            filename="t.png",
+        )
+        run = RunData(
+            metadata=RunMetadata(
+                run_name="r", run_path=tmp_path / "r", model="m", concurrency=1
+            ),
+            requests=None,
+            aggregated={},
+            timeslices=None,
+            gpu_telemetry=None,
+        )
+
+        # Two distinct metrics share `requests`; we want one dedup'd entry.
+        assert single_run_exporter._missing_data_sources(spec, run) == [
+            "gpu_telemetry",
+            "requests",
+        ]
+
+    def test_single_run_skipped_plot_emits_warning_with_source_name(
+        self, single_run_exporter, sample_available_metrics, tmp_path, caplog
+    ):
+        """Skipping a single-run plot logs WARNING naming the missing source."""
+        gpu_spec = PlotSpec(
+            name="gpu_utilization_and_throughput",
+            plot_type=PlotType.DUAL_AXIS,
+            metrics=[
+                MetricSpec(name="timestamp_s", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="throughput_tokens_per_sec",
+                    source=DataSource.REQUESTS,
+                    axis="y",
+                ),
+                MetricSpec(
+                    name="gpu_utilization",
+                    source=DataSource.GPU_TELEMETRY,
+                    axis="y2",
+                ),
+            ],
+            title="t",
+            filename="gpu.png",
+        )
+        run = RunData(
+            metadata=RunMetadata(
+                run_name="r", run_path=tmp_path / "r", model="m", concurrency=1
+            ),
+            requests=pd.DataFrame(
+                {"timestamp_s": [1, 2, 3], "throughput_tokens_per_sec": [1, 2, 3]}
+            ),
+            aggregated={},
+            timeslices=None,
+            gpu_telemetry=None,  # Missing → should trigger skip.
+        )
+
+        with caplog.at_level("WARNING"):
+            generated = single_run_exporter.export(
+                run, sample_available_metrics, [gpu_spec]
+            )
+
+        assert generated == []
+        skip_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "Skipping" in r.message
+        ]
+        assert skip_warnings, "expected a WARNING for the skipped plot"
+        assert "gpu_telemetry" in skip_warnings[0].message
+        assert "gpu_utilization_and_throughput" in skip_warnings[0].message
+
     def test_per_request_to_dataframe(self, sample_single_run_data):
         """Test conversion of per-request data to DataFrame."""
         df = prepare_request_timeseries(sample_single_run_data)
@@ -1442,6 +1531,97 @@ class TestSharedExporterFunctionality:
 
         # May generate fewer plots if metrics are missing
         assert isinstance(generated_files, list)
+
+    def test_multi_run_missing_required_columns_helper(self, tmp_path):
+        """Helper names every required spec column that's missing from the df."""
+        exporter = MultiRunPNGExporter(tmp_path / "plots")
+        spec = PlotSpec(
+            name="needs_two_metrics",
+            plot_type=PlotType.SCATTER_LINE,
+            metrics=[
+                MetricSpec(
+                    name="time_to_first_token",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="t",
+            filename="t.png",
+        )
+        # df has throughput but not TTFT
+        df = pd.DataFrame({"request_throughput": [1.0]})
+
+        assert exporter._missing_required_columns(spec, df) == ["time_to_first_token"]
+
+        # Both columns present -> no missing
+        df_complete = pd.DataFrame(
+            {"time_to_first_token": [1.0], "request_throughput": [2.0]}
+        )
+        assert exporter._missing_required_columns(spec, df_complete) == []
+
+    def test_multi_run_skipped_plot_emits_warning_with_column_name(
+        self, tmp_path, sample_available_metrics, caplog
+    ):
+        """Skipping a plot for missing columns logs WARNING naming the column."""
+        exporter = MultiRunPNGExporter(tmp_path / "plots")
+        ttft_spec = PlotSpec(
+            name="ttft_vs_throughput",
+            plot_type=PlotType.SCATTER_LINE,
+            metrics=[
+                MetricSpec(
+                    name="time_to_first_token",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="t",
+            filename="t.png",
+        )
+        non_streaming_run = RunData(
+            metadata=RunMetadata(
+                run_name="r",
+                run_path=tmp_path / "r",
+                model="m",
+                concurrency=1,
+            ),
+            requests=None,
+            aggregated={
+                # Non-streaming: TTFT is absent.
+                "request_latency": {"avg": 100.0, "unit": "ms"},
+                "request_throughput": {"avg": 5.0, "unit": "requests/sec"},
+            },
+            timeslices=None,
+            slice_duration=None,
+        )
+
+        with caplog.at_level("WARNING"):
+            generated = exporter.export(
+                [non_streaming_run], sample_available_metrics, [ttft_spec]
+            )
+
+        assert generated == []
+        skip_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "Skipping" in r.message
+        ]
+        assert skip_warnings, "expected a WARNING for the skipped plot"
+        assert "time_to_first_token" in skip_warnings[0].message
+        assert "ttft_vs_throughput" in skip_warnings[0].message
 
 
 class TestSingleRunGPUPlots:
