@@ -1610,6 +1610,44 @@ class DataLoader(AIPerfLoggerMixin):
         return result
 
     @staticmethod
+    def _extract_load_field(
+        config: dict[str, Any], v2_field: str, legacy_field: str
+    ) -> Any | None:
+        """Resolve a per-phase load characteristic across YAML v2 and legacy.
+
+        YAML v2 attaches per-phase fields (``concurrency``, ``requests``)
+        to entries under ``input_config.phases[]`` and leaves the flat
+        ``input_config.loadgen`` block as ``null``. Legacy artifacts put
+        the same values directly on ``loadgen`` under their old names
+        (``concurrency`` / ``request_count``).
+
+        Prefer the v2 value (read from the ``profiling`` phase when
+        present, else the first phase) so v2 artifacts resolve
+        deterministically. Fall back to ``loadgen[legacy_field]`` for
+        legacy artifacts, then to ``None``.
+        """
+        phases = config.get("phases")
+        if isinstance(phases, list) and phases:
+            profiling_phase = next(
+                (
+                    p
+                    for p in phases
+                    if isinstance(p, dict) and p.get("name") == "profiling"
+                ),
+                None,
+            )
+            candidate = profiling_phase or next(
+                (p for p in phases if isinstance(p, dict)), None
+            )
+            if candidate is not None and v2_field in candidate:
+                return candidate[v2_field]
+
+        loadgen = config.get("loadgen")
+        if isinstance(loadgen, dict) and legacy_field in loadgen:
+            return loadgen[legacy_field]
+        return None
+
+    @staticmethod
     def _extract_model_name(config: dict[str, Any]) -> str | None:
         """Resolve the model name from an ``input_config`` block.
 
@@ -1666,12 +1704,10 @@ class DataLoader(AIPerfLoggerMixin):
             config = aggregated["input_config"]
 
             model = self._extract_model_name(config)
-
-            if "loadgen" in config and "concurrency" in config["loadgen"]:
-                concurrency = config["loadgen"]["concurrency"]
-
-            if "loadgen" in config and "request_count" in config["loadgen"]:
-                request_count = config["loadgen"]["request_count"]
+            concurrency = self._extract_load_field(config, "concurrency", "concurrency")
+            request_count = self._extract_load_field(
+                config, "requests", "request_count"
+            )
 
             if "endpoint" in config and "type" in config["endpoint"]:
                 endpoint_type = config["endpoint"]["type"]
@@ -1680,6 +1716,17 @@ class DataLoader(AIPerfLoggerMixin):
             start_time = aggregated.get("start_time")
             end_time = aggregated.get("end_time")
             was_cancelled = aggregated.get("was_cancelled", False)
+
+            # Aggregate-only runs (sweep cells) carry no ``input_config``; the
+            # sweep exporter stamps the resolved model into ``metadata.model``
+            # instead. See ``_resolve_model_name_for_variation`` in
+            # ``aiperf.cli_runner._sweep_aggregate``.
+            if model is None:
+                meta_block = aggregated.get("metadata")
+                if isinstance(meta_block, dict):
+                    stamped = meta_block.get("model")
+                    if isinstance(stamped, str) and stamped:
+                        model = stamped
 
         duration_seconds = None
         if (
