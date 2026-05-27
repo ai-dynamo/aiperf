@@ -1288,16 +1288,18 @@ class DataLoader(AIPerfLoggerMixin):
 
             # Build series key for grouping
             df_filtered["labels_json"] = df_filtered.apply(
-                lambda row: orjson.dumps(
-                    {
-                        k: row[k]
-                        for k in label_columns
-                        if pd.notna(row[k]) and row[k] != ""
-                    },
-                    option=orjson.OPT_SORT_KEYS,
-                ).decode()
-                if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
-                else "{}",
+                lambda row: (
+                    orjson.dumps(
+                        {
+                            k: row[k]
+                            for k in label_columns
+                            if pd.notna(row[k]) and row[k] != ""
+                        },
+                        option=orjson.OPT_SORT_KEYS,
+                    ).decode()
+                    if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
+                    else "{}"
+                ),
                 axis=1,
             )
 
@@ -1607,6 +1609,33 @@ class DataLoader(AIPerfLoggerMixin):
 
         return result
 
+    @staticmethod
+    def _extract_model_name(config: dict[str, Any]) -> str | None:
+        """Resolve the model name from an ``input_config`` block.
+
+        YAML v2 stores it at ``models.items[].name``; legacy artifacts store
+        it at ``endpoint.model_names``. YAML v2 wins when both are present;
+        an empty/malformed ``models.items`` falls through to the legacy path.
+        """
+        models_block = config.get("models")
+        if isinstance(models_block, dict):
+            items = models_block.get("items")
+            if (
+                isinstance(items, list)
+                and items
+                and isinstance(items[0], dict)
+                and items[0].get("name")
+            ):
+                return items[0]["name"]
+
+        # Legacy: pre-YAML-v2 artifacts stored the model list on the endpoint block.
+        endpoint = config.get("endpoint")
+        if isinstance(endpoint, dict):
+            names = endpoint.get("model_names")
+            if names:
+                return names[0]
+        return None
+
     def _extract_metadata(
         self,
         run_path: Path,
@@ -1636,10 +1665,7 @@ class DataLoader(AIPerfLoggerMixin):
         if aggregated and "input_config" in aggregated:
             config = aggregated["input_config"]
 
-            if "endpoint" in config and "model_names" in config["endpoint"]:
-                models = config["endpoint"]["model_names"]
-                if models:
-                    model = models[0]
+            model = self._extract_model_name(config)
 
             if "loadgen" in config and "concurrency" in config["loadgen"]:
                 concurrency = config["loadgen"]["concurrency"]
