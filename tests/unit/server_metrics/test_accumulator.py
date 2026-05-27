@@ -219,10 +219,15 @@ class TestServerMetricsResultsProcessor:
     ) -> None:
         # SGLang servers emit `sglang:*` metric names; the realtime snapshot
         # should populate the same fields as for vLLM via per-field fallbacks.
+        # Counter pair `cached_tokens_total`/`prompt_tokens_total` drives the
+        # cumulative prefix-cache hit rate (and the uncached delta), matching
+        # vLLM's `prefix_cache_hits`/`prefix_cache_queries` shape — preferred
+        # over the per-batch `sglang:cache_hit_rate` gauge because that gauge
+        # reads 0 between requests.
         processor = ServerMetricsAccumulator(mock_user_config)
-        for timestamp_ns, prompt_total, generation_total in (
-            (1_000_000_000, 0.0, 0.0),
-            (2_000_000_000, 1_000_000.0, 5_000.0),
+        for timestamp_ns, prompt_total, cached_total, generation_total in (
+            (1_000_000_000, 0.0, 0.0, 0.0),
+            (2_000_000_000, 1_000_000.0, 700_000.0, 5_000.0),
         ):
             await processor.process_server_metrics_record(
                 ServerMetricsRecord(
@@ -231,8 +236,8 @@ class TestServerMetricsResultsProcessor:
                     metrics={
                         "sglang:cache_hit_rate": MetricFamily(
                             type=PrometheusMetricType.GAUGE,
-                            description="Prefix cache hit rate (0-1).",
-                            samples=[MetricSample(value=0.42)],
+                            description="Per-batch prefix cache hit rate (0-1).",
+                            samples=[MetricSample(value=0.0)],
                         ),
                         "sglang:token_usage": MetricFamily(
                             type=PrometheusMetricType.GAUGE,
@@ -258,6 +263,11 @@ class TestServerMetricsResultsProcessor:
                             description="Total prefill tokens.",
                             samples=[MetricSample(value=prompt_total)],
                         ),
+                        "sglang:cached_tokens": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Total prefix-cached prefill tokens.",
+                            samples=[MetricSample(value=cached_total)],
+                        ),
                         "sglang:generation_tokens": MetricFamily(
                             type=PrometheusMetricType.COUNTER,
                             description="Total generation tokens.",
@@ -269,15 +279,41 @@ class TestServerMetricsResultsProcessor:
 
         snapshot = processor.realtime_snapshot()
 
-        assert snapshot["prefix_cache_hit_rate"] == pytest.approx(42.0)
+        # Counter pair wins over the gauge: 700k cached / 1M prompt = 70%.
+        assert snapshot["prefix_cache_hit_rate"] == pytest.approx(70.0)
+        assert snapshot["unique_input_tokens_srv"] == pytest.approx(300_000.0)
         assert snapshot["kv_cache_usage_pct"] == pytest.approx(88.0)
         assert snapshot["num_running"] == 6.0
         assert snapshot["num_waiting"] == 1.0
         # Counter rate over the 1s window between samples.
         assert snapshot["input_token_throughput_srv"] == pytest.approx(1_000_000.0)
         assert snapshot["output_token_throughput_srv"] == pytest.approx(5_000.0)
-        # SGLang's gauge-only cache_hit_rate cannot decompose into
-        # hits/queries, so unique_input_tokens_srv must be absent.
+
+    async def test_realtime_snapshot_falls_back_to_sglang_gauge_when_counters_absent(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        # Older SGLang builds emit only the per-batch `cache_hit_rate` gauge
+        # (no `cached_tokens_total` counter). The accumulator should still
+        # populate `prefix_cache_hit_rate` from the gauge, but
+        # `unique_input_tokens_srv` is unrecoverable in that case.
+        processor = ServerMetricsAccumulator(mock_user_config)
+        await processor.process_server_metrics_record(
+            ServerMetricsRecord(
+                endpoint_url="http://127.0.0.1:8000/metrics",
+                timestamp_ns=1_000_000_000,
+                metrics={
+                    "sglang:cache_hit_rate": MetricFamily(
+                        type=PrometheusMetricType.GAUGE,
+                        description="Per-batch prefix cache hit rate.",
+                        samples=[MetricSample(value=0.42)],
+                    ),
+                },
+            )
+        )
+
+        snapshot = processor.realtime_snapshot()
+
+        assert snapshot["prefix_cache_hit_rate"] == pytest.approx(42.0)
         assert "unique_input_tokens_srv" not in snapshot
 
     async def test_realtime_snapshot_handles_parser_stripped_total_suffix(

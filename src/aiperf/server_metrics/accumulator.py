@@ -390,11 +390,14 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         - ``prefix_cache_hit_rate`` — vLLM counter pair
           ``vllm:prefix_cache_hits`` / ``vllm:prefix_cache_queries`` (delta
-          from ``start_ns`` when supplied), or SGLang gauge
-          ``sglang:cache_hit_rate`` (combined L1+L2+L3 hit rate via
-          RadixAttention; the L2/L3 portion is not separately exposed).
-        - ``unique_input_tokens_srv`` — derived from the vLLM counter pair
-          only; SGLang's gauge has no compatible decomposition.
+          from ``start_ns`` when supplied), or SGLang counter pair
+          ``sglang:cached_tokens_total`` / ``sglang:prompt_tokens_total``
+          (same shape; cumulative rate, combined L1+L2+L3 via RadixAttention).
+          Falls back last to the per-batch ``sglang:cache_hit_rate`` gauge
+          for older SGLang builds.
+        - ``unique_input_tokens_srv`` — derived from either counter pair as
+          ``queries - hits`` (vLLM) or ``prompt - cached`` (SGLang). Empty
+          when only the SGLang gauge is available.
         - ``external_prefix_cache_hit_rate`` — vLLM
           ``vllm:external_prefix_cache_*`` only. SGLang folds HiCache hits
           into ``sglang:cache_hit_rate`` and exposes no separate hit rate.
@@ -448,9 +451,20 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             out["prefix_cache_hit_rate"] = 100.0 * hits / queries
             out["unique_input_tokens_srv"] = max(queries - hits, 0.0)
             return
-        # SGLang exposes the rate directly as a 0–1 gauge; the underlying
-        # hits/queries split is not in Prometheus, so unique_input_tokens
-        # cannot be reconstructed here.
+        # SGLang counter pair: `cached_tokens_total` / `prompt_tokens_total`
+        # — structurally identical to vLLM's hits / queries pair, so the
+        # cumulative cache-hit rate (and the uncached-tokens delta) follow
+        # the same formula. Use this in preference to `sglang:cache_hit_rate`,
+        # which is a per-batch gauge that reads 0 between requests and gives
+        # misleading values during idle scrape windows in low-concurrency
+        # agentic replay.
+        sgl_cached = self._counter_delta(endpoints, "sglang:cached_tokens", start_ns)
+        sgl_prompt = self._counter_delta(endpoints, "sglang:prompt_tokens", start_ns)
+        if sgl_cached is not None and sgl_prompt and sgl_prompt > 0:
+            out["prefix_cache_hit_rate"] = 100.0 * sgl_cached / sgl_prompt
+            out["unique_input_tokens_srv"] = max(sgl_prompt - sgl_cached, 0.0)
+            return
+        # Last-resort fallback for SGLang versions that emit only the gauge.
         sgl_rate = self._gauge_latest_max(endpoints, "sglang:cache_hit_rate")
         if sgl_rate is not None:
             out["prefix_cache_hit_rate"] = self._to_pct(sgl_rate)
