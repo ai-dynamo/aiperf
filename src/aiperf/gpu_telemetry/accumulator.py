@@ -39,6 +39,11 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
+def _gpu_count_suffix(n: int) -> str:
+    """Render a "(N GPUs)" header suffix; partial-cohort runs differ from full."""
+    return f"({n} GPU{'s' if n != 1 else ''})"
+
+
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
     """Accumulate GPU telemetry records and compute metrics in a hierarchical structure.
 
@@ -444,7 +449,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         results: list[MetricResult] = []
         if power_count > 0:
             results.append(MetricResult(
-                tag="total_gpu_power", header="Total GPU Power",
+                tag="total_gpu_power", header=f"Total GPU Power {_gpu_count_suffix(power_count)}",
                 unit=str(PowerMetricUnit.WATT), avg=total_power_w, count=None,
             ))  # fmt: skip
         else:
@@ -452,7 +457,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         if energy_count > 0:
             results.append(MetricResult(
-                tag="total_gpu_energy", header="Total GPU Energy",
+                tag="total_gpu_energy", header=f"Total GPU Energy {_gpu_count_suffix(energy_count)}",
                 unit=str(EnergyMetricUnit.JOULE), avg=total_energy_j, count=None,
             ))  # fmt: skip
         else:
@@ -460,7 +465,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         if total_output_tokens is not None and total_energy_j > 0:
             results.append(MetricResult(
-                tag="output_tokens_per_joule", header="Output Tokens per Joule",
+                tag="output_tokens_per_joule", header=f"Output Tokens per Joule {_gpu_count_suffix(energy_count)}",
                 unit=str(GenericMetricUnit.TOKENS_PER_JOULE),
                 avg=total_output_tokens / total_energy_j, count=None,
             ))  # fmt: skip

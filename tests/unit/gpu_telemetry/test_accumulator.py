@@ -473,14 +473,17 @@ class TestComputeEfficiencyMetrics:
         power = next(r for r in results if r.tag == "total_gpu_power")
         assert power.avg == pytest.approx(200.0)
         assert power.unit == str(PowerMetricUnit.WATT)
+        assert power.header == "Total GPU Power (1 GPU)"
 
         energy = next(r for r in results if r.tag == "total_gpu_energy")
         assert energy.avg == pytest.approx(1000.0)  # 0.001 MJ → J
         assert energy.unit == str(EnergyMetricUnit.JOULE)
+        assert energy.header == "Total GPU Energy (1 GPU)"
 
         tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
         assert tpj.avg == pytest.approx(2.0)  # 2000 tokens / 1000 J
         assert tpj.unit == str(GenericMetricUnit.TOKENS_PER_JOULE)
+        assert tpj.header == "Output Tokens per Joule (1 GPU)"
 
     def test_emitted_units_match_metric_class_units(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
@@ -580,13 +583,44 @@ class TestComputeEfficiencyMetrics:
         power = next(r for r in results if r.tag == "total_gpu_power")
         assert power.avg == pytest.approx(250.0)  # 100 + 150
         assert power.count is None
+        assert power.header == "Total GPU Power (2 GPUs)"
 
         energy = next(r for r in results if r.tag == "total_gpu_energy")
         assert energy.avg == pytest.approx(1000.0)  # 500 + 500
         assert energy.count is None
+        assert energy.header == "Total GPU Energy (2 GPUs)"
 
         tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
         assert tpj.avg == pytest.approx(1.0)  # 1000 tokens / 1000 J
+        assert tpj.header == "Output Tokens per Joule (2 GPUs)"
+
+    def test_header_reflects_partial_cohort_count(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """Header surfaces the *valid-data* GPU count, not the cohort total.
+
+        Two GPUs are configured but only one reports energy; the total_gpu_energy
+        header must read "(1 GPU)" so a "1 of 2" partial run is distinguishable
+        from a "2 of 2" full run. MetricResult.count cannot carry this because
+        to_json_result strips count to None for DERIVED metrics.
+        """
+        gpu_full = self._make_gpu_mock(power_avg=100.0, energy_delta_mj=0.001)
+        gpu_power_only = self._make_gpu_mock(power_avg=150.0, energy_delta_mj=None)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-0": gpu_full, "GPU-1": gpu_power_only}
+        }
+        metric_results = [
+            MetricResult(tag="total_output_tokens", header="h", unit="t", avg=2000.0)
+        ]
+
+        results = accumulator.compute_efficiency_metrics(metric_results, time_filter)
+        by_tag = {r.tag: r for r in results}
+
+        assert by_tag["total_gpu_power"].header == "Total GPU Power (2 GPUs)"
+        assert by_tag["total_gpu_energy"].header == "Total GPU Energy (1 GPU)"
+        assert by_tag["output_tokens_per_joule"].header == (
+            "Output Tokens per Joule (1 GPU)"
+        )
 
     def test_energy_filter_widens_end_ns_while_power_filter_stays_bounded(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
