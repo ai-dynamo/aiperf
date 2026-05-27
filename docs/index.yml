@@ -207,6 +207,8 @@ navigation:
     path: reference/vendor-usage-fields.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
+  - page: HTTP API Endpoints
+    path: reference/api-endpoints.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
 
