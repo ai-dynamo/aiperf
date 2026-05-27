@@ -11,6 +11,7 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     forbid_input_truncation=True,
     require_loader=(
         "semianalysis_cc_traces_weka_with_subagents",
+        "semianalysis_cc_traces_weka_with_subagents_256k",
         "weka_trace",
         "weka_hf",
     ),

@@ -1833,6 +1833,25 @@ public_dataset_loader:
       default_block_size: 64
       default_prompt_corpus: coding
 
+  semianalysis_cc_traces_weka_with_subagents_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents 256k-capped variant — hosted
+      on HuggingFace as semianalysisai/cc-traces-weka-with-subagents-051926-256k
+      (217 traces, public, no auth). Derived from the 051926 with-subagents
+      parent by dropping any request whose in+out exceeds 256,000 proxy-tokenizer
+      tokens and reshifting surviving timelines so think-time pacing is
+      preserved. Designed for replay against servers configured with
+      max_model_len ≈ 256k (e.g. MiniMax-M2.5) where the unfiltered with-
+      subagents corpus would have requests rejected.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-051926-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
   weka_hf:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
     description: |
