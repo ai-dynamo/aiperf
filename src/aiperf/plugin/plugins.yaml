@@ -1240,12 +1240,17 @@ accuracy_benchmark:
   bigbench:
     class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
     description: |
-      BigBench benchmark for diverse language understanding tasks spanning
-      linguistics, reasoning, and world knowledge.
+      BigBench-Hard benchmark, aligned with the trt-llm benchmark recipe's
+      DeepEval-backed configuration. Prompts are byte-equal to
+      ``deepeval.benchmarks.BigBenchHard`` (n_shots=3, enable_cot=True,
+      using DeepEval's bundled per-subtask CoT prompt files). Pairs with
+      ``exact_match`` for the recipe's strict ``Scorer.exact_match_score``
+      semantics. Requires the ``[accuracy]`` install (deepeval ships the
+      27 canonical prompt files).
     metadata:
       default_grader: exact_match
       default_n_shots: 3
-      is_implemented: false
+      default_enable_cot: true
 
   aime24:
     class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark

@@ -7,7 +7,7 @@
 
 This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
 
-**Status summary:** With the HellaSwag loader landing on top of AIP-874, `MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `ExactMatchGrader`, `MMLUBenchmark`, `AIMEBenchmark`, and `HellaSwagBenchmark` are fully implemented; the remaining benchmarks (`bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`) are still stubs and ship behind `NotImplementedError` until each follow-up branch lands. Use the implemented classes as canonical references when filling in the remaining stubs.
+**Status summary:** With the BigBench-Hard loader landing on top of the HellaSwag stack, `MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `ExactMatchGrader`, `MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, and `BigBenchBenchmark` are fully implemented; the remaining benchmarks (`aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`) are still stubs and ship behind `NotImplementedError` until each follow-up branch lands. Use the implemented classes as canonical references when filling in the remaining stubs.
 
 ## Table of Contents
 
@@ -172,17 +172,17 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 | 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 | **IMPLEMENTED in PR #815** — canonical reference for new benchmarks. Downloads via HuggingFace datasets, handles few-shot formatting and CoT. |
 | 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 8 | **IMPLEMENTED.** Loads `Maxwell-Jia/AIME_2024`, instructs the model to wrap its final integer in `\boxed{}`, supports few-shot priming and chain-of-thought. `default_enable_cot=true`. |
 | 3 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `exact_match` | 10 | **IMPLEMENTED.** Loads `Rowan/hellaswag` (validation split filtered per task by `activity_label`; train split feeds the "one few-shot per unique activity_label" rule). Prompt rendering delegates to `deepeval.benchmarks.HellaSwag`'s `HellaSwagTemplate.generate_output`, so output is byte-equal to the trt-llm recipe's DeepEval-backed path. Pairs with `exact_match` for strict `Scorer.exact_match_score` semantics. Requires the `[accuracy]` extras (deepeval). |
+| 4 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 | **IMPLEMENTED.** Loads `lukaemon/bbh` (27 BBH subtasks). Prompt rendering delegates to `deepeval.benchmarks.BigBenchHard`'s `BigBenchHardTemplate.generate_output`, which reads the 27 canonical CoT/shot prompt files DeepEval ships as package data. Pairs with `exact_match` for the recipe's strict `Scorer.exact_match_score` semantics. `default_n_shots=3`, `default_enable_cot=true`. Requires the `[accuracy]` extras (deepeval). |
 
 ### Still Stubbed
 
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots |
 |---|-------|------|------------|----------------|-----------------|
-| 1 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
-| 2 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
-| 3 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
-| 4 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
-| 5 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
-| 6 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
+| 1 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
+| 2 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
+| 3 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
+| 4 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
+| 5 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
 
 **Each benchmark has 1 method to implement:**
 
@@ -308,14 +308,14 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 
 | Component | Implemented | Still Stubbed | Methods per Stub | Remaining Methods |
 |-----------|-------------|---------------|------------------|-------------------|
-| Graders | 1 (`MultipleChoiceGrader`) | 3 | 2 (`grade`, `extract_answer`) | 6 |
-| Benchmarks | 1 (`MMLUBenchmark`) | 8 | 1 (`load_problems`) | 8 |
+| Graders | 7 (all) | 0 | — | 0 |
+| Benchmarks | 4 (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`) | 5 | 1 (`load_problems`) | 5 |
 | Record Processor | 1 (`AccuracyRecordProcessor`) | 0 | — | 0 |
 | Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
 | Stub-plugin Validator | 0 | 1 | 1 (`AccuracyConfig._reject_stub_plugins`) | 1 |
-| **Total** | **6** | **13** | | **15** |
+| **Total** | **15** | **6** | | **6** |
 
 ### Self-Disabling Pattern
 
@@ -323,11 +323,12 @@ Processors and exporters raise their `Disabled` exception **in `__init__`** when
 
 ### Suggested Implementation Order
 
-The processors, exporters, and one grader/benchmark pair are already wired end-to-end. Start from the already-working pipeline:
+The processors, exporters, all graders, and four benchmarks (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`) are already wired end-to-end. The remaining work is the five stub benchmarks; mirror the existing loader whose grader matches:
 
-1. **Graders** — use `MultipleChoiceGrader` as reference; implement `ExactMatchGrader` next (simplest), then `MathGrader`
-2. **Benchmarks** — use `MMLUBenchmark` as reference; implement dataset loading for each remaining benchmark
-3. **Stub-plugin validator** — update `AccuracyConfig._reject_stub_plugins()` when a benchmark or grader moves from stubbed to supported
+1. **`aime24`, `aime25`, `math_500`** — mirror `AIMEBenchmark` (`benchmarks/aime.py`); pair with the `math` grader.
+2. **`gpqa_diamond`** — mirror `MMLUBenchmark` (`benchmarks/mmlu.py`); pair with the `multiple_choice` grader.
+3. **`lcb_codegeneration`** — mirror `MMLUBenchmark`'s scaffolding; pair with the `code_execution` grader.
+4. **Stub-plugin validator** — update `AccuracyConfig._reject_stub_plugins()` whenever a benchmark moves from stubbed to supported.
 
 ### Key Files for Reference
 

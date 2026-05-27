@@ -18,6 +18,7 @@ from aiperf_mock_server.models import (
     RequestT,
     SolidoRAGRequest,
     TGIGenerateRequest,
+    flatten_completion_prompt_token_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,7 @@ def count_tokens(text: str) -> int:
 def tokenize_request(request: RequestT) -> TokenizedText:
     """Tokenize a request and return TokenizedText with usage."""
     text, max_tokens = _extract_request_content(request)
-    prompt_tokens = list(_tokenize(text))
+    prompt_tokens = _extract_prompt_tokens(request, text)
     prompt_token_count = len(prompt_tokens)
 
     # For embeddings, rankings, and images - simple token counting without generation options
@@ -244,6 +245,14 @@ def tokenize_request(request: RequestT) -> TokenizedText:
 # ============================================================================
 # Internal Helpers
 # ============================================================================
+
+
+def _extract_prompt_tokens(request: RequestT, text: str) -> list[str]:
+    if isinstance(request, CompletionRequest):
+        prompt_token_ids = flatten_completion_prompt_token_ids(request.prompt)
+        if prompt_token_ids is not None:
+            return [str(token_id) for token_id in prompt_token_ids]
+    return list(_tokenize(text))
 
 
 def _calculate_budget(
@@ -326,6 +335,39 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return " ".join(request.query), None
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
+
+
+def _extract_osl_fingerprint(request: RequestT) -> dict[str, object]:
+    """Return every OSL-shaping field the client sent, with None for fields
+    that don't apply to this request type. Used by the request recorder to
+    capture not just the resolved OSL cap but also which API field set it and
+    what other constraints (min_tokens, ignore_eos, reasoning_effort) shaped
+    the generation budget."""
+    fp: dict[str, object] = {
+        "max_tokens": None,
+        "max_completion_tokens": None,
+        "min_tokens": None,
+        "ignore_eos": None,
+        "reasoning_effort": None,
+    }
+    if isinstance(request, ChatCompletionRequest):
+        fp["max_tokens"] = request.max_tokens
+        fp["max_completion_tokens"] = request.max_completion_tokens
+        fp["min_tokens"] = request.min_tokens
+        fp["ignore_eos"] = request.ignore_eos
+        fp["reasoning_effort"] = request.reasoning_effort
+    elif isinstance(request, CompletionRequest):
+        fp["max_tokens"] = request.max_tokens
+        fp["min_tokens"] = request.min_tokens
+        fp["ignore_eos"] = request.ignore_eos
+        fp["reasoning_effort"] = request.reasoning_effort
+    elif isinstance(request, TGIGenerateRequest):
+        # TGI calls it parameters.max_new_tokens — recorded under max_tokens
+        # so the JSONL schema stays uniform across LLM endpoints.
+        fp["max_tokens"] = request.max_tokens
+        fp["min_tokens"] = request.min_tokens
+        fp["ignore_eos"] = request.ignore_eos
+    return fp
 
 
 def _extract_chat_messages(messages: list) -> str:

@@ -19,8 +19,9 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
     benchmarking speculative decoding across diverse semantic domains and
     input sequence lengths. Each row contains a ``turns`` column with a
     list of plain strings and a ``category`` column identifying the
-    semantic domain or entropy tier. Only the first turn is used as the
-    benchmark prompt; subsequent turns are discarded.
+    semantic domain or entropy tier. By default only the first turn is used
+    as the benchmark prompt; with ``multi_turn=True`` every non-empty turn
+    in the row becomes its own Turn in one Conversation.
 
     When ``category`` is set in plugin metadata, only rows matching that
     category are loaded. This enables per-category acceptance rate
@@ -56,15 +57,18 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
         self,
         run: BenchmarkRun | None = None,
         category: str | None = None,
+        *,
+        multi_turn: bool = False,
         **kwargs,
     ) -> None:
         self.category = category
+        self.multi_turn = multi_turn
         super().__init__(run=run, **kwargs)
 
     async def convert_to_conversations(
         self, data: dict[str, Any]
     ) -> list[Conversation]:
-        """Convert each dataset row into a single-turn Conversation."""
+        """Convert each dataset row into a Conversation (single- or multi-turn)."""
         dataset = data["dataset"]
         conversations: list[Conversation] = []
         skipped = 0
@@ -80,24 +84,37 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
             if self.category and row.get("category") != self.category:
                 continue
 
-            turns = row.get("turns")
-            if not turns or not isinstance(turns, list) or not turns[0]:
+            turns_raw = row.get("turns")
+            if not turns_raw or not isinstance(turns_raw, list):
                 skipped += 1
                 continue
 
-            prompt = str(turns[0]).strip()
-            if not prompt:
-                skipped += 1
-                continue
-
-            conversations.append(
-                Conversation(
-                    session_id=self.session_id_generator.next(),
-                    turns=[
-                        Turn(texts=[Text(contents=[prompt])]),
-                    ],
+            if self.multi_turn:
+                conv_turns: list[Turn] = []
+                for t in turns_raw:
+                    text = str(t).strip() if t else ""
+                    if text:
+                        conv_turns.append(Turn(texts=[Text(contents=[text])]))
+                if not conv_turns:
+                    skipped += 1
+                    continue
+                conversations.append(
+                    Conversation(
+                        session_id=self.session_id_generator.next(),
+                        turns=conv_turns,
+                    )
                 )
-            )
+            else:
+                prompt = str(turns_raw[0]).strip() if turns_raw[0] else ""
+                if not prompt:
+                    skipped += 1
+                    continue
+                conversations.append(
+                    Conversation(
+                        session_id=self.session_id_generator.next(),
+                        turns=[Turn(texts=[Text(contents=[prompt])])],
+                    )
+                )
 
         self.debug(
             lambda: (

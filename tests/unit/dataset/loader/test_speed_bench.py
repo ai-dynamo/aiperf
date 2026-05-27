@@ -289,3 +289,75 @@ class TestSpeedBenchLoaderStreaming:
         assert len(conversations) == 2
         assert conversations[0].turns[0].texts[0].contents[0] == "Code 0"
         assert conversations[1].turns[0].texts[0].contents[0] == "Code 1"
+
+
+@pytest.mark.asyncio
+class TestSpeedBenchLoaderMultiTurn:
+    async def test_multi_turn_produces_all_turns(self, cli_config):
+        loader = SpeedBenchLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="nvidia/SPEED-Bench",
+            hf_split="test",
+            hf_subset="qualitative",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                _make_speed_bench_row(["First turn", "Second turn", "Third turn"]),
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 3
+        assert conversations[0].turns[0].texts[0].contents[0] == "First turn"
+        assert conversations[0].turns[1].texts[0].contents[0] == "Second turn"
+        assert conversations[0].turns[2].texts[0].contents[0] == "Third turn"
+
+    async def test_default_single_turn_unchanged(self, loader):
+        data = {
+            "dataset": [
+                _make_speed_bench_row(["First turn", "Second turn", "Third turn"]),
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "First turn"
+
+    async def test_multi_turn_skips_empty_turns_in_array(self, cli_config):
+        loader = SpeedBenchLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="nvidia/SPEED-Bench",
+            hf_split="test",
+            hf_subset="qualitative",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                _make_speed_bench_row(["Valid", "", "Also valid"]),
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
+        assert conversations[0].turns[1].texts[0].contents[0] == "Also valid"
+
+    async def test_multi_turn_with_category_filter(self, cli_config):
+        loader = SpeedBenchLoader(
+            run=make_run_from_cli(cli_config),
+            hf_dataset_name="nvidia/SPEED-Bench",
+            hf_split="test",
+            hf_subset="qualitative",
+            category="coding",
+            multi_turn=True,
+        )
+        data = {
+            "dataset": [
+                _make_speed_bench_row(["Code Q1", "Code Q2"], category="coding"),
+                _make_speed_bench_row(["Math Q1"], category="math"),
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2

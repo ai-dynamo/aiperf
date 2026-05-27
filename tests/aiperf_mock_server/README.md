@@ -20,6 +20,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 - [**Deterministic Responses**](#token-generation): Hash-based generation for identical outputs
 - [**Fast Mode**](#quick-start): Zero-latency mode (`--fast`) for integration testing
 - [**Corpus**](#corpus): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
+- [**Request Recording**](#request-recording): Per-request ISL + requested OSL capture with JSONL output and a shutdown summary
 
 ### Supported Endpoints
 
@@ -150,16 +151,22 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--tokenizer` | `Qwen/Qwen3-0.6B` | HuggingFace tokenizer for corpus |
+| `--tokenizer` | `builtin` | Tokenizer for corpus (and for the recorder, when enabled). `builtin` = bundled tiktoken `o200k_base` (zero network access); pass any HuggingFace name or path to use an HF tokenizer. |
 | `--tokenizer-revision` | `main` | Tokenizer revision (branch, tag, or commit) |
 | `--tokenizer-trust-remote-code` | `false` | Trust remote code for custom tokenizers |
 | `--no-tokenizer` | `false` | Skip tokenizer, use character-based chunking (faster startup) |
+
+### Request Recording Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--record-requests` | `None` | Path to a JSONL file for per-request ISL + requested OSL capture. Presence of this flag enables recording mode, forces `--workers=1`, and requires a real tokenizer (incompatible with `--no-tokenizer`). |
 
 **Auto-Scaling GPU Metrics**
 
 DCGM metrics automatically scale based on observed token throughput. The system tracks peak throughput and uses that as 100% load:
 
-```
+```text
 Token Flow:
 ┌─────────────────┐
 │  LLM Endpoint   │  (chat/completions)
@@ -502,20 +509,208 @@ No CLI knob — this is always-on. Streaming success paths set a `_finished` fla
 - Single-process only: `--workers > 1` runs each worker with an independent scheduler (no cross-worker batching).
 - No KV-block accounting, no preemption, no swap. For those, see design C (deferred).
 
+## Request Recording
+
+Used to verify that an aiperf run actually generates the requested ISL / OSL distribution on the wire. When `--record-requests PATH` is set, the server tokenizes every incoming request inline with the configured `--tokenizer` and appends one JSONL record per request. Chat requests are counted from the framework-shaped prompt: `prompt_token_ids` if supplied, otherwise `tokenizer.apply_chat_template(..., tokenize=True, add_generation_prompt=True)` when the tokenizer supports it. Completion requests follow vLLM / trtllm-serve shape: `prompt` may be text, a list of text prompts, a token-id list, or a list of token-id lists; token-id prompts are counted directly and recorded as `prompt_token_ids`. Tokenizers without chat templates (including `builtin`) use a role-preserving fallback and record that mode explicitly. On shutdown it writes a per-endpoint distribution summary to `<PATH>.summary.json` (and prints the same summary to stdout).
+
+```mermaid
+flowchart LR
+    subgraph client["client (aiperf, curl, ...)"]
+        REQ([HTTP POST])
+    end
+
+    subgraph uvicorn["uvicorn / FastAPI process (workers=1)"]
+        direction TB
+        handlers["handler<br/>chat / completions / TGI / embeddings / ..."]
+        mkctx["make_ctx()"]
+        resp([HTTP response])
+        handlers --> mkctx
+        mkctx -->|"tokenize_request<br/>(cheap ~4 char est.)"| resp
+
+        subgraph lifespan["lifespan"]
+            recorder["RequestRecorder<br/>open() at start,<br/>close() at shutdown"]
+            tok["Tokenizer.from_pretrained<br/>(same name as corpus)"]
+            stats["per-endpoint stats<br/>(ISL / OSL lists in process memory)"]
+            tok --> stats
+            recorder --- tok
+        end
+
+        mkctx -. "record()<br/>inline tokenize + write" .-> tok
+    end
+
+    REQ --> handlers
+
+    stats --> jsonl[("requests.jsonl<br/>one JSON / request, appended inline")]
+    recorder -. "close()<br/>flushes summary" .-> summary[("requests.jsonl.summary.json<br/>+ stdout table")]
+```
+
+**Properties:**
+
+- The recorder lives in the FastAPI lifespan; tokenization and the JSONL append both run on the event loop in `make_ctx`. Real HF `tokenizer.encode()` is fast (sub-ms for typical prompts), and `--workers=1` means there is exactly one producer — no locking, no queue, no subprocess.
+- The recorder reuses the configured `--tokenizer` rather than introducing a separate one, so ISL counts match whatever vocab the corpus is using. For chat models with HuggingFace chat templates, this mirrors trtllm-serve's prompt-token path instead of counting only user-message text.
+- `--record-requests` rejects `--no-tokenizer` at config validation time, since recording with no tokenizer is incoherent.
+- `--record-requests` forces `--workers=1` because per-request stats are kept in process memory and need a single producer to attribute cleanly to one output file.
+
+**Output format** — one JSON object per line, capturing the full OSL fingerprint the client sent (not just the resolved cap):
+
+```json
+{"ts": 1714000000.123, "request_id": "chatcmpl-...", "endpoint": "/v1/chat/completions",
+ "model": "Qwen/Qwen3-0.6B", "isl": 512,
+ "requested_osl": 256, "max_tokens": null, "max_completion_tokens": 256,
+ "min_tokens": null, "ignore_eos": false, "reasoning_effort": null,
+ "stream": true, "tokenization_mode": "chat_template"}
+```
+
+| Field | Meaning |
+|---|---|
+| `isl` | Real tokenized length of the assembled prompt (always populated). |
+| `requested_osl` | Resolved OSL cap: `max_completion_tokens or max_tokens` for chat, `max_tokens` for completions, `parameters.max_new_tokens` for TGI. `null` for embeddings/ranking/image retrieval. |
+| `max_tokens` / `max_completion_tokens` | The raw fields the client sent — useful to see which API name-space they used. TGI's `max_new_tokens` is recorded under `max_tokens` so the schema stays uniform. |
+| `min_tokens` | Floor on generated tokens (vllm/SGLang). |
+| `ignore_eos` | If `true`, server generates exactly `max_tokens`. |
+| `reasoning_effort` | `low`/`medium`/`high` for reasoning models — adds a reasoning budget on top of the main output. |
+| `stream` | Whether the request asked for streaming. |
+| `tokenization_mode` | How ISL was counted: `prompt_token_ids`, `chat_template`, `chat_template_string`, `chat_template_fallback`, `tokenizer_call`, `encode_without_special_tokens`, or `plain_text_encode` for the low-level recorder API. |
+
+> **Note on `chat_template_fallback` ISL drift.** When the tokenizer has no chat template (e.g. `builtin` tiktoken) the recorder renders messages as literal ChatML — `<|im_start|>role\n...<|im_end|>` — and tokenizes that string without special-token handling. Each role marker becomes ~5 raw tokens instead of the single token a real chat template would produce, so a `chat_template_fallback` ISL is inflated by roughly *5 × (2N + 1)* tokens for an N-message conversation. The `tokenization_mode` field on every JSONL row tells you which path was used; compare rows with the same mode when validating `--isl-mean` against ground truth.
+
+**Summary** — `<PATH>.summary.json` and stdout, per endpoint:
+
+```text
+Request distribution (200 requests)
+──────────────────────────────────────────────
+  Definitions
+    ISL/OSL: input/requested output sequence length in tokens; OSL is the request cap, not generated output.
+    Vocab used: unique token IDs observed / tokenizer vocab size.
+    top-10 cover: share of prompt tokens from the 10 most common token IDs.
+    entropy: token-id diversity; higher means broader prompt vocabulary use.
+    top decoded tokens: most frequent token IDs decoded for sanity checks; tokens are not words.
+    vocab shape: log-scaled 80-bucket view across token-id space.
+    vocab shape stats: mean/percentiles of prompt-token counts per bucket, including empty buckets.
+
+  /v1/completions  n=200
+    ISL            mean  1050.6   min   416   max  1703   p50  1042   p99  1694
+    Requested OSL  mean   527.8   min   216   max   896   p50   522   p99   814
+
+    ISL histogram (13 bins, n=200, 181 unique)
+       416-  515    2 █░░░░░░░░░░░░░░░░░░░
+       515-  614    0 ░░░░░░░░░░░░░░░░░░░░
+       614-  713   14 ████████░░░░░░░░░░░░
+       713-  812   18 ██████████░░░░░░░░░░
+       812-  911   29 ████████████████░░░░
+       911- 1010   25 ██████████████░░░░░░
+      1010- 1109   36 ████████████████████
+      1109- 1208   21 ████████████░░░░░░░░
+      1208- 1307   23 █████████████░░░░░░░
+      1307- 1406   15 ████████░░░░░░░░░░░░
+      1406- 1505    8 ████░░░░░░░░░░░░░░░░
+      1505- 1604    6 ███░░░░░░░░░░░░░░░░░
+      1604- 1703    3 ██░░░░░░░░░░░░░░░░░░
+
+    Requested OSL histogram (10 bins, n=200, 166 unique)
+      216- 284    2 █░░░░░░░░░░░░░░░░░░░
+      284- 352   12 █████░░░░░░░░░░░░░░░
+      352- 420   26 ███████████░░░░░░░░░
+      420- 488   34 ██████████████░░░░░░
+      488- 556   48 ████████████████████
+      556- 624   33 ██████████████░░░░░░
+      624- 692   29 ████████████░░░░░░░░
+      692- 760   10 ████░░░░░░░░░░░░░░░░
+      760- 828    4 ██░░░░░░░░░░░░░░░░░░
+      828- 896    2 █░░░░░░░░░░░░░░░░░░░
+
+
+    Vocab  used 11991/128000 (9.4%)  top-10 cover 14%  entropy 10.6/17.0 bits
+      top decoded tokens: " the" 4452, " I" 3969, " and" 3523, " of" 3119, " to" 3070
+
+    vocab shape  (80 buckets over id 0..127999, log-y)
+
+      bucket tokens mean  2623.9   p50   470   p90  2931   p95  6572   p99 40006
+
+    ██▇▇▇▆▆▆▆▆▆▆▆▆▆▆▆▆▅▅▅▆▅▅▅▆▅▅▅▅▅▅▅▅▅▅▅▅▄▅▅▅▅▅▄▅▅▅▄▄▄▅▅▅▅▅▅▄▅▄▄▅▄▁▂ ▁▁▁▁▁▂▁▁▁▃▁▂▁
+    0                   32K                 64K                 96K             128K
+```
+
+For each endpoint the JSON file contains:
+- `count`, `streamed_count`, `ignore_eos_count`, `reasoning_effort_counts` (categorical tallies).
+- Quantile blocks for `isl`, `requested_osl`, and `min_tokens`. A block is `null` when no request set that field. Each block contains:
+  - `min`, `max`, `mean`, `stdev`, `p50`, `p90`, `p95`, `p99`
+  - `unique_values` — count of distinct values observed for this metric.
+  - `histogram` — equal-width histogram with parallel `bin_edges` (length N+1) and `counts` (length N). `null` when no values were observed (e.g. `requested_osl` on embeddings). Bucket count: `num_bins = max(10, ceil((max - min) / 100))`.
+
+Example quantile block:
+
+```json
+"isl": {
+  "min": 207.0, "max": 1821.0, "mean": 1010.48, "stdev": 480.80,
+  "p50": 997.5, "p90": 1684.8, "p95": 1745.55, "p99": 1819.02,
+  "unique_values": 19,
+  "histogram": {
+    "bin_edges": [207.0, 301.94, 396.88, 491.82, 586.76, 681.71, 776.65,
+                  871.59, 966.53, 1061.47, 1156.41, 1251.35, 1346.29,
+                  1441.24, 1536.18, 1631.12, 1726.06, 1821.0],
+    "counts":    [7, 6, 5, 4, 6, 8, 7, 10, 11, 9, 8, 6, 5, 4, 3, 1, 0]
+  }
+}
+```
+
+The optional `vocab_distribution` block (per endpoint) characterises sampling across the tokenizer's vocabulary: coverage of distinct ids, top-N concentration, Shannon entropy with the uniform-sampling ceiling for comparison, an 80-bucket sparkline across the full id space, per-bucket shape statistics, and the full `token_id -> count` frequency table for offline analysis. The block is `null` when no requests reached the endpoint.
+
+```json
+"vocab_distribution": {
+  "vocab_size": 151936,
+  "vocab_size_source": "tokenizer",
+  "unique_ids": 5234,
+  "coverage_pct": 3.44,
+  "total_tokens": 102000,
+  "top_10_concentration_pct": 47.21,
+  "entropy_bits": 8.23,
+  "max_entropy_bits": 17.21,
+  "top_tokens": [
+    {"id": 264, "text": " the", "count": 3201},
+    {"id": 318, "text": " a",   "count": 2890}
+  ],
+  "shape_80": [3201, 412, 311, 0, 47, "..."],
+  "shape_80_stats": {
+    "min": 0.0, "max": 3201.0, "mean": 1275.0, "stdev": 840.22,
+    "p50": 14.0, "p90": 2455.0, "p95": 2890.0, "p99": 3201.0
+  },
+  "frequencies": {"264": 3201, "318": 2890, "...": 0}
+}
+```
+
+Stats come from stdlib `statistics` — no numpy/pandas dependency.
+
+**Example end-to-end run:**
+
+```bash
+aiperf-mock-server --record-requests /tmp/req.jsonl --fast &
+aiperf profile \
+    --endpoint-type chat \
+    --url http://localhost:8000 \
+    --model Qwen/Qwen3-0.6B \
+    --random-range-ratio 0.2 --isl-mean 1024 --osl-mean 256 \
+    --request-count 200
+kill %1     # graceful shutdown: worker flushes JSONL + summary
+cat /tmp/req.jsonl.summary.json
+python -c "import pandas as pd; print(pd.read_json('/tmp/req.jsonl', lines=True).describe())"
+```
+
 ## Project Structure
 
-```
+```text
 tests/aiperf_mock_server/
-├── __main__.py      # CLI entry point
-├── app.py           # FastAPI application and endpoints
-├── config.py        # Configuration (CLI, env vars)
-├── models.py        # Pydantic request/response models
-├── tokens.py        # Tokenization and generation
-├── utils.py         # Request context, streaming, latency
-├── metrics.py       # Prometheus metric definitions
-├── metrics_utils.py # Metric recording helpers
-├── dcgm_faker.py    # GPU telemetry simulation
-├── scheduler.py     # Step-based batched scheduler
+├── __main__.py             # CLI entry point
+├── app.py                  # FastAPI application and endpoints
+├── config.py               # Configuration (CLI, env vars)
+├── models.py               # Pydantic request/response models
+├── tokens.py               # Tokenization and generation
+├── utils.py                # Request context, streaming, latency
+├── request_recorder.py     # In-process per-request ISL/OSL recorder + summary
+├── metrics.py              # Prometheus metric definitions
+├── metrics_utils.py        # Metric recording helpers
+├── dcgm_faker.py           # GPU telemetry simulation
+├── scheduler.py            # Step-based batched scheduler
 ├── test_scheduler.py
 ├── test_scheduler_integration.py
 ├── test_robustness.py
