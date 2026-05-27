@@ -498,7 +498,9 @@ def test_execute_multi_benchmark_skips_table_when_suppressed() -> None:
 class TestResolveModelNameForVariation:
     """Unit tests for ``_resolve_model_name_for_variation``."""
 
-    def test_single_config_no_variations_returns_first_model(self):
+    def test__resolve_model_name_for_variation_single_config_no_variations_returns_first_model(
+        self,
+    ):
         from aiperf.cli_runner._sweep_aggregate import (
             _resolve_model_name_for_variation,
         )
@@ -508,7 +510,9 @@ class TestResolveModelNameForVariation:
 
         assert _resolve_model_name_for_variation(plan, key) == "test-model"
 
-    def test_matches_variation_index_for_multi_config_plan(self):
+    def test__resolve_model_name_for_variation_multi_config_matches_variation_index_returns_expected(
+        self,
+    ):
         from aiperf.cli_runner._sweep_aggregate import (
             _resolve_model_name_for_variation,
         )
@@ -527,7 +531,9 @@ class TestResolveModelNameForVariation:
         assert _resolve_model_name_for_variation(plan, ("cell_a", ())) == "model-a"
         assert _resolve_model_name_for_variation(plan, ("cell_b", ())) == "model-b"
 
-    def test_falls_back_to_first_config_when_label_unmatched(self):
+    def test__resolve_model_name_for_variation_unmatched_label_falls_back_to_first_config(
+        self,
+    ):
         from aiperf.cli_runner._sweep_aggregate import (
             _resolve_model_name_for_variation,
         )
