@@ -151,7 +151,11 @@ class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
             time_filter: Time range covering the profiling phase.
 
         Returns:
-            List of MetricResult objects. Empty if no GPU data is available for any metric..
+            Up to three MetricResult objects covering total GPU power, total
+            GPU energy, and output tokens per joule. Each metric is
+            independently omitted when its underlying GPU signal is
+            unavailable; returns an empty list when no GPU has any of the
+            relevant signals.
         """
         ...
 
