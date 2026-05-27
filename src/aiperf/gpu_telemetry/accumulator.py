@@ -146,11 +146,17 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 self._last_metric_values = new_values
 
     async def summarize(self) -> list[MetricResult]:
-        """Generate GPU MetricResult list for real-time display and final export.
+        """Generate per-GPU MetricResult list for real-time display and final export.
 
         This method is called by RecordsManager for:
         1. Final results generation when profiling completes
         2. Real-time dashboard updates when --gpu-telemetry dashboard is enabled
+
+        Async and runs periodically under the dashboard cadence
+        (`REALTIME_METRICS_INTERVAL`). Emits one MetricResult per GPU per
+        signal. Contrast with `compute_efficiency_metrics` below, which is
+        sync, runs once per profiling phase, and aggregates across GPUs
+        into 0-3 cross-GPU totals.
 
         Returns:
             List of MetricResult objects, one per GPU per metric type.
@@ -387,17 +393,31 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         metric_results: list[MetricResult],
         time_filter: TimeRangeFilter,
     ) -> list[MetricResult]:
-        """Compute cross-boundary power efficiency metrics.
+        """Compute cross-boundary power efficiency totals for one profiling phase.
 
-        Sums avg(gpu_power_usage) and energy_consumption deltas across all GPUs
-        and returns up to three MetricResult objects: total GPU power (W),
-        total GPU energy (J), and output tokens per joule (tokens/J). GPUs
-        missing the relevant signal are skipped.
+        Aggregates avg(gpu_power_usage) and energy_consumption deltas across all
+        GPUs into 0-3 cross-GPU totals: `total_gpu_power` (W), `total_gpu_energy`
+        (J), and `output_tokens_per_joule`. Sync; called once per phase from
+        `RecordsManager._summarize_with_logging`. Sibling `summarize()` above is
+        async, runs periodically for the dashboard, and emits one MetricResult
+        per GPU per signal instead.
 
         Args:
-            metric_results: All metric results from the profiling phase. Used to
-                            look up total_output_tokens for tokens/J calculation.
-            time_filter: Time range covering the profiling phase (warmup excluded).
+            metric_results: Read-only; scanned only for the `total_output_tokens`
+                            tag to compute tokens/J.
+            time_filter: Profiling-phase window (warmup excluded). For energy
+                         (a counter) `end_ns` is intentionally widened to None
+                         so the final scrape after `requests_end_ns` is captured.
+
+        Returns:
+            Up to 3 MetricResults in order `total_gpu_power`, `total_gpu_energy`,
+            `output_tokens_per_joule`. Each is independently omitted when no GPU
+            has the underlying signal; tokens/J is also omitted when
+            `total_output_tokens` is absent or aggregate energy is zero.
+
+        Example:
+            >>> accumulator.compute_efficiency_metrics(
+            ...     records, TimeRangeFilter(start_ns=t0, end_ns=t1))
         """
         tokens_result = next(
             (r for r in metric_results if r.tag == "total_output_tokens"), None
