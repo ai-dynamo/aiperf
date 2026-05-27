@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import ConfigDict, Field
 
@@ -10,6 +12,9 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.config.config import BenchmarkConfig
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 # =============================================================================
 # JSON Metric Result
@@ -61,7 +66,7 @@ class JsonMetricResult(AIPerfBaseModel):
     )
 
     @staticmethod
-    def project_summary_dict(payload: dict[str, Any]) -> dict[str, "JsonMetricResult"]:
+    def project_summary_dict(payload: dict[str, Any]) -> dict[str, JsonMetricResult]:
         return {
             key: JsonMetricResult.model_validate(value)
             for key, value in payload.items()
@@ -216,6 +221,29 @@ class RunInfo(AIPerfBaseModel):
             "the run was constructed without a CLI context."
         ),
     )
+
+    @classmethod
+    def from_run(cls, run: BenchmarkRun | None) -> RunInfo | None:
+        """Project a ``BenchmarkRun`` envelope onto its run-identity shape.
+
+        Single source of truth shared by ``profile_export_aiperf.json`` and the
+        live ``GET /api/run`` endpoint, so the on-disk and live shapes cannot
+        diverge.
+        """
+        if run is None:
+            return None
+        variation = run.variation
+        return cls(
+            benchmark_id=run.benchmark_id,
+            sweep_id=run.sweep_id,
+            random_seed=run.random_seed,
+            trial=run.trial,
+            run_label=run.label or None,
+            variation_label=variation.label if variation is not None else None,
+            variation_index=variation.index if variation is not None else None,
+            variation_values=dict(variation.values) if variation is not None else None,
+            cli_command=run.cli_command,
+        )
 
 
 # =============================================================================
