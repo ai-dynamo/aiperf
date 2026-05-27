@@ -366,6 +366,132 @@ class TestDatasetResolverEdgeCases:
 
         assert run.resolved.dataset_file_paths is None
 
+    def test_detect_type_falls_through_for_csv_first_line(self, tmp_path) -> None:
+        """A non-JSON first line (BurstGPT's CSV header) must not short-circuit
+        structural detection. Regresses the bug where ValueError on
+        ``load_json_str`` returned (None, None) before any loader's
+        ``can_load`` got a chance.
+        """
+        from aiperf.plugin.enums import CustomDatasetType
+
+        csv_file = tmp_path / "burst.csv"
+        csv_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "5,ChatGPT,472,18,490,Conversation log\n"
+            "45,ChatGPT,1087,230,1317,Conversation log\n"
+        )
+
+        detected, first_record = DatasetResolver._detect_type(str(csv_file))
+
+        assert detected == CustomDatasetType.BURST_GPT_TRACE
+        assert first_record is None
+
+    def test_detect_type_does_not_warn_on_csv_first_line(
+        self, tmp_path, caplog
+    ) -> None:
+        """Auto-detecting a CSV must not emit a JSON-parse warning.
+
+        ``load_json_str`` logs ``WARNING: Failed to parse JSON string``
+        before re-raising, so probing the first line with it would
+        produce a misleading warning on every successful BurstGPT CSV
+        auto-detect. The helper uses ``orjson.loads`` directly to keep
+        the expected non-JSON path silent.
+        """
+        import logging
+
+        csv_file = tmp_path / "burst.csv"
+        csv_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "5,ChatGPT,472,18,490,Conversation log\n"
+        )
+
+        with caplog.at_level(logging.WARNING):
+            DatasetResolver._detect_type(str(csv_file))
+
+        assert not any("Failed to parse JSON" in rec.message for rec in caplog.records)
+
+    def test_read_first_jsonl_record_returns_none_for_binary_file(
+        self, tmp_path
+    ) -> None:
+        """A non-UTF-8 dataset path must fall through gracefully.
+
+        The original ``except (OSError, ValueError)`` swallowed
+        ``UnicodeDecodeError`` too (it's a ValueError subclass), so
+        pointing the resolver at a binary file produced "no detection"
+        instead of crashing. The narrower handlers in the refactor
+        re-introduced the crash unless ``UnicodeDecodeError`` is caught
+        explicitly.
+        """
+        binary_file = tmp_path / "weights.bin"
+        binary_file.write_bytes(b"\x80\x81\x82\xff\xfe\xfd")
+
+        assert DatasetResolver._read_first_jsonl_record(str(binary_file)) is None
+
+    def test_read_first_jsonl_record_returns_none_for_non_dict_json(
+        self, tmp_path
+    ) -> None:
+        """A first line that's valid JSON but not an object must return None.
+
+        The helper's declared return type is ``dict | None``; downstream
+        callers (``_detect_type``'s explicit-type branch) call
+        ``data.get("type")``, which would ``AttributeError`` on a list.
+        """
+        list_file = tmp_path / "list.jsonl"
+        list_file.write_text("[1, 2, 3]\n")
+
+        assert DatasetResolver._read_first_jsonl_record(str(list_file)) is None
+
+    def test_read_first_jsonl_record_returns_none_for_empty_file(
+        self, tmp_path
+    ) -> None:
+        """An empty file (or a file with only blank lines) returns None."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.write_text("\n   \n\n")
+
+        assert DatasetResolver._read_first_jsonl_record(str(empty_file)) is None
+
+    def test_detect_type_returns_none_none_when_file_unreadable(self, tmp_path) -> None:
+        """OSError on file open bails the whole detection with (None, None).
+
+        Pointing at a directory that exists but contains nothing the
+        helper can open by name reaches the OSError branch in
+        ``_detect_type``.
+        """
+        nonexistent = tmp_path / "does_not_exist.jsonl"
+
+        detected, first_record = DatasetResolver._detect_type(str(nonexistent))
+
+        assert detected is None
+        assert first_record is None
+
+    def test_burst_gpt_csv_auto_detected_with_timing(self, tmp_path) -> None:
+        """End-to-end resolver pass: BurstGPT CSV with no explicit format
+        is recognized and reports has_timing=True so fixed_schedule can run.
+        """
+        csv_file = tmp_path / "burst.csv"
+        csv_file.write_text(
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
+            "5,ChatGPT,472,18,490,Conversation log\n"
+            "45,ChatGPT,1087,230,1317,Conversation log\n"
+        )
+
+        config = _make_config(
+            datasets=[{"name": "main", "type": "file", "path": str(csv_file)}],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 2,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+
 
 # ============================================================
 # TimingResolver Edge Cases

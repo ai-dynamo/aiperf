@@ -120,6 +120,22 @@ class TestTokenizerFunctions:
         assert result.prompt_token_count > 0
         assert result.count > 0
 
+    @pytest.mark.parametrize(
+        "prompt,expected_count",
+        [
+            ([101, 102, 103], 3),
+            ([[101, 102], [103, 104]], 4),
+        ],
+    )
+    def test_tokenize_completion_token_id_prompt_counts_raw_ids(
+        self, prompt, expected_count
+    ):
+        req = CompletionRequest(model="test-model", prompt=prompt, max_tokens=10)
+        result = tokenize_request(req)
+
+        assert result.prompt_token_count == expected_count
+        assert result.count > 0
+
     def test_tokenize_chat_request(self):
         req = ChatCompletionRequest(
             model="test-model",
