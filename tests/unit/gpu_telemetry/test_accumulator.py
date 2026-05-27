@@ -549,3 +549,37 @@ class TestComputeEfficiencyMetrics:
 
         tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
         assert tpj.avg == pytest.approx(1.0)  # 1000 tokens / 1000 J
+
+    def test_energy_filter_widens_end_ns_while_power_filter_stays_bounded(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        # Counter-based energy must be open-ended so the final scrape captured
+        # after PROFILE_COMPLETE is included; gauge-based power must stay
+        # bounded so post-bench idle samples don't drag the average down.
+        gpu = self._make_gpu_mock(power_avg=200.0, energy_delta_mj=0.001)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+        metric_results = [
+            MetricResult(
+                tag="total_output_tokens",
+                header="Total Output Tokens",
+                unit="tokens",
+                avg=2000.0,
+            )
+        ]
+
+        accumulator.compute_efficiency_metrics(metric_results, time_filter)
+
+        filters_by_metric: dict[str, TimeRangeFilter] = {
+            call.args[0]: call.kwargs["time_filter"]
+            for call in gpu.get_metric_result.call_args_list
+        }
+
+        power_filter = filters_by_metric["gpu_power_usage"]
+        assert power_filter.start_ns == time_filter.start_ns
+        assert power_filter.end_ns == time_filter.end_ns
+
+        energy_filter = filters_by_metric["energy_consumption"]
+        assert energy_filter.start_ns == time_filter.start_ns
+        assert energy_filter.end_ns is None
