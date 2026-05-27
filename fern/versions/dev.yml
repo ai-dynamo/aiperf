@@ -201,6 +201,8 @@ navigation:
         path: ../pages-dev/reference/vendor-usage-fields.md
       - page: JSON Export Schema
         path: ../pages-dev/reference/json-export-schema.md
+      - page: HTTP API Endpoints
+        path: ../pages-dev/reference/api-endpoints.md
       - page: YAML Config Roadmap
         path: ../pages-dev/reference/yaml-config-roadmap.md
   - section: Server Metrics
