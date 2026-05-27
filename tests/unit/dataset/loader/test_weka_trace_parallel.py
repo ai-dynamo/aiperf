@@ -179,6 +179,7 @@ def _drive_parallel_inproc(
                             "system_tokens": sa.system_tokens,
                             "child_session_ids": child_sids,
                             "sa_end_seconds": sa_end,
+                            "t": sa.t,
                         },
                     )
                 )

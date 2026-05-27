@@ -134,7 +134,7 @@ class PhaseRunner(TaskManagerMixin):
             and config.phase == CreditPhase.WARMUP
             and isinstance(conversation_source, TrajectorySource)
         ):
-            trajectory_count = len(conversation_source.trajectories)
+            trajectory_count = conversation_source.warmup_credit_count
             if (
                 trajectory_count > 0
                 and trajectory_count != config.total_expected_requests
@@ -275,6 +275,7 @@ class PhaseRunner(TaskManagerMixin):
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
             user_config=self._user_config,
+            branch_orchestrator=self._branch_orchestrator,
         )
 
         try:

@@ -387,6 +387,133 @@ class BranchOrchestrator:
                     (conv.conversation_id, branch.branch_id)
                 )
 
+    def seed_snapshot(
+        self,
+        states,
+        *,
+        cache_bust_markers: dict[str, str | None] | None = None,
+    ) -> None:
+        """Seed join bookkeeping from an agentic replay wall-clock snapshot.
+
+        Normal DAG state is discovered by observing a parent turn return and
+        spawning children from that event. Snapshot replay starts after that
+        event has already happened, so the strategy provides already-live
+        child states and any gated parent state here.
+        """
+        if self._cleaning_up:
+            return
+
+        states_by_corr = {state.x_correlation_id: state for state in states}
+        children_by_parent: dict[str, list] = defaultdict(list)
+        for state in states:
+            if state.agent_depth > 0 and state.parent_correlation_id is not None:
+                children_by_parent[state.parent_correlation_id].append(state)
+
+        for parent_corr, child_states in children_by_parent.items():
+            parent_state = states_by_corr.get(parent_corr)
+            parent_meta = None
+            if parent_state is not None:
+                parent_meta = self._cs.get_metadata(parent_state.conversation_id)
+
+            tracked_children = 0
+            for child_state in child_states:
+                self._child_modes[child_state.x_correlation_id] = (
+                    child_state.branch_mode
+                )
+                entries: list[ChildJoinEntry] = []
+                if (
+                    parent_state is not None
+                    and parent_meta is not None
+                    and child_state.join_target_turn_index is not None
+                    and child_state.branch_id is not None
+                ):
+                    prereq_key = f"SPAWN_JOIN:{child_state.branch_id}"
+                    pending = self._ensure_seeded_join(
+                        parent_state=parent_state,
+                        parent_meta=parent_meta,
+                        gated_idx=child_state.join_target_turn_index,
+                        cache_bust_marker=(
+                            cache_bust_markers or {}
+                        ).get(parent_state.x_correlation_id),
+                    )
+                    prereq_state = pending.outstanding.setdefault(
+                        prereq_key, PrereqState()
+                    )
+                    prereq_state.expected += 1
+                    prereq_state.registered = True
+                    entries.append(
+                        ChildJoinEntry(
+                            parent_correlation_id=parent_corr,
+                            gated_turn_index=child_state.join_target_turn_index,
+                            prereq_key=prereq_key,
+                        )
+                    )
+                else:
+                    entries.append(
+                        ChildJoinEntry(
+                            parent_correlation_id=parent_corr,
+                            gated_turn_index=None,
+                            prereq_key=None,
+                        )
+                    )
+
+                self._child_to_join[child_state.x_correlation_id] = entries
+                tracked_children += 1
+
+            if tracked_children:
+                self._descendant_counts[parent_corr] = (
+                    self._descendant_counts.get(parent_corr, 0) + tracked_children
+                )
+                self.stats.children_spawned += tracked_children
+
+    def _ensure_seeded_join(
+        self,
+        *,
+        parent_state,
+        parent_meta,
+        gated_idx: int,
+        cache_bust_marker: str | None,
+    ) -> PendingBranchJoin:
+        parent_corr = parent_state.x_correlation_id
+        active = self._active_joins.get(parent_corr)
+        if active is not None and active.gated_turn_index == gated_idx:
+            return active
+        future = self._future_joins.get(parent_corr, {}).get(gated_idx)
+        if future is not None:
+            return future
+
+        has_forks = False
+        if 0 <= gated_idx < len(parent_meta.turns):
+            has_forks = bool(getattr(parent_meta.turns[gated_idx], "has_forks", False))
+
+        pending = PendingBranchJoin(
+            parent_x_correlation_id=parent_corr,
+            parent_conversation_id=parent_state.conversation_id,
+            parent_num_turns=len(parent_meta.turns),
+            parent_agent_depth=parent_state.agent_depth,
+            parent_parent_correlation_id=parent_state.parent_correlation_id,
+            gated_turn_index=gated_idx,
+            parent_branch_mode=parent_state.branch_mode,
+            parent_has_forks_on_gated_turn=has_forks,
+            parent_cache_bust_marker=cache_bust_marker,
+            parent_cache_bust_target=self._cache_bust_target,
+        )
+        for prereq_key in self._gated_turn_prereq_keys.get(
+            (parent_state.conversation_id, gated_idx), set()
+        ):
+            pending.outstanding[prereq_key] = PrereqState()
+
+        if (
+            parent_state.waiting_on_children
+            and parent_state.join_target_turn_index == gated_idx
+        ):
+            pending.is_blocked = True
+            self._active_joins[parent_corr] = pending
+            self.stats.parents_suspended += 1
+        else:
+            self._future_joins.setdefault(parent_corr, {})[gated_idx] = pending
+        return pending
+
     async def intercept(self, credit) -> bool:
         """Intercept the credit-return path.
 

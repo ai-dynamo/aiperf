@@ -1141,6 +1141,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         child_conversation_ids=child_sids,
                         mode=ConversationBranchMode.SPAWN,
                         is_background=is_background,
+                        start_timestamp_ms=min(e.t for _, e in entries) * 1000.0,
                     )
                 )
                 conv.turns[preceding].branch_ids.append(branch_id)
@@ -1188,6 +1189,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 context_mode=self._resolved_context_mode(),
                 is_root=False,
                 agent_depth=1,
+                parent_conversation_id=cp.parent_trace_id,
             )
             child_seen_hash_ids: set[int] = set()
             for k, creq in enumerate(cp.stream_requests):
@@ -1374,6 +1376,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     (plan.trace_id, sa_index), []
                 ),
                 "sa_end_seconds": _sa_end_seconds(sa),
+                "t": sa.t,
             }
             if trace_idle_timing is not None:
                 sa_payload["effective_sa_end_seconds"] = (
@@ -1503,6 +1506,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         child_conversation_ids=branch["child_session_ids"],
                         mode=ConversationBranchMode.SPAWN,
                         is_background=branch["is_background"],
+                        start_timestamp_ms=branch.get("start_timestamp"),
                     )
                 )
                 parent_conv.turns[branch["preceding_turn"]].branch_ids.append(
@@ -1525,6 +1529,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     context_mode=self._resolved_context_mode(),
                     is_root=child["is_root"],
                     agent_depth=child["agent_depth"],
+                    parent_conversation_id=child.get(
+                        "parent_conversation_id", result["trace_id"]
+                    ),
                 )
                 for t_dict in child["turns"]:
                     child_conv.turns.append(

@@ -6,13 +6,22 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.models import (
+    ConversationBranchInfo,
+    ConversationMetadata,
+    DatasetMetadata,
+    TurnMetadata,
+    TurnPrerequisite,
+)
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import (
     BranchOrchestrator,
     ChildJoinEntry,
     PendingBranchJoin,
     PrereqState,
 )
+from aiperf.timing.trajectory_source import ConversationState
 
 
 @pytest.mark.asyncio
@@ -27,6 +36,92 @@ async def test_intercept_no_spawn_returns_false():
         x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
     )
     assert await orch.intercept(credit) is False
+
+
+@pytest.mark.asyncio
+async def test_seed_snapshot_registers_active_join_and_releases_parent():
+    branch_id = "b0"
+    parent_meta = ConversationMetadata(
+        conversation_id="parent",
+        turns=[
+            TurnMetadata(timestamp_ms=0.0),
+            TurnMetadata(timestamp_ms=12000.0, branch_ids=[branch_id]),
+            TurnMetadata(
+                timestamp_ms=20000.0,
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN,
+                        branch_id=branch_id,
+                    )
+                ],
+            ),
+        ],
+        branches=[
+            ConversationBranchInfo(
+                branch_id=branch_id,
+                child_conversation_ids=["child"],
+                mode=ConversationBranchMode.SPAWN,
+                start_timestamp_ms=13000.0,
+            )
+        ],
+    )
+    child_meta = ConversationMetadata(
+        conversation_id="child",
+        turns=[TurnMetadata(timestamp_ms=13000.0), TurnMetadata(timestamp_ms=14000.0)],
+        is_root=False,
+        agent_depth=1,
+        parent_conversation_id="parent",
+    )
+
+    class _Source:
+        dataset_metadata = DatasetMetadata(
+            conversations=[parent_meta, child_meta],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+
+        def get_metadata(self, conversation_id):
+            return {
+                "parent": parent_meta,
+                "child": child_meta,
+            }[conversation_id]
+
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=_Source(), credit_issuer=issuer)
+    states = (
+        ConversationState(
+            conversation_id="parent",
+            x_correlation_id="parent-corr",
+            next_turn_index=2,
+            waiting_on_children=True,
+            join_target_turn_index=2,
+        ),
+        ConversationState(
+            conversation_id="child",
+            x_correlation_id="child-corr",
+            next_turn_index=1,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            join_target_turn_index=2,
+            branch_id=branch_id,
+            branch_mode=ConversationBranchMode.SPAWN,
+        ),
+    )
+
+    orch.seed_snapshot(states, cache_bust_markers={"parent-corr": "marker"})
+
+    assert orch.has_pending_branch_work() is True
+    assert "parent-corr" in orch._active_joins
+    pending = orch._active_joins["parent-corr"]
+    assert pending.parent_cache_bust_marker == "marker"
+    assert pending.outstanding[f"SPAWN_JOIN:{branch_id}"].expected == 1
+
+    await orch.on_child_leaf_reached("child-corr")
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    released = issuer.dispatch_join_turn.await_args.args[0]
+    assert released.parent_x_correlation_id == "parent-corr"
+    assert released.gated_turn_index == 2
 
 
 @pytest.mark.asyncio

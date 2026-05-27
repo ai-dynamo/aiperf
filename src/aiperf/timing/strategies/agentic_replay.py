@@ -41,7 +41,12 @@ from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
-from aiperf.timing.trajectory_source import TrajectorySource
+from aiperf.timing.trajectory_source import (
+    ConversationState,
+    Trajectory,
+    TrajectorySnapshot,
+    TrajectorySource,
+)
 
 if TYPE_CHECKING:
     from aiperf.common.config import UserConfig
@@ -72,6 +77,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
         user_config: UserConfig | None = None,
+        branch_orchestrator=None,
         **kwargs,
     ) -> None:
         super().__init__(logger_name="AgenticReplayTiming")
@@ -94,6 +100,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.stop_checker = stop_checker
         self.credit_issuer = credit_issuer
         self.lifecycle = lifecycle
+        self.branch_orchestrator = branch_orchestrator
 
         self._recycle_queue: asyncio.Queue[str] | None = None
         # Keyed on x_correlation_id (not trace_id): the guard's intent is to
@@ -202,7 +209,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 for trajectory in self.conversation_source.trajectories
             }
             for conv in self.conversation_source.dataset_metadata.conversations:
-                self._recycle_queue.put_nowait(conv.conversation_id)
+                if getattr(conv, "is_root", True):
+                    self._recycle_queue.put_nowait(conv.conversation_id)
             self.info(
                 f"PROFILING setup: trajectories={len(trajectory_ids)} traces, "
                 f"recycle_queue={self._recycle_queue.qsize()} traces (full pool)"
@@ -216,28 +224,39 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self._execute_profiling()
 
     async def _execute_warmup(self) -> None:
-        """Dispatch one credit per trajectory at turn ``k_i``."""
-        self._warmup_total_count = len(self.conversation_source.trajectories)
+        """Dispatch one warmup credit for every ready trajectory state."""
+        self._warmup_total_count = self.conversation_source.warmup_credit_count
         self.info(
             f"WARMUP execute: dispatching {self._warmup_total_count} trajectory credits"
         )
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
-            session = self.conversation_source.session_for(trajectory)
-            self._correlation_to_lane[session.x_correlation_id] = lane
-            self._active_traces[trajectory.conversation_id] += 1
-            self._mint_marker_for_session(
-                session.x_correlation_id, trajectory.conversation_id, lane
-            )
-            turn = self._build_turn_for_session(session, trajectory.start_turn_index)
-            self._warmup_correlation_to_trace[turn.x_correlation_id] = (
-                trajectory.conversation_id
-            )
-            num_turns = len(session.metadata.turns)
-            self._warmup_correlation_to_start_info[turn.x_correlation_id] = (
-                trajectory.start_turn_index,
-                num_turns,
-            )
-            await self.credit_issuer.issue_credit(turn)
+            if trajectory.snapshot is None:
+                session = self.conversation_source.session_for(trajectory)
+                dispatch_index = trajectory.start_turn_index
+                self._correlation_to_lane[session.x_correlation_id] = lane
+                self._active_traces[trajectory.conversation_id] += 1
+                self._mint_marker_for_session(
+                    session.x_correlation_id, trajectory.conversation_id, lane
+                )
+                turn = self._build_turn_for_session(session, dispatch_index)
+                self._record_warmup_turn(turn.x_correlation_id, session, dispatch_index)
+                await self.credit_issuer.issue_credit(turn)
+                continue
+
+            states = self._materialize_snapshot(trajectory).states
+            for state in states:
+                if state.waiting_on_children:
+                    continue
+                session = self.conversation_source.session_for_state(state)
+                self._correlation_to_lane[session.x_correlation_id] = lane
+                self._mint_marker_for_session(
+                    session.x_correlation_id, state.conversation_id, lane
+                )
+                turn = self._build_turn_for_session(session, state.next_turn_index)
+                self._record_warmup_turn(
+                    turn.x_correlation_id, session, state.next_turn_index
+                )
+                await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
         # will be issued. SendingCompleteStopCondition watches this flag and
         # fires once all in-flight credits return (the warmup barrier).
@@ -259,9 +278,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """
         self.info(
             f"PROFILING execute: resuming {len(self.conversation_source.trajectories)} "
-            f"trajectory sessions at k_i + 1"
+            f"trajectory sessions"
         )
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
+            if trajectory.snapshot is not None:
+                await self._dispatch_snapshot_for_profiling(trajectory, lane)
+                continue
+
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
             self._active_traces[trajectory.conversation_id] += 1
@@ -350,18 +373,20 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             and is_context_overflow_response(body=error)
         )
 
-        if not credit.is_final_turn and not terminal_overflow:
-            await self._dispatch_next_turn(credit)
+        if credit.agent_depth > 0:
+            if not credit.is_final_turn and not terminal_overflow:
+                await self._dispatch_next_turn(credit)
+                return
+            if terminal_overflow and self.branch_orchestrator is not None:
+                await self.branch_orchestrator.on_child_stopped(
+                    credit.x_correlation_id
+                )
+            self._session_marker.pop(credit.x_correlation_id, None)
+            self._correlation_to_lane.pop(credit.x_correlation_id, None)
             return
 
-        # DAG-child final turns are owned by BranchOrchestrator
-        # (on_child_leaf_reached / on_child_errored, already invoked by the
-        # callback handler before reaching the strategy). The trajectory
-        # recycle pool is root-only — child conversation_ids like
-        # ``parent::sa:agent_id`` are not legitimate pool entries, and they
-        # repeat across recycle passes of the same parent, which would trip
-        # the double-recycle guard the second time the parent re-runs.
-        if credit.agent_depth > 0:
+        if not credit.is_final_turn and not terminal_overflow:
+            await self._dispatch_next_turn(credit)
             return
 
         if terminal_overflow:
@@ -453,6 +478,83 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         turn = self._build_turn_for_session(session, 0)
         await self.credit_issuer.issue_credit(turn)
+
+    def _record_warmup_turn(
+        self,
+        x_correlation_id: str,
+        session: SampledSession,
+        turn_index: int,
+    ) -> None:
+        self._warmup_correlation_to_trace[x_correlation_id] = session.conversation_id
+        self._warmup_correlation_to_start_info[x_correlation_id] = (
+            turn_index,
+            len(session.metadata.turns),
+        )
+
+    async def _dispatch_snapshot_for_profiling(
+        self, trajectory: Trajectory, lane: int
+    ) -> None:
+        snapshot = self._materialize_snapshot(trajectory)
+        for state in snapshot.states:
+            self._correlation_to_lane[state.x_correlation_id] = lane
+            if state.agent_depth == 0:
+                self._active_traces[state.conversation_id] += 1
+            self._mint_marker_for_session(
+                state.x_correlation_id, state.conversation_id, lane
+            )
+
+        if self.branch_orchestrator is not None:
+            self.branch_orchestrator.seed_snapshot(
+                snapshot.states,
+                cache_bust_markers=self._session_marker,
+            )
+
+        for state in snapshot.states:
+            if state.waiting_on_children:
+                continue
+
+            session = self.conversation_source.session_for_state(state)
+            turn = self._build_turn_for_session(session, state.next_turn_index)
+            delay_s = state.next_dispatch_offset_ms / MILLIS_PER_SECOND
+            if delay_s > 0:
+                self.scheduler.schedule_later(
+                    delay_s,
+                    self.credit_issuer.issue_credit(turn),
+                )
+            else:
+                await self.credit_issuer.issue_credit(turn)
+
+    def _materialize_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
+        assert trajectory.snapshot is not None
+        corr_map = {
+            state.x_correlation_id: str(uuid.uuid4())
+            for state in trajectory.snapshot.states
+        }
+        states: list[ConversationState] = []
+        for state in trajectory.snapshot.states:
+            parent_corr = (
+                corr_map.get(state.parent_correlation_id)
+                if state.parent_correlation_id is not None
+                else None
+            )
+            states.append(
+                ConversationState(
+                    conversation_id=state.conversation_id,
+                    x_correlation_id=corr_map[state.x_correlation_id],
+                    next_turn_index=state.next_turn_index,
+                    next_dispatch_offset_ms=state.next_dispatch_offset_ms,
+                    agent_depth=state.agent_depth,
+                    parent_correlation_id=parent_corr,
+                    waiting_on_children=state.waiting_on_children,
+                    join_target_turn_index=state.join_target_turn_index,
+                    branch_id=state.branch_id,
+                    branch_mode=state.branch_mode,
+                )
+            )
+        return TrajectorySnapshot(
+            t_star_ms=trajectory.snapshot.t_star_ms,
+            states=tuple(states),
+        )
 
     def _release_lane_for(
         self, finished_correlation_id: str, finished_trace_id: str
