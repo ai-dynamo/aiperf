@@ -114,14 +114,14 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
 
     def _build_turn(self, trace: MooncakeTrace, prompt: str) -> Turn:
         if trace.payload is not None:
-            return Turn(
+            turn = Turn(
                 timestamp=trace.timestamp,
                 delay=trace.delay,
                 max_tokens=trace.output_length,
                 raw_payload=trace.payload,
                 extra_body=trace.extra,
             )
-        if trace.messages is not None:
+        elif trace.messages is not None:
             turn = Turn(
                 timestamp=trace.timestamp,
                 delay=trace.delay,
