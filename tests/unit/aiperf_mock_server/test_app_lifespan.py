@@ -12,6 +12,27 @@ from aiperf_mock_server.config import MockServerConfig
 from fastapi import FastAPI
 
 
+@pytest.fixture(autouse=True)
+def _restore_dcgm_fakers():
+    """Snapshot and restore the module-level ``dcgm_fakers`` list.
+
+    ``lifespan`` unconditionally appends two ``DCGMFaker`` entries to the
+    module-level list at ``aiperf_mock_server.app.dcgm_fakers``. Running
+    ``async with lifespan(...)`` here leaks those appends into every
+    subsequent test that imports ``aiperf_mock_server.app`` — e.g.
+    ``tests/unit/server/test_app.py::test_dcgm_metrics_invalid_instance``
+    starts seeing ``/dcgm3/metrics`` return 200 instead of 404 because the
+    list is no longer length-2.
+    """
+    from aiperf_mock_server.app import dcgm_fakers
+
+    snapshot = list(dcgm_fakers)
+    try:
+        yield
+    finally:
+        dcgm_fakers[:] = snapshot
+
+
 @pytest.mark.asyncio
 async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
     tmp_path, monkeypatch
