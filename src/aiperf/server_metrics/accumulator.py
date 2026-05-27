@@ -415,6 +415,12 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
           / ``vllm:generation_tokens_total`` or SGLang
           ``sglang:prompt_tokens_total`` / ``sglang:generation_tokens_total``.
 
+        Counter lookups internally use the parser-stripped form (no ``_total``
+        suffix) because ``prometheus_client.parser.text_string_to_metric_families``
+        strips it from the family name. Helpers gate by ``metric_type`` to keep
+        gauge/counter name collisions (e.g. SGLang's ``num_retracted_reqs``
+        gauge vs ``num_retracted_reqs_total`` counter) from cross-contaminating.
+
         Returns ``{}`` when no server metrics have been received yet, so
         callers can suppress the row on early ticks.
         """
@@ -510,12 +516,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     def _add_preemptions(
         self, out: dict[str, float], endpoints: list, start_ns: int | None
     ) -> None:
-        # SGLang exposes the same concept as `num_retracted_reqs_total`.
+        # SGLang exposes the same concept as `num_retracted_reqs_total` (counter).
+        # That name collides with `num_retracted_reqs` (gauge) after parser
+        # stripping, so the counter-type filter in `_counter_delta` is what
+        # keeps the lookup from picking up the gauge by mistake.
         preempt = self._first_counter_delta(
             endpoints,
             start_ns,
             "vllm:num_preemptions",
-            "sglang:num_retracted_reqs_total",
+            "sglang:num_retracted_reqs",
         )
         if preempt is not None:
             out["num_preemptions"] = preempt
@@ -527,20 +536,22 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # — what the server itself observed across all in-flight + completed
         # requests (independent of aiperf's client-side accounting). Suppressed
         # when the counters are absent so non-vLLM/non-SGLang servers don't
-        # show spurious zeroes.
+        # show spurious zeroes. NOTE: the `_total` suffix is intentionally
+        # absent — `prometheus_client.parser.text_string_to_metric_families`
+        # strips it from the family name, so the stored key is the base form.
         in_rate = self._first_counter_rate(
             endpoints,
             start_ns,
-            "vllm:prompt_tokens_total",
-            "sglang:prompt_tokens_total",
+            "vllm:prompt_tokens",
+            "sglang:prompt_tokens",
         )
         if in_rate is not None:
             out["input_token_throughput_srv"] = in_rate
         out_rate = self._first_counter_rate(
             endpoints,
             start_ns,
-            "vllm:generation_tokens_total",
-            "sglang:generation_tokens_total",
+            "vllm:generation_tokens",
+            "sglang:generation_tokens",
         )
         if out_rate is not None:
             out["output_token_throughput_srv"] = out_rate
@@ -588,6 +599,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         the baseline when present. This mirrors final export accounting so
         realtime rows can exclude warmup.
 
+        Skips entries whose stored metric_type is not COUNTER — guards against
+        the case where a gauge and a counter parse to the same family name
+        (e.g. SGLang's ``num_retracted_reqs`` gauge collides with
+        ``num_retracted_reqs_total`` counter after parser stripping).
+
         Returns None if no endpoint has at least two samples for the metric.
         """
         total = 0.0
@@ -595,6 +611,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         for ep in endpoints:
             for key, entry in ep.metrics.items():
                 if key.name != metric_name:
+                    continue
+                if entry.metric_type != PrometheusMetricType.COUNTER:
                     continue
                 vals = entry.data.values
                 if len(vals) >= 2:
@@ -625,11 +643,18 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
     @staticmethod
     def _gauge_latest_max(endpoints: list, metric_name: str) -> float | None:
-        """Max of latest gauge values across endpoints, or None if absent."""
+        """Max of latest gauge values across endpoints, or None if absent.
+
+        Skips entries whose stored metric_type is not GAUGE so a counter sharing
+        the same name (after parser ``_total`` stripping) can't be misread as a
+        gauge value.
+        """
         best: float | None = None
         for ep in endpoints:
             for key, entry in ep.metrics.items():
                 if key.name != metric_name:
+                    continue
+                if entry.metric_type != PrometheusMetricType.GAUGE:
                     continue
                 vals = entry.data.values
                 if len(vals) > 0:
@@ -645,6 +670,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         Running-average rate for a Prometheus counter, in tokens/sec. Uses each
         endpoint's selected baseline and last observed timestamps as the window.
+        Skips entries whose stored metric_type is not COUNTER (see
+        ``_counter_delta`` for the gauge-collision rationale).
+
         Returns None if no endpoint observed the metric, or if every endpoint has
         only one usable sample.
         """
@@ -654,6 +682,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         for ep in endpoints:
             for key, entry in ep.metrics.items():
                 if key.name != metric_name:
+                    continue
+                if entry.metric_type != PrometheusMetricType.COUNTER:
                     continue
                 vals = entry.data.values
                 ts = entry.data.timestamps
