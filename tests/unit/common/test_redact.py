@@ -1455,6 +1455,56 @@ class TestCliCommandRedaction:
         assert "http://localhost:8000" in cmd
         assert "gpt2" in cmd
 
+    @pytest.mark.parametrize(
+        "flag, value",
+        [
+            param("--input-tokens-mean", "1024", id="input-tokens-mean"),
+            param("--input-tokens-stddev", "0", id="input-tokens-stddev"),
+            param("--output-tokens-mean", "128", id="output-tokens-mean"),
+            param("--output-tokens-stddev", "32", id="output-tokens-stddev"),
+            param(
+                "--synthetic-input-tokens-mean", "1024", id="synthetic-input-tokens-mean",
+            ),
+            param(
+                "--synthetic-input-tokens-stddev",
+                "0",
+                id="synthetic-input-tokens-stddev",
+            ),
+        ],
+    )  # fmt: skip
+    def test_token_count_flags_preserve_value_in_cli_command(self, flag, value):
+        """Regression: flag names containing 'tokens' (plural — LLM token
+        counts) must not be redacted just because they share a substring with
+        auth-token flags. Reported via real-run output where every
+        --*-tokens-* flag value came back as '<redacted>'."""
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", flag, value]
+        )
+        assert value in cmd, f"{flag} value {value!r} should not be redacted"
+        assert REDACTED_VALUE not in cmd
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            param("--api-token", id="api-token"),
+            param("--api_token", id="api_token-underscore"),
+            param("--auth-token", id="auth-token"),
+            param("--access-token", id="access-token"),
+            param("--bearer-token", id="bearer-token"),
+            param("--id-token", id="id-token"),
+            param("--refresh-token", id="refresh-token"),
+        ],
+    )  # fmt: skip
+    def test_auth_token_compound_flags_redacted_in_cli_command(self, flag):
+        """Auth-token flag variants must still be redacted after tightening
+        the sensitive-token list away from the bare-'token' substring match."""
+        secret = "nv-secret-AUTH-TOKEN-9876543210"
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", flag, secret]
+        )
+        assert secret not in cmd
+        assert REDACTED_VALUE in cmd
+
 
 # =============================================================================
 # ErrorDetails safe repr
