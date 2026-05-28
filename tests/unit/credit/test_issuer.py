@@ -105,6 +105,7 @@ def make_turn(
     num_turns: int = 1,
     agent_depth: int = 0,
     parent_correlation_id: str | None = None,
+    counts_toward_phase_target: bool = True,
 ) -> TurnToSend:
     """Create a TurnToSend for testing."""
     return TurnToSend(
@@ -114,6 +115,7 @@ def make_turn(
         num_turns=num_turns,
         agent_depth=agent_depth,
         parent_correlation_id=parent_correlation_id,
+        counts_toward_phase_target=counts_toward_phase_target,
     )
 
 
@@ -743,6 +745,18 @@ class TestDagFieldsPropagation:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.agent_depth == 1
         assert sent_credit.parent_correlation_id == "parent-xid"
+        assert sent_credit.counts_toward_phase_target is True
+
+    async def test_credit_inherits_phase_target_membership_from_turn(
+        self, credit_issuer, mock_router
+    ):
+        """Credit should carry explicit phase-target membership."""
+        turn = make_turn(counts_toward_phase_target=False)
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.counts_toward_phase_target is False
 
     async def test_credit_default_depth_and_parent_when_unset(
         self, credit_issuer, mock_router
@@ -813,7 +827,7 @@ class TestDispatchFirstTurn:
     """Tests for CreditIssuer.dispatch_first_turn."""
 
     async def test_dispatch_first_turn_issues_via_try_issue_credit(
-        self, credit_issuer, mock_router
+        self, credit_issuer, mock_router, mock_progress
     ):
         """dispatch_first_turn should issue via try_issue_credit with depth/parent propagated."""
         from aiperf.common.models import ConversationMetadata, TurnMetadata
@@ -841,6 +855,10 @@ class TestDispatchFirstTurn:
         assert sent_credit.num_turns == 2
         assert sent_credit.agent_depth == 1
         assert sent_credit.parent_correlation_id == "parent-xid"
+        assert sent_credit.counts_toward_phase_target is False
+
+        counted_turn = mock_progress.increment_sent.call_args.args[0]
+        assert counted_turn.counts_toward_phase_target is False
 
     async def test_dispatch_first_turn_bypasses_session_slot_for_subagent(
         self, credit_issuer, mock_concurrency, mock_router

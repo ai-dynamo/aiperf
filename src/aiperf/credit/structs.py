@@ -53,6 +53,14 @@ class Credit(
     url_index: int | None = None
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    counts_toward_phase_target: bool = True
+    """Whether this credit can satisfy the phase's planned send target.
+
+    Reactive DAG children set this False because they are spawned after the
+    root plan has been sampled. Snapshot replay can dispatch subagent states as
+    planned phase work, so target membership is intentionally separate from
+    ``agent_depth``.
+    """
     has_forks: bool = False
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     """DAG branch mode for this credit. Ignored when parent_correlation_id is None
@@ -114,6 +122,8 @@ class TurnToSend(Struct, frozen=True):
     num_turns: int
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    counts_toward_phase_target: bool = True
+    """Whether this turn can satisfy the phase's planned send target."""
     has_forks: bool = False
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
@@ -147,6 +157,7 @@ class TurnToSend(Struct, frozen=True):
             num_turns=credit.num_turns,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
+            counts_toward_phase_target=credit.counts_toward_phase_target,
             has_forks=next_meta.has_forks if next_meta is not None else False,
             branch_mode=credit.branch_mode,
             cache_bust_marker=credit.cache_bust_marker,

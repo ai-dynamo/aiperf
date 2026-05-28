@@ -216,6 +216,57 @@ async def test_warmup_dispatch_uses_start_turn_index():
 
 
 @pytest.mark.asyncio
+async def test_warmup_snapshot_subagent_counts_toward_phase_target():
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=1,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=1,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="child",
+        next_turn_index=0,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(parent_state, child_state),
+            ),
+        )
+    ]
+    issued = []
+
+    async def capture(turn):
+        issued.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        issuer=issuer,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert len(issued) == 1
+    assert issued[0].conversation_id == "trace_1"
+    assert issued[0].agent_depth == 1
+    assert issued[0].counts_toward_phase_target is True
+
+
+@pytest.mark.asyncio
 async def test_warmup_handle_credit_return_is_noop():
     """In WARMUP, handle_credit_return must not dispatch follow-up turns."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
@@ -413,7 +464,9 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
             "trace_0::sa:0",
             1,
             1,
-            branch_orchestrator.seed_snapshot.call_args.args[0][1].parent_correlation_id,
+            branch_orchestrator.seed_snapshot.call_args.args[0][
+                1
+            ].parent_correlation_id,
         )
     ]
     seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
