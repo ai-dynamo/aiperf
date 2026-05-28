@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from aiperf.common.enums import EnergyMetricUnit, GenericMetricUnit, PowerMetricUnit
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
@@ -622,12 +623,15 @@ class TestComputeEfficiencyMetrics:
             "Output Tokens per Joule (1 GPU)"
         )
 
-    def test_energy_filter_widens_end_ns_while_power_filter_stays_bounded(
+    def test_energy_filter_widens_end_ns_by_grace_while_power_filter_stays_bounded(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
     ) -> None:
-        # Counter-based energy must be open-ended so the final scrape captured
-        # after PROFILE_COMPLETE is included; gauge-based power must stay
-        # bounded so post-bench idle samples don't drag the average down.
+        # Counter-based energy widens end_ns by FINAL_SCRAPE_GRACE_NS so the
+        # trailing scrape (which lands after requests_end_ns on the
+        # COLLECTION_INTERVAL cadence) is captured, but the window stays
+        # bounded so cooldown, idle, or subsequent-phase samples don't leak
+        # into the delta. Gauge-based power stays at the unwidened end_ns so
+        # post-bench idle samples don't drag the average down.
         gpu = self._make_gpu_mock(power_avg=200.0, energy_delta_mj=0.001)
         accumulator._hierarchy.dcgm_endpoints = {
             "http://node1:9401/metrics": {"GPU-test": gpu}
@@ -654,4 +658,55 @@ class TestComputeEfficiencyMetrics:
 
         energy_filter = filters_by_metric["energy_consumption"]
         assert energy_filter.start_ns == time_filter.start_ns
-        assert energy_filter.end_ns is None
+        assert energy_filter.end_ns == (
+            time_filter.end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
+        )
+        assert energy_filter.end_ns is not None, (
+            "energy filter must remain bounded so a multi-phase run cannot leak "
+            "cooldown or subsequent-phase samples into phase N's energy delta"
+        )
+
+    def test_repeated_calls_use_bounded_energy_window_per_phase(
+        self, accumulator: GPUTelemetryAccumulator
+    ) -> None:
+        """Each `compute_efficiency_metrics` call must bound the energy filter at
+        `phase.end_ns + grace` — never reach into a later phase's samples.
+
+        Multi-phase regression guard: simulate WARMUP -> PROFILING by calling
+        the method twice with non-overlapping windows. Both calls must produce
+        bounded energy filters whose `end_ns` reflects the phase being closed,
+        not "now" or the union of all stored samples.
+        """
+        gpu = self._make_gpu_mock(power_avg=100.0, energy_delta_mj=0.0005)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+        metric_results = [
+            MetricResult(tag="total_output_tokens", header="h", unit="t", avg=500.0)
+        ]
+        phase1 = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
+        phase2 = TimeRangeFilter(start_ns=3_000_000_000, end_ns=4_000_000_000)
+
+        accumulator.compute_efficiency_metrics(metric_results, phase1)
+        accumulator.compute_efficiency_metrics(metric_results, phase2)
+
+        energy_filters = [
+            call.kwargs["time_filter"]
+            for call in gpu.get_metric_result.call_args_list
+            if call.args[0] == "energy_consumption"
+        ]
+        assert len(energy_filters) == 2
+
+        grace = Environment.GPU.FINAL_SCRAPE_GRACE_NS
+        assert energy_filters[0].start_ns == phase1.start_ns
+        assert energy_filters[0].end_ns == phase1.end_ns + grace
+        assert energy_filters[1].start_ns == phase2.start_ns
+        assert energy_filters[1].end_ns == phase2.end_ns + grace
+
+        # Phase 1's bounded end must not extend into phase 2 — that's the leak
+        # the bound prevents. Confirms grace is intentionally small.
+        assert energy_filters[0].end_ns < phase2.start_ns, (
+            f"phase 1 energy window ({energy_filters[0].end_ns}) extends past "
+            f"phase 2 start ({phase2.start_ns}); the grace window is too large "
+            f"for safe multi-phase use"
+        )

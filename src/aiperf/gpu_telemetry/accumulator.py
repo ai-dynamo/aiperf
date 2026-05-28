@@ -359,6 +359,16 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     def _sum_gpu_energy_joules(self, time_filter: TimeRangeFilter) -> tuple[float, int]:
         """Sum energy_consumption deltas (converted to joules) across all GPUs.
 
+        Energy is a monotonic counter scraped on COLLECTION_INTERVAL cadence;
+        the trailing scrape that closes the phase often lands a few hundred
+        milliseconds after `requests_end_ns`. The caller is expected to widen
+        `time_filter.end_ns` by `Environment.GPU.FINAL_SCRAPE_GRACE_NS` so the
+        late scrape is captured, while still bounding the window so cooldown,
+        idle, or subsequent-phase samples don't leak into the delta. An
+        unbounded (`end_ns=None`) filter here would silently include every
+        post-phase sample present in `_hierarchy.dcgm_endpoints`, which only
+        grows append-only across phase boundaries.
+
         Returns:
             Tuple of (total_energy_joules, gpu_count). GPUs missing energy data
             (NoMetricValue or None avg) are skipped.
@@ -414,9 +424,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         Args:
             metric_results: Read-only; scanned only for the `total_output_tokens`
                             tag to compute tokens/J.
-            time_filter: Profiling-phase window (warmup excluded). For energy
-                         (a counter) `end_ns` is intentionally widened to None
-                         so the final scrape after `requests_end_ns` is captured.
+            time_filter: Profiling-phase window (warmup excluded). For energy,
+                         `end_ns` is widened by `Environment.GPU.FINAL_SCRAPE_GRACE_NS`
+                         to capture the trailing scrape without leaking idle
+                         or subsequent-phase samples.
 
         Returns:
             Up to 3 MetricResults in order `total_gpu_power`, `total_gpu_energy`,
@@ -433,9 +444,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         )
         total_output_tokens = tokens_result.avg if tokens_result is not None else None
         total_power_w, power_count = self._sum_gpu_power_watts(time_filter)
-        # Energy is a counter; the final telemetry scrape often lands after
-        # requests_end_ns, so widen end_ns to capture the full bench-window delta.
-        energy_filter = TimeRangeFilter(start_ns=time_filter.start_ns, end_ns=None)
+        bounded_end_ns = time_filter.end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
+        energy_filter = TimeRangeFilter(start_ns=time_filter.start_ns, end_ns=bounded_end_ns)  # fmt: skip
         total_energy_j, energy_count = self._sum_gpu_energy_joules(energy_filter)
         self.debug(
             lambda: (
