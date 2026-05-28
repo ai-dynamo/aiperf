@@ -12,12 +12,6 @@ jobs:
   build:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    # Windows is non-blocking for now: we've validated AIPerf on a Windows
-    # 11 VDI but GitHub Actions windows-latest is Server 2022, and subtle
-    # environment differences (shell, PATH, line endings, codepage) can
-    # surface in CI but not on the VDI. Keep it informational until it has
-    # been observed green across a few runs, then promote to required.
-    continue-on-error: ${{ matrix.os == 'windows' }}
     strategy:
       fail-fast: false
       matrix:
