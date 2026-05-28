@@ -238,7 +238,20 @@ def redact_cli_command(cmd: str) -> str:
     return cmd
 
 
-_CLI_COMMAND_SENSITIVE_TOKENS = ("api-key", "api_key", "authorization", "token")
+# Each entry must contain a `-` or `_` so it can't substring-match an innocent
+# plural (e.g. bare `"token"` would match `--*-tokens-mean` flags carrying LLM
+# token counts). Bare `--token` is intentionally not matched; add a specific
+# compound form (e.g. `"my-token"`) if a new auth flag needs to be covered.
+_CLI_COMMAND_SENSITIVE_TOKENS = (
+    "api-key", "api_key",
+    "api-token", "api_token",
+    "auth-token", "auth_token",
+    "access-token", "access_token",
+    "bearer-token", "bearer_token",
+    "id-token", "id_token",
+    "refresh-token", "refresh_token",
+    "authorization",
+)  # fmt: skip
 
 
 def _redact_cli_args(args: list) -> list:
