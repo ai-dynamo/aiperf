@@ -528,6 +528,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/mmap_cache_lock.py",
+      "acquire_cache_lock"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
