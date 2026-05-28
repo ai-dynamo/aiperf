@@ -232,11 +232,20 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Raises:
             ValueError: If synthesis options are set but dataset type is not a trace format.
         """
-        if self._should_synthesize() and not plugins.is_trace_dataset(dataset_type):
+        s = self._file_dataset.synthesis
+        if (
+            s is not None
+            and (
+                self._should_synthesize()
+                or s.max_isl is not None
+                or s.max_osl is not None
+            )
+            and not plugins.is_trace_dataset(dataset_type)
+        ):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
-                f"--synthesis-output-len-multiplier) "
+                f"--synthesis-output-len-multiplier, --synthesis-max-isl, --synthesis-max-osl) "
                 f"are only supported with trace datasets, "
                 f"but got {dataset_type}. "
                 f"Either remove synthesis options or use a trace dataset type."
