@@ -168,7 +168,12 @@ class _IdleGap:
 @dataclass
 class _TraceIdleTiming:
     parent_by_outer_idx: dict[int, _RequestTiming]
-    child_by_request_id: dict[int, _RequestTiming]
+    # Keyed by (child_plan.session_id, request_idx_within_stream). Not id(req):
+    # the parallel reconstruction path pickles request objects to worker
+    # processes, where they materialize at fresh memory addresses and any
+    # id()-based dict misses with KeyError. (session_id, idx) is stable
+    # across the pickle round-trip.
+    child_by_session_request: dict[tuple[str, int], _RequestTiming]
     subagent_end_by_outer_idx: dict[int, float]
 
 
@@ -348,13 +353,13 @@ def _build_trace_idle_timing(
         parent_by_outer_idx[outer_idx] = _RequestTiming(t, delay_ms)
         prev_t = t
 
-    child_by_request_id: dict[int, _RequestTiming] = {}
+    child_by_session_request: dict[tuple[str, int], _RequestTiming] = {}
     for cp in child_plans_for_trace:
         prev_child_t: float | None = None
-        for req in cp.stream_requests:
+        for k, req in enumerate(cp.stream_requests):
             t = warp.map(_subagent_request_absolute_t(cp.entry, req))
             delay_ms = None if prev_child_t is None else (t - prev_child_t) * 1000.0
-            child_by_request_id[id(req)] = _RequestTiming(t, delay_ms)
+            child_by_session_request[(cp.session_id, k)] = _RequestTiming(t, delay_ms)
             prev_child_t = t
 
     subagent_end_by_outer_idx = {
@@ -363,7 +368,7 @@ def _build_trace_idle_timing(
     }
     return _TraceIdleTiming(
         parent_by_outer_idx=parent_by_outer_idx,
-        child_by_request_id=child_by_request_id,
+        child_by_session_request=child_by_session_request,
         subagent_end_by_outer_idx=subagent_end_by_outer_idx,
     )
 
@@ -1214,7 +1219,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                 trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
                 if trace_idle_timing is not None:
-                    timing = trace_idle_timing.child_by_request_id[id(creq)]
+                    timing = trace_idle_timing.child_by_session_request[
+                        (cp.session_id, k)
+                    ]
                     t_ms = timing.timestamp_seconds * 1000.0
                     child_delay_ms = timing.delay_ms
                 else:
@@ -1271,7 +1278,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         for cp in child_plans:
             trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
             requests_dicts: list[_WekaNormalRequestPayload] = []
-            for creq in cp.stream_requests:
+            for k, creq in enumerate(cp.stream_requests):
                 req_payload: _WekaNormalRequestPayload = {
                     "hash_ids": list(creq.hash_ids),
                     "input_length": creq.input_length,
@@ -1281,7 +1288,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "think_time": getattr(creq, "think_time", None),
                 }
                 if trace_idle_timing is not None:
-                    timing = trace_idle_timing.child_by_request_id[id(creq)]
+                    timing = trace_idle_timing.child_by_session_request[
+                        (cp.session_id, k)
+                    ]
                     req_payload["effective_t"] = timing.timestamp_seconds
                     req_payload["effective_delay_ms"] = timing.delay_ms
                 requests_dicts.append(req_payload)
