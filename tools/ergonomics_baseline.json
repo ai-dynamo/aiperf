@@ -509,6 +509,11 @@
     [
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_parallel_reconstruction_tasks"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
     [
@@ -1000,11 +1005,6 @@
       "function-size",
       "src/aiperf/server_metrics/accumulator.py",
       "ServerMetricsAccumulator._compute_endpoint_summaries"
-    ],
-    [
-      "function-size",
-      "src/aiperf/server_metrics/accumulator.py",
-      "ServerMetricsAccumulator.realtime_snapshot"
     ],
     [
       "function-size",

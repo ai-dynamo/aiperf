@@ -1273,9 +1273,22 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             _WekaTraceTask,
         )
 
+        # Drop the same child_plans the serial path drops at line ~1172.
+        # _build_trace_idle_timing only populates timing for active subagents
+        # (via _child_plans_for_active_subagents), so without this skip the
+        # lookup below KeyErrors on any subagent that appears before the
+        # first normal parent turn -- a real condition in the 256k-capped
+        # corpus where reshifted timelines can leave the first subagent
+        # without a preceding normal.
+        dropped_per_trace: dict[str, set[int]] = {
+            plan.trace_id: _dropped_subagent_indices(plan) for plan in parent_plans
+        }
+
         children_by_trace: dict[str, list[dict[str, Any]]] = defaultdict(list)
         sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
+            if cp.subagent_index in dropped_per_trace.get(cp.parent_trace_id, set()):
+                continue
             trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
             requests_dicts: list[_WekaNormalRequestPayload] = []
             for k, creq in enumerate(cp.stream_requests):
