@@ -178,6 +178,42 @@ class TestAPIServerSettings:
         assert hasattr(env, "API_SERVER")
         assert isinstance(env.API_SERVER, _APIServerSettings)
 
+    def test_api_server_settings_post_complete_grace_default(self) -> None:
+        """POST_COMPLETE_GRACE defaults to 5.0 seconds when no env var is set."""
+        settings = _APIServerSettings()
+        assert settings.POST_COMPLETE_GRACE == 5.0
+
+    def test_api_server_settings_env_post_complete_grace_overrides_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AIPERF_API_SERVER_POST_COMPLETE_GRACE env var overrides the default."""
+        monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", "2.5")
+        settings = _APIServerSettings()
+        assert settings.POST_COMPLETE_GRACE == 2.5
+
+    def test_api_server_settings_post_complete_grace_zero_allowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Zero is a valid value (recovers pre-fix immediate-shutdown behavior)."""
+        monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", "0")
+        settings = _APIServerSettings()
+        assert settings.POST_COMPLETE_GRACE == 0.0
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            param("-0.1", id="below_minimum"),
+            param("301", id="above_maximum"),
+        ],
+    )  # fmt: skip
+    def test_api_server_settings_post_complete_grace_out_of_range_raises(
+        self, bad_value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Values outside [0.0, 300.0] are rejected at settings construction."""
+        monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", bad_value)
+        with pytest.raises(ValueError):
+            _APIServerSettings()
+
 
 class TestCompressionSettings:
     """Test _CompressionSettings defaults and validation."""

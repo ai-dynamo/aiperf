@@ -38,6 +38,8 @@ from typing_extensions import Self  # noqa: E402
 
 Parameter = _load_cyclopts_parameter()
 
+logger = logging.getLogger(__name__)
+
 
 class MockServerConfig(BaseSettings):
     """Server configuration with environment variable support."""
@@ -62,6 +64,20 @@ class MockServerConfig(BaseSettings):
             self.ranking_per_passage_latency = 0.0
             self.image_retrieval_base_latency = 0.0
             self.image_retrieval_per_image_latency = 0.0
+        if self.record_requests is not None:
+            if self.no_tokenizer:
+                raise ValueError(
+                    "--record-requests requires a tokenizer for counting ISL; "
+                    "remove --no-tokenizer or omit --record-requests"
+                )
+            if self.workers != 1:
+                logger.warning(
+                    "--record-requests forces --workers=1 (was %d): the recorder "
+                    "keeps per-request stats in-process, so a single uvicorn "
+                    "worker is the supported producer",
+                    self.workers,
+                )
+                self.workers = 1
         return self
 
     port: Annotated[
@@ -456,6 +472,20 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--no-tokenizer"),
     ] = False
 
+    # Request recording options
+    record_requests: Annotated[
+        str | None,
+        Field(
+            description="Path to a JSONL file for recording per-request ISL "
+            "(tokenized input length) and requested OSL. When set, the server "
+            "tokenizes each request inline (reusing the configured --tokenizer) "
+            "and writes one record per request; a summary of the distributions "
+            "is written to <path>.summary.json on shutdown. Requires a real "
+            "tokenizer (incompatible with --no-tokenizer) and forces --workers=1."
+        ),
+        Parameter(name="--record-requests"),
+    ] = None
+
     # /v1/models Options (used by readiness-probe tests)
     default_model: Annotated[
         str,
@@ -502,8 +532,6 @@ class MockServerConfig(BaseSettings):
 
 
 server_config: MockServerConfig = MockServerConfig()
-
-logger = logging.getLogger(__name__)
 
 
 def set_server_config(config: MockServerConfig) -> None:

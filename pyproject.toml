@@ -219,6 +219,7 @@ markers = [
     "server_unit: marks tests as unit tests for the mock server",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
     "network: marks tests that require network access",
+    "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
 ]
 # Better console output
 console_output_style = "progress"
@@ -242,7 +243,7 @@ filterwarnings = [
     "ignore:Argument ``constraints_func`` is an experimental feature.*:optuna.exceptions.ExperimentalWarning",
     "ignore:ORJSONResponse is deprecated.*:fastapi.exceptions.FastAPIDeprecationWarning",
     "ignore:CUDA initialization.*The NVIDIA driver on your system is too old.*:UserWarning",
-    "ignore:The model inputs are of type torch.float32.*:botorch.exceptions.warnings.InputDataWarning",
+    "ignore:The model inputs are of type torch.float32.*",
     "ignore:Optimization failed in `gen_candidates_scipy`.*:RuntimeWarning",
     "ignore:Optimization failed on the second try.*:RuntimeWarning",
     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",

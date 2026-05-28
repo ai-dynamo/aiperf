@@ -57,8 +57,14 @@ class SingleRunPNGExporter(BasePNGExporter):
 
         for spec in plot_specs:
             try:
-                if not self._can_generate_plot(spec, run):
-                    self.debug(f"Skipping {spec.name} - required data not available")
+                missing = self._missing_data_sources(spec, run)
+                if missing:
+                    self.warning(
+                        f"Skipping plot '{spec.name}': required data source(s) "
+                        f"missing or empty: {missing}. Verify the benchmark "
+                        f"produced this data (e.g. 'gpu_telemetry' requires "
+                        f"--gpu-telemetry-url)."
+                    )
                     continue
 
                 fig = self._create_plot_from_spec(spec, run, available_metrics)
@@ -75,35 +81,29 @@ class SingleRunPNGExporter(BasePNGExporter):
 
         return generated_files
 
-    def _can_generate_plot(self, spec: PlotSpec, run: RunData) -> bool:
-        """
-        Check if a plot can be generated based on data availability.
+    def _missing_data_sources(self, spec: PlotSpec, run: RunData) -> list[str]:
+        """Return the data sources required by ``spec`` that are missing/empty.
 
-        Args:
-            spec: Plot specification
-            run: RunData object
-
-        Returns:
-            True if the plot can be generated, False otherwise
+        Deduplicated and sorted so the warning message is stable. Empty
+        list means the plot can be generated. A spec metric counts as
+        missing when its declared ``source`` resolves to ``None`` or an
+        empty DataFrame on the RunData.
         """
+        missing: set[str] = set()
         for metric in spec.metrics:
-            if (
-                (
-                    metric.source == DataSource.REQUESTS
-                    and (run.requests is None or run.requests.empty)
-                )
-                or (
-                    metric.source == DataSource.TIMESLICES
-                    and (run.timeslices is None or run.timeslices.empty)
-                )
-                or (
-                    metric.source == DataSource.GPU_TELEMETRY
-                    and (run.gpu_telemetry is None or run.gpu_telemetry.empty)
-                )
+            if metric.source == DataSource.REQUESTS and (
+                run.requests is None or run.requests.empty
             ):
-                return False
-
-        return True
+                missing.add("requests")
+            elif metric.source == DataSource.TIMESLICES and (
+                run.timeslices is None or run.timeslices.empty
+            ):
+                missing.add("timeslices")
+            elif metric.source == DataSource.GPU_TELEMETRY and (
+                run.gpu_telemetry is None or run.gpu_telemetry.empty
+            ):
+                missing.add("gpu_telemetry")
+        return sorted(missing)
 
     def _create_plot_from_spec(
         self, spec: PlotSpec, run: RunData, available_metrics: dict

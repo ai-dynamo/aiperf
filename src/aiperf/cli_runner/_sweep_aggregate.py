@@ -45,6 +45,38 @@ still surface the parameter combination for reporting.
 """
 
 
+def _resolve_model_name_for_variation(
+    plan: BenchmarkPlan, key: VariationKey
+) -> str | None:
+    """Resolve the first model name for the variation identified by ``key``.
+
+    Matches ``plan.variations[i].label`` against ``_key_label(key)`` and
+    returns ``plan.configs[i].models.items[0].name``. Falls back to
+    ``configs[0]`` when no variation matches (non-sweep plans or label
+    mismatch), and returns ``None`` if the resolved config has no model
+    items.
+
+    The aggregate exporter stamps this onto ``metadata["model"]`` so the
+    plot loader can recover the model name for aggregate-only runs
+    (``profile_export_aiperf_aggregate.json`` carries no
+    ``input_config`` block).
+    """
+    if not plan.configs:
+        return None
+
+    target_label = _key_label(key)
+    config = plan.configs[0]
+    for variation in plan.variations:
+        if variation.label == target_label and 0 <= variation.index < len(plan.configs):
+            config = plan.configs[variation.index]
+            break
+
+    items = getattr(getattr(config, "models", None), "items", None) or []
+    if items and getattr(items[0], "name", None):
+        return items[0].name
+    return None
+
+
 def _plan_iteration_order(plan: BenchmarkPlan) -> Any:
     """Resolve the sweep iteration order, defaulting to REPEATED outside grids."""
     from aiperf.common.enums import SweepMode
@@ -421,6 +453,8 @@ async def _export_one_variation_aggregate(
     aggregate_result.metadata["variation_label"] = variation_label
     aggregate_result.metadata["variation_values"] = dict(_key_values(key))
     aggregate_result.metadata["sweep_mode"] = str(_plan_iteration_order(plan))
+    if model := _resolve_model_name_for_variation(plan, key):
+        aggregate_result.metadata["model"] = model
 
     from aiperf.config.sweep import _format_dir_name
 

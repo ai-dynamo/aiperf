@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import jinja2
@@ -16,6 +15,7 @@ from aiperf.common.models import (
     ParsedResponse,
     RequestInfo,
 )
+from aiperf.common.path_safety import safe_read_template_path
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 NAMED_TEMPLATES: dict[str, str] = {
@@ -55,13 +55,10 @@ class TemplateEndpoint(BaseEndpoint):
             self.info(f"Using named template: '{template_source}'")
             template_source = NAMED_TEMPLATES[template_source]
         else:
-            try:
-                template_path = Path(template_source)
-                if template_path.is_file():
-                    self.info(f"Loading template from file: '{template_path}'")
-                    template_source = template_path.read_text(encoding="utf-8")
-            except (OSError, ValueError) as e:
-                self.debug(f"Not a file or treating as inline template: '{e!r}'")
+            file_text = safe_read_template_path(template_source)
+            if file_text is not None:
+                self.info(f"Loading template from file: '{template_source}'")
+                template_source = file_text
 
         self._template = jinja2.Environment(autoescape=True).from_string(
             template_source
