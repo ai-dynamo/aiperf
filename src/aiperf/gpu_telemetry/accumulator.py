@@ -166,7 +166,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         (`REALTIME_METRICS_INTERVAL`). Emits one MetricResult per GPU per
         signal. Contrast with `compute_efficiency_metrics` below, which is
         sync, runs once per profiling phase, and aggregates across GPUs
-        into 0-3 cross-GPU totals.
+        into cross-GPU totals.
 
         Returns:
             List of MetricResult objects, one per GPU per metric type.
@@ -416,10 +416,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """Compute cross-boundary power efficiency totals for one profiling phase.
 
         Aggregates avg(gpu_power_usage) and energy_consumption deltas across
-        all GPUs into 0-3 cross-GPU totals (W, J, tokens/J). Sync; called once
-        per phase from `RecordsManager._summarize_with_logging`. Sibling
-        `summarize()` above is async, periodic for the dashboard, and emits
-        one MetricResult per GPU per signal instead.
+        all GPUs into 0-4 cross-GPU totals (W, J, tokens/J, J/user). Sync;
+        called once per phase from `RecordsManager._summarize_with_logging`.
+        Sibling `summarize()` above is async, periodic for the dashboard, and
+        emits one MetricResult per GPU per signal instead.
 
         Args:
             metric_results: Read-only; scanned only for the `total_output_tokens`
@@ -430,10 +430,9 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                          or subsequent-phase samples.
 
         Returns:
-            Up to 3 MetricResults in order `total_gpu_power`, `total_gpu_energy`,
-            `output_tokens_per_joule`. Each is independently omitted when no GPU
-            has the underlying signal; tokens/J is also omitted when
-            `total_output_tokens` is absent or aggregate energy is zero.
+            Up to 4 MetricResults: `total_gpu_power`, `total_gpu_energy`,
+            `output_tokens_per_joule`, `energy_per_user`. Each is independently
+            omitted when its underlying signal is missing.
 
         Example:
             >>> accumulator.compute_efficiency_metrics(
@@ -447,12 +446,22 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         bounded_end_ns = time_filter.end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
         energy_filter = TimeRangeFilter(start_ns=time_filter.start_ns, end_ns=bounded_end_ns)  # fmt: skip
         total_energy_j, energy_count = self._sum_gpu_energy_joules(energy_filter)
+        profiling_phases = self.run.cfg.get_profiling_phases()
+        raw_concurrency = profiling_phases[0].concurrency if profiling_phases else None
+        concurrency = (
+            raw_concurrency
+            if isinstance(raw_concurrency, int)
+            and not isinstance(raw_concurrency, bool)
+            and raw_concurrency > 0
+            else None
+        )
         self.debug(
             lambda: (
                 f"compute_efficiency_metrics totals: "
                 f"power={total_power_w:.2f}W ({power_count} GPUs), "
                 f"energy={total_energy_j:.2f}J ({energy_count} GPUs), "
-                f"total_output_tokens={total_output_tokens}"
+                f"total_output_tokens={total_output_tokens}, "
+                f"concurrency={concurrency}"
             )
         )
 
@@ -485,6 +494,20 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                     f"Skipping output_tokens_per_joule: "
                     f"total_output_tokens={total_output_tokens}, "
                     f"total_energy_j={total_energy_j:.2f}"
+                )
+            )
+
+        if concurrency is not None and energy_count > 0:
+            results.append(MetricResult(
+                tag="energy_per_user", header=f"Energy per User {_gpu_count_suffix(energy_count)}",
+                unit=str(GenericMetricUnit.JOULES_PER_USER),
+                avg=total_energy_j / concurrency, count=None,
+            ))  # fmt: skip
+        else:
+            self.debug(
+                lambda: (
+                    f"Skipping energy_per_user: "
+                    f"concurrency={concurrency}, energy_count={energy_count}"
                 )
             )
         return results

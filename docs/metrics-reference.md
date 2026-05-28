@@ -116,6 +116,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total GPU Power](#total-gpu-power)
     - [Total GPU Energy](#total-gpu-energy)
     - [Output Tokens per Joule](#output-tokens-per-joule)
+    - [Energy per User](#energy-per-user)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
@@ -1740,7 +1741,7 @@ http_req_chunks_received = trace.response_chunks_count
 > [!NOTE]
 > All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the standard derivation walk — see the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern).
 
-Each metric's header surfaces the number of GPUs that contributed valid data (e.g. `Total GPU Power (8 GPUs)`), so a partial-cohort run (where one or more GPUs failed to report) is distinguishable from a full run. Tags are emitted in this order when present: `total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`. Each tag is independently omitted when its underlying signal is unavailable.
+Each metric's header surfaces the number of GPUs that contributed valid data (e.g. `Total GPU Power (8 GPUs)`), so a partial-cohort run (where one or more GPUs failed to report) is distinguishable from a full run. Tags are emitted in this order when present: `total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`, `energy_per_user`. Each tag is independently omitted when its underlying signal is unavailable.
 
 ### Total GPU Power
 
@@ -1809,6 +1810,28 @@ output_tokens_per_joule = total_output_tokens / total_gpu_energy
 - Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
 - Numerator comes from the request records (`total_output_tokens`); denominator comes from the GPU telemetry counter delta above. The header reports the energy-side GPU count, since that's the cohort the metric depends on.
 - Omitted when `total_output_tokens` is absent from the records or aggregate `total_gpu_energy` is zero.
+
+---
+
+### Energy per User
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Per-user energy footprint during the profiling phase: total GPU energy consumed divided by the configured concurrency. Lower is better — a more efficient deployment serves the same load for less energy per concurrent user.
+
+**Formula:**
+```python
+# concurrency from the resolved profiling phase config
+# (run.cfg.get_profiling_phases()[0].concurrency).
+energy_per_user_j = total_gpu_energy / concurrency
+```
+
+**Notes:**
+- Unit: `joules/user`.
+- Flagged `MetricFlags.NONE` — smaller-is-better is the default for unflagged metrics.
+- Denominator is the profiling phase's configured `concurrency`. The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
+- Header reports the energy-side GPU count (the same cohort `total_gpu_energy` reports), e.g. `Energy per User (8 GPUs)`.
+- Omitted when concurrency is unset (e.g. pure `--request-rate` mode) or aggregate GPU energy is unavailable.
 
 ---
 

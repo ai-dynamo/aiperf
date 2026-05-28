@@ -6,6 +6,7 @@ import pytest
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.power_efficiency_metrics import (
+    EnergyPerUserMetric,
     OutputTokensPerJouleMetric,
     TotalGpuEnergyMetric,
     TotalGpuPowerMetric,
@@ -27,7 +28,12 @@ class TestPowerEfficiencyDeriveValueContract:
 
     @pytest.mark.parametrize(
         "metric_class",
-        [TotalGpuPowerMetric, TotalGpuEnergyMetric, OutputTokensPerJouleMetric],
+        [
+            TotalGpuPowerMetric,
+            TotalGpuEnergyMetric,
+            OutputTokensPerJouleMetric,
+            EnergyPerUserMetric,
+        ],
         ids=lambda c: c.tag,
     )
     def test_derive_value_raises_no_metric_value(self, metric_class) -> None:

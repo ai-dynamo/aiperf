@@ -446,7 +446,7 @@ class TestComputeEfficiencyMetrics:
     def test_happy_path_all_metrics_present(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
     ) -> None:
-        """power + energy + tokens all present → three MetricResults returned."""
+        """power + energy + tokens + concurrency=1 (default) → four MetricResults."""
         gpu = self._make_gpu_mock(
             power_avg=200.0, energy_delta_mj=0.001
         )  # 0.001 MJ = 1000 J
@@ -469,6 +469,7 @@ class TestComputeEfficiencyMetrics:
             "total_gpu_power",
             "total_gpu_energy",
             "output_tokens_per_joule",
+            "energy_per_user",
         }
 
         power = next(r for r in results if r.tag == "total_gpu_power")
@@ -486,6 +487,60 @@ class TestComputeEfficiencyMetrics:
         assert tpj.unit == str(GenericMetricUnit.TOKENS_PER_JOULE)
         assert tpj.header == "Output Tokens per Joule (1 GPU)"
 
+        epu = next(r for r in results if r.tag == "energy_per_user")
+        assert epu.avg == pytest.approx(1000.0)  # 1000 J / 1 user (default)
+        assert epu.unit == str(GenericMetricUnit.JOULES_PER_USER)
+        assert epu.header == "Energy per User (1 GPU)"
+
+    def test_energy_per_user_scales_with_concurrency(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """concurrency=N (positive int) → emit total_energy / N."""
+        accumulator.run.cfg.get_profiling_phases()[0].concurrency = 8
+        gpu = self._make_gpu_mock(power_avg=200.0, energy_delta_mj=0.001)  # 1000 J
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+
+        results = accumulator.compute_efficiency_metrics([], time_filter)
+
+        epu = next(r for r in results if r.tag == "energy_per_user")
+        assert epu.avg == pytest.approx(125.0)  # 1000 J / 8 users
+        assert epu.unit == str(GenericMetricUnit.JOULES_PER_USER)
+        assert epu.header == "Energy per User (1 GPU)"
+
+    def test_energy_per_user_omitted_when_concurrency_none(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """concurrency=None (e.g. pure request-rate run) → energy_per_user omitted."""
+        accumulator.run.cfg.get_profiling_phases()[0].concurrency = None
+        gpu = self._make_gpu_mock(power_avg=200.0, energy_delta_mj=0.001)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+
+        results = accumulator.compute_efficiency_metrics([], time_filter)
+
+        tags = {r.tag for r in results}
+        assert "energy_per_user" not in tags
+        assert "total_gpu_energy" in tags  # sibling still emits
+
+    def test_energy_per_user_omitted_when_no_energy_data(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """concurrency set but no GPU energy → energy_per_user omitted (no numerator)."""
+        accumulator.run.cfg.get_profiling_phases()[0].concurrency = 8
+        gpu = self._make_gpu_mock(power_avg=150.0, energy_delta_mj=None)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+
+        results = accumulator.compute_efficiency_metrics([], time_filter)
+
+        tags = {r.tag for r in results}
+        assert "energy_per_user" not in tags
+        assert "total_gpu_energy" not in tags
+
     def test_emitted_units_match_metric_class_units(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
     ) -> None:
@@ -495,6 +550,7 @@ class TestComputeEfficiencyMetrics:
         the unit enums would break this without needing per-test updates.
         """
         from aiperf.metrics.types.power_efficiency_metrics import (
+            EnergyPerUserMetric,
             OutputTokensPerJouleMetric,
             TotalGpuEnergyMetric,
             TotalGpuPowerMetric,
@@ -517,6 +573,7 @@ class TestComputeEfficiencyMetrics:
             TotalGpuPowerMetric.tag: str(TotalGpuPowerMetric.unit),
             TotalGpuEnergyMetric.tag: str(TotalGpuEnergyMetric.unit),
             OutputTokensPerJouleMetric.tag: str(OutputTokensPerJouleMetric.unit),
+            EnergyPerUserMetric.tag: str(EnergyPerUserMetric.unit),
         }
         for tag, expected_unit in expected.items():
             assert by_tag[tag].unit == expected_unit, (
@@ -595,6 +652,10 @@ class TestComputeEfficiencyMetrics:
         assert tpj.avg == pytest.approx(1.0)  # 1000 tokens / 1000 J
         assert tpj.header == "Output Tokens per Joule (2 GPUs)"
 
+        epu = next(r for r in results if r.tag == "energy_per_user")
+        assert epu.avg == pytest.approx(1000.0)  # 1000 J / 1 user (default)
+        assert epu.header == "Energy per User (2 GPUs)"
+
     def test_header_reflects_partial_cohort_count(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
     ) -> None:
@@ -622,6 +683,8 @@ class TestComputeEfficiencyMetrics:
         assert by_tag["output_tokens_per_joule"].header == (
             "Output Tokens per Joule (1 GPU)"
         )
+        # energy_per_user inherits the energy-side count (its denominator).
+        assert by_tag["energy_per_user"].header == "Energy per User (1 GPU)"
 
     def test_energy_filter_widens_end_ns_by_grace_while_power_filter_stays_bounded(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter

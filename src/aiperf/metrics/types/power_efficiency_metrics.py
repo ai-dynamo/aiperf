@@ -92,3 +92,31 @@ class OutputTokensPerJouleMetric(BaseDerivedMetric[float]):
             "surfaces, the derivation walk is missing its NoMetricValue handler "
             "(see MetricResultsProcessor.update_derived_metrics)."
         )
+
+
+class EnergyPerUserMetric(BaseDerivedMetric[float]):
+    """Total GPU energy divided by configured concurrency, in joules per user.
+
+    Invariant: externally injected by
+    `GPUTelemetryAccumulator.compute_efficiency_metrics` as
+    `total_gpu_energy / profiling_phase.concurrency`. `_derive_value` is
+    intentionally non-functional;
+    `MetricResultsProcessor.update_derived_metrics` is expected to catch
+    NoMetricValue and skip the tag during its derivation walk. Omitted
+    when concurrency is unset (e.g. pure request-rate runs) or zero.
+    """
+
+    tag = "energy_per_user"
+    header = "Energy per User"
+    unit = GenericMetricUnit.JOULES_PER_USER
+    display_order = 903
+    flags = MetricFlags.NONE
+
+    def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
+        raise NoMetricValue(
+            "Cannot derive 'energy_per_user' from MetricResultsDict: this metric "
+            "is externally injected by "
+            "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
+            "surfaces, the derivation walk is missing its NoMetricValue handler "
+            "(see MetricResultsProcessor.update_derived_metrics)."
+        )

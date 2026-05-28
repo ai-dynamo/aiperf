@@ -188,6 +188,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/gpu_telemetry/accumulator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/gpu_telemetry/amdsmi_collector.py",
       ""
     ],
@@ -420,6 +425,11 @@
       "function-size",
       "src/aiperf/exporters/mlflow_data_exporter.py",
       "MLflowDataExporter._export_sync"
+    ],
+    [
+      "function-size",
+      "src/aiperf/gpu_telemetry/accumulator.py",
+      "GPUTelemetryAccumulator.compute_efficiency_metrics"
     ],
     [
       "function-size",
