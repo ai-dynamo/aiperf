@@ -166,9 +166,11 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
     && chmod -R 755 /app
 
-# Install only the dependencies using uv
+# Install only the runtime dependencies using uv. --no-default-groups excludes
+# the PEP 735 dev group (hypothesis, pre-commit) so dev-only tooling does not
+# leak into the runtime image; the test/dev extras are not installed here either.
 COPY pyproject.toml .
-RUN uv sync --active --no-install-project
+RUN uv sync --active --no-install-project --no-default-groups
 
 # Copy the rest of the application
 COPY --from=wheel-builder /dist /dist
