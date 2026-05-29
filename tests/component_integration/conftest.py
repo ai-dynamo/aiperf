@@ -155,8 +155,11 @@ def mock_os_kill_sigkill():
     def safe_os_kill(pid, sig):
         if pid == os.getpid() and sig == expected_kill_signal:
             # BaseService._kill calls os.kill(os.getpid(), kill_signal)
-            # Raise SystemExit instead of actually killing the test process
-            raise SystemExit(-9)  # Python subprocess convention for SIGKILL
+            # Raise SystemExit instead of actually killing the test process.
+            # Exit code derived from the platform-selected signal so signal-
+            # specific assertions don't skew between POSIX (-9 for SIGKILL)
+            # and Windows (-15 for SIGTERM).
+            raise SystemExit(-int(expected_kill_signal))
         return original_os_kill(pid, sig)
 
     with patch("os.kill", safe_os_kill):

@@ -96,8 +96,11 @@ class TestRedirectStdioToDevnull:
     """
 
     def _patch_os(self):
+        # Distinct FDs for the two os.open() calls (devnull -> 99, stderr
+        # file -> 100). Using a single value would let a bug where stderr
+        # is duped from the devnull FD pass silently.
         return (
-            patch("aiperf.common.bootstrap.os.open", return_value=99),
+            patch("aiperf.common.bootstrap.os.open", side_effect=[99, 100]),
             patch("aiperf.common.bootstrap.os.dup2"),
             patch("aiperf.common.bootstrap.os.close"),
             patch("aiperf.common.bootstrap.os.fdopen"),
@@ -126,10 +129,13 @@ class TestRedirectStdioToDevnull:
             assert "aiperf_child_" in stderr_open_args[0]
             assert stderr_open_args[0].endswith("_stderr.log")
 
+            # stdin/stdout dup from devnull FD (99); stderr dups from the
+            # distinct per-PID stderr file FD (100) — proves they're routed
+            # to different sources, not aliased.
             assert mock_dup2.call_args_list == [
                 call(99, 0),
                 call(99, 1),
-                call(99, 2),
+                call(100, 2),
             ]
             assert mock_close.call_count == 2
 

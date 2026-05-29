@@ -624,7 +624,7 @@ class TestZMQIPCProxyConfig:
 
     def test_addr_raises_when_path_is_none(self) -> None:
         cfg = ZMQIPCProxyConfig(name="test")
-        with pytest.raises(ValueError, match="[Pp]ath is required"):
+        with pytest.raises(ValueError, match=r"[Pp]ath is required"):
             _ = cfg.frontend_address
 
 

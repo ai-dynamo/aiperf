@@ -36,12 +36,18 @@ def _try_symlink_or_skip(link: Path, target: Path) -> None:
     """Create a symlink, or pytest.skip if the platform forbids it.
 
     Windows requires Admin or Developer Mode to create symlinks (WinError
-    1314 otherwise). GHA windows-latest has neither.
+    1314 otherwise). GHA windows-latest has neither. Only skip on permission
+    or operation-not-supported errors; re-raise other OSError values so they
+    surface as test failures rather than silent skips.
     """
+    import errno
+
     try:
         link.symlink_to(target)
     except OSError as e:
-        pytest.skip(f"symlink creation not permitted on this platform: {e}")
+        if e.errno in (errno.EPERM, errno.EACCES, errno.ENOSYS):
+            pytest.skip(f"symlink creation not permitted on this platform: {e}")
+        raise
 
 
 class TestEndpointTemplateFromExtraPathSafety:

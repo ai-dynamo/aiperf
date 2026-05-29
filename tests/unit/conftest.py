@@ -741,7 +741,7 @@ def _patch_platform_constants(*, is_windows: bool, is_macos: bool, is_linux: boo
 
 
 @pytest.fixture
-def mock_platform_darwin(mock_platform_system):
+def mock_platform_darwin(mock_platform_system: Mock) -> Generator[Mock, None, None]:
     """Mock platform.system() and IS_MACOS/IS_LINUX/IS_WINDOWS for macOS testing."""
     mock_platform_system.return_value = "Darwin"
     with _patch_platform_constants(is_windows=False, is_macos=True, is_linux=False):
@@ -749,7 +749,7 @@ def mock_platform_darwin(mock_platform_system):
 
 
 @pytest.fixture
-def mock_platform_linux(mock_platform_system):
+def mock_platform_linux(mock_platform_system: Mock) -> Generator[Mock, None, None]:
     """Mock platform.system() and IS_MACOS/IS_LINUX/IS_WINDOWS for Linux testing."""
     mock_platform_system.return_value = "Linux"
     with _patch_platform_constants(is_windows=False, is_macos=False, is_linux=True):

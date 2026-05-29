@@ -38,7 +38,7 @@ class TestBuildSocketAddressLinux:
 
     def test_path_none_raises_value_error(self) -> None:
         with pytest.raises(
-            ValueError, match="[Pp]ath is required for socket address derivation"
+            ValueError, match=r"[Pp]ath is required for socket address derivation"
         ):
             _build_socket_address(None, "event_bus.ipc")
 
@@ -83,7 +83,7 @@ class TestBuildSocketAddressWindows:
 
     def test_path_none_raises_value_error(self) -> None:
         with pytest.raises(
-            ValueError, match="[Pp]ath is required for socket address derivation"
+            ValueError, match=r"[Pp]ath is required for socket address derivation"
         ):
             _build_socket_address(None, "event_bus.ipc")
 
