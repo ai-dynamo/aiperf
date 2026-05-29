@@ -297,6 +297,21 @@ class _GPUSettings(BaseSettings):
         default=100,
         description="Batch size for telemetry record export results processor",
     )
+    FINAL_SCRAPE_GRACE_NS: int = Field(
+        ge=0,
+        le=60_000_000_000,
+        default=666_000_000,
+        description=(
+            "Grace window in nanoseconds appended to phase end_ns when computing "
+            "the GPU energy-counter delta. Energy is scraped on a cadence "
+            "(see COLLECTION_INTERVAL), so the trailing scrape often lands after "
+            "the phase ends; this grace lets it be included while bounding the "
+            "window so cooldown/idle samples and subsequent-phase samples don't "
+            "leak into the delta. Default 666_000_000 ns ~= 2x the default "
+            "333 ms COLLECTION_INTERVAL; raise this if you also raise "
+            "COLLECTION_INTERVAL."
+        ),
+    )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,
         le=300,
