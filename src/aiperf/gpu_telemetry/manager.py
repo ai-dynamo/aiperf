@@ -348,7 +348,6 @@ class GPUTelemetryManager(BaseComponentService):
         started_count = 0
         for source_url, collector in self._collectors.items():
             try:
-                await collector.initialize()
                 await collector.start()
                 started_count += 1
             except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
