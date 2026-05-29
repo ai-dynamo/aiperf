@@ -225,6 +225,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 | [Dataset Synthesis API](docs/api/synthesis.md) | Synthesis module API reference |
 | [Code Patterns](docs/dev/patterns.md) | Code examples for services, models, messages, plugins |
 | [Migrating from Genai-Perf](docs/migrating.md) | Migration guide and feature comparison |
+| [Roadmap](docs/roadmap.md) | Public release roadmap for upcoming AIPerf work |
 | [Design Proposals](https://github.com/ai-dynamo/enhancements) | Enhancement proposals and discussions |
 
 ## Contributing

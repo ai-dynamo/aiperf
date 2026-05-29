@@ -6,6 +6,7 @@ site_author: NVIDIA CORPORATION & AFFILIATES
 
 nav:
   - Home: index.md
+  - Roadmap: roadmap.md
   - Getting Started:
     - Basic Tutorial: tutorial.md
     - CLI Options: cli-options.md

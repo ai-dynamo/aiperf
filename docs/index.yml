@@ -4,6 +4,8 @@
 navigation:
 - page: Welcome to AIPerf Documentation
   path: index.md
+- page: Roadmap
+  path: roadmap.md
 
 - section: Getting Started
   contents:
