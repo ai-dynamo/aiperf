@@ -1255,11 +1255,12 @@ accuracy_benchmark:
   aime24:
     class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
     description: |
-      AIME 2024 benchmark with problems from the 2024 competition year.
+      AIME 2024 benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (HuggingFaceH4/aime_2024 + lighteval
+      ``expr_gold_metric``).
     metadata:
-      default_grader: math
+      default_grader: lighteval_expr
       default_n_shots: 0
-      is_implemented: false
 
   aime25:
     class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
