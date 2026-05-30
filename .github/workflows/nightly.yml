@@ -8,7 +8,7 @@
 #   2. Validate — pre-commit + unit / integration tests
 #   3. Build    — wheel (→ S3) + multi-arch containers (→ ECR)
 #   4. Stage    — [automated-release approval] ECR → NGC staging; S3 → Artifactory
-#   5. Scan     — trigger GitLab security scan (fire-and-forget)
+#   5. Trigger  — trigger GitLab nightly pipeline (fire-and-forget)
 #   6. Summary  — always runs
 #
 # No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
@@ -36,11 +36,11 @@ on:
         description: 'Commit SHA to build. Required. Must be on main.'
         required: true
       release:
-        description: 'Stage artifacts and trigger GitLab security scan. Schedule always sets release=true.'
+        description: 'Stage artifacts and trigger GitLab nightly pipeline. Schedule always sets release=true.'
         type: boolean
         default: true
-      skip_security_scan:
-        description: 'Skip GitLab security scan. Emergency use only.'
+      skip_gitlab_trigger:
+        description: 'Skip GitLab nightly pipeline trigger. Emergency use only.'
         type: boolean
         default: false
       manual_artifacts:
@@ -588,7 +588,7 @@ jobs:
       #
       # Hard-fail intentional: a failure here fails build-container, which
       # blocks the staging jobs (create-multiarch-manifest-ecr,
-      # stage-nightly-{wheel,container}, trigger-gitlab-security-scan) via
+      # stage-nightly-{wheel,container}, trigger-gitlab-nightly-pipeline) via
       # their `needs:` chain. The existing `unit-tests` job stays
       # advisory; this gate sits inside the publish path.
       - name: Run unit tests against installed nightly wheel (amd64 only)
@@ -903,7 +903,7 @@ jobs:
           # contains the NGC_STAGING_IMAGE_BASE secret, and GitHub Actions
           # blanks any cross-job output that includes a secret value (the
           # `Skip output '<name>' since it may contain secret.` annotation).
-          # trigger-gitlab-security-scan reconstructs the image string from
+          # trigger-gitlab-nightly-pipeline reconstructs the image string from
           # the same secret + container_tag instead.
 
   stage-nightly-wheel:
@@ -986,18 +986,18 @@ jobs:
           # index is the canonical check.
 
   # ============================================================================
-  # PHASE 5: TRIGGER GITLAB SECURITY SCAN
+  # PHASE 5: TRIGGER GITLAB NIGHTLY PIPELINE
   # Fire-and-forget. Passes full artifact locations so GitLab can pull containers
   # from NGC staging and download the wheel from Artifactory without further input.
   # ============================================================================
 
-  trigger-gitlab-security-scan:
-    name: Trigger GitLab Security Scan
+  trigger-gitlab-nightly-pipeline:
+    name: Trigger GitLab Nightly Pipeline
     needs: [prepare-nightly, stage-nightly-container, stage-nightly-wheel]
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
-    if: ${{ inputs.skip_security_scan != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
+    if: ${{ !inputs.skip_gitlab_trigger && needs.prepare-nightly.outputs.release == 'true' }}
     steps:
       - name: Trigger GitLab pipeline
         env:
@@ -1045,7 +1045,7 @@ jobs:
             --request POST \
             --form "token=<${TOKEN_FILE}" \
             --form "ref=main" \
-            --form "variables[PIPELINE_TYPE]=security" \
+            --form "variables[PIPELINE_TYPE]=nightly" \
             --form "variables[RELEASE_TYPE]=${RELEASE_TYPE}" \
             --form "variables[PROJECT]=aiperf" \
             --form "variables[SOURCE_BRANCH]=main" \
@@ -1076,7 +1076,7 @@ jobs:
             exit 1
           fi
 
-          echo "GitLab security scan triggered: pipeline ID ${PIPELINE_ID}"
+          echo "GitLab nightly pipeline triggered: pipeline ID ${PIPELINE_ID}"
 
   # ============================================================================
   # PHASE 5b: WEIGHT-DRIFT SUGGESTION (informational, never blocks)
@@ -1138,7 +1138,7 @@ jobs:
       - create-multiarch-manifest-ecr
       - stage-nightly-container
       - stage-nightly-wheel
-      - trigger-gitlab-security-scan
+      - trigger-gitlab-nightly-pipeline
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1176,12 +1176,12 @@ jobs:
             echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
             echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
             echo ""
-            echo "### Stage + Scan"
+            echo "### Stage + Trigger"
             echo "| Job | Result |"
             echo "|-----|--------|"
             echo "| stage-nightly-container (→ NGC staging) | ${{ needs.stage-nightly-container.result }} |"
             echo "| stage-nightly-wheel (→ Artifactory) | ${{ needs.stage-nightly-wheel.result }} |"
-            echo "| trigger-gitlab-security-scan | ${{ needs.trigger-gitlab-security-scan.result }} |"
+            echo "| trigger-gitlab-nightly-pipeline | ${{ needs.trigger-gitlab-nightly-pipeline.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Notify on failure
