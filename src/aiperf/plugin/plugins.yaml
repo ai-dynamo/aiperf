@@ -1265,11 +1265,12 @@ accuracy_benchmark:
   aime25:
     class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
     description: |
-      AIME 2025 benchmark with problems from the 2025 competition year.
+      AIME 2025 benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (yentinglin/aime_2025 + lighteval
+      ``expr_gold_metric``).
     metadata:
-      default_grader: math
+      default_grader: lighteval_expr
       default_n_shots: 0
-      is_implemented: false
 
   math_500:
     class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
