@@ -52,6 +52,7 @@ from aiperf.common.protocols import (
     RequestClientProtocol,
     StreamingDealerClientProtocol,
 )
+from aiperf.common.session_prefix import prepend_unique_session_prefix
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -204,6 +205,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._prefill_concurrency_enabled: bool = any(
             getattr(phase, "prefill_concurrency", None) is not None
             for phase in self.run.cfg.phases
+        )
+
+        # Approximate token length of the per-session-instance unique prefix used
+        # to defeat cross-resample prefix-cache hits (0 disables). See
+        # ``make_unique_session_prefix``.
+        self._unique_session_prefix_length: int = (
+            self.run.cfg.endpoint.unique_session_prefix_length
         )
 
         # Only used as a fallback when dataset client is not initialized
@@ -607,6 +615,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
+        # Derived from x_correlation_id: identical across this session's turns
+        # (keeps within-session prefix caching) but unique per resampled instance
+        # (kills cross-resample cache hits). Rides user_context_message so it is
+        # prepended to the first turn and counted toward input tokens. No-op when
+        # the feature is disabled (length 0).
+        user_context_message = prepend_unique_session_prefix(
+            user_context_message,
+            session.x_correlation_id,
+            self._unique_session_prefix_length,
+        )
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
