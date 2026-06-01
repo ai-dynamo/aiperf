@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,39 @@ pytestmark = [
     pytest.mark.fern,
     pytest.mark.skipif(not _fern_installed, reason="fern CLI not installed"),
 ]
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(scope="session")
+def staged_fern_docs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Stage and convert docs the way CI and ``make fern-preview`` do.
+
+    Copies ``fern/`` and ``docs/`` into a temp tree, runs ``md_to_mdx.py`` to
+    convert GitHub Markdown to Fern MDX, then returns the staged ``fern/``
+    directory. Fern link validation must run against converted content: raw
+    ``docs/`` contains HTML comments that Fern's MDX parser rejects, which
+    breaks the link-check rules with a false error.
+    """
+    staged = tmp_path_factory.mktemp("fern-docs")
+    shutil.copytree(
+        _REPO_ROOT / "fern",
+        staged / "fern",
+        ignore=shutil.ignore_patterns(".local-preview"),
+    )
+    shutil.copytree(_REPO_ROOT / "docs", staged / "docs")
+    subprocess.run(
+        [
+            "python3",
+            str(staged / "fern" / "md_to_mdx.py"),
+            "--dir",
+            str(staged / "docs"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return staged / "fern"
 
 
 def test_fern_check() -> None:
