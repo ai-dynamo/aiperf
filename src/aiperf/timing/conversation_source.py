@@ -84,6 +84,46 @@ class SampledSession:
             branch_mode=self.branch_mode,
         )
 
+    def build_seeded_turn(self, start_turn_index: int) -> TurnToSend:
+        """Build the start turn for a session seeded mid-conversation.
+
+        The returned turn has ``turn_index == start_turn_index``; the session
+        runs turns ``[start_turn_index, num_turns)`` on the wire while turns
+        ``[0, start_turn_index)`` are reconstructed worker-side as synthetic
+        history (so the session's accumulated context starts at its
+        steady-state depth without replaying the earlier turns).
+
+        Falls back to a normal first turn when ``start_turn_index <= 0``.
+
+        Args:
+            start_turn_index: Turn index at which to begin. Clamped to the last
+                turn so a fraction-derived index can never equal the turn count.
+
+        Raises:
+            ValueError: If the conversation has no turns.
+        """
+        num_turns = len(self.metadata.turns)
+        if num_turns == 0:
+            raise ValueError(
+                f"conversation '{self.conversation_id}': cannot seed a turn in an "
+                "empty conversation"
+            )
+        if start_turn_index <= 0:
+            return self.build_first_turn()
+        start_turn_index = min(start_turn_index, num_turns - 1)
+        meta = self.metadata.turns[start_turn_index]
+        return TurnToSend(
+            conversation_id=self.conversation_id,
+            x_correlation_id=self.x_correlation_id,
+            turn_index=start_turn_index,
+            num_turns=num_turns,
+            start_turn_index=start_turn_index,
+            agent_depth=self.agent_depth,
+            parent_correlation_id=self.parent_correlation_id,
+            has_forks=meta.has_forks,
+            branch_mode=self.branch_mode,
+        )
+
 
 class ConversationSource:
     """Samples conversations from dataset to create session instances.
