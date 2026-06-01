@@ -227,6 +227,14 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    seed_response: "Turn | None" = Field(
+        default=None,
+        description="Pre-synthesized assistant response for this turn, used ONLY to "
+        "reconstruct synthetic history when a session is seeded mid-conversation "
+        "(start_turn_index > 0). Sized to this turn's output length by the composer; "
+        "None when seeding is disabled. Carries role='assistant' + raw_messages so it "
+        "renders identically to a captured response in build_messages.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -285,6 +293,9 @@ class Turn(AIPerfBaseModel):
             prerequisites=list(self.prerequisites),
             branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
+            # Text-only assistant placeholder (no media); preserved so a
+            # media-stripped session can still hydrate seeded history.
+            seed_response=self.seed_response,
         )
 
 

@@ -107,6 +107,45 @@ class UserSession(AIPerfBaseModel):
         self.turn_index = turn_index
         return turn
 
+    def hydrate_seed_history(self, up_to_turn_index: int) -> None:
+        """Pre-populate ``turn_list`` with synthetic history for turns [0, k).
+
+        Seeds a session mid-conversation: each prior turn is reconstructed as a
+        ``(user prompt, synthetic assistant response)`` pair so the accumulated
+        context starts at its turn-``up_to_turn_index`` depth without replaying
+        the earlier turns on the wire. The user prompt is the real templated
+        turn; the assistant side is the turn's pre-synthesized ``seed_response``
+        (sized to the turn's output length by the composer). Called once at
+        session creation, before ``advance_turn(up_to_turn_index)`` appends the
+        first real turn. No-op for ``up_to_turn_index <= 0``.
+
+        Only valid for ``DELTAS_WITHOUT_RESPONSES``: ``MESSAGE_ARRAY_WITH_RESPONSES``
+        replaces ``turn_list`` on every ``advance_turn`` (the seed would be
+        discarded) and raw-payload turns carry no structured content to
+        accumulate.
+
+        Raises:
+            NotImplementedError: If the session's context mode is not
+                ``DELTAS_WITHOUT_RESPONSES``.
+        """
+        if up_to_turn_index <= 0:
+            return
+        if self.context_mode != ConversationContextMode.DELTAS_WITHOUT_RESPONSES:
+            raise NotImplementedError(
+                f"conversation '{self.conversation.session_id}': mid-conversation "
+                f"seeding requires context_mode="
+                f"{ConversationContextMode.DELTAS_WITHOUT_RESPONSES.value!r}, got "
+                f"{self.context_mode.value!r}"
+            )
+        up_to = min(up_to_turn_index, self.num_turns)
+        seeded: list[Turn] = []
+        for i in range(up_to):
+            turn = self.conversation.turns[i]
+            seeded.append(turn)
+            if turn.seed_response is not None:
+                seeded.append(turn.seed_response)
+        self.turn_list = seeded + self.turn_list
+
     def should_store_response(self) -> bool:
         """Whether assistant responses should be stored based on context mode.
 
