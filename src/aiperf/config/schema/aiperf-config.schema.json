@@ -10787,6 +10787,31 @@
           ],
           "x-jinja2-supported": true
         },
+        "outputLenMultiplier": {
+          "default": 1.0,
+          "description": "Multiplier for output lengths in synthesized traces.",
+          "title": "Outputlenmultiplier",
+          "oneOf": [
+            {
+              "default": 1.0,
+              "description": "Multiplier for output lengths in synthesized traces.",
+              "minimum": 0.0,
+              "title": "Outputlenmultiplier",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "maxIsl": {
           "anyOf": [
             {

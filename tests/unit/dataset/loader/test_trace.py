@@ -1142,6 +1142,7 @@ def make_synthesis_config(
     prefix_len_multiplier: float = 1.0,
     prefix_root_multiplier: int = 1,
     prompt_len_multiplier: float = 1.0,
+    output_len_multiplier: float = 1.0,
     max_isl: int | None = None,
     max_osl: int | None = None,
 ) -> CLIConfig:
@@ -1154,6 +1155,7 @@ def make_synthesis_config(
         synthesis_prefix_len_multiplier=prefix_len_multiplier,
         synthesis_prefix_root_multiplier=prefix_root_multiplier,
         synthesis_prompt_len_multiplier=prompt_len_multiplier,
+        synthesis_output_len_multiplier=output_len_multiplier,
         synthesis_max_isl=max_isl,
         synthesis_max_osl=max_osl,
     )
@@ -1271,6 +1273,27 @@ class TestMooncakeTraceSynthesisIntegration:
 
         assert result["session-1"][0].timestamp == 500
         assert result["session-1"][1].timestamp == 1000
+
+    def test_output_len_multiplier_applied(self, mock_prompt_generator):
+        """Test that output_len_multiplier scales output_length."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64),
+                MooncakeTrace(input_length=512, output_length=128),
+            ],
+        }
+        cli_config = make_synthesis_config(output_len_multiplier=2.5, max_osl=256)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            run=make_run_from_cli(cli_config),
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert result["session-1"][0].output_length == 160
+        assert result["session-1"][1].output_length == 256
 
     def test_prefix_len_multiplier_extends_hash_ids(self, mock_prompt_generator):
         """Test that prefix_len_multiplier extends hash_ids."""
@@ -1518,6 +1541,32 @@ class TestMooncakeTraceSynthesisIntegration:
         traces = list(dataset.values())
         assert traces[0][0].timestamp == 500
         assert traces[1][0].timestamp == 1000
+
+    def test_load_dataset_scales_output_len_before_max_osl(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test output_len_multiplier is applied before max_osl capping."""
+        content = [
+            '{"input_length": 6755, "output_length": 500, "timestamp": 0}',
+            '{"input_length": 7319, "output_length": 490, "timestamp": 0}',
+            '{"input_length": 7234, "output_length": 794, "timestamp": 0}',
+            '{"input_length": 2287, "output_length": 316, "timestamp": 0}',
+            '{"input_length": 9013, "output_length": 3, "timestamp": 0}',
+        ]
+        filename = create_jsonl_file(content)
+
+        cli_config = make_synthesis_config(output_len_multiplier=0.5, max_osl=256)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=make_run_from_cli(cli_config),
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        traces = list(dataset.values())
+        output_lengths = [session[0].output_length for session in traces]
+        assert output_lengths == [250, 245, 256, 158, 2]
 
     def test_load_dataset_skips_synthesis_when_disabled(
         self, create_jsonl_file, mock_prompt_generator

@@ -288,6 +288,9 @@ class TestSynthesisValidation:
             {"synthesis_prefix_len_multiplier": 2.0},
             {"synthesis_prefix_root_multiplier": 2},
             {"synthesis_prompt_len_multiplier": 2.0},
+            {"synthesis_output_len_multiplier": 2.0},
+            {"synthesis_max_isl": 4096},
+            {"synthesis_max_osl": 4096},
         ],
     )
     def test_various_synthesis_options_raise_error(
@@ -318,18 +321,30 @@ class TestSynthesisValidation:
         for dataset_type in CustomDatasetType:
             composer._validate_synthesis_config(dataset_type)
 
-    def test_max_isl_alone_allowed_with_any_type(self, custom_config, mock_tokenizer):
-        """Test that max_isl alone doesn't trigger synthesis validation.
-
-        max_isl is a filter, not a synthesis transformation.
-        """
-        custom_config.synthesis_max_isl = 4096
+    @pytest.mark.parametrize(
+        ("synthesis_field", "value"),
+        [
+            ("synthesis_max_isl", 4096),
+            ("synthesis_max_osl", 4096),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [
+            CustomDatasetType.MOONCAKE_TRACE,
+            CustomDatasetType.BAILIAN_TRACE,
+        ],
+    )
+    def test_trace_only_caps_allowed_with_trace_datasets(
+        self, custom_config, mock_tokenizer, synthesis_field, value, dataset_type
+    ):
+        """Test that max_isl/max_osl are allowed with trace dataset types."""
+        setattr(custom_config, synthesis_field, value)
         composer = CustomDatasetComposer(
             run=make_run(custom_config), tokenizer=mock_tokenizer
         )
 
-        # Should not raise - max_isl doesn't trigger should_synthesize()
-        composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+        composer._validate_synthesis_config(dataset_type)
 
 
 class TestExplicitCustomDatasetType:

@@ -1003,6 +1003,7 @@ aiperf profile \
 - `--synthesis-prefix-len-multiplier`: Scale shared prefix lengths
 - `--synthesis-prefix-root-multiplier`: Distribute traces across N independent prefix trees
 - `--synthesis-prompt-len-multiplier`: Scale unique prompt lengths
+- `--synthesis-output-len-multiplier`: Scale output lengths
 - `--synthesis-max-isl`: Filter out traces exceeding max input length
 - `--synthesis-max-osl`: Cap output length for traces exceeding max
 
