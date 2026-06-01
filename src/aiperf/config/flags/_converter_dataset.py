@@ -407,6 +407,7 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
         ("synthesis_prefix_len_multiplier", "prefix_len_multiplier"),
         ("synthesis_prefix_root_multiplier", "prefix_root_multiplier"),
         ("synthesis_prompt_len_multiplier", "prompt_len_multiplier"),
+        ("synthesis_output_len_multiplier", "output_len_multiplier"),
         ("synthesis_max_isl", "max_isl"),
         ("synthesis_max_osl", "max_osl"),
     ):

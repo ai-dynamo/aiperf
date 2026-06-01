@@ -775,6 +775,12 @@ Multiplier for leaf path (unique prompt) lengths.
 <br/>_Constraints: ≥ 0.0_
 <br/>_Default: `1.0`_
 
+#### `--synthesis-output-len-multiplier` `<float>`
+
+Multiplier for output lengths in synthesized traces.
+<br/>_Constraints: ≥ 0.0_
+<br/>_Default: `1.0`_
+
 #### `--synthesis-max-isl` `<int>`
 
 Maximum input sequence length for filtering. Traces with input_length > max_isl are skipped.
@@ -2091,6 +2097,12 @@ Number of independent radix trees to distribute traces across.
 #### `--synthesis-prompt-len-multiplier` `<float>`
 
 Multiplier for leaf path (unique prompt) lengths.
+<br/>_Constraints: ≥ 0.0_
+<br/>_Default: `1.0`_
+
+#### `--synthesis-output-len-multiplier` `<float>`
+
+Multiplier for output lengths in synthesized traces.
 <br/>_Constraints: ≥ 0.0_
 <br/>_Default: `1.0`_
 

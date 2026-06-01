@@ -1574,6 +1574,18 @@ class CLIConfig(BaseConfig):
         ),
     ] = 1.0
 
+    synthesis_output_len_multiplier: Annotated[
+        float,
+        Field(
+            default=1.0,
+            ge=0.0,
+            description="Multiplier for output lengths in synthesized traces",
+        ),
+        CLIParameter(
+            name=("--synthesis-output-len-multiplier",), group=Groups.SYNTHESIS
+        ),
+    ] = 1.0
+
     synthesis_max_isl: Annotated[
         int | None,
         Field(
