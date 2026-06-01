@@ -527,6 +527,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
                 self._pin_parent_if_fork_child(credit, x_correlation_id)
                 self._seed_from_parent_if_fork_child(credit, x_correlation_id)
+                # Session seeded mid-conversation (start_turn_index > 0):
+                # reconstruct turns [0, k) as synthetic history so the
+                # accumulated context starts at its steady-state depth.
+                if credit_context.credit.start_turn_index > 0:
+                    session.hydrate_seed_history(
+                        credit_context.credit.start_turn_index
+                    )
 
             session.advance_turn(credit_context.credit.turn_index)
 

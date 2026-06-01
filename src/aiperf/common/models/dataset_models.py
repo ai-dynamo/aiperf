@@ -279,6 +279,12 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    seed_response: "Turn | None" = Field(
+        default=None,
+        description="Synthetic assistant response used to reconstruct prior history "
+        "when a delta-mode session starts after turn zero. None when trajectory "
+        "seeding is disabled.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""

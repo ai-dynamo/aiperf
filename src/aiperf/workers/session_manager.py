@@ -107,6 +107,46 @@ class UserSession(AIPerfBaseModel):
         self.turn_index = turn_index
         return turn
 
+    def hydrate_seed_history(self, up_to_turn_index: int) -> None:
+        """Pre-populate ``turn_list`` with synthetic history for turns [0, k).
+
+        Delta-mode sessions need the preceding turns accumulated before their
+        first on-wire request. For ``DELTAS_WITHOUT_RESPONSES``, each prior user
+        turn is paired with its synthetic assistant response. Delta turns that
+        already contain responses are accumulated as authored.
+
+        ``MESSAGE_ARRAY_WITH_RESPONSES`` turns are self-contained. Starting at
+        turn ``k`` therefore requires no hydration; ``advance_turn(k)`` directly
+        selects the complete message array for that row.
+        """
+        if (
+            up_to_turn_index <= 0
+            or self.context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        ):
+            return
+        if self.context_mode not in {
+            ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+            ConversationContextMode.DELTAS_WITH_RESPONSES,
+        }:
+            raise NotImplementedError(
+                f"conversation '{self.conversation.session_id}': mid-conversation "
+                f"seeding does not support context_mode="
+                f"{self.context_mode.value!r}"
+            )
+        up_to = min(up_to_turn_index, self.num_turns)
+        seeded: list[Turn] = []
+        for i in range(up_to):
+            turn = self.conversation.turns[i]
+            seeded.append(turn)
+            if (
+                self.context_mode
+                == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+                and turn.seed_response is not None
+            ):
+                seeded.append(turn.seed_response)
+        self.turn_list = seeded + self.turn_list
+
     def should_store_response(self) -> bool:
         """Whether assistant responses should be stored based on context mode.
 
