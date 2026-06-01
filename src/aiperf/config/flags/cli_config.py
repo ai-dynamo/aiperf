@@ -328,6 +328,25 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
+    unique_session_prefix_length: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Prepend a unique per-session-instance prefix of approximately this many "
+                "tokens to each session's first turn, derived from the session correlation "
+                "id. Identical across a session's turns (keeps within-session prefix "
+                "caching) but unique per resampled instance, so sampling a finite dataset "
+                "with replacement under server prefix caching does not produce unrealistic "
+                "cross-resample cache hits that inflate throughput. 0 disables."
+            ),
+        ),
+        CLIParameter(
+            name=("--unique-session-prefix-length",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = 0
+
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
         Field(

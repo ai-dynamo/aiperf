@@ -62,6 +62,7 @@ from aiperf.common.protocols import (
 from aiperf.config.adaptive_scale_phase import (
     sla_filters_require_first_token_observation,
 )
+from aiperf.common.session_prefix import prepend_unique_session_prefix
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -238,6 +239,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # FirstToken messages when a downstream consumer needs them.
         self._first_token_observation_enabled: bool = any(
             _phase_needs_first_token_callback(phase) for phase in self.run.cfg.phases
+        )
+
+        # Approximate token length of the per-session-instance unique prefix used
+        # to defeat cross-resample prefix-cache hits (0 disables). See
+        # ``make_unique_session_prefix``.
+        self._unique_session_prefix_length: int = (
+            self.run.cfg.endpoint.unique_session_prefix_length
         )
 
         # Only used as a fallback when dataset client is not initialized
@@ -578,6 +586,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             not self._is_payload_bytes
             or self._dataset_client is None
             or credit.agent_depth != 0
+            or self._unique_session_prefix_length > 0
         ):
             return False
         payload_bytes = await self._dataset_client.get_payload_bytes(
@@ -848,6 +857,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit = credit_context.credit
         if turns is None:
             turns = session.turn_list if session else []
+        if session is not None:
+            user_context_message = prepend_unique_session_prefix(
+                user_context_message,
+                session.x_correlation_id,
+                self._unique_session_prefix_length,
+            )
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,

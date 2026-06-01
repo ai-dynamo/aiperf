@@ -240,6 +240,22 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    unique_session_prefix_length: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Prepend a unique per-session-instance prefix of approximately "
+            "this many tokens to each session's first turn, derived from the session's "
+            "correlation id. The prefix is identical across that session's turns "
+            "(preserving within-session prefix-cache reuse) but differs across resampled "
+            "instances of the same conversation. Use when sampling a finite dataset with "
+            "replacement under server prefix caching, to stop unrealistic cross-resample "
+            "cache hits from inflating throughput. 0 disables. Prepended after any shared "
+            "system prompt.",
+        ),
+    ]
+
     template: Annotated[
         TemplateConfig | None,
         Field(

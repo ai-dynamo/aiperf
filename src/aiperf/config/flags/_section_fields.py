@@ -28,6 +28,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "timeout_seconds",
         "transport",
         "endpoint_type",
+        "unique_session_prefix_length",
         "url_selection_strategy",
         "urls",
         "use_legacy_max_tokens",

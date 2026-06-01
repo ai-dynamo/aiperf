@@ -10535,6 +10535,31 @@
           "title": "Useservertokencount",
           "type": "boolean"
         },
+        "uniqueSessionPrefixLength": {
+          "default": 0,
+          "description": "Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session's correlation id. The prefix is identical across that session's turns (preserving within-session prefix-cache reuse) but differs across resampled instances of the same conversation. Use when sampling a finite dataset with replacement under server prefix caching, to stop unrealistic cross-resample cache hits from inflating throughput. 0 disables. Prepended after any shared system prompt.",
+          "title": "Uniquesessionprefixlength",
+          "oneOf": [
+            {
+              "default": 0,
+              "description": "Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session's correlation id. The prefix is identical across that session's turns (preserving within-session prefix-cache reuse) but differs across resampled instances of the same conversation. Use when sampling a finite dataset with replacement under server prefix caching, to stop unrealistic cross-resample cache hits from inflating throughput. 0 disables. Prepended after any shared system prompt.",
+              "minimum": 0,
+              "title": "Uniquesessionprefixlength",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "template": {
           "anyOf": [
             {

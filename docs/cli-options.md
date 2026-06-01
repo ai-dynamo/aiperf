@@ -381,6 +381,12 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
 
+#### `--unique-session-prefix-length` `<int>`
+
+Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session correlation id. Identical across a session's turns (keeps within-session prefix caching) but unique per resampled instance, so sampling a finite dataset with replacement under server prefix caching does not produce unrealistic cross-resample cache hits that inflate throughput. 0 disables.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0`_
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
@@ -1815,6 +1821,12 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
+
+#### `--unique-session-prefix-length` `<int>`
+
+Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session correlation id. Identical across a session's turns (keeps within-session prefix caching) but unique per resampled instance, so sampling a finite dataset with replacement under server prefix caching does not produce unrealistic cross-resample cache hits that inflate throughput. 0 disables.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0`_
 
 #### `--connection-reuse-strategy` `<str>`
 
