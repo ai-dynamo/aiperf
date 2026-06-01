@@ -338,7 +338,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         Runs continuously during collector's RUNNING state, triggering a metrics
         collection every collection_interval seconds.
         """
-        await self._collect_and_process_metrics()
+        await self.collect_and_process_metrics()
 
     async def collect_and_process_metrics(self) -> None:
         """Public alias for one-shot scrape.
@@ -360,11 +360,11 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
             records = await asyncio.to_thread(self._collect_gpu_metrics)
             if records and self._record_callback:
                 await self._record_callback(records, self.id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
             if self._error_callback:
                 try:
                     await self._error_callback(ErrorDetails.from_exception(e), self.id)
-                except Exception as callback_error:
+                except Exception as callback_error:  # noqa: BLE001 - fault-tolerant telemetry
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
                 self.error(f"Metrics collection error: {e}")

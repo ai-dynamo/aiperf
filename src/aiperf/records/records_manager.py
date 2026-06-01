@@ -53,6 +53,7 @@ from aiperf.common.models import (
     TelemetryRecord,
     WorkerProcessingStats,
 )
+from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
@@ -735,6 +736,39 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         return metric_results
 
+    def _apply_gpu_efficiency_metrics(
+        self,
+        records_results: list[MetricResult],
+        phase_stats: PhaseRecordsStats,
+        phase: CreditPhase,
+    ) -> None:
+        """Append GPU efficiency metrics to records_results when the phase has a real window.
+
+        No-op if no accumulator is configured. Skips with a warning when the
+        phase has no records (either bound is None) — a two-call time.time_ns()
+        fallback would otherwise yield a zero-width window and power (gauge)
+        would either emit a misleading 0.0W or be silently dropped depending
+        on sample jitter.
+        """
+        if self._gpu_telemetry_accumulator is None:
+            return
+        if phase_stats.start_ns is None or phase_stats.requests_end_ns is None:
+            self.warning(
+                f"Skipping efficiency metrics for phase {phase}: "
+                f"start_ns={phase_stats.start_ns}, "
+                f"requests_end_ns={phase_stats.requests_end_ns}"
+            )
+            return
+        time_filter = TimeRangeFilter(
+            start_ns=phase_stats.start_ns,
+            end_ns=phase_stats.requests_end_ns,
+        )
+        efficiency_metrics = self._gpu_telemetry_accumulator.compute_efficiency_metrics(
+            metric_results=records_results,
+            time_filter=time_filter,
+        )
+        records_results.extend(efficiency_metrics)
+
     async def _process_results(
         self, phase: CreditPhase, cancelled: bool
     ) -> ProcessRecordsResult:
@@ -789,11 +823,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 error_results.append(ErrorDetails.from_exception(result))
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        # Snapshot count BEFORE extending with efficiency metrics — `completed`
+        # reports the number of request-derived records, not derived aggregates.
+        records_completed = len(records_results)
+
+        self._apply_gpu_efficiency_metrics(records_results, phase_stats, phase)
+
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
                 timeslice_metric_results=timeslice_metric_results,
-                completed=len(records_results),
+                completed=records_completed,
                 start_ns=phase_stats.start_ns or time.time_ns(),
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
