@@ -93,6 +93,8 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Latency](#request-latency)
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
+    - [Session Throughput](#session-throughput)
+    - [Session Count](#session-count)
     - [Error Request Count](#error-request-count)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
@@ -1421,6 +1423,41 @@ The total number of **successfully completed** requests in the benchmark. This i
 ```python
 request_count = sum(1 for r in records if r.valid)
 ```
+
+---
+
+### Session Throughput
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sustained rate at which whole multi-turn **sessions** complete, expressed in sessions per hour. A session is one conversation instance (one `x_correlation_id`); it completes when its final turn returns successfully. This is the headline metric for "sessions per hour at max throughput" runs, where the server is held at saturation with sessions sampled with replacement.
+
+**Formula:**
+```python
+session_throughput = session_count / benchmark_duration_hours
+```
+
+**Notes:**
+- Counts only root sessions (`agent_depth == 0`); DAG sub-agent children belong to their parent's session.
+- For multi-turn datasets this is lower than [Request Throughput](#request-throughput) (which counts every turn); for single-turn datasets the two count the same events.
+- Reflects the steady-state window: pair with a seamless warmup so the profiling window begins at full concurrency, and a fixed `--benchmark-duration` (rather than a session-count cap) so concurrency is sustained by resampling.
+
+---
+
+### Session Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+The total number of **successfully completed** sessions (multi-turn conversations) in the benchmark. A session is counted when the final turn of a root conversation returns a valid response.
+
+**Formula:**
+```python
+session_count = sum(1 for r in records if r.valid and r.is_final_turn and r.agent_depth == 0)
+```
+
+**Notes:**
+- Goodput-style count: a session whose final turn errored is not counted, since the session did not complete.
+- DAG children (`agent_depth > 0`) are part of their parent's session and are not counted separately, matching the timing-side `completed_sessions` counter.
 
 ---
 

@@ -593,6 +593,13 @@ class RecordContext(AIPerfBaseModel):
         "record-enrichment time so the record processor reads it directly off the record without "
         "the full ``turns`` list on the wire. None for non-ASR requests.",
     )
+    is_final_turn: bool = Field(
+        default=True,
+        description="Whether this is the final turn in the conversation. Set worker-side "
+        "from the originating credit. Used by the per-conversation connection strategy to "
+        "release the connection lease, and hoisted onto the record so the record processor "
+        "can count completed sessions (final-turn root records) for session throughput.",
+    )
 
     # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
 
@@ -619,10 +626,10 @@ class RequestInfo(RecordContext):
     Extends ``RecordContext`` with pre-send-only fields that never need to
     cross the ZMQ hop to the record processor: ``ModelEndpointInfo``
     (URLs / headers / extras), transport timing (``drop_perf_ns``,
-    ``cancel_after_ns``), round-robin URL index, and the
-    connection-lease-release marker. ``inference_client`` builds these
-    on-the-fly during transport dispatch; ``_enrich_request_record``
-    down-casts to a pure ``RecordContext`` before attaching to the record.
+    ``cancel_after_ns``), and round-robin URL index. ``inference_client``
+    builds these on-the-fly during transport dispatch;
+    ``_enrich_request_record`` down-casts to a pure ``RecordContext`` before
+    attaching to the record.
     """
 
     model_endpoint: ModelEndpointInfo = Field(
@@ -647,11 +654,6 @@ class RequestInfo(RecordContext):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the credit was dropped by the timing manager. "
         "This is used to calculate the credit drop latency.",
-    )
-    is_final_turn: bool = Field(
-        default=True,
-        description="Whether this is the final turn in the conversation. "
-        "Used by per-conversation connection strategy to release the connection lease.",
     )
     url_index: int | None = Field(
         default=None,
