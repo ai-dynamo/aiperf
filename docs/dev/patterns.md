@@ -401,9 +401,9 @@ GPU power and energy come from telemetry scrapes, not from request
 records, so their values must be injected by the accumulator that owns
 the sensor data rather than derived by the standard registry walk.
 
-Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](../../src/aiperf/metrics/types/power_efficiency_metrics.py).
+Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
 Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
-([`src/aiperf/gpu_telemetry/accumulator.py`](../../src/aiperf/gpu_telemetry/accumulator.py)).
+([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
 
 ### The three-part contract
 
@@ -481,7 +481,7 @@ values are not overwritten.
 ### Test contract
 
 The error-message invariants are pinned by
-[`tests/unit/metrics/test_power_efficiency_metrics.py`](../../tests/unit/metrics/test_power_efficiency_metrics.py)
+[`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
 (parametrized over the three classes): every `_derive_value` call must
 raise `NoMetricValue` with a message that names the tag, the operation
 source (`MetricResultsDict`), and the injection site
