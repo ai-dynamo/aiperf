@@ -19,7 +19,9 @@ The verification work behind this document was performed by inspecting each prov
 | Vendor | Wrapper | Token-count fields | Cache fields | Notable extras |
 |---|---|---|---|---|
 | OpenAI | flat `usage` | `prompt_tokens`, `completion_tokens`, `total_tokens` | `prompt_tokens_details.cached_tokens` (read-only) | nested `*_tokens_details` for audio / reasoning / prediction |
-| vLLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` | matches OpenAI; sometimes emits `prompt_tokens_details: null` |
+| vLLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | OpenAI-shape; `cached_tokens` emitted only with `--enable-prompt-tokens-details` (default off), else `prompt_tokens_details: null` |
+| SGLang | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | OpenAI-compatible; `cached_tokens` emitted only with `--enable-cache-report` (default off) |
+| TRT-LLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` | OpenAI-compatible; `cached_tokens` emitted by default (no flag) |
 | Anthropic | flat `usage` | `input_tokens`, `output_tokens` | `cache_creation_input_tokens`, `cache_read_input_tokens` | `cache_creation` TTL sub-object; `service_tier`; `server_tool_use` |
 | Google Gemini | `usageMetadata` envelope (camelCase) | `promptTokenCount`, `candidatesTokenCount`, `totalTokenCount` | `cachedContentTokenCount` (read-only) | `thoughtsTokenCount`, `toolUsePromptTokenCount`, modality `*Details[]` arrays |
 | AWS Bedrock | flat `usage` (camelCase) | `inputTokens`, `outputTokens`, `totalTokens` | `cacheReadInputTokens`, `cacheWriteInputTokens` | `cacheDetails[]` TTL array |
@@ -93,6 +95,20 @@ class PromptTokenUsageInfo(OpenAIBaseModel):
 ```
 
 vLLM is OpenAI-compatible. Its `prompt_tokens_details` is narrower than OpenAI's (only `cached_tokens`, no `audio_tokens`). vLLM may emit `prompt_tokens_details: null` and `completion_tokens_details: null` explicitly; AIPerf's nested-field walk handles that case (the `isinstance(details, dict)` guard returns False, and the property returns None).
+
+**Enablement (opt-in):** vLLM populates `cached_tokens` only when the server is launched with `--enable-prompt-tokens-details` (default off, per [vllm-project/vllm#10174](https://github.com/vllm-project/vllm/pull/10174) — "guarded by a flag ... OFF by default"). Without the flag, `prompt_tokens_details` is `null` and AIPerf's cache-read metrics are all-None even when prefix caching is active. The flag is independent of `--enable-prefix-caching` (the cache must still be on for `cached_tokens` to be non-zero).
+
+### SGLang
+
+**Verified against:** `sglang` / `python/sglang/srt/entrypoints/openai/serving_chat.py` → `usage_processor.py` (`v0.5.12.post1`).
+
+SGLang is OpenAI-compatible and surfaces cache reads as `prompt_tokens_details.cached_tokens` — but **only when the server is launched with `--enable-cache-report`** (`server_args.enable_cache_report`, default off, per [sgl-project/sglang#1599](https://github.com/sgl-project/sglang/pull/1599) — kept opt-in "to limit the impact to current users"). Without the flag the field is absent and AIPerf's cache-read metrics are all-None. SGLang also exposes a prefix-cache hit rate as a scraped Prometheus gauge (`sglang:cache_hit_rate`), but that gauge is *instantaneous* — its windowed average badly understates steady-state reuse, so prefer the usage-derived `cached_tokens` for cache reporting.
+
+### TRT-LLM
+
+**Verified against:** `TensorRT-LLM` / `tensorrt_llm/serve/postprocess_handlers.py` (`v1.3.0rc15.post1`).
+
+TensorRT-LLM (`trtllm-serve`) is OpenAI-compatible and populates `prompt_tokens_details.cached_tokens` **by default** — `postprocess_handlers.py` sets it unconditionally from the engine's KV-cache reuse, so no flag is needed. This is separate from exposing Prometheus `/metrics` (which requires `return_perf_metrics: true`); the `usage` cache field works regardless.
 
 ### Anthropic
 

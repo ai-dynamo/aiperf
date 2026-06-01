@@ -106,7 +106,7 @@ class MetricSample(AIPerfBaseModel):
         default=None,
         description="Metric labels (excluding histogram special labels). None if no labels.",
     )
-    value: float | None = Field(
+    value: FiniteFloat | None = Field(
         default=None, description="Simple metric value (counter/gauge)"
     )
     buckets: dict[str, float] | None = Field(
