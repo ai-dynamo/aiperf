@@ -116,8 +116,8 @@ class CreditIssuer:
             False if this was the final credit or couldn't acquire slots.
 
         Note:
-            For first turns (turn_index == 0), acquires session slot first.
-            For all turns, acquires prefill slot.
+            For session-start turns (turn_index == start_turn_index), acquires
+            session slot first. For all turns, acquires prefill slot.
             Slots are released automatically on failure.
 
         Flow:
@@ -128,7 +128,7 @@ class CreditIssuer:
             5. Create and send Credit
             6. If final credit: freeze counts + set event
         """
-        is_first_turn = turn.turn_index == 0
+        is_first_turn = turn.is_session_start
 
         # Select appropriate check function based on turn type
         # - First turns need can_start_new_session (more restrictive - checks session quota)
@@ -176,7 +176,7 @@ class CreditIssuer:
             False: Credit issued but this was final, OR stop condition triggered.
             None: No slots available, credit NOT issued. Retry later.
         """
-        is_first_turn = turn.turn_index == 0
+        is_first_turn = turn.is_session_start
 
         # Select appropriate check function based on turn type
         can_proceed_fn = (
@@ -225,7 +225,7 @@ class CreditIssuer:
         # Get URL index from strategy (for multi-URL load balancing)
         # Only advance the round-robin on the first turn of a conversation.
         # Subsequent turns will use the url_index stored in the worker's UserSession.
-        is_first_turn = turn.turn_index == 0
+        is_first_turn = turn.is_session_start
         url_index = (
             self._url_selection_strategy.next_url_index()
             if self._url_selection_strategy and is_first_turn
@@ -243,6 +243,7 @@ class CreditIssuer:
             x_correlation_id=turn.x_correlation_id,
             turn_index=turn.turn_index,
             num_turns=turn.num_turns,
+            start_turn_index=turn.start_turn_index,
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
