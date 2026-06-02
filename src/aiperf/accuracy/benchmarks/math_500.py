@@ -95,7 +95,7 @@ class Math500Benchmark(AIPerfLoggerMixin):
         problems: list[BenchmarkProblem] = []
         for row in ds:
             problem = row[PROBLEM_FIELD]
-            solution = str(row.get(SOLUTION_FIELD, ""))
+            solution = row.get(SOLUTION_FIELD) or ""
             messages: list[AccuracyChatMessage] = [{"role": "user", "content": problem}]
             problems.append(
                 BenchmarkProblem(
