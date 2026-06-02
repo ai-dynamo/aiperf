@@ -155,16 +155,21 @@ Both surface in the final report's JSON and console table.
 
 ### 5.5 New message types
 
-In `src/aiperf/common/enums/enums.py`:
+In `src/aiperf/common/enums/enums.py`, the existing `class MessageType(CaseInsensitiveStrEnum)` gains two members:
 
 ```python
-class MessageType(StrEnum):
+class MessageType(CaseInsensitiveStrEnum):
     ...
     PROXY_REQUEST_RECORD = "proxy_request_record"
     TASK_RECORD = "task_record"
 ```
 
-Plus corresponding `Message` subclasses in `src/aiperf/messages/proxy_request_record.py` and `src/aiperf/messages/task_record.py` with `Field(description=…)` on every field per AIPerf coding standards.
+Corresponding message classes follow the existing domain-grouped convention under `src/aiperf/common/messages/`:
+
+- `src/aiperf/common/messages/proxy_messages.py` — defines `ProxyRequestRecordMessage(BaseServiceMessage)` with `message_type: MessageTypeT = MessageType.PROXY_REQUEST_RECORD`.
+- `src/aiperf/common/messages/task_messages.py` — defines `TaskRecordMessage(BaseServiceMessage)` with `message_type: MessageTypeT = MessageType.TASK_RECORD`.
+
+Both follow the pattern of existing files like `inference_messages.py`: `Field(description=…)` on every field, no `Optional`, type hints throughout.
 
 ### 5.6 New CLI flags — `src/aiperf/config/flags/`
 
@@ -215,8 +220,8 @@ service:
 | `src/aiperf/proxy/service.py` | `src/aiperf/plugin/plugins.yaml` (+2 service entries) |
 | `src/aiperf/task_runner/service.py` | `src/aiperf/common/enums/enums.py` (+2 `MessageType`) |
 | `src/aiperf/task_runner/harbor_schema.py` | `src/aiperf/records/record_processor_service.py` (+2 handlers) |
-| `src/aiperf/messages/proxy_request_record.py` | `src/aiperf/config/flags/cli_config.py` (+8 flags) |
-| `src/aiperf/messages/task_record.py` | `docs/cli-options.md` (auto-regenerated) |
+| `src/aiperf/common/messages/proxy_messages.py` | `src/aiperf/config/flags/cli_config.py` (+8 flags) |
+| `src/aiperf/common/messages/task_messages.py` | `docs/cli-options.md` (auto-regenerated) |
 | `tests/fixtures/harbor/v0_9_0/{resolved,failed,errored,schema_drift}.json` | `docs/environment-variables.md` (auto-regenerated if env vars added) |
 | `tests/fixtures/harbor/README.md` | |
 | `tests/harness/mock_harbor.py` | |
