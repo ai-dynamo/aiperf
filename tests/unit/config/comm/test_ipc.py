@@ -356,3 +356,70 @@ class TestResolveCollisionSalt:
             pytest.raises(ValueError, match=r"port collision"),
         ):
             _resolve_collision_salt(compute)
+
+
+class TestZMQIPCConfigSaltThreading:
+    """Pins the salt-retry integration on ``ZMQIPCConfig``: when constructed
+    under ``IS_WINDOWS=True``, ``validate_path`` runs ``_resolve_collision_salt``,
+    which calls ``_addresses_with_salt`` to derive every endpoint's address
+    under each candidate salt. Without these tests, those helper methods (and
+    the salt-threading wiring through property methods) are dead code from
+    a coverage standpoint on the POSIX CI runner. Exercising them via mocked
+    Windows brings the salt-retry code path under coverage even on Linux.
+    """
+
+    def test_windows_config_construction_runs_retry_loop(self, tmp_path: Path) -> None:
+        """Constructing a ``ZMQIPCConfig`` on Windows must invoke
+        ``_addresses_with_salt`` at least once and pick a salt that yields
+        non-colliding tcp:// addresses for every endpoint.
+        """
+        from aiperf.config.comm.ipc import ZMQIPCConfig
+
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            config = ZMQIPCConfig(path=tmp_path / "aiperf")
+            # Access properties INSIDE the patch context — the IS_WINDOWS
+            # check in ``build_socket_address`` fires at every call, not at
+            # validate-time.
+            addresses = [
+                config.records_push_pull_address,
+                config.credit_router_address,
+                config.credit_return_router_address,
+                config.control_address,
+                config.group_lifecycle_address,
+                config.dataset_manager_proxy_config.frontend_address,
+                config.dataset_manager_proxy_config.backend_address,
+                config.event_bus_proxy_config.frontend_address,
+                config.event_bus_proxy_config.backend_address,
+                config.raw_inference_proxy_config.frontend_address,
+                config.raw_inference_proxy_config.backend_address,
+            ]
+
+        # Every endpoint should be tcp://127.0.0.1:<port> on Windows, with
+        # distinct ports — the salt-retry loop guarantees no collision.
+        for addr in addresses:
+            assert addr.startswith("tcp://127.0.0.1:"), addr
+        ports = [int(a.rsplit(":", 1)[1]) for a in addresses]
+        assert len(set(ports)) == len(ports), (
+            f"Port collision survived the retry loop: {ports}"
+        )
+
+    def test_windows_salt_propagates_to_proxy_configs(self, tmp_path: Path) -> None:
+        """Whatever salt the parent picks must propagate to every proxy
+        config so the proxy's own property methods derive ports under the
+        SAME hash input. Otherwise bind and connect sides would disagree.
+        """
+        from aiperf.config.comm.ipc import ZMQIPCConfig
+
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            config = ZMQIPCConfig(path=tmp_path / "aiperf")
+
+        parent_salt = config._collision_salt
+        for proxy in (
+            config.dataset_manager_proxy_config,
+            config.event_bus_proxy_config,
+            config.raw_inference_proxy_config,
+        ):
+            assert proxy._collision_salt == parent_salt, (
+                f"Proxy {proxy.name} salt {proxy._collision_salt!r} != "
+                f"parent salt {parent_salt!r}"
+            )
