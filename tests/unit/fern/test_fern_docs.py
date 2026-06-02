@@ -146,3 +146,38 @@ def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_fern_check_strict(staged_fern_docs: Path) -> None:
+    """Strict validation: broken or relative markdown links must fail.
+
+    The auth-skipped redirects warning and accent-contrast warning remain as
+    warnings (not errors) under ``--strict-broken-links``; broken/relative
+    links are promoted to errors.
+    """
+    result = subprocess.run(
+        ["fern", "check", "--warnings", "--strict-broken-links"],
+        cwd=staged_fern_docs,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"fern check --strict-broken-links failed (exit {result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_fern_broken_links(staged_fern_docs: Path) -> None:
+    """Verify Fern finds no broken links in the converted content."""
+    result = subprocess.run(
+        ["fern", "docs", "broken-links"],
+        cwd=staged_fern_docs,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"fern docs broken-links failed (exit {result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
