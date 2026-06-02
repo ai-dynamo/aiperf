@@ -277,7 +277,8 @@ def resolve_alias(name: str) -> AliasResolutionResult:
     """
     # Check if this looks like a local path. Use ``path.anchor`` instead of
     # ``path.is_absolute()`` because the latter requires a drive letter on
-    # Windows (``WindowsPath("/home/user/foo").is_absolute() == False``).
+    # Windows (``WindowsPath("/home/user/foo").is_absolute() == False``;
+    # pinned by ``test_resolve_alias_treats_posix_absolute_path_as_local``).
     # Anchor is truthy for any path with a drive AND/OR root, so a POSIX-style
     # absolute path passed on Windows is correctly recognized as local.
     path = Path(name)

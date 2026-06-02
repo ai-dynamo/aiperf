@@ -267,6 +267,11 @@ def _redirect_stdio_to_devnull() -> None:
     during ``DLL_PROCESS_DETACH``. Releasing the inherited pipe FDs to NUL
     early makes shutdown clean. Service log output is already routed through
     the multiprocessing log_queue, so this loses nothing.
+
+    See also: ``src/aiperf/orchestrator/subprocess_runner.py::
+    _release_inherited_pipes_on_windows`` — the sibling that calls this
+    helper from the sweep-iteration intermediate process. If you extend
+    the FD-redirection contract here, audit that call site too.
     """
     # Redirect at the OS level so spawned grandchild processes (e.g.
     # ProcessPoolExecutor workers via 'spawn' context) inherit safe FDs
