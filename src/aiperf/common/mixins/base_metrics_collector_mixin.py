@@ -20,6 +20,7 @@ from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
+from aiperf.common.redact import redact_url
 from aiperf.transports.http_defaults import AioHttpDefaults
 
 # `create_tcp_connector` is exposed as a module attribute via __getattr__ to
@@ -236,6 +237,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             **kwargs: Additional arguments passed to super().__init__()
         """
         self._endpoint_url = endpoint_url
+        # Credential-free form of the endpoint URL for logging, record keys,
+        # and exports. The raw _endpoint_url is used only for the actual HTTP
+        # fetch so userinfo never leaks into logs or exported artifacts.
+        self._display_url = redact_url(endpoint_url)
         self._collection_interval = collection_interval
         self._reachability_timeout = reachability_timeout
         self._record_callback = record_callback
@@ -495,7 +500,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 return
             self._endpoint_disabled = True
             self.warning(
-                f"Disabling server metrics collection for {self._endpoint_url}: "
+                f"Disabling server metrics collection for {self._display_url}: "
                 f"{e}. To suppress this warning, pass --no-server-metrics."
             )
             if self._error_callback:
@@ -574,7 +579,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 # caller can auto-disable instead of looping on parse errors.
                 if content_type.startswith("application/json"):
                     raise IncompatibleMetricsEndpointError(
-                        f"endpoint {self._endpoint_url!r} returned non-Prometheus "
+                        f"endpoint {self._display_url!r} returned non-Prometheus "
                         f"content-type {content_type!r}; expected text/plain "
                         f"(Prometheus exposition format)"
                     )
