@@ -98,11 +98,12 @@ Key invariants:
 
 ### 5.1 `ProxyService` — `src/aiperf/proxy/service.py`
 
-`BaseComponentService` hosting a FastAPI app on `--proxy-port` (default `18888`). Three passthrough routes to `--url`:
+`BaseComponentService` hosting a FastAPI app on `--proxy-port` (default `18888`). Two passthrough routes to `--url`:
 
-- `POST /v1/agent/{path:path}` → `source="agent"`
-- `POST /v1/replay/{path:path}` → `source="replay"`
-- `POST /v1/worker/{path:path}` → `source="worker"`
+- `POST /v1/agent/{path:path}` → `source="agent"` (harbor agents inside sandboxes)
+- `POST /v1/replay/{path:path}` → `source="replay"` (AIPerf workers driving recorded traces via `trace-replay` / `dag_jsonl`)
+
+The `source` discriminator is path-derived rather than header-derived because harbor's agents can't be expected to send custom headers; routing by URL path is the only mechanism that works without harbor cooperation. If we ever add synthetic co-traffic in the future, we add a new route then.
 
 Each route streams the upstream response back faithfully — SSE chunks forwarded as they arrive, no buffering — which is critical to preserve TTFT/ITL measurement. Each request is timed at: send, first byte (TTFT), each chunk (ITL), final. The proxy parses request and response payloads to extract input/output token counts. Records `PROXY_REQUEST_RECORD` messages with: `source`, upstream path (e.g. `chat/completions`), timings, status, token counts, generated `request_id`. Headers from client → proxy → upstream are forwarded transparently except `Host`. Auth headers (`Authorization`, `api-key`) pass through unchanged.
 
@@ -381,7 +382,7 @@ Three tiers matching AIPerf convention. Real Daytona/Modal/e2b sandboxes are exp
 ### 8.1 Unit tests — `tests/unit/`
 
 - `unit/proxy/test_proxy_service.py` — boot `ProxyService` against `pytest-httpserver`. Cases: happy-path forward (JSON and SSE), header passthrough, request-ID stamping, source-tag inference from path, upstream 5xx forwarded, upstream timeout, client disconnect mid-stream marks record `partial=True`. SSE chunk-timing test asserts recorded TTFT/ITL match injected delays within tolerance — the most load-bearing assertion in the feature.
-- `unit/proxy/test_proxy_records.py` — parametrize across `source = agent | replay | worker`; assert `PROXY_REQUEST_RECORD` payload shape; token-count parsing for chat/completions and completions response bodies.
+- `unit/proxy/test_proxy_records.py` — parametrize across `source = agent | replay`; assert `PROXY_REQUEST_RECORD` payload shape; token-count parsing for chat/completions and completions response bodies.
 - `unit/task_runner/test_harbor_schema.py` — fixtures under `tests/fixtures/harbor/v0_9_0/`. Parametrized cases per fixture. `ValidationError` on extra fields proves the drift detection actually fires.
 - `unit/task_runner/test_task_runner_service.py` — `TaskRunnerService` with subprocess monkeypatched. Cases: spawn count respects `--task-concurrency`, semaphore honored under burst, non-zero exit → `harbor_crash`, missing rollout JSON → `harbor_crash`, malformed JSON → `schema_mismatch`, parsed `resolved=False` → `task_failure`, `--task-runner-fail-fast` triggers early stop at threshold.
 - `unit/messages/test_new_message_types.py` — `PROXY_REQUEST_RECORD` and `TASK_RECORD` deserialize symmetrically; `MessageType` enum entries present.
