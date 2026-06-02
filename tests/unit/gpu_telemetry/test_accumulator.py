@@ -17,6 +17,10 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.gpu_telemetry.accumulator import (
     GPUTelemetryAccumulator,
 )
+from aiperf.gpu_telemetry.constants import (
+    NVIDIA_ENERGY_CONSUMPTION_FIELD,
+    NVIDIA_POWER_USAGE_FIELD,
+)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.post_processors.conftest import make_telemetry_record
 
@@ -381,3 +385,4 @@ class TestGPUTelemetryAccumulator:
 
         assert len(gpu0_results) > 0
         assert len(gpu1_results) > 0
+

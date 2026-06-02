@@ -23,9 +23,18 @@ NVIDIA_GPU_TELEMETRY_PLATFORM = "nvidia"
 AMD_GPU_TELEMETRY_PLATFORM = "amd"
 UNKNOWN_GPU_TELEMETRY_PLATFORM = "unknown"
 
+# Canonical namespaced NVIDIA telemetry field names. After AIP-905 namespacing,
+# DCGM/pynvml samples are stored under these keys. The power-efficiency
+# accumulator (GPUTelemetryAccumulator.compute_efficiency_metrics) resolves
+# power and energy through these same constants, so a future rename updates one
+# place and the producer (the mappings below) can never desync from the
+# consumer (the accumulator).
+NVIDIA_POWER_USAGE_FIELD = "nvidia_power_usage"
+NVIDIA_ENERGY_CONSUMPTION_FIELD = "nvidia_energy_consumption"
+
 NVIDIA_TELEMETRY_FIELD_ALIASES = {
-    "gpu_power_usage": "nvidia_power_usage",
-    "energy_consumption": "nvidia_energy_consumption",
+    "gpu_power_usage": NVIDIA_POWER_USAGE_FIELD,
+    "energy_consumption": NVIDIA_ENERGY_CONSUMPTION_FIELD,
     "gpu_utilization": "nvidia_gpu_utilization",
     "mem_utilization": "nvidia_memory_utilization",
     "gpu_memory_used": "nvidia_memory_used",
@@ -40,8 +49,8 @@ NVIDIA_TELEMETRY_FIELD_ALIASES = {
 
 # DCGM field mapping to telemetry record fields
 DCGM_TO_FIELD_MAPPING = {
-    "DCGM_FI_DEV_POWER_USAGE": "nvidia_power_usage",
-    "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": "nvidia_energy_consumption",
+    "DCGM_FI_DEV_POWER_USAGE": NVIDIA_POWER_USAGE_FIELD,
+    "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": NVIDIA_ENERGY_CONSUMPTION_FIELD,
     "DCGM_FI_DEV_GPU_UTIL": "nvidia_gpu_utilization",
     "DCGM_FI_DEV_MEM_COPY_UTIL": "nvidia_memory_utilization",
     "DCGM_FI_DEV_FB_USED": "nvidia_memory_used",
@@ -59,10 +68,10 @@ DCGM_TO_FIELD_MAPPING = {
 # - field_name: Corresponds to TelemetryMetrics model field name
 # - unit_enum: MetricUnitT enum (use .value in exporters to get string)
 GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
-    ("NVIDIA GPU Power Usage", "nvidia_power_usage", PowerMetricUnit.WATT),
+    ("NVIDIA GPU Power Usage", NVIDIA_POWER_USAGE_FIELD, PowerMetricUnit.WATT),
     (
         "NVIDIA Energy Consumption",
-        "nvidia_energy_consumption",
+        NVIDIA_ENERGY_CONSUMPTION_FIELD,
         EnergyMetricUnit.MEGAJOULE,
     ),
     ("NVIDIA GPU Utilization", "nvidia_gpu_utilization", GenericMetricUnit.PERCENT),
@@ -118,7 +127,7 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
 # These metrics accumulate over time (e.g., total energy consumed since boot),
 # so we compute the delta between baseline and final values rather than statistics.
 GPU_TELEMETRY_COUNTER_METRICS: set[str] = {
-    "nvidia_energy_consumption",
+    NVIDIA_ENERGY_CONSUMPTION_FIELD,
     "nvidia_xid_errors",
     "nvidia_power_violation",
     "amd_energy_consumption",
