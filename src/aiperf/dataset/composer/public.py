@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-import inspect
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.models import Conversation
@@ -97,7 +96,6 @@ class PublicDatasetComposer(BaseDatasetComposer):
             "image_column": loader_metadata.image_column,
             "video_column": loader_metadata.video_column,
             "audio_column": loader_metadata.audio_column,
-            "category": loader_metadata.category,
             "prompt_template": loader_metadata.prompt_template,
         }
         kwargs.update({k: v for k, v in optional_fields.items() if v is not None})
@@ -122,27 +120,3 @@ class PublicDatasetComposer(BaseDatasetComposer):
             kwargs["streaming"] = loader_metadata.streaming
 
         return kwargs
-
-    @staticmethod
-    def _loader_accepts_kwarg(loader_class: type, name: str) -> bool:
-        """Return True when ``name`` is an explicitly declared parameter of
-        ``loader_class.__init__`` (or any class in its MRO before ``BaseMixin``).
-
-        ``**kwargs`` does not count as acceptance — the silent-swallow chain
-        through ``BaseMixin.__init__`` is exactly what this check exists to
-        catch.
-        """
-        for klass in loader_class.__mro__:
-            if klass.__name__ == "BaseMixin":
-                break
-            try:
-                params = inspect.signature(klass.__init__).parameters
-            except (TypeError, ValueError):
-                continue
-            param = params.get(name)
-            if param is not None and param.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            ):
-                return True
-        return False

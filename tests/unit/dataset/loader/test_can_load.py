@@ -11,7 +11,25 @@ from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
+from aiperf.dataset.loader.speed_bench import (
+    SpeedBenchLoader,
+    SpeedBenchQualitativeLoader,
+    SpeedBenchRow,
+    SpeedBenchThroughput1KLoader,
+    SpeedBenchThroughput2KLoader,
+    SpeedBenchThroughput8KLoader,
+    SpeedBenchThroughput16KLoader,
+    SpeedBenchThroughput32KLoader,
+)
 from aiperf.plugin.enums import CustomDatasetType
+
+
+def _speed_bench_probe(category: str = "coding") -> dict:
+    return {
+        "question_id": "speed-coding-1".ljust(32, "0"),
+        "category": category,
+        "messages": [{"role": "user", "content": "Implement binary search."}],
+    }
 
 
 class TestSingleTurnCanLoad:
@@ -67,6 +85,120 @@ class TestMultiTurnCanLoad:
     def test_can_load(self, data, expected):
         """Test various data formats for MultiTurn pydantic validation."""
         assert MultiTurnDatasetLoader.can_load(data) is expected
+
+
+class TestSpeedBenchCanLoad:
+    """Tests for SpeedBenchLoader.can_load() method."""
+
+    @pytest.mark.parametrize(
+        "data,expected",
+        [
+            param(
+                {
+                    "question_id": "speed-coding-1".ljust(32, "0"),
+                    "category": "coding",
+                    "messages": [
+                        {"role": "user", "content": "Implement binary search."}
+                    ],
+                },
+                True,
+                id="speed_bench_messages",
+            ),
+            param(
+                {
+                    "question_id": "speed-chat-1".ljust(32, "0"),
+                    "category": "qa",
+                    "messages": [
+                        {"role": "system", "content": "Answer tersely."},
+                        {"role": "user", "content": "What is Python?"},
+                    ],
+                },
+                True,
+                id="multiple_messages",
+            ),
+            param(
+                {"turns": [{"text": "Turn 1"}]},
+                False,
+                id="generic_multi_turn",
+            ),
+            param(
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "category": "coding",
+                    "turns": ["old"],
+                },
+                False,
+                id="old_turns_shape",
+            ),
+            param(
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                False,
+                id="missing_category",
+            ),
+            param(
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "category": "coding",
+                    "messages": [],
+                },
+                False,
+                id="empty_messages",
+            ),
+            param(
+                {
+                    "question_id": "q1".ljust(32, "0"),
+                    "category": "coding",
+                    "messages": [
+                        {"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}
+                    ],
+                },
+                False,
+                id="turns_placeholder",
+            ),
+            param(
+                {
+                    "question_id": "too-short",
+                    "category": "coding",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                False,
+                id="question_id_too_short",
+            ),
+            param(None, False, id="none_data"),
+        ],
+    )
+    def test_can_load(self, data, expected):
+        assert SpeedBenchLoader.can_load(data) is expected
+
+    @pytest.mark.parametrize(
+        "loader,filename",
+        [
+            param(SpeedBenchQualitativeLoader, "qualitative.jsonl", id="qualitative"),
+            param(SpeedBenchThroughput1KLoader, "throughput_1k.jsonl", id="throughput_1k"),
+            param(SpeedBenchThroughput2KLoader, "throughput_2k.jsonl", id="throughput_2k"),
+            param(SpeedBenchThroughput8KLoader, "throughput_8k.jsonl", id="throughput_8k"),
+            param(SpeedBenchThroughput16KLoader, "throughput_16k.jsonl", id="throughput_16k"),
+            param(SpeedBenchThroughput32KLoader, "throughput_32k.jsonl", id="throughput_32k"),
+        ],
+    )  # fmt: skip
+    def test_split_loaders_match_expected_filename(self, loader, filename):
+        assert loader.can_load(_speed_bench_probe(), filename=Path(filename)) is True
+
+    @pytest.mark.parametrize(
+        "loader",
+        [
+            param(SpeedBenchQualitativeLoader, id="qualitative"),
+            param(SpeedBenchThroughput1KLoader, id="throughput_1k"),
+        ],
+    )  # fmt: skip
+    def test_split_loaders_reject_missing_or_wrong_filename(self, loader):
+        data = _speed_bench_probe()
+
+        assert loader.can_load(data) is False
+        assert loader.can_load(data, filename=Path("other.jsonl")) is False
 
 
 class TestRandomPoolCanLoad:
@@ -143,6 +275,7 @@ class TestMooncakeTraceCanLoad:
             param({"text_input": "Hello world"}, True, id="text_input_only"),
             param({"timestamp": 1000, "session_id": "abc"}, False, id="no_required_fields"),
             param({"output_length": 50}, False, id="only_output_length"),
+            param(_speed_bench_probe(), False, id="speed_bench_row"),
             param(None, False, id="none_data"),
         ],
     )  # fmt: skip

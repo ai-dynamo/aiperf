@@ -59,6 +59,24 @@ Where `{ISL}` is one of: `1k`, `2k`, `8k`, `16k`, `32k`.
 
 ---
 
+## Prepare the Dataset
+
+NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agreement](https://huggingface.co/datasets/nvidia/SPEED-Bench/blob/main/License.pdf). For each dataset a user elects to use, the user is responsible for checking if the dataset license is fit for the intended purpose. The prepare data script below automatically fetches data from all the source datasets.
+
+You should first download and prepare the dataset using the following one liner:
+
+```bash
+SPEED_BENCH_DIR="./datasets/speed-bench"
+curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py | python3 - --output_dir $SPEED_BENCH_DIR
+```
+
+This will download all splits into the working directory as JSONL files. Other supported options of the prepare script:
+
+* `--config`: select which config to prepare, can be one of the splits in the dataset (e.g., `qualitative`, `throughput_2k`) or `all` to prepare all of the configs.
+* `--output_dir`: select different output directory to download the dataset to.
+
+---
+
 ## Start a Server with Speculative Decoding
 
 Launch an inference server with speculative decoding enabled. For example, with vLLM:
@@ -66,8 +84,7 @@ Launch an inference server with speculative decoding enabled. For example, with 
 ```bash
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model meta-llama/Llama-3.1-8B-Instruct \
-  --speculative-model meta-llama/Llama-3.2-1B-Instruct \
-  --num-speculative-tokens 5
+  --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 5, "method": "draft_model"}'
 ```
 
 Verify the server is ready:
@@ -99,11 +116,12 @@ For standard (non-reasoning) models, use `temperature=0` and a 4K output length 
 
 ```bash
 aiperf profile \
-    --model meta/llama-3.1-8b-instruct \
+    --model meta-llama/Llama-3.1-8B-Instruct\
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --public-dataset speed_bench_coding \
+    --custom-dataset-type speed_bench_coding \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --osl 4096 \
     --extra-inputs temperature:0 \
     --concurrency 16
@@ -129,7 +147,8 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --public-dataset speed_bench_coding \
+    --custom-dataset-type speed_bench_coding \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --osl 4096 \
     --extra-inputs temperature:0 \
@@ -152,7 +171,8 @@ for cat in $CATEGORIES; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --public-dataset "speed_bench_${cat}" \
+      --custom-dataset-type speed_bench_${cat} \
+      --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
       --server-metrics http://localhost:8000/metrics \
       --osl 4096 \
       --extra-inputs temperature:0 \
@@ -199,7 +219,8 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --public-dataset speed_bench_qualitative \
+    --custom-dataset-type speed_bench_qualitative \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 16
 ```
@@ -216,7 +237,8 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --public-dataset speed_bench_throughput_1k \
+    --custom-dataset-type speed_bench_throughput_1k \
+    --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 64 \
     --benchmark-duration 120
@@ -236,7 +258,8 @@ for tier in low_entropy mixed high_entropy; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --public-dataset "speed_bench_throughput_1k_${tier}" \
+      --custom-dataset-type "speed_bench_throughput_1k_${tier}" \
+      --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
       --server-metrics http://localhost:8000/metrics \
       --concurrency 64 \
       --benchmark-duration 60
@@ -255,30 +278,8 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --public-dataset speed_bench_qualitative \
+    --custom-dataset-type speed_bench_qualitative \
+    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
     --no-server-metrics \
     --concurrency 16
 ```
-
----
-
-## Pre-download Dataset for Offline Use
-
-AIPerf automatically downloads and caches the dataset on first use. To pre-download for container builds or air-gapped environments:
-
-```bash
-huggingface-cli download nvidia/SPEED-Bench --repo-type dataset
-```
-
-Or selectively download specific splits:
-
-```python
-from datasets import load_dataset
-
-for subset in ["qualitative", "throughput_1k", "throughput_2k",
-               "throughput_8k", "throughput_16k", "throughput_32k"]:
-    load_dataset("nvidia/SPEED-Bench", name=subset, split="test",
-                 trust_remote_code=False)
-```
-
-Set `HF_HOME` to control the cache location (e.g., `ENV HF_HOME=/opt/hf_cache` in a Dockerfile).

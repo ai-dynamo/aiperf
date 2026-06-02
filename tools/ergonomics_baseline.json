@@ -273,6 +273,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/plugin/schema/schemas.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/post_processors/otel_metrics_results_processor.py",
       ""
     ],

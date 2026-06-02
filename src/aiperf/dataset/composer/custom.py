@@ -281,7 +281,18 @@ class CustomDatasetComposer(BaseDatasetComposer):
             # own default.
             kwargs["num_conversations"] = self._file_dataset.entries
 
+        if loader_metadata.category is not None:
+            kwargs["category"] = loader_metadata.category
+
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
+
+        if loader_metadata.multi_turn:
+            if not self._loader_accepts_kwarg(LoaderClass, "multi_turn"):
+                raise ValueError(
+                    f"Loader {LoaderClass.__name__} does not support the 'multi_turn' parameter."
+                )
+            kwargs["multi_turn"] = loader_metadata.multi_turn
+
         if self._inline_records is not None:
             self.loader = LoaderClass(
                 inline_records=self._inline_records,
