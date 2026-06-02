@@ -1852,6 +1852,44 @@ public_dataset_loader:
       default_block_size: 64
       default_prompt_corpus: coding
 
+  semianalysis_cc_traces_weka_with_subagents_060226:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 variant — hosted on
+      HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060226 (225
+      traces, public, no auth). v6-only + CC ≥ 2.1.139 + max-parallel-subagents
+      ≤ 5, otherwise same filter stack as the 052726 with-subagents corpus
+      (≥20 main-agent turns, classifier calls excluded, exact-duplicate rows
+      deduped). Newer Claude Code CLI versions, fresher recording window.
+      Default for non-DSv4 agentic recipes; DSv4 stays on the 052726 variant
+      for continuity with prior baselines.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060226
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060226
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_060226_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents v6 256k-capped variant —
+      hosted on HuggingFace as semianalysisai/cc-traces-weka-with-subagents-060226-256k
+      (225 traces, public, no auth). Derived from the 060226 with-subagents
+      parent by dropping any request whose in+out exceeds 256,000 proxy-
+      tokenizer tokens and reshifting surviving timelines so think-time pacing
+      is preserved. Designed for replay against servers configured with
+      max_model_len ≈ 256k where the unfiltered with-subagents corpus would
+      have requests rejected.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_060226_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-060226-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
   weka_hf:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
     description: |
