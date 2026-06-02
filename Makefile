@@ -307,7 +307,7 @@ component-integration-tests-verbose test-component-integration-verbose: #? run c
 	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not stress and not performance and not slow' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
 
-test-fern-docs: #? validate Fern documentation (check, strict check, dev server).
+test-fern-docs: #? validate Fern documentation (check, strict broken-link + broken-links checks, dev server).
 	@printf "$(bold)$(blue)Running Fern documentation checks...$(reset)\n"
 	$(activate_venv) && pytest tests/unit/fern/ -m fern -v --tb=short $(args)
 	@printf "$(bold)$(green)Fern documentation checks passed!$(reset)\n"
