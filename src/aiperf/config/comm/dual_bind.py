@@ -5,12 +5,12 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, ClassVar
 
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 from typing_extensions import Self
 
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
 from aiperf.config.comm.ipc import (
-    _validate_no_port_collisions,
+    _resolve_collision_salt,
     build_socket_address,
 )
 from aiperf.plugin.enums import CommunicationBackend
@@ -64,6 +64,11 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     enable_control: bool = Field(default=False, description="Enable control socket")
     enable_capture: bool = Field(default=False, description="Enable capture socket")
 
+    # Salt propagated from parent ``ZMQDualBindConfig`` when collision-retry
+    # has had to rotate. Mirrors the ``ZMQIPCProxyConfig._collision_salt``
+    # pattern — see ``ipc.py`` for the rationale.
+    _collision_salt: str = PrivateAttr(default="")
+
     def _socket_addr(self, endpoint: str) -> str:
         """Build a ZMQ socket address for the given endpoint.
 
@@ -72,7 +77,9 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
         assume an ``ipc://`` prefix; see ``build_socket_address`` for the
         derivation.
         """
-        return build_socket_address(self.ipc_path, f"{self.name}_{endpoint}.ipc")
+        return build_socket_address(
+            self.ipc_path, f"{self.name}_{endpoint}.ipc", self._collision_salt
+        )
 
     def _tcp_addr(self, port: int) -> str:
         """Build a TCP address for the given port (bind-side)."""
@@ -156,10 +163,15 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
             self.raw_inference_proxy_config,
         ]
 
+    # Salt propagated to every proxy when collision-retry rotates. See
+    # ``ZMQIPCConfig._collision_salt`` for the full rationale.
+    _collision_salt: str = PrivateAttr(default="")
+
     @model_validator(mode="after")
     def validate_paths(self) -> Self:
-        """Set default IPC path, propagate to proxy configs, and check that
-        Windows TCP-fallback ports don't collide (no-op on POSIX).
+        """Set default IPC path, propagate settings to proxy configs, and
+        resolve any Windows TCP-fallback port collision via salt rotation.
+        No-op past the path-defaulting on POSIX.
         """
         if self.ipc_path is None:
             self.ipc_path = Path(tempfile.mkdtemp()) / "aiperf"
@@ -168,32 +180,40 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
                 proxy_config.ipc_path = self.ipc_path
             proxy_config.tcp_host = self.tcp_host
 
-        # Detect Windows TCP-fallback port collisions at config time. Same
-        # rationale as ZMQIPCConfig: dual-bind also derives Windows IPC ports
-        # from hashed paths, so the birthday-paradox collision risk applies
-        # here too. No-op on POSIX.
-        _validate_no_port_collisions(self._collect_local_addresses())
+        # Find a collision-free salt and propagate it to every proxy so all
+        # endpoints share the same hash input. No-op on POSIX; the retry
+        # loop only fires on the ~0.56% Windows birthday-paradox draws.
+        self._collision_salt = _resolve_collision_salt(self._addresses_with_salt)
+        for proxy_config in self.proxy_configs:
+            proxy_config._collision_salt = self._collision_salt
         return self
 
-    def _collect_local_addresses(self) -> list[tuple[str, str]]:
-        """Collect ``(label, address)`` pairs for every local IPC endpoint
-        the dual-bind config derives, for collision checking. Excludes the
-        TCP bind-side addresses since those have explicit user-chosen ports
-        and don't share the hash window."""
+    def _addresses_with_salt(self, salt: str) -> list[tuple[str, str]]:
+        """Compute every local IPC endpoint's address using the given salt,
+        for the collision-retry loop. Excludes TCP bind-side addresses
+        (those use explicit user-chosen ports and don't share the hash
+        window).
+        """
+        ipc_filename = lambda fname: build_socket_address(  # noqa: E731
+            self.ipc_path, fname, salt
+        )
         pairs: list[tuple[str, str]] = [
-            ("records_push_pull", self.records_push_pull_address),
-            ("credit_router", self.credit_router_address),
-            ("credit_return_router", self.credit_return_router_address),
-            ("control", self.control_address),
-            ("group_lifecycle", self.group_lifecycle_address),
+            ("records_push_pull", ipc_filename("records_push_pull.ipc")),
+            ("credit_router", ipc_filename("credit_router.ipc")),
+            ("credit_return_router", ipc_filename("credit_return_router.ipc")),
+            ("control", ipc_filename("control.ipc")),
+            ("group_lifecycle", ipc_filename("group_lifecycle.ipc")),
         ]
         for proxy in self.proxy_configs:
-            pairs.append((f"{proxy.name}_frontend", proxy.frontend_address))
-            pairs.append((f"{proxy.name}_backend", proxy.backend_address))
-            if proxy.control_address is not None:
-                pairs.append((f"{proxy.name}_control", proxy.control_address))
-            if proxy.capture_address is not None:
-                pairs.append((f"{proxy.name}_capture", proxy.capture_address))
+            proxy_addr = lambda endpoint, p=proxy: build_socket_address(  # noqa: E731
+                p.ipc_path, f"{p.name}_{endpoint}.ipc", salt
+            )
+            pairs.append((f"{proxy.name}_frontend", proxy_addr("frontend")))
+            pairs.append((f"{proxy.name}_backend", proxy_addr("backend")))
+            if proxy.enable_control:
+                pairs.append((f"{proxy.name}_control", proxy_addr("control")))
+            if proxy.enable_capture:
+                pairs.append((f"{proxy.name}_capture", proxy_addr("capture")))
         return pairs
 
     ipc_path: Annotated[
@@ -278,7 +298,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
                 f"Dual-bind IPC address for endpoint {name!r} requires comm.ipc_path; "
                 "set comm.ipc_path or configure controller_host for TCP addresses."
             )
-        return build_socket_address(self.ipc_path, f"{name}.ipc")
+        return build_socket_address(self.ipc_path, f"{name}.ipc", self._collision_salt)
 
     @property
     def records_push_pull_address(self) -> str:

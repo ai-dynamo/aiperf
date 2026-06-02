@@ -4,15 +4,28 @@ import asyncio
 import multiprocessing
 import uuid
 from multiprocessing import Process
-from multiprocessing.context import ForkProcess, SpawnProcess
+from multiprocessing.context import SpawnProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.types import ServiceTypeT
+
+if IS_WINDOWS:
+    # Windows multiprocessing has no fork context — ``ForkProcess`` is
+    # undefined on ``multiprocessing.context`` there. Define a stub so the
+    # type union below evaluates at class-definition time without the
+    # import raising. The stub is never instantiated on Windows because
+    # spawn is the only start method available there; it exists purely
+    # so Pydantic's annotation resolution doesn't NameError.
+    class ForkProcess:  # type: ignore[no-redef]
+        pass
+else:
+    from multiprocessing.context import ForkProcess
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 

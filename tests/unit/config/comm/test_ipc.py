@@ -274,3 +274,85 @@ class TestPortCollisionValidation:
                     ("b", "tcp://127.0.0.1:30000"),
                 ]
             )
+
+
+class TestResolveCollisionSalt:
+    """Pins the salt-retry behavior: ``_resolve_collision_salt`` rotates the
+    salt until ``compute_addresses(salt)`` has no port collision, then
+    returns that salt. This is what keeps Windows CI from flaking on the
+    ~0.56% birthday-paradox collision rate.
+    """
+
+    def test_first_salt_wins_when_no_collision(self) -> None:
+        """If the default-zero salt already has no collision, return ``""``
+        immediately — don't waste retries when the first draw is good."""
+        from aiperf.config.comm.ipc import _resolve_collision_salt
+
+        def compute(salt: str) -> list[tuple[str, str]]:
+            return [
+                ("a", "tcp://127.0.0.1:30000"),
+                ("b", "tcp://127.0.0.1:30001"),
+            ]
+
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            assert _resolve_collision_salt(compute) == ""
+
+    def test_retries_until_no_collision(self) -> None:
+        """If salts ``""`` and ``":1"`` collide but ``":2"`` doesn't, the
+        loop returns ``":2"``. Proves the retry actually probes different
+        salts rather than blindly returning the first one."""
+        from aiperf.config.comm.ipc import _resolve_collision_salt
+
+        attempts: list[str] = []
+
+        def compute(salt: str) -> list[tuple[str, str]]:
+            attempts.append(salt)
+            if salt in ("", ":1"):
+                return [
+                    ("a", "tcp://127.0.0.1:30000"),
+                    ("b", "tcp://127.0.0.1:30000"),
+                ]
+            return [
+                ("a", "tcp://127.0.0.1:30000"),
+                ("b", "tcp://127.0.0.1:30001"),
+            ]
+
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            assert _resolve_collision_salt(compute) == ":2"
+        assert attempts == ["", ":1", ":2"]
+
+    def test_posix_returns_empty_salt_no_iteration(self) -> None:
+        """On POSIX salt rotation is irrelevant — ipc:// addresses cannot
+        collide on a port. Return ``""`` immediately without calling
+        ``compute_addresses`` even once (cheap fast path)."""
+        from aiperf.config.comm.ipc import _resolve_collision_salt
+
+        calls = 0
+
+        def compute(salt: str) -> list[tuple[str, str]]:
+            nonlocal calls
+            calls += 1
+            return [("a", "tcp://127.0.0.1:30000"), ("b", "tcp://127.0.0.1:30000")]
+
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", False):
+            assert _resolve_collision_salt(compute) == ""
+        assert calls == 0
+
+    def test_exhausting_retries_raises(self) -> None:
+        """If every salt attempt collides (statistically impossible in
+        practice, but possible if a caller bug means salt isn't actually
+        in the hash input), raise so the failure is loud rather than
+        silently shipping colliding ports."""
+        from aiperf.config.comm.ipc import _resolve_collision_salt
+
+        def compute(salt: str) -> list[tuple[str, str]]:
+            return [
+                ("a", "tcp://127.0.0.1:30000"),
+                ("b", "tcp://127.0.0.1:30000"),
+            ]
+
+        with (
+            patch("aiperf.config.comm.ipc.IS_WINDOWS", True),
+            pytest.raises(ValueError, match=r"port collision"),
+        ):
+            _resolve_collision_salt(compute)
