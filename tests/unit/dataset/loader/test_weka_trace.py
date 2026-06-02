@@ -228,6 +228,7 @@ def test_subagent_produces_child_conversation_and_branch_plus_prereq(monkeypatch
     branch = parent.branches[0]
     assert branch.mode == ConversationBranchMode.SPAWN
     assert branch.child_conversation_ids == ["trace_sa::sa:agent_001"]
+    assert branch.start_timestamp_ms == pytest.approx(2000.0)
     assert parent.turns[0].branch_ids == [branch.branch_id]
 
     # Parent's next turn carries a SPAWN_JOIN prereq referencing the branch.
@@ -237,6 +238,9 @@ def test_subagent_produces_child_conversation_and_branch_plus_prereq(monkeypatch
     assert p.branch_id == branch.branch_id
 
     # Child conversation has one inner turn.
+    assert child.is_root is False
+    assert child.agent_depth == 1
+    assert child.parent_conversation_id == "trace_sa"
     assert len(child.turns) == 1
     assert child.turns[0].model == "claude-haiku-4-5-20251001"
 

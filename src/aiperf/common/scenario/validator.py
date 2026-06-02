@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _AGENTX_SCENARIO = "inferencex-agentx-mvp"
-_AGENTX_WEKA_HF_REPO = "semianalysisai/cc-traces-weka-with-subagents-051926"
+_AGENTX_WEKA_HF_REPO = "semianalysisai/cc-traces-weka-with-subagents-052726"
 
 
 @dataclass

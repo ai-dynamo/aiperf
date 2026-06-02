@@ -60,12 +60,14 @@ class _WekaBranchDict(TypedDict):
     is_background: bool
     preceding_turn: int
     following_turn: int | None
+    start_timestamp: float | None
 
 
 class _WekaChildDict(TypedDict):
     """One reconstructed subagent conversation."""
 
     session_id: str
+    parent_conversation_id: str
     turns: list[_WekaParentTurnDict]
     is_root: bool
     agent_depth: int
@@ -117,6 +119,8 @@ class _WekaSubagentMarkerPayload(TypedDict):
     child_session_ids: list[str]
     sa_end_seconds: float
     effective_sa_end_seconds: NotRequired[float]
+    t: float
+    effective_t: NotRequired[float]
 
 
 class _WekaParentPayload(TypedDict):
@@ -490,6 +494,8 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "is_background": is_background,
                 "preceding_turn": preceding,
                 "following_turn": join_turn,
+                "start_timestamp": min(e.get("effective_t", e["t"]) for e in entries)
+                * 1000.0,
             }
         )
 
@@ -568,6 +574,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         children_out.append(
             {
                 "session_id": cp["session_id"],
+                "parent_conversation_id": cp["parent_trace_id"],
                 "turns": child_turns,
                 "is_root": False,
                 "agent_depth": 1,

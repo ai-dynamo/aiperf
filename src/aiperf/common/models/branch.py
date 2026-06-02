@@ -44,6 +44,15 @@ class ConversationBranchInfo(AIPerfBaseModel):
             "restricted to background SPAWN branches on root conversations."
         ),
     )
+    start_timestamp_ms: int | float | None = Field(
+        default=None,
+        description=(
+            "Absolute wall-clock timestamp, in milliseconds, when this branch's "
+            "children entered the live trace timeline. Used by agentic replay "
+            "to reconstruct in-flight subagents when sampling a mid-trace "
+            "snapshot."
+        ),
+    )
 
     @field_validator("is_background")
     @classmethod

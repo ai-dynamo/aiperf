@@ -26,7 +26,9 @@ from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
+    ConversationState,
     Trajectory,
+    TrajectorySnapshot,
     TrajectorySource,
 )
 
@@ -105,6 +107,9 @@ def _make_credit(
     turn_index: int,
     num_turns: int,
     phase: CreditPhase = CreditPhase.PROFILING,
+    agent_depth: int = 0,
+    parent_correlation_id: str | None = None,
+    branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
 ) -> Credit:
     return Credit(
         id=0,
@@ -114,7 +119,9 @@ def _make_credit(
         turn_index=turn_index,
         num_turns=num_turns,
         issued_at_ns=0,
-        branch_mode=ConversationBranchMode.FORK,
+        agent_depth=agent_depth,
+        parent_correlation_id=parent_correlation_id,
+        branch_mode=branch_mode,
     )
 
 
@@ -206,6 +213,57 @@ async def test_warmup_dispatch_uses_start_turn_index():
     await strategy.setup_phase()
     await strategy.execute_phase()
     assert sorted(issued_turn_indices) == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_warmup_snapshot_subagent_counts_toward_phase_target():
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=1,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=1,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="child",
+        next_turn_index=0,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(parent_state, child_state),
+            ),
+        )
+    ]
+    issued = []
+
+    async def capture(turn):
+        issued.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        issuer=issuer,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert len(issued) == 1
+    assert issued[0].conversation_id == "trace_1"
+    assert issued[0].agent_depth == 1
+    assert issued[0].counts_toward_phase_target is True
 
 
 @pytest.mark.asyncio
@@ -301,6 +359,119 @@ async def test_profiling_phase_resumes_trajectory_at_k_plus_one():
     await strategy.execute_phase()
 
     assert sorted(captured) == [("trace_0", 1), ("trace_1", 3)]
+
+
+@pytest.mark.asyncio
+async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=12000.0),
+                    TurnMetadata(timestamp_ms=20000.0),
+                ],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::sa:0",
+                turns=[
+                    TurnMetadata(timestamp_ms=13000.0),
+                    TurnMetadata(timestamp_ms=14000.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_0::sa:0",
+        x_correlation_id="child",
+        next_turn_index=1,
+        next_dispatch_offset_ms=500.0,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        join_target_turn_index=2,
+        branch_id="b0",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=13500.0,
+            states=(parent_state, child_state),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    issued: list[tuple[str, int, int, str | None]] = []
+
+    async def capture(turn):
+        issued.append(
+            (
+                turn.conversation_id,
+                turn.turn_index,
+                turn.agent_depth,
+                turn.parent_correlation_id,
+            )
+        )
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda _delay, coro: asyncio.create_task(
+        coro
+    )
+    branch_orchestrator = MagicMock()
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+        branch_orchestrator=branch_orchestrator,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    branch_orchestrator.seed_snapshot.assert_called_once()
+    scheduler.schedule_later.assert_called_once()
+    await asyncio.sleep(0)
+    assert issued == [
+        (
+            "trace_0::sa:0",
+            1,
+            1,
+            branch_orchestrator.seed_snapshot.call_args.args[0][
+                1
+            ].parent_correlation_id,
+        )
+    ]
+    seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
+    assert seeded_states[0].waiting_on_children is True
+    assert seeded_states[1].parent_correlation_id == seeded_states[0].x_correlation_id
 
 
 @pytest.mark.asyncio
@@ -471,6 +642,38 @@ async def test_handle_credit_return_recycles_on_final_turn():
     while not strategy._recycle_queue.empty():
         remaining.append(strategy._recycle_queue.get_nowait())
     assert remaining == ["trace_1", "trace_2", "trace_0"]
+
+
+@pytest.mark.asyncio
+async def test_handle_credit_return_does_not_recycle_final_child_turn():
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    issuer = AsyncMock()
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=2,
+        turns_per_trace=3,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    strategy._correlation_to_lane["child-corr"] = 0
+    strategy._session_marker["child-corr"] = None
+    issuer.issue_credit.reset_mock()
+
+    final_child_credit = _make_credit(
+        conversation_id="trace_0::sa:0",
+        x_correlation_id="child-corr",
+        turn_index=1,
+        num_turns=2,
+        agent_depth=1,
+        parent_correlation_id="parent-corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    await strategy.handle_credit_return(final_child_credit)
+
+    assert issuer.issue_credit.await_count == 0
+    assert "child-corr" not in strategy._correlation_to_lane
+    assert "child-corr" not in strategy._session_marker
 
 
 @pytest.mark.asyncio

@@ -185,10 +185,16 @@ class TestServerMetricsResultsProcessor:
     async def test_realtime_snapshot_uses_sglang_retracted_total_counter(
         self, mock_user_config: UserConfig
     ) -> None:
+        # SGLang exposes preemptions as `sglang:num_retracted_reqs_total`
+        # (counter). `prometheus_client.parser.text_string_to_metric_families`
+        # strips `_total` from counter family names before the data collector
+        # stores them, so aiperf looks the metric up by the stripped form. The
+        # COUNTER type filter in `_counter_delta` keeps it from picking up
+        # SGLang's gauge of the same stripped name in clusters that emit both.
         processor = ServerMetricsAccumulator(mock_user_config)
-        for timestamp_ns, gauge_value, counter_value in (
-            (1_000_000_000, 5.0, 10.0),
-            (2_000_000_000, 3.0, 12.0),
+        for timestamp_ns, counter_value in (
+            (1_000_000_000, 10.0),
+            (2_000_000_000, 12.0),
         ):
             await processor.process_server_metrics_record(
                 ServerMetricsRecord(
@@ -196,11 +202,6 @@ class TestServerMetricsResultsProcessor:
                     timestamp_ns=timestamp_ns,
                     metrics={
                         "sglang:num_retracted_reqs": MetricFamily(
-                            type=PrometheusMetricType.GAUGE,
-                            description="Current retracted requests.",
-                            samples=[MetricSample(value=gauge_value)],
-                        ),
-                        "sglang:num_retracted_requests_total": MetricFamily(
                             type=PrometheusMetricType.COUNTER,
                             description="Total retracted requests.",
                             samples=[MetricSample(value=counter_value)],
@@ -212,6 +213,201 @@ class TestServerMetricsResultsProcessor:
         snapshot = processor.realtime_snapshot()
 
         assert snapshot["num_preemptions"] == 2.0
+
+    async def test_realtime_snapshot_uses_sglang_fallbacks_when_vllm_absent(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        # SGLang servers emit `sglang:*` metric names; the realtime snapshot
+        # should populate the same fields as for vLLM via per-field fallbacks.
+        # Counter pair `cached_tokens_total`/`prompt_tokens_total` drives the
+        # cumulative prefix-cache hit rate (and the uncached delta), matching
+        # vLLM's `prefix_cache_hits`/`prefix_cache_queries` shape — preferred
+        # over the per-batch `sglang:cache_hit_rate` gauge because that gauge
+        # reads 0 between requests.
+        processor = ServerMetricsAccumulator(mock_user_config)
+        for timestamp_ns, prompt_total, cached_total, generation_total in (
+            (1_000_000_000, 0.0, 0.0, 0.0),
+            (2_000_000_000, 1_000_000.0, 700_000.0, 5_000.0),
+        ):
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://127.0.0.1:8000/metrics",
+                    timestamp_ns=timestamp_ns,
+                    metrics={
+                        "sglang:cache_hit_rate": MetricFamily(
+                            type=PrometheusMetricType.GAUGE,
+                            description="Per-batch prefix cache hit rate (0-1).",
+                            samples=[MetricSample(value=0.0)],
+                        ),
+                        "sglang:token_usage": MetricFamily(
+                            type=PrometheusMetricType.GAUGE,
+                            description="KV cache token usage (0-1).",
+                            samples=[MetricSample(value=0.88)],
+                        ),
+                        "sglang:num_running_reqs": MetricFamily(
+                            type=PrometheusMetricType.GAUGE,
+                            description="Running requests.",
+                            samples=[MetricSample(value=6.0)],
+                        ),
+                        "sglang:num_queue_reqs": MetricFamily(
+                            type=PrometheusMetricType.GAUGE,
+                            description="Queued requests.",
+                            samples=[MetricSample(value=1.0)],
+                        ),
+                        # Counter family names are stored without `_total`
+                        # because `prometheus_client.parser` strips that suffix
+                        # before the data collector sees them. Look up by the
+                        # parser-stripped form.
+                        "sglang:prompt_tokens": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Total prefill tokens.",
+                            samples=[MetricSample(value=prompt_total)],
+                        ),
+                        "sglang:cached_tokens": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Total prefix-cached prefill tokens.",
+                            samples=[MetricSample(value=cached_total)],
+                        ),
+                        "sglang:generation_tokens": MetricFamily(
+                            type=PrometheusMetricType.COUNTER,
+                            description="Total generation tokens.",
+                            samples=[MetricSample(value=generation_total)],
+                        ),
+                    },
+                )
+            )
+
+        snapshot = processor.realtime_snapshot()
+
+        # Counter pair wins over the gauge: 700k cached / 1M prompt = 70%.
+        assert snapshot["prefix_cache_hit_rate"] == pytest.approx(70.0)
+        assert snapshot["unique_input_tokens_srv"] == pytest.approx(300_000.0)
+        assert snapshot["kv_cache_usage_pct"] == pytest.approx(88.0)
+        assert snapshot["num_running"] == 6.0
+        assert snapshot["num_waiting"] == 1.0
+        # Counter rate over the 1s window between samples.
+        assert snapshot["input_token_throughput_srv"] == pytest.approx(1_000_000.0)
+        assert snapshot["output_token_throughput_srv"] == pytest.approx(5_000.0)
+
+    async def test_realtime_snapshot_falls_back_to_sglang_gauge_when_counters_absent(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        # Older SGLang builds emit only the per-batch `cache_hit_rate` gauge
+        # (no `cached_tokens_total` counter). The accumulator should still
+        # populate `prefix_cache_hit_rate` from the gauge, but
+        # `unique_input_tokens_srv` is unrecoverable in that case.
+        processor = ServerMetricsAccumulator(mock_user_config)
+        await processor.process_server_metrics_record(
+            ServerMetricsRecord(
+                endpoint_url="http://127.0.0.1:8000/metrics",
+                timestamp_ns=1_000_000_000,
+                metrics={
+                    "sglang:cache_hit_rate": MetricFamily(
+                        type=PrometheusMetricType.GAUGE,
+                        description="Per-batch prefix cache hit rate.",
+                        samples=[MetricSample(value=0.42)],
+                    ),
+                },
+            )
+        )
+
+        snapshot = processor.realtime_snapshot()
+
+        assert snapshot["prefix_cache_hit_rate"] == pytest.approx(42.0)
+        assert "unique_input_tokens_srv" not in snapshot
+
+    async def test_realtime_snapshot_handles_parser_stripped_total_suffix(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        # Regression test for the `_total` parser-stripping bug. Drives the
+        # accumulator with text routed through the same Prometheus parser the
+        # data collector uses, so any future drift between lookup names and
+        # the parser's family-name convention fails here loudly rather than
+        # silently suppressing the throughput row at runtime. Without the fix,
+        # `_counter_rate("vllm:prompt_tokens_total", ...)` returned None
+        # because the parser had stored the family as "vllm:prompt_tokens".
+        from prometheus_client.parser import text_string_to_metric_families
+
+        text_t1 = """\
+# HELP vllm:prompt_tokens_total Total prompt tokens.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{model_name="m"} 0.0
+# HELP vllm:generation_tokens_total Total generation tokens.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{model_name="m"} 0.0
+"""
+        text_t2 = """\
+# HELP vllm:prompt_tokens_total Total prompt tokens.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{model_name="m"} 1000000.0
+# HELP vllm:generation_tokens_total Total generation tokens.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{model_name="m"} 5000.0
+"""
+
+        def parse(text: str) -> dict[str, MetricFamily]:
+            out: dict[str, MetricFamily] = {}
+            for family in text_string_to_metric_families(text):
+                metric_type = PrometheusMetricType(family.type)
+                samples = [
+                    MetricSample(labels=dict(s.labels) or None, value=s.value)
+                    for s in family.samples
+                ]
+                out[family.name] = MetricFamily(
+                    type=metric_type,
+                    description=family.documentation or "",
+                    samples=samples,
+                )
+            return out
+
+        processor = ServerMetricsAccumulator(mock_user_config)
+        for ts, text in (
+            (1_000_000_000, text_t1),
+            (2_000_000_000, text_t2),
+        ):
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://127.0.0.1:8000/metrics",
+                    timestamp_ns=ts,
+                    metrics=parse(text),
+                )
+            )
+
+        snapshot = processor.realtime_snapshot()
+
+        # Rates over a 1-second window between samples.
+        assert snapshot["input_token_throughput_srv"] == pytest.approx(1_000_000.0)
+        assert snapshot["output_token_throughput_srv"] == pytest.approx(5_000.0)
+
+    async def test_realtime_snapshot_derives_cpu_kv_from_sglang_hicache(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        # SGLang HiCache exposes host-tier capacity as used/total token
+        # gauges only; the ratio is computed here so the field populates
+        # whenever HiCache is active.
+        processor = ServerMetricsAccumulator(mock_user_config)
+        await processor.process_server_metrics_record(
+            ServerMetricsRecord(
+                endpoint_url="http://127.0.0.1:8000/metrics",
+                timestamp_ns=1_000_000_000,
+                metrics={
+                    "sglang:hicache_host_used_tokens": MetricFamily(
+                        type=PrometheusMetricType.GAUGE,
+                        description="Tokens in host KV cache.",
+                        samples=[MetricSample(value=300_000.0)],
+                    ),
+                    "sglang:hicache_host_total_tokens": MetricFamily(
+                        type=PrometheusMetricType.GAUGE,
+                        description="Host KV cache capacity in tokens.",
+                        samples=[MetricSample(value=1_000_000.0)],
+                    ),
+                },
+            )
+        )
+
+        snapshot = processor.realtime_snapshot()
+
+        assert snapshot["cpu_kv_cache_usage_pct"] == pytest.approx(30.0)
 
     async def test_export_results_with_data(
         self,

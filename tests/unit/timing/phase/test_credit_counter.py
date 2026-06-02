@@ -236,6 +236,7 @@ def child_turn(
     num: int = 1,
     corr: str = "x1",
     depth: int = 1,
+    counts_toward_phase_target: bool = False,
 ) -> TurnToSend:
     return TurnToSend(
         conversation_id=conv,
@@ -244,6 +245,7 @@ def child_turn(
         x_correlation_id=corr,
         agent_depth=depth,
         parent_correlation_id="parent-x",
+        counts_toward_phase_target=counts_toward_phase_target,
     )
 
 
@@ -259,9 +261,9 @@ class TestDagChildCounterSplit:
       / ``total_session_turns`` exclude children — they reflect
       sampled-root session lifecycle only. Inflating them would make a
       single-session DAG run report as multi-session.
-    - ``is_final_credit`` is never flipped by children — the phase's
-      "sending complete" signal stays tied to root-plan exhaustion
-      (``--request-count`` / ``--conversation-num``), not wire volume.
+    - Reactive DAG children set ``counts_toward_phase_target=False`` so they
+      cannot flip ``is_final_credit``. Snapshot warmup can still make a
+      subagent state count toward the planned warmup target.
     """
 
     def test_child_increment_sent_bumps_requests_only(self) -> None:
@@ -288,24 +290,48 @@ class TestDagChildCounterSplit:
         assert c.sent_sessions == 1
         assert c.total_session_turns == 2
 
-    def test_child_never_triggers_is_final_credit(self) -> None:
-        """``is_final_credit`` is a root-plan signal. Even if children
-        push ``requests_sent`` past the configured cap, the signal
-        must only flip when a *root* credit exhausts the plan — that's
-        what drives ``freeze_sent_counts`` and the
-        ``all_credits_sent_event``. Children go past the cap via the
-        ``applies_to_dag_children=False`` bypass on
-        ``RequestCountStopCondition``.
+    def test_reactive_child_never_triggers_is_final_credit(self) -> None:
+        """Reactive children are not part of the sampled phase plan.
+
+        Even if they push ``requests_sent`` past the configured cap, the signal
+        must only flip when a target-counted credit exhausts the plan. Reactive
+        children go past the cap via the ``applies_to_dag_children=False``
+        bypass on ``RequestCountStopCondition``.
         """
         c = CreditCounter(cfg(reqs=1))
         _, final_root = c.increment_sent(turn(idx=0))
         assert final_root is True  # root exhausted the plan
 
-        # Children push requests_sent past the cap but must not
+        # Reactive children push requests_sent past the cap but must not
         # re-trigger ``is_final_credit``.
         _, final_child = c.increment_sent(child_turn(conv="child-1", idx=0))
         assert final_child is False
         assert c.requests_sent == 2
+
+    def test_planned_child_can_trigger_is_final_credit(self) -> None:
+        """Snapshot warmup may dispatch a ready subagent as planned work.
+
+        The child still must not inflate session counters, but it must be able
+        to satisfy ``total_expected_requests`` when it is one of the warmup
+        credits counted by ``TrajectorySource.warmup_credit_count``.
+        """
+        c = CreditCounter(cfg(reqs=2))
+        _, final_root = c.increment_sent(turn(idx=0, num=2))
+        assert final_root is False
+
+        _, final_child = c.increment_sent(
+            child_turn(
+                conv="child-1",
+                idx=0,
+                num=3,
+                counts_toward_phase_target=True,
+            )
+        )
+
+        assert final_child is True
+        assert c.requests_sent == 2
+        assert c.sent_sessions == 1
+        assert c.total_session_turns == 2
 
     def test_child_increment_returned_bumps_requests_only(self) -> None:
         c = CreditCounter(cfg(reqs=1))

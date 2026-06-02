@@ -23,6 +23,7 @@ def test_credit_defaults():
     c = _make_credit()
     assert c.agent_depth == 0
     assert c.parent_correlation_id is None
+    assert c.counts_toward_phase_target is True
 
 
 def test_credit_with_depth_and_parent():
@@ -32,10 +33,15 @@ def test_credit_with_depth_and_parent():
 
 
 def test_turn_to_send_propagates_depth_from_previous_credit():
-    prev = _make_credit(agent_depth=2, parent_correlation_id="p")
+    prev = _make_credit(
+        agent_depth=2,
+        parent_correlation_id="p",
+        counts_toward_phase_target=False,
+    )
     tts = TurnToSend.from_previous_credit(prev)
     assert tts.agent_depth == 2
     assert tts.parent_correlation_id == "p"
+    assert tts.counts_toward_phase_target is False
 
 
 def test_turn_to_send_defaults():
@@ -44,3 +50,4 @@ def test_turn_to_send_defaults():
     )
     assert tts.agent_depth == 0
     assert tts.parent_correlation_id is None
+    assert tts.counts_toward_phase_target is True

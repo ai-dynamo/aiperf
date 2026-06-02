@@ -179,36 +179,36 @@ class CreditCounter:
         DAG offspring. They do NOT bump ``_sent_sessions`` or
         ``_total_session_turns`` because they inherit the parent's
         session slot (``CreditIssuer.issue_credit`` skips session-slot
-        acquisition for them). Children also never flip
-        ``is_final_credit`` — the ``TimingStrategy`` loop's "sending
-        complete" signal is root-plan-driven, not wire-volume-driven.
+        acquisition for them).
+
+        ``counts_toward_phase_target`` decides whether a turn can flip
+        ``is_final_credit``. Reactive DAG children set it False because they
+        are spawned after the root plan has been sampled. Snapshot warmup can
+        dispatch subagent states as planned warmup credits, so target
+        membership cannot be inferred from ``agent_depth`` alone.
 
         Lock-free: no async calls.
         """
         credit_index = self._requests_sent
         new_sent_count = self._requests_sent + 1
 
-        if turn_to_send.agent_depth > 0:
-            # Children: bump request count only (observability), leave
-            # session counters alone (slot is inherited), never signal
-            # plan exhaustion.
-            self._requests_sent = new_sent_count
-            return credit_index, False
-
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
 
-        if turn_to_send.turn_index == 0:
+        if turn_to_send.agent_depth == 0 and turn_to_send.turn_index == 0:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns
 
-        is_final_credit = (
-            self._config.total_expected_requests is not None
-            and new_sent_count >= self._config.total_expected_requests
-        ) or (
-            self._config.expected_num_sessions is not None
-            and new_sent_sessions_count >= self._config.expected_num_sessions
-            and new_sent_count >= new_total_session_turns
+        is_final_credit = turn_to_send.counts_toward_phase_target and (
+            (
+                self._config.total_expected_requests is not None
+                and new_sent_count >= self._config.total_expected_requests
+            )
+            or (
+                self._config.expected_num_sessions is not None
+                and new_sent_sessions_count >= self._config.expected_num_sessions
+                and new_sent_count >= new_total_session_turns
+            )
         )
 
         self._requests_sent = new_sent_count

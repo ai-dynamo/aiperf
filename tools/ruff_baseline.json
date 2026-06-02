@@ -1194,11 +1194,6 @@
     ],
     [
       "C901",
-      "src/aiperf/server_metrics/export_stats.py",
-      "_compute_histogram_stats"
-    ],
-    [
-      "C901",
       "src/aiperf/server_metrics/histogram_percentiles.py",
       "_generate_observations_with_sum_constraint"
     ],
@@ -1231,6 +1226,11 @@
       "C901",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._snapshot_for"
     ],
     [
       "C901",
@@ -1401,11 +1401,6 @@
       "PLR0912",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._build_model_map"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_parallel"
     ],
     [
       "PLR0912",
@@ -1751,11 +1746,6 @@
       "PLR0915",
       "src/aiperf/records/records_manager.py",
       "_render_realtime_block"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/server_metrics/export_stats.py",
-      "_compute_histogram_stats"
     ],
     [
       "PLR0915",

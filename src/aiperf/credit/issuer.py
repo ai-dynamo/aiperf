@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from msgspec.structs import replace as _struct_replace
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit, TurnToSend
@@ -255,6 +257,7 @@ class CreditIssuer:
             url_index=url_index,
             agent_depth=turn.agent_depth,
             parent_correlation_id=turn.parent_correlation_id,
+            counts_toward_phase_target=turn.counts_toward_phase_target,
             has_forks=turn.has_forks,
             branch_mode=turn.branch_mode,
             cache_bust_marker=turn.cache_bust_marker,
@@ -307,6 +310,8 @@ class CreditIssuer:
             self._phase, can_proceed_fn
         ):
             return False
+        if turn.counts_toward_phase_target:
+            turn = _struct_replace(turn, counts_toward_phase_target=False)
         await self._issue_credit_internal(turn)
         return True
 

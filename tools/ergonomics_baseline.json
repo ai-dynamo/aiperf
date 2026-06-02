@@ -298,6 +298,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/trajectory_source.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/transports/aiohttp_transport.py",
       ""
     ],
@@ -504,6 +509,11 @@
     [
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_parallel_reconstruction_tasks"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
     [
@@ -515,6 +525,11 @@
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader.convert_to_conversations"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/mmap_cache_lock.py",
+      "acquire_cache_lock"
     ],
     [
       "function-size",
@@ -998,11 +1013,6 @@
     ],
     [
       "function-size",
-      "src/aiperf/server_metrics/accumulator.py",
-      "ServerMetricsAccumulator.realtime_snapshot"
-    ],
-    [
-      "function-size",
       "src/aiperf/server_metrics/csv_exporter.py",
       "ServerMetricsCsvExporter._write_section"
     ],
@@ -1130,6 +1140,11 @@
       "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._snapshot_for"
     ],
     [
       "function-size",

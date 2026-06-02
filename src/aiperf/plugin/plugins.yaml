@@ -1815,8 +1815,8 @@ public_dataset_loader:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
     description: |
       SemiAnalysis Weka cc-traces, with-subagents variant — hosted on HuggingFace
-      as semianalysisai/cc-traces-weka-with-subagents-051926 (219 traces,
-      ~78k requests, public, no auth). v5-only + CC ≥ 2.1.139 filtered with
+      as semianalysisai/cc-traces-weka-with-subagents-052726 (472 traces,
+      public, no auth). v5-only + CC ≥ 2.1.139 filtered with
       WekaSubagentEntry blocks preserved — captures full parent + Task-tool
       sub-agent fan-out structure. ≥20 main-agent turns per trace; non-
       conversational classifier calls (max_tokens ≤ 64 + no tools) excluded
@@ -1827,7 +1827,26 @@ public_dataset_loader:
       based replay produce byte-identical conversations.
       Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents
     metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-051926
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-052726
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  semianalysis_cc_traces_weka_with_subagents_256k:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka cc-traces, with-subagents 256k-capped variant — hosted
+      on HuggingFace as semianalysisai/cc-traces-weka-with-subagents-052726-256k
+      (470 traces, public, no auth). Derived from the 052726 with-subagents
+      parent by dropping any request whose in+out exceeds 256,000 proxy-tokenizer
+      tokens and reshifting surviving timelines so think-time pacing is
+      preserved. Designed for replay against servers configured with
+      max_model_len ≈ 256k (e.g. MiniMax-M2.5) where the unfiltered with-
+      subagents corpus would have requests rejected.
+      Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_256k
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-with-subagents-052726-256k
       hf_split: train
       is_trace: true
       default_block_size: 64

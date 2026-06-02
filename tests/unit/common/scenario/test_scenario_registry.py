@@ -16,6 +16,7 @@ def test_inferencex_agentx_mvp_registered():
     assert spec.forbid_input_truncation is True
     assert spec.require_loader == (
         "semianalysis_cc_traces_weka_with_subagents",
+        "semianalysis_cc_traces_weka_with_subagents_256k",
         "weka_trace",
         "weka_hf",
     )
