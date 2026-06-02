@@ -26,6 +26,28 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
+def _force_exit_process(is_windows: bool) -> None:
+    """Platform-conditional unconditional process exit. Extracted as a
+    module-level helper so the platform branch is unit-testable without
+    standing up a full ``BaseService`` instance.
+
+    POSIX uses ``SIGKILL`` — uncatchable, exits the process immediately.
+    Windows has no ``SIGKILL``, and ``SIGTERM`` is NOT a substitute:
+    ``bootstrap.py`` installs ``SIG_IGN`` for SIGTERM in every child process
+    (to prevent C-extension teardown SIGSEGVs), so ``os.kill(pid, SIGTERM)``
+    would hit the child's own ignore-handler and be a no-op. Use
+    ``os._exit`` on Windows to bypass the signal layer entirely.
+
+    Neither branch returns; the function is effectively ``NoReturn`` at
+    runtime. Annotated as ``-> None`` because Python's static-analysis
+    ``NoReturn`` would force every caller into unreachable-code warnings.
+    """
+    if is_windows:
+        os._exit(1)
+    else:
+        os.kill(os.getpid(), signal.SIGKILL)
+
+
 class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, ABC):
     """Base class for all AIPerf services, providing common functionality for
     communication, state management, and lifecycle operations.
@@ -165,19 +187,12 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         self.stopped_event.set()
         # Graceful stop has already failed; the lifecycle task may be wedged
         # inside a C extension (zmq, uvloop, orjson) where CancelledError
-        # cannot interrupt. POSIX uses SIGKILL — uncatchable, exits the
-        # process immediately. Windows has no SIGKILL, and SIGTERM is NOT
-        # a substitute here: ``bootstrap.py`` installs ``SIG_IGN`` for
-        # SIGTERM in every child process (to prevent C-extension teardown
-        # SIGSEGVs), so ``os.kill(pid, SIGTERM)`` would hit the child's own
-        # ignore-handler and be a no-op. Use ``os._exit`` on Windows to
-        # bypass the signal layer entirely.
-        if IS_WINDOWS:
-            os._exit(1)
-        else:
-            os.kill(os.getpid(), signal.SIGKILL)
-        # Unreachable: both branches above terminate the process. Kept
-        # so the static-analysis return type stays ``NoReturn``-shaped
-        # and any future refactor that softens the kill path still
-        # surfaces a CancelledError to awaiting callers.
+        # cannot interrupt. ``_force_exit_process`` handles the platform
+        # branch (SIGKILL on POSIX, ``os._exit`` on Windows — see the helper
+        # for why SIGTERM is not a substitute there).
+        _force_exit_process(IS_WINDOWS)
+        # Unreachable: ``_force_exit_process`` terminates the process. Kept
+        # so the static-analysis return type stays ``NoReturn``-shaped and
+        # any future refactor that softens the kill path still surfaces a
+        # CancelledError to awaiting callers.
         raise asyncio.CancelledError(f"Killed {self}")

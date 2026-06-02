@@ -942,6 +942,35 @@ class _ServiceSettings(BaseSettings):
             self.DISABLE_UVLOOP = True
         return self
 
+    @model_validator(mode="after")
+    def validate_windows_port_window_fits_in_tcp_range(self) -> Self:
+        """Fail fast if the configured Windows TCP-fallback port window would
+        emit invalid ports above the TCP max (65535).
+
+        ``build_socket_address`` derives an endpoint port as
+        ``WINDOWS_TCP_BASE_PORT + (sha256_hash mod WINDOWS_TCP_PORT_RANGE)``.
+        With the two fields bounded independently, a config like base 65000
+        + range 20000 would silently produce ``tcp://127.0.0.1:84999`` —
+        invalid, and only blowing up later at ZMQ bind/connect time with a
+        misleading error. Validate the sum at config time so misconfigured
+        envs fail with a clear, actionable message.
+
+        No-op on POSIX where ipc:// is used and these fields are dead. The
+        check fires anyway because ``_ServiceSettings`` validation runs on
+        every platform — but the only cost is the addition, which is cheap.
+        """
+        max_port = self.WINDOWS_TCP_BASE_PORT + self.WINDOWS_TCP_PORT_RANGE - 1
+        if max_port > 65535:
+            raise ValueError(
+                f"AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT "
+                f"({self.WINDOWS_TCP_BASE_PORT}) + "
+                f"AIPERF_SERVICE_WINDOWS_TCP_PORT_RANGE "
+                f"({self.WINDOWS_TCP_PORT_RANGE}) - 1 = {max_port} exceeds "
+                f"the max TCP port (65535). Lower either value so the "
+                f"window stays within 1024-65535."
+            )
+        return self
+
 
 class _TokenizerSettings(BaseSettings):
     """Tokenizer pre-warm and loading configuration.

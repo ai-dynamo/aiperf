@@ -50,6 +50,40 @@ class TestServiceSettingsUvloopWindows:
             assert settings.DISABLE_UVLOOP is expected_result
 
 
+class TestWindowsTcpPortWindowValidation:
+    """Pins the port-window-fits-in-TCP-range validator. Without it,
+    ``build_socket_address`` would silently emit invalid URLs like
+    ``tcp://127.0.0.1:84999`` and fail at ZMQ bind time with a
+    misleading error.
+    """
+
+    def test_valid_window_within_range_is_accepted(self) -> None:
+        """The default values (28000 + 20000 = 48000 max port) are well
+        under 65535 and must not trip the validator."""
+        settings = _ServiceSettings()
+        assert (
+            settings.WINDOWS_TCP_BASE_PORT + settings.WINDOWS_TCP_PORT_RANGE - 1
+            <= 65535
+        )
+
+    def test_boundary_window_exactly_fitting_is_accepted(self) -> None:
+        """Window where ``base + range - 1 == 65535`` is the largest legal
+        config — must NOT raise. Example: base 45536 + range 20000 → max
+        port 65535."""
+        _ServiceSettings(WINDOWS_TCP_BASE_PORT=45536, WINDOWS_TCP_PORT_RANGE=20000)
+
+    def test_window_overflowing_max_port_raises(self) -> None:
+        """When ``base + range - 1 > 65535`` the model_validator must raise
+        with a message naming both env-var names so the user knows which
+        knob to adjust."""
+        with pytest.raises(Exception) as exc:
+            _ServiceSettings(WINDOWS_TCP_BASE_PORT=65000, WINDOWS_TCP_PORT_RANGE=20000)
+        msg = str(exc.value)
+        assert "WINDOWS_TCP_BASE_PORT" in msg
+        assert "WINDOWS_TCP_PORT_RANGE" in msg
+        assert "65535" in msg
+
+
 class TestProfileConfigureTimeout:
     """Test suite for profile configure timeout validation."""
 
