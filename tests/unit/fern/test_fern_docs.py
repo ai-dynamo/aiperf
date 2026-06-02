@@ -73,10 +73,11 @@ def staged_fern_docs(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return staged / "fern"
 
 
-def test_fern_check() -> None:
-    """Validate the Fern definition has no errors."""
+def test_fern_check(staged_fern_docs: Path) -> None:
+    """Validate the Fern definition (converted content) has no errors."""
     result = subprocess.run(
         ["fern", "check"],
+        cwd=staged_fern_docs,
         capture_output=True,
         text=True,
         timeout=60,
@@ -87,7 +88,7 @@ def test_fern_check() -> None:
     )
 
 
-def test_fern_docs_dev_starts() -> None:
+def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
     """Verify fern docs dev builds and starts without errors.
 
     Starts ``fern docs dev`` in a subprocess, monitors stdout for the
@@ -98,6 +99,7 @@ def test_fern_docs_dev_starts() -> None:
     port = _get_free_port()
     proc = subprocess.Popen(
         ["fern", "docs", "dev", "--port", str(port)],
+        cwd=staged_fern_docs,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
