@@ -76,6 +76,8 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
     input sequence lengths. Each JSONL row contains a ``question_id``, a
     ``category`` identifying the semantic domain or entropy tier, and a
     ``messages`` array of OpenAI-style ``role``/``content`` dictionaries.
+    By default all messages are used with ``multi_turn=True``,
+    otherwise only the first message is used.
 
     When ``category`` is set in plugin metadata, only rows matching that
     category are loaded. This enables per-category acceptance rate
@@ -110,9 +112,12 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         filename: str,
         run: BenchmarkRun | None = None,
         category: str | None = None,
+        *,
+        multi_turn: bool = True,
         **kwargs: Any,
     ) -> None:
         self.category = category
+        self.multi_turn = multi_turn
         super().__init__(filename=filename, run=run, **kwargs)
 
     @classmethod
@@ -135,31 +140,34 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         emitted to surface a likely category/file mismatch rather than
         silently returning an empty dataset.
 
+        When ``self.multi_turn`` is set, all turns in the row are used,
+        otherwise only the first turn is used.
+
         Returns:
             A dictionary mapping session_id (the SPEED-Bench question_id) to
             a list of MultiTurn objects.
         """
         data: dict[str, list[MultiTurn]] = defaultdict(list)
 
-        with open(self.filename) as f:
-            for line in f:
-                if (line := line.strip()) == "":
-                    continue  # Skip empty lines
+        for row in self._iter_record_dicts():
+            loaded_line = SpeedBenchRow.model_validate(row)
 
-                loaded_line = SpeedBenchRow.model_validate_json(line)
+            if self.category and loaded_line.category != self.category:
+                continue
 
-                if self.category and loaded_line.category != self.category:
-                    continue
+            messages = (
+                loaded_line.messages if self.multi_turn else loaded_line.messages[:1]
+            )
 
-                multi_turn_data = MultiTurn(
-                    session_id=loaded_line.question_id,
-                    turns=[
-                        SingleTurn(text=message["content"], role=message["role"])
-                        for message in loaded_line.messages
-                    ],
-                )
+            multi_turn_data = MultiTurn(
+                session_id=loaded_line.question_id,
+                turns=[
+                    SingleTurn(text=message["content"], role=message["role"])
+                    for message in messages
+                ],
+            )
 
-                data[multi_turn_data.session_id].append(multi_turn_data)
+            data[multi_turn_data.session_id].append(multi_turn_data)
 
         if self.category and not data:
             self.warning(

@@ -364,6 +364,12 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "loaders that support per-category subsets (e.g. SPEED-Bench)."
         ),
     )
+    multi_turn: bool = Field(
+        default=False,
+        description=(
+            "When true, each row becomes one Conversation with multiple Turn objects."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):
@@ -412,6 +418,14 @@ class PublicDatasetLoaderMetadata(BaseModel):
     message_content_key: str = Field(
         default="content",
         description="Key inside each message dict for the text content. Used with conversation_column (e.g. 'content', 'value').",
+    )
+    multi_turn: bool = Field(
+        default=False,
+        description=(
+            "When true, each row becomes one Conversation with multiple Turn objects. "
+            "For HFConversationDatasetLoader: user→assistant (OpenAI roles) or human→gpt "
+            "(ShareGPT-style ``from`` fields) pairs."
+        ),
     )
     streaming: bool = Field(
         default=False,

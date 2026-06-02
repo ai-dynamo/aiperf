@@ -70,6 +70,15 @@ class SynthesisConfig(BaseConfig):
         ),
     ]
 
+    output_len_multiplier: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            default=1.0,
+            description="Multiplier for output lengths in synthesized traces.",
+        ),
+    ]
+
     max_isl: Annotated[
         int | None,
         Field(

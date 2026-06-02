@@ -72,6 +72,10 @@ system message).
 |---|---|---|---|
 | `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
 | `aime` | `math` | 8 | `Maxwell-Jia/AIME_2024` (trt-llm reference, 8-shot CoT) |
+| `hellaswag` | `exact_match` | 10 | `Rowan/hellaswag` (trt-llm/DeepEval reference; one few-shot per unique activity_label) |
+| `bigbench` | `exact_match` | 3 | `lukaemon/bbh` (trt-llm/DeepEval reference; 27 subtasks, canonical CoT/non-CoT prompt files) |
+| `aime24` | `lighteval_expr` | 0 | `HuggingFaceH4/aime_2024` (trt-llm/lighteval reference, bare problem text, `expr_gold_metric`) |
+| `aime25` | `lighteval_expr` | 0 | `yentinglin/aime_2025` (trt-llm/lighteval reference, bare problem text, `expr_gold_metric`) |
 
 ## CLI Flags
 

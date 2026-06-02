@@ -111,6 +111,17 @@ def test_synthesis_with_trace_dataset_succeeds():
         assert config.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
 
 
+def test_synthesis_output_len_with_trace_dataset_succeeds():
+    """Synthesis output length multiplier flows through unchanged at the DTO layer."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = CLIConfig(
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            input_file=temp_file.name,
+            synthesis_output_len_multiplier=2.0,
+        )
+        assert config.synthesis_output_len_multiplier == 2.0
+
+
 def test_synthesis_max_isl_with_trace_dataset_succeeds():
     """Synthesis max_isl flows through unchanged at the DTO layer."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:

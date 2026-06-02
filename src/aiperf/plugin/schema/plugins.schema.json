@@ -661,6 +661,12 @@
               "default": null,
               "description": "Filter dataset rows to a specific category value. Used by custom loaders that support per-category subsets (e.g. SPEED-Bench).",
               "title": "Category"
+            },
+            "multi_turn": {
+              "default": false,
+              "description": "When true, each row becomes one Conversation with multiple Turn objects.",
+              "title": "Multi Turn",
+              "type": "boolean"
             }
           },
           "title": "CustomDatasetLoaderMetadata",
@@ -798,6 +804,12 @@
               "description": "Key inside each message dict for the text content. Used with conversation_column (e.g. 'content', 'value').",
               "title": "Message Content Key",
               "type": "string"
+            },
+            "multi_turn": {
+              "default": false,
+              "description": "When true, each row becomes one Conversation with multiple Turn objects. For HFConversationDatasetLoader: user\u2192assistant (OpenAI roles) or human\u2192gpt (ShareGPT-style ``from`` fields) pairs.",
+              "title": "Multi Turn",
+              "type": "boolean"
             },
             "streaming": {
               "default": false,

@@ -96,10 +96,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -132,13 +132,13 @@ jobs:
           fi
 
       - name: Checkout source branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: source-checkout
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -216,7 +216,7 @@ jobs:
           cat docs.yml
 
       - name: Setup Node.js for Fern validation
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -356,13 +356,13 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: source-checkout
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -418,7 +418,7 @@ jobs:
           yq -i '.products[0] = load("/tmp/preserved_product.yml")' docs.yml
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -544,7 +544,7 @@ jobs:
           echo "Processing version: $VERSION (tag: $TAG)"
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: docs-website
           fetch-depth: 0
@@ -692,7 +692,7 @@ jobs:
           echo "Successfully released documentation for $TAG on docs-website branch"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 

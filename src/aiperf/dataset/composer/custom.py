@@ -220,6 +220,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             or s.prefix_len_multiplier != 1.0
             or s.prefix_root_multiplier != 1
             or s.prompt_len_multiplier != 1.0
+            or s.output_len_multiplier != 1.0
         )
 
     def _validate_synthesis_config(self, dataset_type: CustomDatasetType) -> None:
@@ -231,10 +232,20 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Raises:
             ValueError: If synthesis options are set but dataset type is not a trace format.
         """
-        if self._should_synthesize() and not plugins.is_trace_dataset(dataset_type):
+        s = self._file_dataset.synthesis
+        if (
+            s is not None
+            and (
+                self._should_synthesize()
+                or s.max_isl is not None
+                or s.max_osl is not None
+            )
+            and not plugins.is_trace_dataset(dataset_type)
+        ):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
-                f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
+                f"--synthesis-output-len-multiplier, --synthesis-max-isl, --synthesis-max-osl) "
                 f"are only supported with trace datasets, "
                 f"but got {dataset_type}. "
                 f"Either remove synthesis options or use a trace dataset type."
@@ -274,6 +285,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
             kwargs["category"] = loader_metadata.category
 
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
+
+        if loader_metadata.multi_turn:
+            if not self._loader_accepts_kwarg(LoaderClass, "multi_turn"):
+                raise ValueError(
+                    f"Loader {LoaderClass.__name__} does not support the 'multi_turn' parameter."
+                )
+            kwargs["multi_turn"] = loader_metadata.multi_turn
+
         if self._inline_records is not None:
             self.loader = LoaderClass(
                 inline_records=self._inline_records,

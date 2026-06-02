@@ -86,6 +86,69 @@ class TestCoreFunctionality:
         assert isinstance(composer.loader, SpeedBenchLoader)
         assert composer.loader.category == "coding"
 
+    def test_no_category_in_kwargs_when_none(self, custom_config, mock_tokenizer):
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with patch(
+            "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+            return_value=CustomDatasetLoaderMetadata(),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
+        assert composer.loader.category is None
+
+    def test_multi_turn_forwarded_to_supporting_loader(
+        self, custom_config, mock_tokenizer
+    ):
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with patch(
+            "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+            return_value=CustomDatasetLoaderMetadata(multi_turn=True),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
+        assert composer.loader.multi_turn
+
+    def test_multi_turn_raises_for_unsupported_loader(
+        self, custom_config, mock_tokenizer
+    ):
+        """A loader that doesn't declare multi_turn on its __init__ must not
+        silently swallow the kwarg via **kwargs — composer should refuse."""
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with (
+            patch(
+                "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+                return_value=CustomDatasetLoaderMetadata(multi_turn=True),
+            ),
+            pytest.raises(ValueError, match="does not support the 'multi_turn'"),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SINGLE_TURN)
+
+    def test_multi_turn_false_does_not_validate_loader_support(
+        self, custom_config, mock_tokenizer
+    ):
+        """multi_turn=False is the default; no need to gate it on loader support."""
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with patch(
+            "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+            return_value=CustomDatasetLoaderMetadata(multi_turn=False),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
+        assert composer.loader.multi_turn
+
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
@@ -303,6 +366,9 @@ class TestSynthesisValidation:
             {"synthesis_prefix_len_multiplier": 2.0},
             {"synthesis_prefix_root_multiplier": 2},
             {"synthesis_prompt_len_multiplier": 2.0},
+            {"synthesis_output_len_multiplier": 2.0},
+            {"synthesis_max_isl": 4096},
+            {"synthesis_max_osl": 4096},
         ],
     )
     def test_various_synthesis_options_raise_error(
@@ -333,18 +399,30 @@ class TestSynthesisValidation:
         for dataset_type in CustomDatasetType:
             composer._validate_synthesis_config(dataset_type)
 
-    def test_max_isl_alone_allowed_with_any_type(self, custom_config, mock_tokenizer):
-        """Test that max_isl alone doesn't trigger synthesis validation.
-
-        max_isl is a filter, not a synthesis transformation.
-        """
-        custom_config.synthesis_max_isl = 4096
+    @pytest.mark.parametrize(
+        ("synthesis_field", "value"),
+        [
+            ("synthesis_max_isl", 4096),
+            ("synthesis_max_osl", 4096),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [
+            CustomDatasetType.MOONCAKE_TRACE,
+            CustomDatasetType.BAILIAN_TRACE,
+        ],
+    )
+    def test_trace_only_caps_allowed_with_trace_datasets(
+        self, custom_config, mock_tokenizer, synthesis_field, value, dataset_type
+    ):
+        """Test that max_isl/max_osl are allowed with trace dataset types."""
+        setattr(custom_config, synthesis_field, value)
         composer = CustomDatasetComposer(
             run=make_run(custom_config), tokenizer=mock_tokenizer
         )
 
-        # Should not raise - max_isl doesn't trigger should_synthesize()
-        composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+        composer._validate_synthesis_config(dataset_type)
 
 
 class TestExplicitCustomDatasetType:

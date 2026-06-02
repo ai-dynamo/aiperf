@@ -8,6 +8,7 @@ import inspect
 import io
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -338,6 +339,38 @@ def resolve_alias(name: str) -> AliasResolutionResult:
         return AliasResolutionResult(resolved_name=name)
 
 
+# Emitted by transformers when ``tokenizer_config.json`` references a class not
+# registered in the installed transformers (e.g. ``TokenizersBackend`` is v5-only).
+# Same wording in 4.x and 5.x; if HF rewords it, the hint is silently dropped but
+# the original error is still raised.
+_MISSING_TOKENIZER_CLASS_RE = re.compile(
+    r"Tokenizer class (\S+) does not exist or is not currently imported"
+)
+
+
+def _missing_tokenizer_class_hint(error: Exception) -> str | None:
+    """Return an upgrade hint when *error* is HF's missing-class error, else None."""
+    match = _MISSING_TOKENIZER_CLASS_RE.search(str(error))
+    if match is None:
+        return None
+    missing = match.group(1)
+    try:
+        import transformers
+
+        version = transformers.__version__
+    except (ImportError, AttributeError):
+        version = "<unknown>"
+    suggestion = (
+        " Try: pip install -U 'transformers>=5'."
+        if version.split(".", 1)[0] == "4"
+        else ""
+    )
+    return (
+        f"Tokenizer class '{missing}' is not registered in your installed "
+        f"transformers {version}.{suggestion}"
+    )
+
+
 class Tokenizer:
     """Simplified interface for HuggingFace tokenizers with sensible defaults."""
 
@@ -422,8 +455,12 @@ class Tokenizer:
         except AmbiguousTokenizerNameError:
             raise
         except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            hint = _missing_tokenizer_class_hint(e)
+            if hint:
+                detail = f"{detail} {hint}"
             raise TokenizerError(
-                f"Failed to load tokenizer '{name}': {type(e).__name__}: {e}",
+                f"Failed to load tokenizer '{name}': {detail}",
                 tokenizer_name=name,
             ) from e
 

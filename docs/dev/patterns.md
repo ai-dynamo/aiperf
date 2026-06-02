@@ -342,6 +342,152 @@ reject all three patterns for new code; see
 [`global-invariants.md`](global-invariants.md) for the full contract and
 the baseline-ratchet mechanism.
 
+## Safe Filesystem Reads Pattern
+
+User-supplied filesystem paths reaching AIPerf (e.g. `--extra-inputs
+payload_template=<path>`, `endpoint.template.body` in a YAML config) must
+go through `aiperf.common.path_safety.safe_read_template_path` rather than
+inline `Path(...).read_text()` / `open(...).read()`. The helper is the
+canonical CWE-22 path-traversal sanitizer recognized by SAST tools — every
+inline read regenerates that finding.
+
+### What the helper does
+
+```python
+from aiperf.common.path_safety import safe_read_template_path
+
+body = safe_read_template_path(user_string)
+if body is None:
+    # safety check failed — caller picks the fallback semantic
+    body = user_string          # template "path or inline" idiom
+    # or: raise ValueError(f"Template file not readable: {user_string!r}")
+```
+
+Sanitizer chain (in the order SAST engines walk it):
+
+1. `Path(ts).expanduser()` — catches `TypeError` / `ValueError` /
+   `RuntimeError` (the last fires on unresolvable `~user` prefixes).
+2. Reject if `path` or any component in `path.parents` is a symlink.
+   `resolve()` alone is insufficient because it follows symlinked parent
+   directories silently.
+3. `path.resolve(strict=True)` — the canonical sanitizer that
+   Snyk/CodeQL/Semgrep recognize; raises on missing paths.
+4. Require `resolved.is_file()` — rejects directories, devices, fifos.
+5. `read_text(encoding="utf-8")` — explicit decode; no platform default. Catches `UnicodeError` alongside `OSError` so non-UTF-8 files fall back to the literal-string branch rather than crashing config conversion.
+
+Returning `None` on any failure preserves the existing "treat as a literal
+value" fallback that both call sites (`_converter_endpoint` and
+`TemplateEndpoint.__init__`) already implement.
+
+### When this pattern does NOT apply
+
+- **Path joining of trusted strings** — `Path(__file__).parent / "data.yaml"`,
+  `artifact_dir / "inputs.json"`. These never resolve untrusted input; no
+  sanitizer needed.
+- **Binary reads** — `open(p, "rb")` for parquet/orjson/etc. The helper is
+  UTF-8-text only. If a hardened binary variant is needed, add it to
+  `aiperf.common.path_safety` alongside the existing helper rather than
+  inlining `read_bytes()`.
+- **Reads where missing-file should hard-fail rather than fall back** — the
+  helper still works (returns `None`); the caller is responsible for
+  raising instead of substituting a literal.
+
+## Externally-Injected Derived Metric Pattern
+
+A normal `BaseDerivedMetric` computes its value from peer metrics in the
+`MetricResultsDict` via `_derive_value`. Some derived metrics, however, are
+computed from data that never lives in the `MetricResultsDict` at all —
+GPU power and energy come from telemetry scrapes, not from request
+records, so their values must be injected by the accumulator that owns
+the sensor data rather than derived by the standard registry walk.
+
+Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
+Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
+([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
+
+### The three-part contract
+
+A metric class that participates in registry listings but is computed
+externally must spell out the contract in three places so future agents
+don't copy-paste the shape as the canonical derived-metric pattern.
+
+**1. `Invariant:` paragraph in the class docstring.** Name the injection
+site and the catching path explicitly:
+
+```python
+class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
+    """Sum of GPU energy consumed across all GPUs during the benchmark phase, in joules.
+
+    Invariant: externally injected by
+    `GPUTelemetryAccumulator.compute_efficiency_metrics` from
+    energy_consumption counter deltas. `_derive_value` is intentionally
+    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    expected to catch NoMetricValue and skip the tag during its
+    derivation walk.
+    """
+```
+
+**2. `_derive_value` returns `NoReturn`.** The body unconditionally
+raises, so the truthful annotation is `NoReturn` from `typing`. Returning
+`float` would lie to type-checkers and downstream code that assumes the
+derivation succeeded.
+
+```python
+from typing import NoReturn
+from aiperf.common.exceptions import NoMetricValue
+from aiperf.metrics.metric_dicts import MetricResultsDict
+
+def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
+    raise NoMetricValue(
+        "Cannot derive 'total_gpu_energy' from MetricResultsDict: this metric "
+        "is externally injected by "
+        "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
+        "surfaces, the derivation walk is missing its NoMetricValue handler "
+        "(see MetricResultsProcessor.update_derived_metrics)."
+    )
+```
+
+**3. Error message names the operation, the injection site, and the catching
+path.** A message that only names the source ("X is computed by the GPU
+telemetry accumulator") gives debugging agents no clue where the contract
+is enforced. The recommended shape is:
+
+- *Operation*: what derivation was attempted (`Cannot derive 'X' from
+  MetricResultsDict`).
+- *Injection site*: which method is the source of truth
+  (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
+- *Catching path*: where the exception is expected to be absorbed
+  (`MetricResultsProcessor.update_derived_metrics`). If this fires in
+  production, the catching path has a bug.
+
+### Why not just skip the class entirely?
+
+The class is still required because the rest of the system reads class
+attributes (`tag`, `header`, `unit`, `display_order`, `flags`) when
+emitting `MetricResult`s, ordering the console table, and gating display
+behavior. The registry entry is structural metadata; the *value* is the
+external injection.
+
+### Where the injection happens
+
+`RecordsManager._apply_gpu_efficiency_metrics` calls
+`GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
+`MetricResult` objects directly with the relevant tags and appends them
+to the records list before `ProcessRecordsResult` is built. The standard
+`update_derived_metrics` walk sees these tags too, raises `NoMetricValue`
+via `_derive_value`, catches it, and skips — so the externally-injected
+values are not overwritten.
+
+### Test contract
+
+The error-message invariants are pinned by
+[`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
+(parametrized over the three classes): every `_derive_value` call must
+raise `NoMetricValue` with a message that names the tag, the operation
+source (`MetricResultsDict`), and the injection site
+(`compute_efficiency_metrics`). A future weakening of any message fails
+the test rather than silently drifting.
+
 ## Testing Pattern
 
 ```python

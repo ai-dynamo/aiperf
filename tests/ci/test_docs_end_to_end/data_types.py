@@ -16,6 +16,14 @@ class Command:
     file_path: str
     start_line: int
     end_line: int
+    # Estimated runtime in seconds; used by the matrix sharder to bin-pack
+    # commands so one shard doesn't end up owning all the slow tests.
+    # Tag-level annotation: ``<!-- aiperf-run-<server>-endpoint-server weight=300 -->``.
+    # Default (80s) covers a typical synthetic-input tutorial command; the
+    # observed mean across unweighted tests is ~95s with a heavy right tail,
+    # so 80 is a conservative under-estimate that prefers to leave shard
+    # headroom rather than over-allocate.
+    weight: int = 80
 
 
 @dataclass

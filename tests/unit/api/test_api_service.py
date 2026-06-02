@@ -215,6 +215,91 @@ class TestFastAPIServiceStartStop:
         assert mock_server.should_exit is True
 
     @pytest.mark.asyncio
+    async def test_stop_holds_grace_window_before_should_exit(
+        self, mock_fastapi_service: FastAPIService, time_traveler
+    ) -> None:
+        """Grace sleep must precede setting should_exit so the listener stays open.
+
+        Uses time_traveler.sleeps_for(grace) to assert the function spends exactly
+        the grace duration in asyncio.sleep — any sleep AFTER should_exit was set
+        would push the duration past the asserted value.
+        """
+        mock_server = MagicMock()
+        completed = asyncio.Event()
+
+        async def fake_serve():
+            """Pretend to be uvicorn.serve(): block until completed is set."""
+            await completed.wait()
+
+        mock_server.should_exit = False
+        task = asyncio.create_task(fake_serve())
+        mock_fastapi_service._server = mock_server
+        mock_fastapi_service._server_task = task
+        completed.set()
+
+        with (
+            patch(
+                "aiperf.api.api_service.Environment.API_SERVER.POST_COMPLETE_GRACE",
+                2.5,
+            ),
+            time_traveler.sleeps_for(2.5),
+        ):
+            await mock_fastapi_service._stop_api_server()
+
+        assert mock_server.should_exit is True
+
+    @pytest.mark.asyncio
+    async def test_stop_skips_grace_when_zero(
+        self, mock_fastapi_service: FastAPIService, time_traveler
+    ) -> None:
+        """POST_COMPLETE_GRACE=0 must skip the sleep entirely (back-compat path)."""
+        mock_server = MagicMock()
+        completed = asyncio.Event()
+
+        async def fake_serve():
+            """Pretend to be uvicorn.serve(): block until completed is set."""
+            await completed.wait()
+
+        task = asyncio.create_task(fake_serve())
+        mock_fastapi_service._server = mock_server
+        mock_fastapi_service._server_task = task
+        completed.set()
+
+        with (
+            patch(
+                "aiperf.api.api_service.Environment.API_SERVER.POST_COMPLETE_GRACE",
+                0.0,
+            ),
+            time_traveler.sleeps_for(0.0),
+        ):
+            await mock_fastapi_service._stop_api_server()
+
+        assert mock_server.should_exit is True
+
+    @pytest.mark.asyncio
+    async def test_stop_skips_grace_when_server_task_done(
+        self, mock_fastapi_service: FastAPIService, time_traveler
+    ) -> None:
+        """Grace must be skipped when there is no live serve task to keep open."""
+        mock_server = MagicMock()
+        # Finished task simulates a crashed/exited server.
+        finished_task = asyncio.create_task(asyncio.sleep(0))
+        await finished_task
+        mock_fastapi_service._server = mock_server
+        mock_fastapi_service._server_task = finished_task
+
+        with (
+            patch(
+                "aiperf.api.api_service.Environment.API_SERVER.POST_COMPLETE_GRACE",
+                5.0,
+            ),
+            time_traveler.sleeps_for(0.0),
+        ):
+            await mock_fastapi_service._stop_api_server()
+
+        assert mock_server.should_exit is True
+
+    @pytest.mark.asyncio
     async def test_stop_cancels_on_timeout(
         self, mock_fastapi_service: FastAPIService
     ) -> None:

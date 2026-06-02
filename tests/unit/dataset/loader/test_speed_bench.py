@@ -53,12 +53,14 @@ def _load_speed_bench_file(
     create_jsonl_file,
     rows: list[dict],
     category: str | None = None,
+    multi_turn: bool = True,
 ):
     filename = _write_speed_bench_file(create_jsonl_file, rows)
     loader = SpeedBenchLoader(
         run=_make_run(),
         filename=filename,
         category=category,
+        multi_turn=multi_turn,
     )
     return loader, loader.load_dataset()
 
@@ -330,3 +332,77 @@ class TestSpeedBenchLoaderRowValidation:
 
         with pytest.raises(ValidationError, match="placeholder"):
             loader.load_dataset()
+
+
+class TestSpeedBenchLoaderMultiTurn:
+    def test_multi_turn_produces_all_messages(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-chat-1"),
+                    messages=[
+                        {"role": "user", "content": "First turn"},
+                        {"role": "assistant", "content": "Second turn"},
+                        {"role": "user", "content": "Third turn"},
+                    ],
+                )
+            ],
+            multi_turn=True,
+        )
+
+        turns = dataset[_qid("speed-chat-1")][0].turns
+        assert len(turns) == 3
+        assert [turn.role for turn in turns] == ["user", "assistant", "user"]
+        assert [turn.text for turn in turns] == [
+            "First turn",
+            "Second turn",
+            "Third turn",
+        ]
+
+    def test_multi_turn_false_loads_first_message_only(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-chat-1"),
+                    messages=[
+                        {"role": "user", "content": "First turn"},
+                        {"role": "user", "content": "Second turn"},
+                    ],
+                )
+            ],
+            multi_turn=False,
+        )
+
+        turns = dataset[_qid("speed-chat-1")][0].turns
+        assert len(turns) == 1
+        assert turns[0].role == "user"
+        assert turns[0].text == "First turn"
+
+    def test_multi_turn_with_category_filter(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"),
+                    category="coding",
+                    messages=[
+                        {"role": "user", "content": "Code Q1"},
+                        {"role": "user", "content": "Code Q2"},
+                    ],
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"),
+                    category="math",
+                    messages=[{"role": "user", "content": "Math Q1"}],
+                ),
+            ],
+            category="coding",
+            multi_turn=True,
+        )
+
+        turns = dataset[_qid("speed-coding-1")][0].turns
+        assert set(dataset) == {_qid("speed-coding-1")}
+        assert len(turns) == 2
+        assert [turn.text for turn in turns] == ["Code Q1", "Code Q2"]
