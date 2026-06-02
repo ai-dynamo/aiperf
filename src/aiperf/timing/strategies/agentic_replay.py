@@ -378,9 +378,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 await self._dispatch_next_turn(credit)
                 return
             if terminal_overflow and self.branch_orchestrator is not None:
-                await self.branch_orchestrator.on_child_stopped(
-                    credit.x_correlation_id
-                )
+                await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
             self._session_marker.pop(credit.x_correlation_id, None)
             self._correlation_to_lane.pop(credit.x_correlation_id, None)
             return

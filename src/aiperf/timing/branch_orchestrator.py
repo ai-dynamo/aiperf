@@ -432,9 +432,9 @@ class BranchOrchestrator:
                         parent_state=parent_state,
                         parent_meta=parent_meta,
                         gated_idx=child_state.join_target_turn_index,
-                        cache_bust_marker=(
-                            cache_bust_markers or {}
-                        ).get(parent_state.x_correlation_id),
+                        cache_bust_marker=(cache_bust_markers or {}).get(
+                            parent_state.x_correlation_id
+                        ),
                     )
                     prereq_state = pending.outstanding.setdefault(
                         prereq_key, PrereqState()
