@@ -4,19 +4,24 @@
 import asyncio
 import atexit
 import contextlib
+import glob
 import multiprocessing
 import os
 import signal
 import sys
 import tempfile
+import time
 import uuid
 import warnings
 from typing import TYPE_CHECKING
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_MACOS, IS_WINDOWS
 from aiperf.common.enums import LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.plugin.enums import ServiceType
+
+_logger = AIPerfLogger(__name__)
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -61,6 +66,14 @@ def bootstrap_and_run_service(
     # the parent's `process.communicate()` never sees EOF and hangs.
     if (IS_MACOS or IS_WINDOWS) and is_child_process:
         _redirect_stdio_to_devnull()
+
+    # Main-process startup sweep: clear stale zero-byte child-stderr logs
+    # from prior runs that bypassed ``atexit`` (os._exit, SIGKILL, force-
+    # terminate, OS reap). Best-effort cleanup; non-empty files (real
+    # crashes) are preserved. Gated to non-child-process startup so each
+    # spawned child doesn't repeat the sweep.
+    if not is_child_process and (IS_MACOS or IS_WINDOWS):
+        sweep_stale_child_stderr_logs()
 
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
@@ -200,9 +213,25 @@ def _request_high_resolution_timer_on_windows() -> None:
 
     # winmm is part of Windows and always present, but guard defensively:
     # if it ever fails, aiperf still runs — high-QPS tests may just
-    # produce noisier intervals.
-    with contextlib.suppress(OSError, AttributeError):
-        ctypes.WinDLL("winmm").timeBeginPeriod(1)
+    # produce noisier intervals. ``timeBeginPeriod`` also signals failure
+    # via a non-zero return code WITHOUT raising, so check the return value
+    # too — otherwise a "silent" non-zero leaves users debugging mysterious
+    # timing flakes with no breadcrumb.
+    try:
+        rc = ctypes.WinDLL("winmm").timeBeginPeriod(1)
+    except (OSError, AttributeError) as e:
+        _logger.warning(
+            f"Could not bump Windows timer resolution: {e!r}; high-QPS "
+            f"test timing may be coarser than 1ms."
+        )
+        return
+    if rc != 0:
+        # MMSYSERR_NOERROR == 0; anything else is a documented failure code.
+        _logger.warning(
+            f"winmm.timeBeginPeriod(1) returned {rc}; the 1ms timer bump "
+            f"did not take effect. High-QPS test timing may be coarser "
+            f"than 1ms. See bootstrap.py docstring for context."
+        )
 
 
 def _exit_if_service_failed(service) -> None:
@@ -304,14 +333,53 @@ def _remove_if_empty(path: str) -> None:
 
     Used by ``_redirect_stdio_to_devnull`` to clean up the per-process stderr
     file when the process exited cleanly with no uncaught traceback. Files
-    with content (i.e. real crashes) are preserved for postmortem.
+    with content (real crashes) are preserved for postmortem.
+
+    Args:
+        path: Absolute filesystem path to the per-process stderr file. The
+            file is unlinked iff ``os.path.getsize(path) == 0``.
+
+    Raises:
+        Nothing — errors are suppressed because this runs from ``atexit``
+        where any exception would print a misleading traceback to the
+        already-shutting-down stderr.
     """
     try:
         if os.path.getsize(path) == 0:
             os.unlink(path)
-    except OSError:
-        # File already gone, or directory not writable — both fine to ignore.
+    except FileNotFoundError:
+        # File already gone (concurrent cleanup, race with parent reaping
+        # the temp dir, etc.) — benign and expected.
         pass
+    except OSError as e:
+        # PermissionError, IsADirectoryError, etc. — surface to debug log
+        # so the cleanup failure leaves a breadcrumb without breaking exit.
+        _logger.debug(lambda exc=e: f"_remove_if_empty({path!r}) failed: {exc!r}")
+
+
+def sweep_stale_child_stderr_logs(max_age_seconds: int = 86400) -> None:
+    """Remove zero-byte ``aiperf_child_*_stderr.log`` files older than the
+    cutoff. Sister-cleanup for ``_remove_if_empty``: that ``atexit`` handler
+    only fires on clean interpreter exit, so files leaked by ``os._exit``,
+    SIGKILL, ``Process.terminate()``, or OS reap of crashed children pile up
+    in ``%TEMP%`` / ``/tmp`` across runs. This sweep clears them.
+
+    Non-empty files (real crashes) are preserved for the user to inspect.
+    Errors are swallowed per file — this is best-effort housekeeping, not
+    a load-bearing path.
+
+    Args:
+        max_age_seconds: Files older than this (mtime) are eligible. Default
+            24h keeps logs around long enough for someone to investigate a
+            morning-after failure without indefinite accumulation.
+    """
+    pattern = os.path.join(tempfile.gettempdir(), "aiperf_child_*_stderr.log")
+    cutoff = time.time() - max_age_seconds
+    for path in glob.glob(pattern):
+        with contextlib.suppress(OSError):
+            st = os.stat(path)
+            if st.st_size == 0 and st.st_mtime < cutoff:
+                os.unlink(path)
 
 
 def _start_yappi_profiling() -> None:

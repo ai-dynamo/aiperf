@@ -163,12 +163,21 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             )
         self.stop_requested = True
         self.stopped_event.set()
-        # SIGKILL is the only reliable way to terminate the process when a
-        # graceful stop has already failed; the lifecycle task may be wedged
+        # Graceful stop has already failed; the lifecycle task may be wedged
         # inside a C extension (zmq, uvloop, orjson) where CancelledError
-        # cannot interrupt. Replace this only if we add a robust abort path
-        # for blocked extension calls. Windows has no SIGKILL —
-        # ``signal.SIGKILL`` raises AttributeError on Windows; SIGTERM is the
-        # closest cross-platform unconditional kill there.
-        os.kill(os.getpid(), signal.SIGTERM if IS_WINDOWS else signal.SIGKILL)
+        # cannot interrupt. POSIX uses SIGKILL — uncatchable, exits the
+        # process immediately. Windows has no SIGKILL, and SIGTERM is NOT
+        # a substitute here: ``bootstrap.py`` installs ``SIG_IGN`` for
+        # SIGTERM in every child process (to prevent C-extension teardown
+        # SIGSEGVs), so ``os.kill(pid, SIGTERM)`` would hit the child's own
+        # ignore-handler and be a no-op. Use ``os._exit`` on Windows to
+        # bypass the signal layer entirely.
+        if IS_WINDOWS:
+            os._exit(1)
+        else:
+            os.kill(os.getpid(), signal.SIGKILL)
+        # Unreachable: both branches above terminate the process. Kept
+        # so the static-analysis return type stays ``NoReturn``-shaped
+        # and any future refactor that softens the kill path still
+        # surfaces a CancelledError to awaiting callers.
         raise asyncio.CancelledError(f"Killed {self}")

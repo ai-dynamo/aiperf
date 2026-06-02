@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for `_build_socket_address` — the Linux/macOS ipc:// vs Windows tcp:// helper.
+"""Tests for `build_socket_address` — the Linux/macOS ipc:// vs Windows tcp:// helper.
 
 Covers Bug 2: ZMQ ipc:// is not supported on Windows (pyzmq wheels disable it
 due to crashes), so AIPerf falls back to tcp://127.0.0.1:<deterministic-port>
@@ -17,15 +17,20 @@ from unittest.mock import patch
 import pytest
 from pytest import param
 
+from aiperf.common.environment import Environment
 from aiperf.config.comm.ipc import (
-    _WINDOWS_TCP_BASE_PORT,
-    _WINDOWS_TCP_PORT_RANGE,
-    _build_socket_address,
+    _validate_no_port_collisions,
+    build_socket_address,
 )
+
+# Default port range (matches Environment.SERVICE defaults; can be overridden
+# at runtime via AIPERF_SERVICE_WINDOWS_TCP_{BASE_PORT,PORT_RANGE}).
+_WINDOWS_TCP_BASE_PORT = Environment.SERVICE.WINDOWS_TCP_BASE_PORT
+_WINDOWS_TCP_PORT_RANGE = Environment.SERVICE.WINDOWS_TCP_PORT_RANGE
 
 
 class TestBuildSocketAddressLinux:
-    """`_build_socket_address` returns ipc:// when not on Windows."""
+    """`build_socket_address` returns ipc:// when not on Windows."""
 
     @pytest.fixture(autouse=True)
     def _force_not_windows(self):
@@ -33,18 +38,18 @@ class TestBuildSocketAddressLinux:
             yield
 
     def test_returns_ipc_url_with_path_and_filename(self, tmp_path: Path) -> None:
-        address = _build_socket_address(tmp_path, "event_bus.ipc")
+        address = build_socket_address(tmp_path, "event_bus.ipc")
         assert address == f"ipc://{tmp_path / 'event_bus.ipc'}"
 
     def test_path_none_raises_value_error(self) -> None:
         with pytest.raises(
             ValueError, match=r"[Pp]ath is required for socket address derivation"
         ):
-            _build_socket_address(None, "event_bus.ipc")
+            build_socket_address(None, "event_bus.ipc")
 
 
 class TestBuildSocketAddressWindows:
-    """`_build_socket_address` returns tcp:// with deterministic port on Windows."""
+    """`build_socket_address` returns tcp:// with deterministic port on Windows."""
 
     @pytest.fixture(autouse=True)
     def _force_windows(self):
@@ -52,11 +57,11 @@ class TestBuildSocketAddressWindows:
             yield
 
     def test_returns_tcp_loopback_url(self, tmp_path: Path) -> None:
-        address = _build_socket_address(tmp_path, "event_bus.ipc")
+        address = build_socket_address(tmp_path, "event_bus.ipc")
         assert address.startswith("tcp://127.0.0.1:")
 
     def test_port_within_configured_range(self, tmp_path: Path) -> None:
-        address = _build_socket_address(tmp_path, "event_bus.ipc")
+        address = build_socket_address(tmp_path, "event_bus.ipc")
         port = int(address.rsplit(":", 1)[1])
         assert (
             _WINDOWS_TCP_BASE_PORT
@@ -65,27 +70,41 @@ class TestBuildSocketAddressWindows:
         )
 
     def test_same_inputs_produce_same_port(self, tmp_path: Path) -> None:
-        addr1 = _build_socket_address(tmp_path, "event_bus.ipc")
-        addr2 = _build_socket_address(tmp_path, "event_bus.ipc")
+        addr1 = build_socket_address(tmp_path, "event_bus.ipc")
+        addr2 = build_socket_address(tmp_path, "event_bus.ipc")
         assert addr1 == addr2
 
     def test_different_filenames_produce_different_ports(self, tmp_path: Path) -> None:
-        addr1 = _build_socket_address(tmp_path, "event_bus.ipc")
-        addr2 = _build_socket_address(tmp_path, "credit_router.ipc")
+        addr1 = build_socket_address(tmp_path, "event_bus.ipc")
+        addr2 = build_socket_address(tmp_path, "credit_router.ipc")
         assert addr1 != addr2
 
     def test_different_paths_produce_different_ports(self, tmp_path: Path) -> None:
         other_path = tmp_path / "other"
         other_path.mkdir()
-        addr1 = _build_socket_address(tmp_path, "event_bus.ipc")
-        addr2 = _build_socket_address(other_path, "event_bus.ipc")
+        addr1 = build_socket_address(tmp_path, "event_bus.ipc")
+        addr2 = build_socket_address(other_path, "event_bus.ipc")
         assert addr1 != addr2
 
     def test_path_none_raises_value_error(self) -> None:
         with pytest.raises(
             ValueError, match=r"[Pp]ath is required for socket address derivation"
         ):
-            _build_socket_address(None, "event_bus.ipc")
+            build_socket_address(None, "event_bus.ipc")
+
+    def test_salt_canonicalization_normalizes_separators_and_case(
+        self, tmp_path: Path
+    ) -> None:
+        """Bind and connect must agree on the derived port regardless of
+        how the path was constructed. Different stringifications of the
+        same logical path (backslash vs forward-slash separators, trailing
+        slash, casing) must produce the same hashed port. Pins F-02.
+        """
+        addr_forward = build_socket_address(Path("C:/Temp/aiperf"), "x.ipc")
+        addr_backslash = build_socket_address(Path("C:\\Temp\\aiperf"), "x.ipc")
+        addr_trailing = build_socket_address(Path("C:/Temp/aiperf/"), "x.ipc")
+        addr_mixed_case = build_socket_address(Path("c:/temp/aiperf"), "x.ipc")
+        assert addr_forward == addr_backslash == addr_trailing == addr_mixed_case
 
     @pytest.mark.parametrize(
         "filename",
@@ -103,7 +122,7 @@ class TestBuildSocketAddressWindows:
     def test_realistic_filenames_all_within_range(
         self, tmp_path: Path, filename: str
     ) -> None:
-        address = _build_socket_address(tmp_path, filename)
+        address = build_socket_address(tmp_path, filename)
         port = int(address.rsplit(":", 1)[1])
         assert (
             _WINDOWS_TCP_BASE_PORT
@@ -137,7 +156,7 @@ class TestBuildSocketAddressHashDistribution:
             "raw_inference_proxy_backend.ipc",
         ]
         ports = {
-            int(_build_socket_address(tmp_path, fn).rsplit(":", 1)[1])
+            int(build_socket_address(tmp_path, fn).rsplit(":", 1)[1])
             for fn in filenames
         }
         assert len(ports) == len(filenames), (
@@ -197,3 +216,61 @@ class TestBuildSocketAddressHashDistribution:
             f"Port range top {port_range_top} enters Windows ephemeral range "
             f"(49152+); outbound connections may collide."
         )
+
+
+class TestPortCollisionValidation:
+    """Pins F-01: ``_validate_no_port_collisions`` raises a clear, actionable
+    error when two derived TCP ports collide on Windows, and is a no-op on
+    POSIX where ipc:// is used.
+    """
+
+    def test_no_collisions_is_silent(self) -> None:
+        """The normal case (no two endpoints share a port) returns None."""
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            _validate_no_port_collisions(
+                [
+                    ("a", "tcp://127.0.0.1:30000"),
+                    ("b", "tcp://127.0.0.1:30001"),
+                    ("c", "tcp://127.0.0.1:30002"),
+                ]
+            )
+
+    def test_collision_raises_with_actionable_message(self) -> None:
+        """When two endpoints hash to the same port, the error names both
+        endpoints and points the user at the env var escape hatch."""
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            with pytest.raises(ValueError, match=r"port collision") as exc:
+                _validate_no_port_collisions(
+                    [
+                        ("records_push_pull", "tcp://127.0.0.1:30518"),
+                        ("control", "tcp://127.0.0.1:30518"),
+                    ]
+                )
+            msg = str(exc.value)
+            assert "records_push_pull" in msg
+            assert "control" in msg
+            assert "30518" in msg
+            assert "AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT" in msg
+
+    def test_ipc_addresses_are_ignored(self) -> None:
+        """Non-TCP addresses (POSIX ipc://) are skipped — the helper only
+        cares about TCP loopback collisions."""
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", True):
+            _validate_no_port_collisions(
+                [
+                    ("a", "ipc:///tmp/foo.ipc"),
+                    ("b", "ipc:///tmp/bar.ipc"),
+                ]
+            )
+
+    def test_posix_is_noop(self) -> None:
+        """On POSIX the function returns immediately — ipc:// addresses
+        cannot collide on a port the way TCP loopback ones can."""
+        with patch("aiperf.config.comm.ipc.IS_WINDOWS", False):
+            # Same port in both addresses; would raise on Windows.
+            _validate_no_port_collisions(
+                [
+                    ("a", "tcp://127.0.0.1:30000"),
+                    ("b", "tcp://127.0.0.1:30000"),
+                ]
+            )

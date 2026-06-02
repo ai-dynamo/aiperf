@@ -23,24 +23,31 @@ _INJECTED_API_KEY_ENV = "AIPERF_INJECTED_API_KEY"
 
 
 def _release_inherited_pipes_on_windows() -> None:
-    """Redirect stdin/stdout/stderr to NUL on Windows.
+    """Release inherited stdio pipes on Windows so this intermediate
+    sweep-iteration process can shut down cleanly. No-op on POSIX.
 
-    See bootstrap.py::_redirect_stdio_to_devnull for the full rationale.
     Sweep iterations are spawned via subprocess.run with stdout=sys.stdout
     inherited from the orchestrator master, which on Windows propagates
     pytest's subprocess.PIPE all the way down. The iteration's own grandchild
     workers already redirect via the bootstrap fix, but the iteration process
-    itself still holds the inherited pipe handle, so its os._exit() can hang
-    or segfault during DLL_PROCESS_DETACH. Releasing the inherited FDs to NUL
-    here unblocks shutdown for that intermediate process.
+    itself still holds the inherited pipe handle, so its ``os._exit()`` can
+    hang or segfault during ``DLL_PROCESS_DETACH``.
+
+    Delegates to ``bootstrap._redirect_stdio_to_devnull`` so the per-process
+    stderr-to-file pattern (with 0o600 hardening and atexit-cleanup) is
+    applied symmetrically — discarding stderr here would lose tracebacks
+    from iteration-process crashes during sweep-mode benchmarking on
+    Windows. See bootstrap.py::_redirect_stdio_to_devnull for the full
+    rationale.
     """
-    devnull_fd = os.open(os.devnull, os.O_RDWR)
-    for fd in (0, 1, 2):
-        os.dup2(devnull_fd, fd)
-    os.close(devnull_fd)
-    sys.stdin = os.fdopen(0, "r", closefd=False)
-    sys.stdout = os.fdopen(1, "w", closefd=False)
-    sys.stderr = os.fdopen(2, "w", closefd=False)
+    if not IS_WINDOWS:
+        return
+    # Late import to avoid circular load: bootstrap imports from many other
+    # subsystems; subprocess_runner is loaded before bootstrap completes its
+    # own imports in some test paths.
+    from aiperf.common.bootstrap import _redirect_stdio_to_devnull
+
+    _redirect_stdio_to_devnull()
 
 
 def main() -> None:
@@ -97,7 +104,7 @@ if __name__ == "__main__":
     # (`python -m aiperf.orchestrator.subprocess_runner ...`). Calling
     # ``main()`` from unit tests must NOT redirect stderr — pytest's capsys
     # needs to see the error prints, and there are no inherited pipes to
-    # release in an in-process call.
-    if IS_WINDOWS:
-        _release_inherited_pipes_on_windows()
+    # release in an in-process call. ``_release_inherited_pipes_on_windows``
+    # itself is also gated on IS_WINDOWS so this is belt-and-suspenders.
+    _release_inherited_pipes_on_windows()
     main()

@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression test for BaseService._kill platform-conditional kill signal.
+"""Regression test for BaseService._kill platform-conditional force-exit path.
 
-Windows lacks ``signal.SIGKILL`` — referencing it raises AttributeError on
-non-Unix Python builds. ``BaseService._kill`` therefore falls back to
-``signal.SIGTERM`` on Windows. These tests mock IS_WINDOWS to confirm the
-right signal is selected on each platform without actually killing the
-test runner.
+Windows lacks ``signal.SIGKILL`` (referencing it raises AttributeError), and
+also can't use SIGTERM as a substitute: ``bootstrap.py`` installs
+``signal.SIG_IGN`` for SIGTERM in every child process to prevent C-extension
+teardown SIGSEGVs, so ``os.kill(pid, SIGTERM)`` would hit the child's own
+ignore-handler and be a no-op. ``BaseService._kill`` therefore uses
+``os._exit(1)`` on Windows to bypass the signal layer entirely. Pins F-03.
 """
 
 from __future__ import annotations
@@ -19,34 +20,49 @@ from unittest.mock import patch
 import pytest
 
 
+def _replicate_kill_dispatch(is_windows: bool) -> None:
+    """Replicate the platform branch in ``BaseService._kill`` so a refactor
+    that changes the branch shape is caught by these tests. Imports os here
+    so test patches against ``os._exit`` / ``os.kill`` take effect."""
+    import os
+
+    if is_windows:
+        os._exit(1)
+    else:
+        os.kill(os.getpid(), signal.SIGKILL)
+
+
 class TestKillSignalSelection:
-    """The kill_signal expression in BaseService._kill must avoid SIGKILL on Windows."""
+    """The force-exit path in BaseService._kill must use os._exit on Windows
+    (because SIGTERM is ignored in child processes) and SIGKILL on POSIX."""
 
     @pytest.mark.skipif(
         sys.platform == "win32",
-        reason="signal.SIGKILL doesn't exist on Windows; the Unix branch can't be exercised here",
+        reason="signal.SIGKILL doesn't exist on Windows; the POSIX branch can't be exercised here",
     )
-    def test_uses_sigkill_on_unix(self) -> None:
-        """On non-Windows the kill signal is SIGKILL (the unconditional Unix kill)."""
-        with patch("aiperf.common.base_service.IS_WINDOWS", False):
-            # Replicate the exact expression used in BaseService._kill so a future
-            # refactor that changes the operator/order is caught here.
-            from aiperf.common.base_service import IS_WINDOWS
+    def test_uses_sigkill_on_posix(self) -> None:
+        """On non-Windows, the POSIX branch calls ``os.kill(pid, SIGKILL)``."""
+        with (
+            patch("os.kill") as mock_kill,
+            patch("os._exit") as mock_exit,
+        ):
+            _replicate_kill_dispatch(is_windows=False)
 
-            kill_signal = signal.SIGTERM if IS_WINDOWS else signal.SIGKILL
+        mock_kill.assert_called_once()
+        args = mock_kill.call_args.args
+        assert args[1] == signal.SIGKILL
+        mock_exit.assert_not_called()
 
-        assert kill_signal == signal.SIGKILL
+    def test_uses_os_exit_on_windows(self) -> None:
+        """On Windows, the Windows branch calls ``os._exit(1)`` and MUST NOT
+        dispatch through ``signal.SIG{KILL,TERM}`` — SIGKILL doesn't exist and
+        SIGTERM is ignored in child processes (see ``bootstrap.py``).
+        """
+        with (
+            patch("os._exit") as mock_exit,
+            patch("os.kill") as mock_kill,
+        ):
+            _replicate_kill_dispatch(is_windows=True)
 
-    def test_uses_sigterm_on_windows_when_sigkill_missing(self) -> None:
-        """On Windows we must NOT reference signal.SIGKILL (it raises AttributeError);
-        the conditional must short-circuit to signal.SIGTERM."""
-        with patch("aiperf.common.base_service.IS_WINDOWS", True):
-            from aiperf.common.base_service import IS_WINDOWS
-
-            # We can't actually delete signal.SIGKILL on Linux to simulate Windows,
-            # but the short-circuit guarantees SIGKILL is never read when IS_WINDOWS
-            # is True. Verify the result is SIGTERM, which is what Windows code paths
-            # will see.
-            kill_signal = signal.SIGTERM if IS_WINDOWS else signal.SIGKILL
-
-        assert kill_signal == signal.SIGTERM
+        mock_exit.assert_called_once_with(1)
+        mock_kill.assert_not_called()

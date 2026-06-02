@@ -987,8 +987,20 @@ class SystemController(SignalHandlerMixin, BaseService):
             if Environment.DEV.MODE:
                 # Print a warning message to the console if developer mode is enabled, on exit after results
                 print_developer_mode_warning()
-        except Exception as e:  # noqa: BLE001 - last-chance guard; any raise here hangs the process tree
+        except (UnicodeEncodeError, OSError) as e:
+            # Narrow catch: the observed failure modes are (1) Rich console
+            # UnicodeEncodeError on Windows piped stdout (cp1252 can't encode
+            # box-drawing chars) and (2) OSError from closed stdio file
+            # descriptors during shutdown. Broader ``except Exception`` would
+            # mask MemoryError, AssertionError from test injection, and any
+            # other real bugs in the reporting code path.
             self.error(f"Post-shutdown reporting failed (continuing to exit): {e!r}")
+        except Exception:  # noqa: BLE001 - last-chance guard; logs full traceback
+            # Anything else: log full traceback to the file handler so the
+            # bug is recoverable instead of being reduced to a one-line repr.
+            self.exception(
+                "Unexpected post-shutdown reporting failure (continuing to exit)"
+            )
 
         # Clean up the global log queue to prevent semaphore leaks
         await cleanup_global_log_queue()

@@ -898,6 +898,30 @@ class _ServiceSettings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for reading health check HTTP requests.",
     )
+    # Windows-only: TCP-loopback fallback for ZMQ IPC sockets (pyzmq on
+    # Windows does not support ipc://). Per-endpoint ports are derived
+    # deterministically from the IPC path; these settings move or resize
+    # the port window if the default conflicts with another service or
+    # if a collision fires (see `_validate_no_port_collisions`).
+    WINDOWS_TCP_BASE_PORT: int = Field(
+        ge=1024,
+        le=65535,
+        default=28000,
+        description="Windows-only: starting port for the ZMQ IPC TCP-loopback "
+        "fallback range. Per-endpoint ports are derived as "
+        "``base + (sha256_hash mod range)``. No-op on POSIX where ipc:// "
+        "is used directly.",
+    )
+    WINDOWS_TCP_PORT_RANGE: int = Field(
+        ge=64,
+        le=60000,
+        default=20000,
+        description="Windows-only: size of the TCP-loopback port window for "
+        "the ZMQ IPC fallback. Birthday-paradox collision probability for "
+        "n sockets is ``1 - exp(-n*n/(2*range))``. Widen if AIPerf grows "
+        "to many more sockets per run, or relocate via "
+        "``AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT`` if 28000-48000 conflicts.",
+    )
 
     @model_validator(mode="after")
     def auto_disable_uvloop_on_windows(self) -> Self:

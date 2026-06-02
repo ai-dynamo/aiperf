@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import concurrent.futures
 import signal
 from collections.abc import Callable, Coroutine
 
@@ -42,7 +43,23 @@ class SignalHandlerMixin(AIPerfLoggerMixin):
 
             def windows_signal_handler(sig: int, _frame: object) -> None:
                 self.warning(f"Signal {sig} received, initiating graceful shutdown")
-                asyncio.run_coroutine_threadsafe(callback(sig), loop)
+                fut = asyncio.run_coroutine_threadsafe(callback(sig), loop)
+
+                def _on_callback_done(f: "concurrent.futures.Future") -> None:
+                    # ``run_coroutine_threadsafe`` returns a future whose
+                    # result is never awaited. If the wrapped coroutine
+                    # raises, the exception is otherwise silently swallowed
+                    # (Python emits "exception never retrieved" on GC, into
+                    # stderr that may already be redirected to NUL by
+                    # ``_redirect_stdio_to_devnull``). Surface failures
+                    # explicitly via the service logger. Skip CancelledError
+                    # — that's the normal loop-teardown path during shutdown,
+                    # not a real failure to surface.
+                    exc = f.exception()
+                    if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                        self.error(f"Signal-handler callback raised: {exc!r}")
+
+                fut.add_done_callback(_on_callback_done)
 
             signal.signal(signal.SIGINT, windows_signal_handler)
             # SIGBREAK (Ctrl+Break / CTRL_BREAK_EVENT) is distinct from SIGINT

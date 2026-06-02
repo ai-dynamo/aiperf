@@ -97,10 +97,11 @@ class TestMultiProcessServiceManager:
         )
         service_manager.multi_process_info = [dead_process_info]
 
-        # Expect an error due to the dead process
+        # Expect an error due to the dead REQUIRED process. (DATASET_MANAGER
+        # is in required_services via the service_manager fixture.)
         with pytest.raises(
             AIPerfError,
-            match="Service process dead_service_123 died before registering",
+            match="Required service dead_service_123 died before registering",
         ):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(),
@@ -128,10 +129,11 @@ class TestMultiProcessServiceManager:
         )
         service_manager.multi_process_info = [alive_process_info, dead_process_info]
 
-        # Should raise error about the dead process
+        # Should raise error about the dead REQUIRED process. (DATASET_MANAGER
+        # is in required_services via the service_manager fixture.)
         with pytest.raises(
             AIPerfError,
-            match="Service process dead_service_789 died before registering",
+            match="Required service dead_service_789 died before registering",
         ):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
@@ -150,14 +152,71 @@ class TestMultiProcessServiceManager:
         )
         service_manager.multi_process_info = [none_process_info]
 
-        # Should raise error about the failed process
+        # Should raise error: None process counts as dead, and DATASET_MANAGER
+        # is in required_services. Optional services with None process would
+        # be dropped with a warning instead (see test_optional_dead_drops_and_continues).
         with pytest.raises(
             AIPerfError,
-            match="Service process failed_to_start_service died before registering",
+            match="Required service failed_to_start_service died before registering",
         ):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
             )
+
+    @pytest.mark.asyncio
+    async def test_optional_dead_drops_and_continues(
+        self,
+        service_manager: MultiProcessServiceManager,
+        mock_alive_process: MagicMock,
+        mock_dead_process: MagicMock,
+    ):
+        """Pins F-04: an optional service (not in required_services) dying
+        before registering must drop the service from the wait set and let
+        the benchmark continue, NOT raise AIPerfError. Required services
+        dying remains fatal (covered by other tests in this class).
+        """
+        # GPU_TELEMETRY is not in required_services (fixture has only
+        # DATASET_MANAGER + TIMING_MANAGER) — so a dead one should be
+        # warning + drop, not fatal.
+        alive_dataset = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="dataset_alive",
+        )
+        alive_timing = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.TIMING_MANAGER,
+            service_id="timing_alive",
+        )
+        # SERVER_METRICS_MANAGER is an actual optional service started via
+        # run_service() — not in the fixture's required_services.
+        dead_optional = MultiProcessRunInfo.model_construct(
+            process=mock_dead_process,
+            service_type=ServiceType.SERVER_METRICS_MANAGER,
+            service_id="server_metrics_dead",
+        )
+        service_manager.multi_process_info = [
+            alive_dataset,
+            alive_timing,
+            dead_optional,
+        ]
+        # Mark the required services as registered so the wait loop succeeds
+        # once the dead optional is dropped.
+        from aiperf.common.enums import ServiceRegistrationStatus
+
+        for info in (alive_dataset, alive_timing):
+            registered = MagicMock()
+            registered.service_type = info.service_type
+            registered.registration_status = ServiceRegistrationStatus.REGISTERED
+            service_manager.service_id_map[info.service_id] = registered
+
+        # Should NOT raise — dead optional gets dropped, wait returns cleanly.
+        await service_manager.wait_for_all_services_registration(
+            stop_event=asyncio.Event(), timeout_seconds=2.0
+        )
+
+        # Dead optional was removed from the wait set.
+        assert dead_optional not in service_manager.multi_process_info
 
     @pytest.mark.asyncio
     async def test_wait_blocks_until_optional_services_register(

@@ -216,6 +216,8 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_HEALTH_HOST` | `'127.0.0.1'` | — | Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments. |
 | `AIPERF_SERVICE_HEALTH_PORT` | `8080` | ≥ 1, ≤ 65535 | Port for the health server HTTP endpoints (/healthz, /readyz). |
 | `AIPERF_SERVICE_HEALTH_REQUEST_TIMEOUT` | `5.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for reading health check HTTP requests. |
+| `AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT` | `28000` | ≥ 1024, ≤ 65535 | Windows-only: starting port for the ZMQ IPC TCP-loopback fallback range. Per-endpoint ports are derived as ``base + (sha256_hash mod range)``. No-op on POSIX where ipc:// is used directly. |
+| `AIPERF_SERVICE_WINDOWS_TCP_PORT_RANGE` | `20000` | ≥ 64, ≤ 60000 | Windows-only: size of the TCP-loopback port window for the ZMQ IPC fallback. Birthday-paradox collision probability for n sockets is ``1 - exp(-n*n/(2*range))``. Widen if AIPerf grows to many more sockets per run, or relocate via ``AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT`` if 28000-48000 conflicts. |
 
 ## TIMING
 

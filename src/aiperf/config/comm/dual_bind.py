@@ -9,7 +9,10 @@ from pydantic import Field, model_validator
 from typing_extensions import Self
 
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
-from aiperf.config.comm.ipc import _build_socket_address
+from aiperf.config.comm.ipc import (
+    _validate_no_port_collisions,
+    build_socket_address,
+)
 from aiperf.plugin.enums import CommunicationBackend
 
 
@@ -61,9 +64,15 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     enable_control: bool = Field(default=False, description="Enable control socket")
     enable_capture: bool = Field(default=False, description="Enable capture socket")
 
-    def _ipc_addr(self, endpoint: str) -> str:
-        """Build an address for the given endpoint (ipc:// on POSIX, tcp:// on Windows)."""
-        return _build_socket_address(self.ipc_path, f"{self.name}_{endpoint}.ipc")
+    def _socket_addr(self, endpoint: str) -> str:
+        """Build a ZMQ socket address for the given endpoint.
+
+        Returns ``ipc://...`` on POSIX and ``tcp://127.0.0.1:<port>`` on
+        Windows (pyzmq there lacks ``ipc://`` support). Callers must NOT
+        assume an ``ipc://`` prefix; see ``build_socket_address`` for the
+        derivation.
+        """
+        return build_socket_address(self.ipc_path, f"{self.name}_{endpoint}.ipc")
 
     def _tcp_addr(self, port: int) -> str:
         """Build a TCP address for the given port (bind-side)."""
@@ -75,7 +84,7 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
         """Resolve address: TCP with remote_host if set, otherwise IPC."""
         if remote_host:
             return f"tcp://{remote_host}:{tcp_port}"
-        return self._ipc_addr(ipc_endpoint)
+        return self._socket_addr(ipc_endpoint)
 
     def resolve_frontend(self, remote_host: str | None) -> str:
         """Get frontend address: TCP with remote_host if set, otherwise IPC."""
@@ -88,7 +97,7 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     @property
     def frontend_address(self) -> str:
         """Get the primary frontend address (IPC)."""
-        return self._ipc_addr("frontend")
+        return self._socket_addr("frontend")
 
     @property
     def frontend_tcp_address(self) -> str:
@@ -103,7 +112,7 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     @property
     def backend_address(self) -> str:
         """Get the primary backend address (IPC)."""
-        return self._ipc_addr("backend")
+        return self._socket_addr("backend")
 
     @property
     def backend_tcp_address(self) -> str:
@@ -118,12 +127,12 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     @property
     def control_address(self) -> str | None:
         """Get the control address (IPC only)."""
-        return self._ipc_addr("control") if self.enable_control else None
+        return self._socket_addr("control") if self.enable_control else None
 
     @property
     def capture_address(self) -> str | None:
         """Get the capture address (IPC only)."""
-        return self._ipc_addr("capture") if self.enable_capture else None
+        return self._socket_addr("capture") if self.enable_capture else None
 
 
 class ZMQDualBindConfig(BaseZMQCommunicationConfig):
@@ -149,14 +158,43 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
 
     @model_validator(mode="after")
     def validate_paths(self) -> Self:
-        """Set default IPC path and propagate settings to proxy configs."""
+        """Set default IPC path, propagate to proxy configs, and check that
+        Windows TCP-fallback ports don't collide (no-op on POSIX).
+        """
         if self.ipc_path is None:
             self.ipc_path = Path(tempfile.mkdtemp()) / "aiperf"
         for proxy_config in self.proxy_configs:
             if proxy_config.ipc_path is None:
                 proxy_config.ipc_path = self.ipc_path
             proxy_config.tcp_host = self.tcp_host
+
+        # Detect Windows TCP-fallback port collisions at config time. Same
+        # rationale as ZMQIPCConfig: dual-bind also derives Windows IPC ports
+        # from hashed paths, so the birthday-paradox collision risk applies
+        # here too. No-op on POSIX.
+        _validate_no_port_collisions(self._collect_local_addresses())
         return self
+
+    def _collect_local_addresses(self) -> list[tuple[str, str]]:
+        """Collect ``(label, address)`` pairs for every local IPC endpoint
+        the dual-bind config derives, for collision checking. Excludes the
+        TCP bind-side addresses since those have explicit user-chosen ports
+        and don't share the hash window."""
+        pairs: list[tuple[str, str]] = [
+            ("records_push_pull", self.records_push_pull_address),
+            ("credit_router", self.credit_router_address),
+            ("credit_return_router", self.credit_return_router_address),
+            ("control", self.control_address),
+            ("group_lifecycle", self.group_lifecycle_address),
+        ]
+        for proxy in self.proxy_configs:
+            pairs.append((f"{proxy.name}_frontend", proxy.frontend_address))
+            pairs.append((f"{proxy.name}_backend", proxy.backend_address))
+            if proxy.control_address is not None:
+                pairs.append((f"{proxy.name}_control", proxy.control_address))
+            if proxy.capture_address is not None:
+                pairs.append((f"{proxy.name}_capture", proxy.capture_address))
+        return pairs
 
     ipc_path: Annotated[
         Path | None,
@@ -226,42 +264,49 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         description="Raw inference proxy configuration (PUSH/PULL).",
     )
 
-    def _ipc_addr(self, name: str) -> str:
-        """Build an address for the given endpoint (ipc:// on POSIX, tcp:// on Windows)."""
+    def _socket_addr(self, name: str) -> str:
+        """Build a ZMQ socket address for the given endpoint.
+
+        Returns ``ipc://...`` on POSIX and ``tcp://127.0.0.1:<port>`` on
+        Windows (pyzmq there lacks ``ipc://`` support). Raises ``ValueError``
+        if ``ipc_path`` is unset — dual-bind requires either an IPC path
+        (for the within-pod IPC side) or a configured controller_host (for
+        the TCP side); the address-derivation path here is the IPC half.
+        """
         if not self.ipc_path:
             raise ValueError(
                 f"Dual-bind IPC address for endpoint {name!r} requires comm.ipc_path; "
                 "set comm.ipc_path or configure controller_host for TCP addresses."
             )
-        return _build_socket_address(self.ipc_path, f"{name}.ipc")
+        return build_socket_address(self.ipc_path, f"{name}.ipc")
 
     @property
     def records_push_pull_address(self) -> str:
         """Get records push/pull address based on deployment mode."""
         if self.controller_host:
             return f"tcp://{self.controller_host}:{self.records_push_pull_tcp_port}"
-        return self._ipc_addr("records_push_pull")
+        return self._socket_addr("records_push_pull")
 
     @property
     def credit_router_address(self) -> str:
         """Get credit router address based on deployment mode."""
         if self.controller_host:
             return f"tcp://{self.controller_host}:{self.credit_router_tcp_port}"
-        return self._ipc_addr("credit_router")
+        return self._socket_addr("credit_router")
 
     @property
     def credit_return_router_address(self) -> str:
         """Get credit return router address based on deployment mode."""
         if self.controller_host:
             return f"tcp://{self.controller_host}:{self.credit_return_router_tcp_port}"
-        return self._ipc_addr("credit_return_router")
+        return self._socket_addr("credit_return_router")
 
     @property
     def control_address(self) -> str:
         """Get control channel address based on deployment mode."""
         if self.controller_host:
             return f"tcp://{self.controller_host}:{self.control_tcp_port}"
-        return self._ipc_addr("control")
+        return self._socket_addr("control")
 
     @property
     def group_lifecycle_address(self) -> str:
@@ -270,7 +315,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         This channel stays local to a single worker group, so it remains on IPC
         even when controller-facing traffic uses TCP.
         """
-        return self._ipc_addr("group_lifecycle")
+        return self._socket_addr("group_lifecycle")
 
     @property
     def control_tcp_bind_address(self) -> str:

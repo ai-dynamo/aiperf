@@ -109,7 +109,7 @@ class TestZMQDualBindProxyConfig:
         assert addr is not None
         assert "test_capture.ipc" in addr
 
-    def test_ipc_addr_raises_without_path(self) -> None:
+    def test_socket_addr_raises_without_path(self) -> None:
         cfg = ZMQDualBindProxyConfig(name="test")
         with pytest.raises(ValueError, match="IPC path is required"):
             _ = cfg.frontend_address
@@ -629,14 +629,14 @@ class TestZMQIPCProxyConfig:
 
 
 # =============================================================================
-# ZMQDualBindConfig._ipc_addr error path
+# ZMQDualBindConfig._socket_addr error path
 # =============================================================================
 
 
 class TestZMQDualBindConfigIPCAddrError:
-    """Test _ipc_addr raises when ipc_path is cleared."""
+    """Test _socket_addr raises when ipc_path is cleared."""
 
-    def test_ipc_addr_raises_when_ipc_path_cleared(self) -> None:
+    def test_socket_addr_raises_when_ipc_path_cleared(self) -> None:
         cfg = ZMQDualBindConfig()
         cfg.ipc_path = None
         with pytest.raises(ValueError) as exc_info:
