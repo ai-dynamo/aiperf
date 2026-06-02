@@ -76,6 +76,7 @@ system message).
 | `bigbench` | `exact_match` | 3 | `lukaemon/bbh` (trt-llm/DeepEval reference; 27 subtasks, canonical CoT/non-CoT prompt files) |
 | `aime24` | `lighteval_expr` | 0 | `HuggingFaceH4/aime_2024` (trt-llm/lighteval reference, bare problem text, `expr_gold_metric`) |
 | `aime25` | `lighteval_expr` | 0 | `yentinglin/aime_2025` (trt-llm/lighteval reference, bare problem text, `expr_gold_metric`) |
+| `math_500` | `lighteval_latex` | 0 | `HuggingFaceH4/MATH-500` (trt-llm/lighteval reference, gold is full solution containing `\boxed{answer}`, `latex_gold_metric`) |
 
 ## CLI Flags
 
