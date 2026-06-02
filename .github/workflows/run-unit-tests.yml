@@ -51,6 +51,14 @@ jobs:
       # ``command -v`` CLI-entry-point check from POSIX is shell-specific
       # and intentionally skipped here; the ``import`` check is the
       # platform-portable half.
+      #
+      # PYTHONIOENCODING=utf-8 forces the Python ``print()`` stdio path to
+      # UTF-8 so ``tools/_core.py``'s box-drawing characters (``━``)
+      # render without UnicodeEncodeError on the Windows default ``cp1252``
+      # console code page. Without it, every banner-print call in the
+      # artifact generator crashes the install step.
+      env:
+        PYTHONIOENCODING: utf-8
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
         uv pip install -e ".[dev]"
