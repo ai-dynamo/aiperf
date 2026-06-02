@@ -45,10 +45,19 @@ jobs:
         make ci-install PYTHON_VERSION=${{ matrix.python-version }}
     - name: Install dependencies (Windows)
       if: runner.os == 'Windows'
+      # Mirror the POSIX ``make ci-install`` artifact-generation steps
+      # (mock-server import check, generate-plugin-enums, generate-plugin-
+      # overloads) so Windows runs the same generated code as POSIX. The
+      # ``command -v`` CLI-entry-point check from POSIX is shell-specific
+      # and intentionally skipped here; the ``import`` check is the
+      # platform-portable half.
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
         uv pip install -e ".[dev]"
         uv pip install -e "tests/aiperf_mock_server[dev]"
+        uv run python -c "import aiperf_mock_server"
+        uv run python tools/generate_plugin_artifacts.py --enums
+        uv run python tools/generate_plugin_artifacts.py --overloads
     # Windows runs the same two tiers as macOS — unit + component_integration
     # — by invoking pytest directly (no `make` available on Windows). Integration
     # tests remain Linux-only (run-integration-tests.yml) which mirrors the
