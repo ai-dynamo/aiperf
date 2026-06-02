@@ -15,6 +15,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -56,12 +57,12 @@ def staged_fern_docs(tmp_path_factory: pytest.TempPathFactory) -> Path:
     shutil.copytree(
         _REPO_ROOT / "fern",
         staged / "fern",
-        ignore=shutil.ignore_patterns(".local-preview"),
+        ignore=shutil.ignore_patterns(".local-preview", ".preview", ".definition"),
     )
     shutil.copytree(_REPO_ROOT / "docs", staged / "docs")
     subprocess.run(
         [
-            "python3",
+            sys.executable,
             str(staged / "fern" / "md_to_mdx.py"),
             "--dir",
             str(staged / "docs"),
@@ -69,6 +70,7 @@ def staged_fern_docs(tmp_path_factory: pytest.TempPathFactory) -> Path:
         check=True,
         capture_output=True,
         text=True,
+        timeout=60,
     )
     return staged / "fern"
 
@@ -151,9 +153,9 @@ def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
 def test_fern_check_strict(staged_fern_docs: Path) -> None:
     """Strict validation: broken or relative markdown links must fail.
 
-    The auth-skipped redirects warning and accent-contrast warning remain as
-    warnings (not errors) under ``--strict-broken-links``; broken/relative
-    links are promoted to errors.
+    ``--strict-broken-links`` promotes broken/relative-link warnings to errors;
+    ``--warnings`` just surfaces remaining non-link warnings (auth-skipped
+    redirects, accent contrast) in the output without failing the check.
     """
     result = subprocess.run(
         ["fern", "check", "--warnings", "--strict-broken-links"],
