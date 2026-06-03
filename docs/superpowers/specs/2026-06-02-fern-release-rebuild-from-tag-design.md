@@ -152,6 +152,19 @@ overwriting the existing snapshot. The input is empty on tag-push events, so the
 guard is never bypassable on an automated tag release — only on a manual dispatch
 where someone explicitly opts in.
 
+`force_rebuild` needs no GitHub configuration — declaring it as a
+`workflow_dispatch` input is enough; GitHub renders the boolean as a checkbox in
+the Actions "Run workflow" dialog. To force a rebuild of an already-released
+version (e.g. after a converter or link-pinning fix):
+
+```bash
+# Actions tab -> "Fern Docs" -> Run workflow -> set tag, check force_rebuild.
+# Or via the CLI:
+gh workflow run fern-docs.yml --ref main -f tag=v0.9.0 -f force_rebuild=true
+```
+
+Omit it for a normal release; it defaults to `false`.
+
 ### Commit, push, publish
 
 Unchanged from today (commit `pages-$TAG/` + `versions/$TAG.yml` + `docs.yml`
