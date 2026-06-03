@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from rich.console import Console, Group, RenderableType
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -72,7 +71,6 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             RenderableType: Rich Group containing multiple Tables, or Text message if no data
         """
         renderables = []
-        renderables.append(self._create_platform_disclaimer())
         first_table = True
 
         # TelemetryExportData uses: endpoints[endpoint_display] -> EndpointData.gpus[gpu_key] -> GpuSummary
@@ -100,35 +98,10 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                 )
                 renderables.append(metrics_table)
 
-        if len(renderables) == 1:
+        if not renderables:
             return self._create_no_data_message()
 
         return Group(*renderables)
-
-    def _create_platform_disclaimer(self) -> Panel:
-        """Create platform-specific comparability warning box for telemetry summaries."""
-        platforms = sorted(
-            {
-                gpu_summary.platform
-                for endpoint_data in self._telemetry_results.endpoints.values()
-                for gpu_summary in endpoint_data.gpus.values()
-            }
-        )
-        platform_text = ", ".join(platforms) if platforms else "unknown"
-        body = Text(
-            f"Platform: {platform_text}\n"
-            "Metric semantics are platform-specific; cross-platform comparisons "
-            "require workload and collector validation.",
-            style="yellow",
-        )
-        return Panel(
-            body,
-            title="GPU Telemetry Platform",
-            border_style="bold yellow",
-            title_align="center",
-            padding=(0, 2),
-            expand=False,
-        )
 
     def _create_summary_header(self, table_title_base: str) -> str:
         """Create the summary header with endpoint reachability status.

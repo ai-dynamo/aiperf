@@ -122,32 +122,11 @@ class TestGPUTelemetryConsoleExporter:
         output = capsys.readouterr().out
         assert "GPU Telemetry Summary" in output
         assert "telemetry sources reachable" in output
-        # Platform disclaimer renders as a titled warning box; assert on tokens
-        # that survive panel word-wrapping rather than a contiguous phrase.
-        assert "GPU Telemetry Platform" in output
-        assert "nvidia" in output
-        assert "semantics" in output and "validation" in output
         assert "H100" in output or "A100" in output
         assert "Power" in output and "Usage" in output
-
-    def test_platform_disclaimer_is_warning_panel(
-        self, mock_profile_results, mock_cfg, sample_telemetry_results
-    ):
-        """The platform disclaimer renders as a titled, bordered warning box."""
-        from rich.panel import Panel
-
-        exporter = GPUTelemetryConsoleExporter(
-            make_exporter_config(
-                results=mock_profile_results,
-                cli_config=mock_cfg,
-                telemetry_results=sample_telemetry_results,
-            )
-        )
-
-        disclaimer = exporter._create_platform_disclaimer()
-
-        assert isinstance(disclaimer, Panel)
-        assert "GPU Telemetry Platform" in str(disclaimer.title)
+        # The vendor disclaimer moved to its own banner exporter; the telemetry
+        # block must no longer render it.
+        assert "GPU Telemetry Platform" not in output
 
     @pytest.mark.asyncio
     async def test_export_displays_all_endpoints(
