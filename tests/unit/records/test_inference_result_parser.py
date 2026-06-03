@@ -496,6 +496,7 @@ class TestContextPromptISL:
         assert parsed_record.responses == []
 
 
+@pytest.mark.asyncio
 class TestMalformedResponseEndToEnd:
     """End-to-end: a malformed/error response body (server crash, proxy error)
     must flow through the parser as a clean failed record, not crash the parser
