@@ -20,3 +20,7 @@ class ConsolePowerEfficiencyExporter(ConsoleMetricsExporter):
     title = "GPU Power Efficiency (NVIDIA)"
     console_groups = (MetricConsoleGroup.GPU_POWER_EFFICIENCY,)
     split_by_group = False
+    # These totals are single aggregate values, not distributions, so only the
+    # average column is meaningful; the percentile/min/max/std columns would all
+    # be N/A.
+    STAT_COLUMN_KEYS = ["avg"]

@@ -78,6 +78,13 @@ class TestConsolePowerEfficiencyExporter:
         assert "Total GPU Energy" in output
         assert "Output Tokens per Joule" in output
         assert "Energy per User" in output
+        # These are single aggregate values, so only the average column is shown.
+        for percentile_header in ("p99", "p90", "p50", "min", "max", "std"):
+            assert percentile_header not in output
+
+    def test_renders_only_average_column(self) -> None:
+        """The efficiency section drops the non-statistical percentile columns."""
+        assert ConsolePowerEfficiencyExporter.STAT_COLUMN_KEYS == ["avg"]
 
     @pytest.mark.asyncio
     async def test_omits_section_when_no_efficiency_metrics(self, capsys) -> None:
