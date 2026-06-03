@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from rich.console import Console, Group, RenderableType
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -104,8 +105,8 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
 
         return Group(*renderables)
 
-    def _create_platform_disclaimer(self) -> Text:
-        """Create platform-specific comparability warning for telemetry summaries."""
+    def _create_platform_disclaimer(self) -> Panel:
+        """Create platform-specific comparability warning box for telemetry summaries."""
         platforms = sorted(
             {
                 gpu_summary.platform
@@ -114,12 +115,19 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             }
         )
         platform_text = ", ".join(platforms) if platforms else "unknown"
-        return Text(
-            "GPU telemetry platform: "
-            f"{platform_text}. "
+        body = Text(
+            f"Platform: {platform_text}\n"
             "Metric semantics are platform-specific; cross-platform comparisons "
             "require workload and collector validation.",
             style="yellow",
+        )
+        return Panel(
+            body,
+            title="GPU Telemetry Platform",
+            border_style="bold yellow",
+            title_align="center",
+            padding=(0, 2),
+            expand=False,
         )
 
     def _create_summary_header(self, table_title_base: str) -> str:
