@@ -15,7 +15,7 @@ Pins:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import orjson
@@ -31,8 +31,11 @@ from aiperf.accuracy.models import BenchmarkProblem
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
-def _make_run():
+
+def _make_run() -> BenchmarkRun:
     return make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.COMPLETIONS,
