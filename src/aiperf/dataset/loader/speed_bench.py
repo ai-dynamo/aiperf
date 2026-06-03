@@ -3,25 +3,81 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections import defaultdict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from aiperf.common.models import Conversation, Text, Turn
-from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+from pydantic import Field, ValidationError, model_validator
+
+from aiperf.common.models import AIPerfBaseModel
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
+from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-class SpeedBenchLoader(BaseHFDatasetLoader):
+class SpeedBenchRow(AIPerfBaseModel):
+    """Defines the schema for Speed-Bench row data.
+
+    Each entry represents a single line in the Speed-Bench JSONL file, which contains the following fields:
+    - question_id: Unique identifier for the question
+    - category: Category of the question
+    - messages: List of messages in the conversation
+    """
+
+    TURNS_PLACEHOLDER: ClassVar[str] = (
+        "FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE SOURCE USING SPECDEC_BENCH"
+    )
+
+    question_id: str = Field(
+        description="Unique identifier for the question", min_length=32, max_length=32
+    )
+    category: str = Field(description="Category of the question", min_length=1)
+    messages: list[dict[str, Any]] = Field(
+        description="List of messages in the conversation", min_length=1
+    )
+
+    @model_validator(mode="after")
+    def validate_messages_structure(self) -> SpeedBenchRow:
+        """Validate the messages field structure."""
+        if not all(
+            isinstance(message, dict)
+            and isinstance(message.get("role"), str)
+            and bool(message["role"].strip())
+            and isinstance(message.get("content"), str)
+            and bool(message["content"].strip())
+            and message["content"] != self.TURNS_PLACEHOLDER
+            for message in self.messages
+        ):
+            raise ValueError(
+                "messages must be a non-empty list of dictionaries with role and content fields, and the content must not be the placeholder string"
+            )
+        return self
+
+
+def is_speed_bench_row(data: object) -> bool:
+    """Return whether data matches the SPEED-Bench JSONL row shape."""
+    if not isinstance(data, dict):
+        return False
+
+    try:
+        SpeedBenchRow.model_validate(data)
+        return True
+    except ValidationError:
+        return False
+
+
+class SpeedBenchLoader(MultiTurnDatasetLoader):
     """HuggingFace dataset loader for nvidia/SPEED-Bench.
 
     SPEED-Bench (SPEculative Evaluation Dataset) provides prompts for
     benchmarking speculative decoding across diverse semantic domains and
-    input sequence lengths. Each row contains a ``turns`` column with a
-    list of plain strings and a ``category`` column identifying the
-    semantic domain or entropy tier. By default only the first turn is used
-    as the benchmark prompt; with ``multi_turn=True`` every non-empty turn
-    in the row becomes its own Turn in one Conversation.
+    input sequence lengths. Each JSONL row contains a ``question_id``, a
+    ``category`` identifying the semantic domain or entropy tier, and a
+    ``messages`` array of OpenAI-style ``role``/``content`` dictionaries.
+    By default all messages are used with ``multi_turn=True``,
+    otherwise only the first message is used.
 
     When ``category`` is set in plugin metadata, only rows matching that
     category are loaded. This enables per-category acceptance rate
@@ -38,89 +94,139 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
     Example plugins.yaml entries::
 
         speed_bench_qualitative:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
-          metadata:
-            hf_dataset_name: nvidia/SPEED-Bench
-            hf_split: test
-            hf_subset: qualitative
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
 
         speed_bench_coding:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeCategoryLoader
           metadata:
-            hf_dataset_name: nvidia/SPEED-Bench
-            hf_split: test
-            hf_subset: qualitative
             category: coding
+
+        speed_bench_throughput_1k_mixed:
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KCategoryLoader
+          metadata:
+            category: mixed
     """
 
     def __init__(
         self,
+        filename: str,
         run: BenchmarkRun | None = None,
         category: str | None = None,
         *,
-        multi_turn: bool = False,
-        **kwargs,
+        multi_turn: bool = True,
+        **kwargs: Any,
     ) -> None:
         self.category = category
         self.multi_turn = multi_turn
-        super().__init__(run=run, **kwargs)
+        super().__init__(filename=filename, run=run, **kwargs)
 
-    async def convert_to_conversations(
-        self, data: dict[str, Any]
-    ) -> list[Conversation]:
-        """Convert each dataset row into a Conversation (single- or multi-turn)."""
-        dataset = data["dataset"]
-        conversations: list[Conversation] = []
-        skipped = 0
-        max_conversations = self._max_conversations()
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        """Return whether a JSON object matches the SPEED-Bench JSONL shape."""
+        return is_speed_bench_row(data)
 
-        for row in dataset:
-            if (
-                max_conversations is not None
-                and len(conversations) >= max_conversations
-            ):
-                break
+    def load_dataset(self) -> dict[str, list[MultiTurn]]:
+        """Load SPEED-Bench multi-turn data from a JSONL file.
 
-            if self.category and row.get("category") != self.category:
+        Each line is mapped to a ``MultiTurn`` where ``session_id`` is taken
+        from the line's ``question_id``, and ``turns`` is built from the
+        ``messages`` array by converting each ``{"role", "content"}`` entry
+        into a ``SingleTurn(role=..., text=...)``.
+
+        When ``self.category`` is set, lines whose ``category`` field does not
+        match are skipped. If the filter eliminates every row, a warning is
+        emitted to surface a likely category/file mismatch rather than
+        silently returning an empty dataset.
+
+        When ``self.multi_turn`` is set, all turns in the row are used,
+        otherwise only the first turn is used.
+
+        Returns:
+            A dictionary mapping session_id (the SPEED-Bench question_id) to
+            a list of MultiTurn objects.
+        """
+        data: dict[str, list[MultiTurn]] = defaultdict(list)
+
+        for row in self._iter_record_dicts():
+            loaded_line = SpeedBenchRow.model_validate(row)
+
+            if self.category and loaded_line.category != self.category:
                 continue
 
-            turns_raw = row.get("turns")
-            if not turns_raw or not isinstance(turns_raw, list):
-                skipped += 1
-                continue
-
-            if self.multi_turn:
-                conv_turns: list[Turn] = []
-                for t in turns_raw:
-                    text = str(t).strip() if t else ""
-                    if text:
-                        conv_turns.append(Turn(texts=[Text(contents=[text])]))
-                if not conv_turns:
-                    skipped += 1
-                    continue
-                conversations.append(
-                    Conversation(
-                        session_id=self.session_id_generator.next(),
-                        turns=conv_turns,
-                    )
-                )
-            else:
-                prompt = str(turns_raw[0]).strip() if turns_raw[0] else ""
-                if not prompt:
-                    skipped += 1
-                    continue
-                conversations.append(
-                    Conversation(
-                        session_id=self.session_id_generator.next(),
-                        turns=[Turn(texts=[Text(contents=[prompt])])],
-                    )
-                )
-
-        self.debug(
-            lambda: (
-                f"Converted {len(conversations)} rows"
-                f" (skipped {skipped} empty"
-                f"{f', filtered to category={self.category!r}' if self.category else ''})"
+            messages = (
+                loaded_line.messages if self.multi_turn else loaded_line.messages[:1]
             )
-        )
-        return conversations
+
+            multi_turn_data = MultiTurn(
+                session_id=loaded_line.question_id,
+                turns=[
+                    SingleTurn(text=message["content"], role=message["role"])
+                    for message in messages
+                ],
+            )
+
+            data[multi_turn_data.session_id].append(multi_turn_data)
+
+        if self.category and not data:
+            self.warning(
+                lambda: (
+                    f"SPEED-Bench category filter {self.category!r} matched no rows "
+                    f"in {self.filename}. Verify the configured category exists in "
+                    f"this dataset."
+                )
+            )
+
+        return data
+
+
+class SpeedBenchSplitLoader(SpeedBenchLoader):
+    """Base loader for a concrete SPEED-Bench JSONL split."""
+
+    split_filename: ClassVar[str]
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        if filename is None or Path(filename).name != cls.split_filename:
+            return False
+
+        return super().can_load(data, filename)
+
+
+class SpeedBenchQualitativeLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench qualitative split."""
+
+    split_filename = "qualitative.jsonl"
+
+
+class SpeedBenchThroughput1KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 1K split."""
+
+    split_filename = "throughput_1k.jsonl"
+
+
+class SpeedBenchThroughput2KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 2K split."""
+
+    split_filename = "throughput_2k.jsonl"
+
+
+class SpeedBenchThroughput8KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 8K split."""
+
+    split_filename = "throughput_8k.jsonl"
+
+
+class SpeedBenchThroughput16KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 16K split."""
+
+    split_filename = "throughput_16k.jsonl"
+
+
+class SpeedBenchThroughput32KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 32K split."""
+
+    split_filename = "throughput_32k.jsonl"

@@ -123,7 +123,7 @@ def extract_category(profile: dict) -> str | None:
     for entry in datasets:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("dataset")
+        name = entry.get("format")
         if isinstance(name, str) and name.startswith("speed_bench_"):
             return name.removeprefix("speed_bench_")
     return None

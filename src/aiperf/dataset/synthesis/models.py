@@ -84,8 +84,14 @@ class SynthesisParams(AIPerfBaseModel):
         ge=0.0,
         description="Multiplier for leaf path (unique prompt) lengths",
     )
+    output_len_multiplier: float = Field(
+        default=1.0, ge=0.0, description="Multiplier for output lengths"
+    )
     max_isl: int | None = Field(
         default=None, ge=1, description="Maximum input sequence length filter"
+    )
+    max_osl: int | None = Field(
+        default=None, ge=1, description="Maximum output sequence length cap"
     )
     block_size: int = Field(
         default=InputTokensDefaults.BLOCK_SIZE, ge=1, description="KV cache page size"
@@ -115,6 +121,8 @@ class SynthesisParams(AIPerfBaseModel):
             prefix_len_multiplier=config.prefix_len_multiplier,
             prefix_root_multiplier=config.prefix_root_multiplier,
             prompt_len_multiplier=config.prompt_len_multiplier,
+            output_len_multiplier=config.output_len_multiplier,
             max_isl=config.max_isl,
+            max_osl=config.max_osl,
             block_size=block_size,
         )

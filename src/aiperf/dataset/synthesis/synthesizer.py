@@ -110,6 +110,17 @@ class Synthesizer(AIPerfLoggerMixin):
                     timestamp / self.params.speedup_ratio
                 )
 
+            output_length = synthetic_trace.get("output_length")
+            if output_length is not None:
+                scaled_output_length = int(
+                    round(output_length * self.params.output_len_multiplier)
+                )
+                if self.params.max_osl is not None:
+                    scaled_output_length = min(
+                        scaled_output_length, self.params.max_osl
+                    )
+                synthetic_trace["output_length"] = max(1, scaled_output_length)
+
             synthetic_traces.append(synthetic_trace)
 
         self.info(f"Generated {len(synthetic_traces)} synthetic traces")

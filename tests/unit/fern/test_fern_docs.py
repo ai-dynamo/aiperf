@@ -15,7 +15,9 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -38,11 +40,46 @@ pytestmark = [
     pytest.mark.skipif(not _fern_installed, reason="fern CLI not installed"),
 ]
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
-def test_fern_check() -> None:
-    """Validate the Fern definition has no errors."""
+
+@pytest.fixture(scope="session")
+def staged_fern_docs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Stage and convert docs the way CI and ``make fern-preview`` do.
+
+    Copies ``fern/`` and ``docs/`` into a temp tree, runs ``md_to_mdx.py`` to
+    convert GitHub Markdown to Fern MDX, then returns the staged ``fern/``
+    directory. Fern link validation must run against converted content: raw
+    ``docs/`` contains HTML comments that Fern's MDX parser rejects, which
+    breaks the link-check rules with a false error.
+    """
+    staged = tmp_path_factory.mktemp("fern-docs")
+    shutil.copytree(
+        _REPO_ROOT / "fern",
+        staged / "fern",
+        ignore=shutil.ignore_patterns(".local-preview", ".preview", ".definition"),
+    )
+    shutil.copytree(_REPO_ROOT / "docs", staged / "docs")
+    subprocess.run(
+        [
+            sys.executable,
+            str(staged / "fern" / "md_to_mdx.py"),
+            "--dir",
+            str(staged / "docs"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return staged / "fern"
+
+
+def test_fern_check(staged_fern_docs: Path) -> None:
+    """Validate the Fern definition (converted content) has no errors."""
     result = subprocess.run(
         ["fern", "check"],
+        cwd=staged_fern_docs,
         capture_output=True,
         text=True,
         timeout=60,
@@ -53,7 +90,7 @@ def test_fern_check() -> None:
     )
 
 
-def test_fern_docs_dev_starts() -> None:
+def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
     """Verify fern docs dev builds and starts without errors.
 
     Starts ``fern docs dev`` in a subprocess, monitors stdout for the
@@ -64,6 +101,7 @@ def test_fern_docs_dev_starts() -> None:
     port = _get_free_port()
     proc = subprocess.Popen(
         ["fern", "docs", "dev", "--port", str(port)],
+        cwd=staged_fern_docs,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -110,3 +148,38 @@ def test_fern_docs_dev_starts() -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_fern_check_strict(staged_fern_docs: Path) -> None:
+    """Strict validation: broken or relative markdown links must fail.
+
+    ``--strict-broken-links`` promotes broken/relative-link warnings to errors;
+    ``--warnings`` just surfaces remaining non-link warnings (auth-skipped
+    redirects, accent contrast) in the output without failing the check.
+    """
+    result = subprocess.run(
+        ["fern", "check", "--warnings", "--strict-broken-links"],
+        cwd=staged_fern_docs,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"fern check --strict-broken-links failed (exit {result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_fern_broken_links(staged_fern_docs: Path) -> None:
+    """Verify Fern finds no broken links in the converted content."""
+    result = subprocess.run(
+        ["fern", "docs", "broken-links"],
+        cwd=staged_fern_docs,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"fern docs broken-links failed (exit {result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
