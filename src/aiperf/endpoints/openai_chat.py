@@ -166,8 +166,11 @@ class ChatEndpoint(BaseEndpoint):
             case "chat.completion.chunk":
                 data_key = "delta"
             case _:
-                object_type = json_obj.get("object")
-                raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")
+                # Unrecognized object: the server can return arbitrary bodies
+                # (error JSON, proxy pages, truncated streams on crash). Degrade
+                # to None like the no-choices/no-data cases below rather than
+                # raising, so the worker records a failure and keeps going.
+                return None
 
         choices = json_obj.get("choices")
         if not choices:
