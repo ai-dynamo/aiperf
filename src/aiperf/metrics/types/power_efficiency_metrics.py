@@ -19,6 +19,7 @@ from typing import NoReturn
 from aiperf.common.enums import (
     EnergyMetricUnit,
     GenericMetricUnit,
+    MetricConsoleGroup,
     MetricFlags,
     PowerMetricUnit,
 )
@@ -115,6 +116,7 @@ class TotalGpuEnergyMetric(_InjectedEnergyMetric):
     unit = EnergyMetricUnit.JOULE
     display_order = 730
     flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY
 
 
 class TotalGpuPowerMetric(_InjectedEnergyMetric):
@@ -170,6 +172,7 @@ class OutputTokensPerJouleMetric(_InjectedEnergyMetric):
     unit = GenericMetricUnit.TOKENS_PER_JOULE
     display_order = 760
     flags = MetricFlags.LARGER_IS_BETTER | MetricFlags.PRODUCES_TOKENS_ONLY
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY
 
 
 class EnergyPerUserMetric(_InjectedEnergyMetric):

@@ -2175,6 +2175,7 @@ The `console_group` class attribute on a metric controls which console table the
 | <a id="group-prediction"></a>`MetricConsoleGroup.PREDICTION` | Speculative prediction token metrics (accepted/rejected). |
 | <a id="group-audio"></a>`MetricConsoleGroup.AUDIO` | Audio token metrics (prompt/completion). |
 | <a id="group-reasoning"></a>`MetricConsoleGroup.REASONING` | Reasoning token metrics. |
+| <a id="group-gpu-power-efficiency"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY` | NVIDIA cross-GPU power efficiency totals (`total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`, `energy_per_user`). Rendered in a dedicated, vendor-attributed `GPU Power Efficiency (NVIDIA)` section instead of the main table. |
 
 Set as a class attribute on a `BaseMetric` subclass:
 
