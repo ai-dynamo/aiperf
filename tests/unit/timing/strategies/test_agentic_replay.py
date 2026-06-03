@@ -9,7 +9,6 @@ Tests the phase-aware trajectory dispatch (WARMUP) and resume-at-k+1 + recycle
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -265,71 +264,6 @@ async def test_warmup_snapshot_subagent_counts_toward_phase_target():
     assert issued[0].conversation_id == "trace_1"
     assert issued[0].agent_depth == 1
     assert issued[0].counts_toward_phase_target is True
-
-
-@pytest.mark.asyncio
-async def test_warmup_snapshot_return_log_distinguishes_root_and_subagent(caplog):
-    parent_state = ConversationState(
-        conversation_id="trace_0",
-        x_correlation_id="parent",
-        next_turn_index=1,
-        agent_depth=0,
-        waiting_on_children=True,
-        join_target_turn_index=1,
-    )
-    child_state = ConversationState(
-        conversation_id="trace_1",
-        x_correlation_id="child",
-        next_turn_index=0,
-        agent_depth=1,
-        parent_correlation_id="parent",
-        branch_mode=ConversationBranchMode.SPAWN,
-    )
-    trajectories = [
-        Trajectory(
-            conversation_id="trace_0",
-            start_turn_index=1,
-            snapshot=TrajectorySnapshot(
-                t_star_ms=13500.0,
-                states=(parent_state, child_state),
-            ),
-        )
-    ]
-    issued = []
-
-    async def capture(turn):
-        issued.append(turn)
-        return True
-
-    issuer = AsyncMock()
-    issuer.issue_credit.side_effect = capture
-    strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.WARMUP,
-        trajectories=trajectories,
-        issuer=issuer,
-    )
-    await strategy.execute_phase()
-
-    turn = issued[0]
-    credit = _make_credit(
-        conversation_id=turn.conversation_id,
-        x_correlation_id=turn.x_correlation_id,
-        turn_index=turn.turn_index,
-        num_turns=turn.num_turns,
-        phase=CreditPhase.WARMUP,
-        agent_depth=turn.agent_depth,
-        parent_correlation_id=turn.parent_correlation_id,
-        branch_mode=turn.branch_mode,
-    )
-    with caplog.at_level(logging.INFO, logger="AgenticReplayTiming"):
-        await strategy.handle_credit_return(credit)
-
-    log_text = "\n".join(record.getMessage() for record in caplog.records)
-    assert "role=subagent" in log_text
-    assert "root_trace_id=trace_0" in log_text
-    assert "conversation_id=trace_1" in log_text
-    assert "sample_time_ms=13500" in log_text
-    assert "local_start_turn=0/4 (0% through conversation)" in log_text
 
 
 @pytest.mark.asyncio

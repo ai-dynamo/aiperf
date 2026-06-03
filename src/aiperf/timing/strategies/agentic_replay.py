@@ -128,20 +128,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             t.conversation_id for t in conversation_source.trajectories
         )
         self._failed_warmup_traces: list[str] = []
-        self._warmup_completed_count: int = 0
-        self._warmup_total_count: int = 0
-        # Track which x_correlation_ids correspond to trajectories in WARMUP
-        # so that terminal failures can be attributed to a trace_id.
-        self._warmup_correlation_to_trace: dict[str, str] = {}
-        # Per-trajectory (k_i, num_turns) recorded at warmup dispatch so the
-        # warmup-completion log line can show the actual start position and
-        # how far into the trace the trajectory began.
-        self._warmup_correlation_to_start_info: dict[str, tuple[int, int]] = {}
-        # Timestamped Weka snapshots may dispatch an already-live subagent
-        # instead of the root. Preserve the root trace and wall-clock sample
-        # time so completion logs do not mislabel child-local progress as
-        # progress through the full trace.
-        self._warmup_correlation_to_snapshot_info: dict[str, tuple[str, float]] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
@@ -230,9 +216,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     async def _execute_warmup(self) -> None:
         """Dispatch one warmup credit for every ready trajectory state."""
-        self._warmup_total_count = self.conversation_source.warmup_credit_count
+        warmup_total_count = self.conversation_source.warmup_credit_count
         self.info(
-            f"WARMUP execute: dispatching {self._warmup_total_count} trajectory credits"
+            f"WARMUP execute: dispatching {warmup_total_count} trajectory credits"
         )
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             if trajectory.snapshot is None:
@@ -244,7 +230,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     session.x_correlation_id, trajectory.conversation_id, lane
                 )
                 turn = self._build_turn_for_session(session, dispatch_index)
-                self._record_warmup_turn(turn.x_correlation_id, session, dispatch_index)
                 await self.credit_issuer.issue_credit(turn)
                 continue
 
@@ -258,13 +243,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     session.x_correlation_id, state.conversation_id, lane
                 )
                 turn = self._build_turn_for_session(session, state.next_turn_index)
-                self._record_warmup_turn(
-                    turn.x_correlation_id,
-                    session,
-                    state.next_turn_index,
-                    root_trace_id=trajectory.conversation_id,
-                    sample_time_ms=trajectory.snapshot.t_star_ms,
-                )
                 await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
         # will be issued. SendingCompleteStopCondition watches this flag and
@@ -352,42 +330,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         second time the parent re-runs.
         """
         if self.config.phase == CreditPhase.WARMUP:
-            self._warmup_completed_count += 1
-            cid = credit.x_correlation_id
-            lane = self._correlation_to_lane.get(cid, -1)
-            trace_id = self._warmup_correlation_to_trace.get(cid, "?")
-            start_info = self._warmup_correlation_to_start_info.get(cid)
-            if start_info is not None:
-                k_i, n_turns = start_info
-                pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
-                start_desc = f"start_turn={k_i}/{n_turns} ({pct:.0f}% through trace)"
-            else:
-                start_desc = "start_turn=?/?"
-            snapshot_info = self._warmup_correlation_to_snapshot_info.get(cid)
-            if snapshot_info is not None:
-                root_trace_id, sample_time_ms = snapshot_info
-                role = "subagent" if credit.agent_depth > 0 else "root"
-                if start_info is not None:
-                    start_desc = (
-                        f"local_start_turn={k_i}/{n_turns} "
-                        f"({pct:.0f}% through conversation)"
-                    )
-                else:
-                    start_desc = "local_start_turn=?/?"
-                identity_desc = (
-                    f"lane={lane}, role={role}, root_trace_id={root_trace_id}, "
-                    f"conversation_id={trace_id}, sample_time_ms={sample_time_ms:.0f}"
-                )
-            else:
-                identity_desc = f"lane={lane}, trace_id={trace_id}"
-            status = "error" if error is not None else "ok"
-            self.info(
-                lambda c=self._warmup_completed_count,
-                t=self._warmup_total_count,
-                s=status,
-                ident=identity_desc,
-                sd=start_desc: (f"WARMUP {c}/{t} returned [{s}] ({ident}, {sd})")
-            )
             return
 
         terminal_overflow = (
@@ -499,26 +441,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         turn = self._build_turn_for_session(session, 0)
         await self.credit_issuer.issue_credit(turn)
-
-    def _record_warmup_turn(
-        self,
-        x_correlation_id: str,
-        session: SampledSession,
-        turn_index: int,
-        *,
-        root_trace_id: str | None = None,
-        sample_time_ms: float | None = None,
-    ) -> None:
-        self._warmup_correlation_to_trace[x_correlation_id] = session.conversation_id
-        self._warmup_correlation_to_start_info[x_correlation_id] = (
-            turn_index,
-            len(session.metadata.turns),
-        )
-        if root_trace_id is not None and sample_time_ms is not None:
-            self._warmup_correlation_to_snapshot_info[x_correlation_id] = (
-                root_trace_id,
-                sample_time_ms,
-            )
 
     async def _dispatch_snapshot_for_profiling(
         self, trajectory: Trajectory, lane: int
