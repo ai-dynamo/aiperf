@@ -78,12 +78,23 @@ jobs:
         PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
         make test-ci PYTHON_VERSION=${{ matrix.python-version }}
+    # Mirrors POSIX ``make test-ci`` semantics: run BOTH tiers and
+    # aggregate exit codes so unit-test failures don't mask component-
+    # integration failures (or vice versa). Without the explicit
+    # ``always() && runner.os == 'Windows'`` guard on the second step,
+    # GitHub Actions' implicit ``success()`` short-circuits the
+    # component-integration step on any unit-test failure.
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
       run: |
         uv run pytest tests/unit -n auto --tb=short -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
-      if: runner.os == 'Windows'
+      # ``!cancelled()`` overrides the implicit ``success()`` so component
+      # integration still runs even if the unit-test step failed — matching
+      # POSIX ``make test-ci`` which aggregates exit codes across both tiers.
+      # Cancellation is still respected so we don't burn runner minutes
+      # finishing after a manual stop.
+      if: ${{ !cancelled() && runner.os == 'Windows' }}
       run: |
         uv run pytest tests/component_integration -n auto --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
