@@ -447,7 +447,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     # Recycle queue spans the FULL dataset pool (including trajectory ids);
     # the pop loop in _spawn_from_recycle_or_id skips trace_ids whose
     # session is currently active.
-    trajectory_ids = {trajectory.conversation_id for trajectory in source.trajectories}
     expected_recycle = len(source.dataset_metadata.conversations)
     assert profiling._recycle_queue is not None
     assert profiling._recycle_queue.qsize() == expected_recycle
@@ -471,15 +470,10 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
                 f"trajectory {trajectory_id} should resume at k+1={k + 1}"
             )
         else:
-            # Recycle-immediately path (N=1 + k=0): some other trace_id from
-            # the recycle queue must have dispatched in its place at turn 0.
-            # Identifiable by *any* dispatch with turn_index=0 for a non-trajectory
-            # trace_id occurring before further credit returns.
-            recycled_at_zero = [
-                cid
-                for cid, idx in profiling_dispatched
-                if idx == 0 and cid not in trajectory_ids
-            ]
+            # Recycle-immediately path (N=1 + k=0): a fresh session from
+            # the recycle queue must have dispatched in its place at turn
+            # 0. The full-pool queue may select the same trace_id again.
+            recycled_at_zero = [cid for cid, idx in profiling_dispatched if idx == 0]
             assert recycled_at_zero, (
                 f"trajectory {trajectory_id} (N={n}, k={k}) should trigger an "
                 "immediate recycle dispatch but none observed"

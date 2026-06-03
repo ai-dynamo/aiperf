@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import Counter
+from dataclasses import replace as _dataclass_replace
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -42,6 +43,7 @@ from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 from aiperf.timing.trajectory_source import (
+    ConversationState,
     Trajectory,
     TrajectorySnapshot,
     TrajectorySource,
@@ -521,11 +523,29 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _dispatch_snapshot_for_profiling(
         self, trajectory: Trajectory, lane: int
     ) -> None:
-        snapshot = self._materialize_snapshot(trajectory)
+        warmup_snapshot = self._materialize_snapshot(trajectory)
+        snapshot = self._snapshot_continuation_after_warmup(trajectory)
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
             if state.agent_depth == 0:
                 self._active_traces[state.conversation_id] += 1
+            self._mint_marker_for_session(
+                state.x_correlation_id, state.conversation_id, lane
+            )
+
+        continuing_roots = {
+            state.x_correlation_id
+            for state in snapshot.states
+            if state.agent_depth == 0
+        }
+        terminal_roots = [
+            state
+            for state in warmup_snapshot.states
+            if state.agent_depth == 0 and state.x_correlation_id not in continuing_roots
+        ]
+        for state in terminal_roots:
+            self._correlation_to_lane[state.x_correlation_id] = lane
+            self._active_traces[state.conversation_id] += 1
             self._mint_marker_for_session(
                 state.x_correlation_id, state.conversation_id, lane
             )
@@ -550,6 +570,68 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
             else:
                 await self.credit_issuer.issue_credit(turn)
+
+        for state in terminal_roots:
+            await self._spawn_from_recycle_or_id(
+                state.conversation_id,
+                finished_correlation_id=state.x_correlation_id,
+            )
+
+    def _snapshot_continuation_after_warmup(
+        self, trajectory: Trajectory
+    ) -> TrajectorySnapshot:
+        """Advance every warmed snapshot stream to its profiling continuation.
+
+        Ready states dispatched turn ``k_i`` during WARMUP. PROFILING must
+        continue those same sessions at ``k_i + 1`` instead of replaying the
+        warmed request. Parents blocked on child joins were not dispatched
+        during WARMUP, so they remain at their gated turn. If every blocking
+        child completed its terminal turn during WARMUP, the parent is
+        unblocked and its gated turn becomes ready immediately.
+        """
+        snapshot = self._materialize_snapshot(trajectory)
+        states: list[ConversationState] = []
+        for state in snapshot.states:
+            if state.waiting_on_children:
+                states.append(state)
+                continue
+
+            metadata = self.conversation_source.get_metadata(state.conversation_id)
+            resume_index = state.next_turn_index + 1
+            if resume_index >= len(metadata.turns):
+                continue
+
+            states.append(
+                _dataclass_replace(
+                    state,
+                    next_turn_index=resume_index,
+                    # The phase begins after the warmup barrier. Dispatch the
+                    # first measured continuation immediately, matching the
+                    # timestamp-less k_i + 1 path. Later turns honor delay_ms
+                    # through _dispatch_next_turn.
+                    next_dispatch_offset_ms=0.0,
+                )
+            )
+
+        live_join_keys = {
+            (state.parent_correlation_id, state.join_target_turn_index)
+            for state in states
+            if state.agent_depth > 0 and state.parent_correlation_id is not None
+        }
+        states = [
+            _dataclass_replace(
+                state,
+                waiting_on_children=False,
+                join_target_turn_index=None,
+                next_dispatch_offset_ms=0.0,
+            )
+            if state.waiting_on_children
+            and (state.x_correlation_id, state.join_target_turn_index)
+            not in live_join_keys
+            else state
+            for state in states
+        ]
+        return TrajectorySnapshot(t_star_ms=snapshot.t_star_ms, states=tuple(states))
 
     def _materialize_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
         """Return the persistent runtime identity graph for a snapshot lane.
