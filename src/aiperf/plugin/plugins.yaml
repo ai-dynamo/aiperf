@@ -1532,8 +1532,10 @@ accuracy_benchmark:
       LiveCodeBench code generation benchmark, aligned with the trt-llm
       benchmark recipe's lighteval-backed configuration
       (livecodebench/code_generation_lite + lighteval ``codegen_metrics``).
-      Carries the LCB-style test-case payload in ``BenchmarkProblem.metadata``
-      so ``CodeExecutionGrader`` can run the generated code against the
+      Serializes the LCB-style test-case payload (starter_code,
+      public_test_cases, private_test_cases, upstream metadata) into
+      ``BenchmarkProblem.ground_truth`` as an orjson blob so
+      ``CodeExecutionGrader`` can run the generated code against the
       bundled public + private test cases.
     metadata:
       default_grader: code_execution
