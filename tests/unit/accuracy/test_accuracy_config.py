@@ -22,10 +22,7 @@ from aiperf.config.accuracy import AccuracyConfig
 # implementation (and remove the ``is_implemented: false`` from the YAML).
 # This branch (AIP-874) implements ``aime``, ``math``, and ``code_execution``,
 # so those names are absent from the stub lists.
-STUB_BENCHMARKS = (
-    "gpqa_diamond",
-    "lcb_codegeneration",
-)
+STUB_BENCHMARKS = ("lcb_codegeneration",)
 STUB_GRADERS: tuple[str, ...] = ()
 
 
