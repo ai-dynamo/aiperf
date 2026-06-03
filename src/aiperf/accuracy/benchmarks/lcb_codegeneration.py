@@ -47,6 +47,13 @@ if TYPE_CHECKING:
 DATASET_NAME = "livecodebench/code_generation_lite"
 TASK_NAME = "lcb_codegeneration"
 
+# LiveCodeBench ships monthly snapshots as ``release_vN`` configs of its
+# HuggingFace dataset script. Pin a specific release so accuracy
+# numbers are reproducible across runs and branches — without the pin
+# we'd silently follow ``release_latest``, which rolls forward every
+# month. Bump the constant when the team rebaselines.
+RELEASE_TAG = "release_v1"
+
 # Lighteval's LCB tasks use the model's full reasoning budget;
 # generations can be hundreds of lines for hard problems.
 DEFAULT_GENERATION_SIZE = 32768
@@ -167,8 +174,38 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
                 "the model's natural response carries reasoning before "
                 "the code block."
             )
-        ds: Dataset = await asyncio.to_thread(load_dataset, DATASET_NAME, split="test")
+        ds: Dataset = await asyncio.to_thread(self._load_pinned_dataset)
         return await asyncio.to_thread(self._build_problems, ds)
+
+    @staticmethod
+    def _load_pinned_dataset() -> Dataset:
+        """Load the pinned LCB release, remapping any failure to a
+        ``RuntimeError`` with an actionable hint.
+
+        ``load_dataset`` here calls into LiveCodeBench's HuggingFace
+        dataset script with ``version_tag=RELEASE_TAG`` so accuracy
+        numbers are reproducible. Failures can come from at least three
+        independent sources — the HF ``datasets`` library removing
+        script-based dataset support in v4+, the pinned ``release_vN``
+        being renamed or removed upstream, or a missing
+        ``trust_remote_code`` opt-in — so we don't try to enumerate the
+        specific exception class. A broad ``except`` keeps the surface
+        small while preserving the original cause via ``__cause__``.
+        """
+        try:
+            return load_dataset(DATASET_NAME, split="test", version_tag=RELEASE_TAG)
+        except Exception as e:
+            raise RuntimeError(
+                f"{TASK_NAME}: failed to load {DATASET_NAME!r} pinned to "
+                f"version_tag={RELEASE_TAG!r}. This typically means either "
+                f"(a) the installed ``datasets`` package no longer supports "
+                f"script-based datasets (LCB ships its loader as a script; "
+                f"try ``uv pip install 'datasets<4'`` or use the upstream "
+                f"parquet snapshot directly), or (b) the pinned "
+                f"``release_vN`` tag was renamed/removed upstream (bump "
+                f"``RELEASE_TAG`` in ``lcb_codegeneration.py``). Original "
+                f"error: {type(e).__name__}: {e}"
+            ) from e
 
     def _build_problems(self, ds: Dataset) -> list[BenchmarkProblem]:
         problems: list[BenchmarkProblem] = []

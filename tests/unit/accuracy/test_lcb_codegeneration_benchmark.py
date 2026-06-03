@@ -242,6 +242,51 @@ class TestLoadProblemsCore:
         assert all(p.task == TASK_NAME for p in problems)
 
 
+class TestPinnedDatasetLoad:
+    """``_load_pinned_dataset`` passes ``version_tag=RELEASE_TAG`` so
+    accuracy numbers are reproducible across runs, and remaps any
+    underlying failure into a ``RuntimeError`` with an actionable
+    hint."""
+
+    @pytest.mark.asyncio
+    async def test_load_dataset_called_with_pinned_release(self) -> None:
+        from aiperf.accuracy.benchmarks.lcb_codegeneration import RELEASE_TAG
+
+        rows = [_make_row()]
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            return_value=_make_fake_dataset(rows),
+        ) as mock_load:
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        # Single call with the pinned ``version_tag`` kwarg, so a future
+        # accidental swap to ``release_latest`` (or to no pin at all)
+        # fails the test.
+        mock_load.assert_called_once()
+        _, kwargs = mock_load.call_args
+        assert kwargs.get("version_tag") == RELEASE_TAG
+        assert kwargs.get("split") == "test"
+
+    @pytest.mark.asyncio
+    async def test_load_failure_remapped_to_runtime_error(self) -> None:
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            side_effect=ValueError("simulated v4 script-loader removal"),
+        ):
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            with pytest.raises(
+                RuntimeError, match=r"^lcb_codegeneration: failed to load"
+            ) as exc:
+                await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        # Original exception preserved via ``__cause__`` so debuggers
+        # can still see what actually broke.
+        assert isinstance(exc.value.__cause__, ValueError)
+        msg = str(exc.value)
+        # Surface both likely root causes so users have a next step.
+        assert "datasets<4" in msg
+        assert "RELEASE_TAG" in msg
+
+
 class TestPathologicalDatasetRows:
     @pytest.mark.asyncio
     async def test_empty_dataset_returns_empty_list(self) -> None:
