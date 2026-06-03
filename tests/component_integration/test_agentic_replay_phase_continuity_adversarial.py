@@ -180,6 +180,9 @@ class TestTrajectoryKSurvivesPhaseBoundary:
         warmup_dispatched = {
             (cid, idx) for cid, idx, _ in _capture_dispatched_turns(warmup_issuer)
         }
+        warmup_correlations = {
+            cid: xcorr for cid, _, xcorr in _capture_dispatched_turns(warmup_issuer)
+        }
         assert warmup_dispatched == set(trajectories_before_warmup), (
             "WARMUP must dispatch each trajectory at exactly its sampled k_i"
         )
@@ -202,9 +205,16 @@ class TestTrajectoryKSurvivesPhaseBoundary:
         profiling_indices = {
             (cid, idx) for cid, idx, _ in _capture_dispatched_turns(profiling_issuer)
         }
+        profiling_correlations = {
+            cid: xcorr for cid, _, xcorr in _capture_dispatched_turns(profiling_issuer)
+        }
         expected = {(cid, k + 1) for cid, k in trajectories_before_warmup}
         assert profiling_indices == expected, (
             "PROFILING must resume each trajectory at k_i + 1 (k_i unchanged)"
+        )
+        assert profiling_correlations == warmup_correlations, (
+            "PROFILING continuation must preserve each warmed trajectory's "
+            "x_correlation_id"
         )
 
 

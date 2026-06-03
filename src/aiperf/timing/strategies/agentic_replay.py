@@ -42,7 +42,6 @@ from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 from aiperf.timing.trajectory_source import (
-    ConversationState,
     Trajectory,
     TrajectorySnapshot,
     TrajectorySource,
@@ -144,14 +143,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
-        # phase) and ``session_for(...)`` mints a new uuid per call, so the
-        # two phases use different ``x_correlation_id``s for the same
-        # trajectory. The MARKER text, however, is spec-required to be
-        # warmup-coherent: the digest is computed from
+        # phase), while the shared TrajectorySource keeps each sampled lane's
+        # x_correlation_id stable across the phase boundary. The MARKER text is
+        # also warmup-coherent: the digest is computed from
         # ``(benchmark_id, recycle_pass, trajectory_index, trace_id)`` —
         # phase-agnostic — so warmup turn k_i and profile turn k_i+1 get
-        # the same marker even though they belong to different sessions.
-        # That preserves the KV-cache lineage warmup is meant to prime.
+        # the same marker within the continued session. That preserves the
+        # KV-cache lineage warmup is meant to prime.
         # trajectory_index is stable per "lane" (slot in the trajectory list)
         # and reused on recycle, so the digest changes only across recycle
         # passes for a given trace_id.
@@ -554,36 +552,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 await self.credit_issuer.issue_credit(turn)
 
     def _materialize_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
+        """Return the persistent runtime identity graph for a snapshot lane.
+
+        ``TrajectorySource`` constructs each timestamped lane once and is
+        shared across WARMUP and PROFILING. Reusing that realized graph keeps
+        every continuing root and subagent on the same ``X-Session-ID`` across
+        the phase boundary.
+        """
         assert trajectory.snapshot is not None
-        corr_map = {
-            state.x_correlation_id: str(uuid.uuid4())
-            for state in trajectory.snapshot.states
-        }
-        states: list[ConversationState] = []
-        for state in trajectory.snapshot.states:
-            parent_corr = (
-                corr_map.get(state.parent_correlation_id)
-                if state.parent_correlation_id is not None
-                else None
-            )
-            states.append(
-                ConversationState(
-                    conversation_id=state.conversation_id,
-                    x_correlation_id=corr_map[state.x_correlation_id],
-                    next_turn_index=state.next_turn_index,
-                    next_dispatch_offset_ms=state.next_dispatch_offset_ms,
-                    agent_depth=state.agent_depth,
-                    parent_correlation_id=parent_corr,
-                    waiting_on_children=state.waiting_on_children,
-                    join_target_turn_index=state.join_target_turn_index,
-                    branch_id=state.branch_id,
-                    branch_mode=state.branch_mode,
-                )
-            )
-        return TrajectorySnapshot(
-            t_star_ms=trajectory.snapshot.t_star_ms,
-            states=tuple(states),
-        )
+        return trajectory.snapshot
 
     def _release_lane_for(
         self, finished_correlation_id: str, finished_trace_id: str
@@ -674,11 +651,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         WARMUP and another for PROFILING). Both phases start with empty
         ``_recycle_pass``, so the first mint for a given trace_id in PROFILING
         produces ``pass=0`` — matching WARMUP's pass=0 digest for the same
-        (trace_id, lane) pair. Note that WARMUP and PROFILING use *different*
-        x_correlation_ids for the same trajectory (``session_for(...)`` mints a
-        fresh uuid per call), so the marker is not literally reused across the
-        boundary; rather, the digest *value* coincides because (benchmark_id,
-        pass=0, trajectory_index, trace_id) does.
+        (trace_id, lane) pair. The shared ``TrajectorySource`` also preserves
+        the lane's x_correlation_id across the phase boundary.
         """
         if self._cache_bust_target == CacheBustTarget.NONE:
             self._session_marker[x_correlation_id] = None

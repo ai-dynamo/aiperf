@@ -485,7 +485,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src.trajectories = [trajectory]
 
-    issued: list[tuple[str, int, int, str | None]] = []
+    issued: list[tuple[str, int, int, str, str | None]] = []
 
     async def capture(turn):
         issued.append(
@@ -493,6 +493,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
                 turn.conversation_id,
                 turn.turn_index,
                 turn.agent_depth,
+                turn.x_correlation_id,
                 turn.parent_correlation_id,
             )
         )
@@ -530,12 +531,15 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
             "trace_0::sa:0",
             1,
             1,
+            "child",
             branch_orchestrator.seed_snapshot.call_args.args[0][
                 1
             ].parent_correlation_id,
         )
     ]
     seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
+    assert seeded_states[0].x_correlation_id == "parent"
+    assert seeded_states[1].x_correlation_id == "child"
     assert seeded_states[0].waiting_on_children is True
     assert seeded_states[1].parent_correlation_id == seeded_states[0].x_correlation_id
 
