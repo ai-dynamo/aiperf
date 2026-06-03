@@ -7,6 +7,7 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
@@ -55,6 +56,27 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _AccuracySettings(BaseSettings):
+    """Accuracy benchmark settings.
+
+    Tunables for the accuracy benchmark loaders. Currently only pins the
+    LiveCodeBench dataset release so accuracy numbers are reproducible
+    across runs without requiring source edits.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    LCB_RELEASE_TAG: str = Field(
+        default="release_v1",
+        description="LiveCodeBench dataset release tag passed as "
+        '``version_tag=`` to ``load_dataset("livecodebench/code_generation_lite")``. '
+        "Pins the monthly snapshot LCB serves so accuracy numbers are "
+        "reproducible across runs and branches. Bump (e.g. to "
+        "``release_v2``) when the team rebaselines against a newer "
+        "snapshot. Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
 
 
 class _APIServerSettings(BaseSettings):
@@ -1273,6 +1295,10 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    ACCURACY: _AccuracySettings = Field(
+        default_factory=_AccuracySettings,
+        description="Accuracy benchmark settings (dataset version pins, etc.)",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",

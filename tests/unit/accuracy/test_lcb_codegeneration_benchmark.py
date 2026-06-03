@@ -243,14 +243,16 @@ class TestLoadProblemsCore:
 
 
 class TestPinnedDatasetLoad:
-    """``_load_pinned_dataset`` passes ``version_tag=RELEASE_TAG`` so
-    accuracy numbers are reproducible across runs, and remaps any
-    underlying failure into a ``RuntimeError`` with an actionable
-    hint."""
+    """``_load_pinned_dataset`` passes
+    ``version_tag=Environment.ACCURACY.LCB_RELEASE_TAG`` (default
+    ``"release_v1"``, overridable via
+    ``AIPERF_ACCURACY_LCB_RELEASE_TAG``) so accuracy numbers are
+    reproducible across runs, and remaps any underlying failure into
+    a ``RuntimeError`` with an actionable hint."""
 
     @pytest.mark.asyncio
-    async def test_load_dataset_called_with_pinned_release(self) -> None:
-        from aiperf.accuracy.benchmarks.lcb_codegeneration import RELEASE_TAG
+    async def test_load_dataset_called_with_default_release(self) -> None:
+        from aiperf.common.environment import Environment
 
         rows = [_make_row()]
         with patch(
@@ -264,8 +266,29 @@ class TestPinnedDatasetLoad:
         # fails the test.
         mock_load.assert_called_once()
         _, kwargs = mock_load.call_args
-        assert kwargs.get("version_tag") == RELEASE_TAG
+        assert kwargs.get("version_tag") == Environment.ACCURACY.LCB_RELEASE_TAG
         assert kwargs.get("split") == "test"
+
+    @pytest.mark.asyncio
+    async def test_env_override_changes_release_tag(self, monkeypatch) -> None:
+        """The env var ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` overrides the
+        default ``release_v1`` pin without requiring a source edit. The
+        loader reads ``Environment.ACCURACY.LCB_RELEASE_TAG`` at call
+        time, so monkeypatching the attribute on the singleton is the
+        cleanest way to exercise the override path in tests (the
+        ``BaseSettings`` itself is read once at module import)."""
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.ACCURACY, "LCB_RELEASE_TAG", "release_v9")
+        rows = [_make_row()]
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            return_value=_make_fake_dataset(rows),
+        ) as mock_load:
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        _, kwargs = mock_load.call_args
+        assert kwargs.get("version_tag") == "release_v9"
 
     @pytest.mark.asyncio
     async def test_load_failure_remapped_to_runtime_error(self) -> None:
@@ -284,7 +307,7 @@ class TestPinnedDatasetLoad:
         msg = str(exc.value)
         # Surface both likely root causes so users have a next step.
         assert "datasets<4" in msg
-        assert "RELEASE_TAG" in msg
+        assert "AIPERF_ACCURACY_LCB_RELEASE_TAG" in msg
 
 
 class TestPathologicalDatasetRows:

@@ -30,6 +30,14 @@ CLI runner post-run callback behavior. Controls whether OnComplete callback exce
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RAISE_ON_CALLBACK_ERROR` | `False` | — | When true, re-raise the first OnComplete callback exception after running all remaining callbacks but before os._exit. Provides a strict-mode contract where a callback raise propagates out of the runner. When false (default) the exception is logged with full traceback, the exit code is forced non-zero, and the process still terminates via os._exit so leftover ZMQ/multiprocessing state cannot hang the interpreter. |
 
+## ACCURACY
+
+Accuracy benchmark settings. Tunables for the accuracy benchmark loaders. Currently only pins the LiveCodeBench dataset release so accuracy numbers are reproducible across runs without requiring source edits.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'release_v1'` | — | LiveCodeBench dataset release tag passed as ``version_tag=`` to ``load_dataset("livecodebench/code_generation_lite")``. Pins the monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Bump (e.g. to ``release_v2``) when the team rebaselines against a newer snapshot. Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
+
 ## APISERVER
 
 API server settings. Controls the host and port of the API server.
