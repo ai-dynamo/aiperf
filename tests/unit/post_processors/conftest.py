@@ -856,8 +856,14 @@ def make_telemetry_record(
     nvidia_temperature: float | None = None,
     nvidia_xid_errors: float | None = None,
     nvidia_power_violation: float | None = None,
+    amd_power: float | None = None,
+    amd_energy_consumption: float | None = None,
 ) -> TelemetryRecord:
-    """Factory for creating TelemetryRecord instances with sensible defaults."""
+    """Factory for creating TelemetryRecord instances with sensible defaults.
+
+    Pass ``platform="amd"`` together with ``amd_power`` / ``amd_energy_consumption``
+    (and ``nvidia_power_usage=None``) to build an AMD telemetry record.
+    """
     return TelemetryRecord(
         timestamp_ns=timestamp_ns,
         dcgm_url=dcgm_url,
@@ -876,5 +882,7 @@ def make_telemetry_record(
             nvidia_temperature=nvidia_temperature,
             nvidia_xid_errors=nvidia_xid_errors,
             nvidia_power_violation=nvidia_power_violation,
+            amd_power=amd_power,
+            amd_energy_consumption=amd_energy_consumption,
         ),
     )

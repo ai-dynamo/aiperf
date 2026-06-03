@@ -698,8 +698,13 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     """Phase-active-only time-weighted analyzer outputs — throughput restricted to
     intervals where the relevant phase has at least one request in flight."""
 
-    GPU_POWER_EFFICIENCY = "gpu_power_efficiency"
-    """NVIDIA-sourced cross-GPU power efficiency totals (power, energy, tokens/J,
+    GPU_POWER_EFFICIENCY_NVIDIA = "gpu_power_efficiency_nvidia"
+    """NVIDIA cross-GPU power efficiency totals (power, energy, tokens/J,
+    energy/user). Rendered in their own vendor-attributed console section rather
+    than the main metrics table."""
+
+    GPU_POWER_EFFICIENCY_AMD = "gpu_power_efficiency_amd"
+    """AMD cross-GPU power efficiency totals (power, energy, tokens/J,
     energy/user). Rendered in their own vendor-attributed console section rather
     than the main metrics table."""
 

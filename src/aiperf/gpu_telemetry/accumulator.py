@@ -31,8 +31,12 @@ from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryR
 from aiperf.common.protocols import PubClientProtocol
 from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import (
+    AMD_ENERGY_CONSUMPTION_FIELD,
+    AMD_GPU_TELEMETRY_PLATFORM,
+    AMD_POWER_FIELD,
     GPU_TELEMETRY_COUNTER_METRICS,
     NVIDIA_ENERGY_CONSUMPTION_FIELD,
+    NVIDIA_GPU_TELEMETRY_PLATFORM,
     NVIDIA_POWER_USAGE_FIELD,
     get_gpu_telemetry_metrics_config,
 )
@@ -42,6 +46,17 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+_PLATFORM_POWER_FIELDS: dict[str, str] = {
+    NVIDIA_GPU_TELEMETRY_PLATFORM: NVIDIA_POWER_USAGE_FIELD,
+    AMD_GPU_TELEMETRY_PLATFORM: AMD_POWER_FIELD,
+}
+
+_PLATFORM_ENERGY_FIELDS: dict[str, str] = {
+    NVIDIA_GPU_TELEMETRY_PLATFORM: NVIDIA_ENERGY_CONSUMPTION_FIELD,
+    AMD_GPU_TELEMETRY_PLATFORM: AMD_ENERGY_CONSUMPTION_FIELD,
+}
 
 
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
@@ -357,8 +372,17 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             summary=summary, endpoints=endpoints, error_summary=error_summary
         )
 
-    def _sum_gpu_power_watts(self, time_filter: TimeRangeFilter) -> tuple[float, int]:
-        """Sum avg(nvidia_power_usage) across all GPUs in the time range.
+    def _iter_gpus_for_platform(self, platform: str):
+        """Yield (gpu_uuid, gpu_data) for GPUs whose metadata.platform matches."""
+        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+            for gpu_uuid, gpu_data in gpu_data_dict.items():
+                if gpu_data.metadata.platform == platform:
+                    yield gpu_uuid, gpu_data
+
+    def _sum_gpu_power_watts(
+        self, time_filter: TimeRangeFilter, platform: str, power_field: str
+    ) -> tuple[float, int]:
+        """Sum avg(`power_field`) across all GPUs of `platform` in the time range.
 
         Returns:
             Tuple of (total_power_watts, gpu_count). GPUs missing power data
@@ -366,37 +390,36 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         total_power_w = 0.0
         gpu_count = 0
-        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
-            for gpu_uuid, gpu_data in gpu_data_dict.items():
-                try:
-                    result = gpu_data.get_metric_result(
-                        NVIDIA_POWER_USAGE_FIELD,
-                        NVIDIA_POWER_USAGE_FIELD,
-                        "GPU Power Usage",
-                        str(PowerMetricUnit.WATT),
-                        time_filter=time_filter,
-                    )
-                except NoMetricValue:
-                    self.debug(
-                        lambda uuid=gpu_uuid: f"No power data for GPU {uuid[:12]}"
-                    )
-                    continue
-                if result.avg is None:
-                    self.debug(
-                        lambda uuid=gpu_uuid: f"GPU {uuid[:12]} power result has no avg"
-                    )
-                    continue
-                self.debug(
-                    lambda uuid=gpu_uuid, avg=result.avg: (
-                        f"GPU {uuid[:12]} power avg={avg:.2f}W"
-                    )
+        for gpu_uuid, gpu_data in self._iter_gpus_for_platform(platform):
+            try:
+                result = gpu_data.get_metric_result(
+                    power_field,
+                    power_field,
+                    "GPU Power Usage",
+                    str(PowerMetricUnit.WATT),
+                    time_filter=time_filter,
                 )
-                total_power_w += result.avg
-                gpu_count += 1
+            except NoMetricValue:
+                self.debug(lambda uuid=gpu_uuid: f"No power data for GPU {uuid[:12]}")
+                continue
+            if result.avg is None:
+                self.debug(
+                    lambda uuid=gpu_uuid: f"GPU {uuid[:12]} power result has no avg"
+                )
+                continue
+            self.debug(
+                lambda uuid=gpu_uuid, avg=result.avg: (
+                    f"GPU {uuid[:12]} power avg={avg:.2f}W"
+                )
+            )
+            total_power_w += result.avg
+            gpu_count += 1
         return total_power_w, gpu_count
 
-    def _sum_gpu_energy_joules(self, time_filter: TimeRangeFilter) -> tuple[float, int]:
-        """Sum nvidia_energy_consumption deltas (converted to joules) across all GPUs.
+    def _sum_gpu_energy_joules(
+        self, time_filter: TimeRangeFilter, platform: str, energy_field: str
+    ) -> tuple[float, int]:
+        """Sum `energy_field` deltas (converted to joules) across GPUs of `platform`.
 
         Energy is a monotonic counter scraped on COLLECTION_INTERVAL cadence;
         the trailing scrape that closes the phase often lands a few hundred
@@ -414,56 +437,73 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         total_energy_j = 0.0
         gpu_count = 0
-        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
-            for gpu_uuid, gpu_data in gpu_data_dict.items():
-                try:
-                    result = gpu_data.get_metric_result(
-                        NVIDIA_ENERGY_CONSUMPTION_FIELD,
-                        NVIDIA_ENERGY_CONSUMPTION_FIELD,
-                        "Energy Consumption",
-                        str(EnergyMetricUnit.MEGAJOULE),
-                        time_filter=time_filter,
-                        is_counter=True,
-                    )
-                except NoMetricValue:
-                    self.debug(
-                        lambda uuid=gpu_uuid: f"No energy data for GPU {uuid[:12]}"
-                    )
-                    continue
-                if result.avg is None:
-                    self.debug(
-                        lambda uuid=gpu_uuid: (
-                            f"GPU {uuid[:12]} energy result has no avg"
-                        )
-                    )
-                    continue
-                energy_j = result.avg * EnergyMetricUnit.MEGAJOULE.joules
-                self.debug(
-                    lambda uuid=gpu_uuid, ej=energy_j: (
-                        f"GPU {uuid[:12]} energy delta={ej:.2f}J"
-                    )
+        for gpu_uuid, gpu_data in self._iter_gpus_for_platform(platform):
+            try:
+                result = gpu_data.get_metric_result(
+                    energy_field,
+                    energy_field,
+                    "Energy Consumption",
+                    str(EnergyMetricUnit.MEGAJOULE),
+                    time_filter=time_filter,
+                    is_counter=True,
                 )
-                total_energy_j += energy_j
-                gpu_count += 1
+            except NoMetricValue:
+                self.debug(lambda uuid=gpu_uuid: f"No energy data for GPU {uuid[:12]}")
+                continue
+            if result.avg is None:
+                self.debug(
+                    lambda uuid=gpu_uuid: (f"GPU {uuid[:12]} energy result has no avg")
+                )
+                continue
+            energy_j = result.avg * EnergyMetricUnit.MEGAJOULE.joules
+            self.debug(
+                lambda uuid=gpu_uuid, ej=energy_j: (
+                    f"GPU {uuid[:12]} energy delta={ej:.2f}J"
+                )
+            )
+            total_energy_j += energy_j
+            gpu_count += 1
         return total_energy_j, gpu_count
 
+    def available_platforms(self) -> set[str]:
+        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``) that
+        have contributed at least one telemetry record.
+
+        Query surface for ``EnergyEfficiencyAnalyzer`` so it can fan out
+        per-vendor without hard-coding which platforms are present.
+        """
+        platforms: set[str] = set()
+        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+            for gpu_data in gpu_data_dict.values():
+                if gpu_data.metadata.platform:
+                    platforms.add(gpu_data.metadata.platform)
+        return platforms
+
     def total_power_watts(
-        self, start_ns: int | None, end_ns: int | None
+        self, start_ns: int | None, end_ns: int | None, platform: str | None = None
     ) -> tuple[float, int]:
-        """Cross-GPU total of avg(gpu_power_usage) over ``[start_ns, end_ns)``.
+        """Per-vendor total of avg(power) over ``[start_ns, end_ns)``.
 
         Query surface for cross-accumulator analyzers (e.g. energy efficiency).
-        Returns ``(total_power_watts, gpu_count)``; ``gpu_count == 0`` means no
-        power signal was available.
+        ``platform`` selects the vendor (``"nvidia"`` or ``"amd"``); when
+        ``None`` all GPUs are summed using the NVIDIA power field (backward
+        compat for single-vendor callers). Returns ``(total_power_watts,
+        gpu_count)``; ``gpu_count == 0`` means no power signal was available.
         """
-        return self._sum_gpu_power_watts(
-            TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
-        )
+        tf = TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+        if platform is None:
+            return self._sum_gpu_power_watts(
+                tf, NVIDIA_GPU_TELEMETRY_PLATFORM, NVIDIA_POWER_USAGE_FIELD
+            )
+        field = _PLATFORM_POWER_FIELDS.get(platform)
+        if field is None:
+            return 0.0, 0
+        return self._sum_gpu_power_watts(tf, platform, field)
 
     def total_energy_joules(
-        self, start_ns: int | None, end_ns: int | None
+        self, start_ns: int | None, end_ns: int | None, platform: str | None = None
     ) -> tuple[float, int]:
-        """Cross-GPU total energy (J) over ``[start_ns, end_ns)``.
+        """Per-vendor total energy (J) over ``[start_ns, end_ns)``.
 
         Query surface for cross-accumulator analyzers. ``end_ns`` is widened by
         ``Environment.GPU.FINAL_SCRAPE_GRACE_NS`` so the trailing scrape that
@@ -475,6 +515,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             if end_ns is not None
             else None
         )
-        return self._sum_gpu_energy_joules(
-            TimeRangeFilter(start_ns=start_ns, end_ns=bounded_end_ns)
-        )
+        tf = TimeRangeFilter(start_ns=start_ns, end_ns=bounded_end_ns)
+        if platform is None:
+            return self._sum_gpu_energy_joules(
+                tf, NVIDIA_GPU_TELEMETRY_PLATFORM, NVIDIA_ENERGY_CONSUMPTION_FIELD
+            )
+        field = _PLATFORM_ENERGY_FIELDS.get(platform)
+        if field is None:
+            return 0.0, 0
+        return self._sum_gpu_energy_joules(tf, platform, field)

@@ -9,40 +9,51 @@ from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 from aiperf.exporters.console_power_efficiency_exporter import (
-    ConsolePowerEfficiencyExporter,
+    ConsoleAmdPowerEfficiencyExporter,
+    ConsoleNvidiaPowerEfficiencyExporter,
 )
 from aiperf.metrics.types.power_efficiency_metrics import (
-    EnergyPerUserMetric,
-    OutputTokensPerJouleMetric,
-    TotalGpuEnergyMetric,
-    TotalGpuPowerMetric,
+    AmdEnergyPerUserMetric,
+    AmdOutputTokensPerJouleMetric,
+    AmdTotalGpuEnergyMetric,
+    AmdTotalGpuPowerMetric,
+    NvidiaEnergyPerUserMetric,
+    NvidiaOutputTokensPerJouleMetric,
+    NvidiaTotalGpuEnergyMetric,
+    NvidiaTotalGpuPowerMetric,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.exporters.conftest import make_exporter_config
 
-EFFICIENCY_RECORDS = [
-    MetricResult(
-        tag="total_gpu_power", header="Total GPU Power (4 GPUs)", unit="W", avg=1558.27
-    ),  # fmt: skip
-    MetricResult(
-        tag="total_gpu_energy",
-        header="Total GPU Energy (4 GPUs)",
-        unit="J",
-        avg=1307261.98,
-    ),  # fmt: skip
-    MetricResult(
-        tag="output_tokens_per_joule",
-        header="Output Tokens per Joule (4 GPUs)",
-        unit="tokens/J",
-        avg=0.32,
-    ),  # fmt: skip
-    MetricResult(
-        tag="energy_per_user",
-        header="Energy per User (4 GPUs)",
-        unit="joules/user",
-        avg=163407.75,
-    ),  # fmt: skip
-]
+
+def _records(prefix: str) -> list[MetricResult]:
+    return [
+        MetricResult(
+            tag=f"{prefix}_total_gpu_power",
+            header="Total GPU Power (4 GPUs)",
+            unit="W",
+            avg=1558.27,
+        ),  # fmt: skip
+        MetricResult(
+            tag=f"{prefix}_total_gpu_energy",
+            header="Total GPU Energy (4 GPUs)",
+            unit="J",
+            avg=1307261.98,
+        ),  # fmt: skip
+        MetricResult(
+            tag=f"{prefix}_output_tokens_per_joule",
+            header="Output Tokens per Joule (4 GPUs)",
+            unit="tokens/J",
+            avg=0.32,
+        ),  # fmt: skip
+        MetricResult(
+            tag=f"{prefix}_energy_per_user",
+            header="Energy per User (4 GPUs)",
+            unit="joules/user",
+            avg=163407.75,
+        ),  # fmt: skip
+    ]
+
 
 NON_EFFICIENCY_RECORDS = [
     MetricResult(tag="request_latency", header="Request Latency", unit="ms", avg=15.3),
@@ -65,50 +76,86 @@ def _config(records: list[MetricResult]):
     )
 
 
-class TestConsolePowerEfficiencyExporter:
+VENDOR_CASES = [
+    pytest.param(
+        ConsoleNvidiaPowerEfficiencyExporter,
+        "nvidia",
+        "GPU Power Efficiency (NVIDIA)",
+        id="nvidia",
+    ),
+    pytest.param(
+        ConsoleAmdPowerEfficiencyExporter,
+        "amd",
+        "GPU Power Efficiency (AMD)",
+        id="amd",
+    ),
+]  # fmt: skip
+
+
+class TestConsolePowerEfficiencyExporters:
     @pytest.mark.asyncio
-    async def test_renders_efficiency_section_with_title_and_rows(self, capsys) -> None:
-        """With efficiency metrics present, a 'GPU Power Efficiency (NVIDIA)' table prints."""
-        exporter = ConsolePowerEfficiencyExporter(_config(EFFICIENCY_RECORDS))
+    @pytest.mark.parametrize("exporter_cls, prefix, title", VENDOR_CASES)
+    async def test_renders_vendor_section_with_title_and_rows(
+        self, exporter_cls, prefix, title, capsys
+    ) -> None:
+        """Each vendor exporter prints its own titled, average-only table."""
+        exporter = exporter_cls(_config(_records(prefix)))
         await exporter.export(Console(width=120))
         output = capsys.readouterr().out
 
-        assert "GPU Power Efficiency (NVIDIA)" in output
+        assert title in output
         assert "Total GPU Power" in output
         assert "Total GPU Energy" in output
         assert "Output Tokens per Joule" in output
         assert "Energy per User" in output
-        # These are single aggregate values, so only the average column is shown.
         for percentile_header in ("p99", "p90", "p50", "min", "max", "std"):
             assert percentile_header not in output
 
-    def test_renders_only_average_column(self) -> None:
-        """The efficiency section drops the non-statistical percentile columns."""
-        assert ConsolePowerEfficiencyExporter.STAT_COLUMN_KEYS == ["avg"]
+    @pytest.mark.parametrize("exporter_cls, prefix, title", VENDOR_CASES)
+    def test_renders_only_average_column(self, exporter_cls, prefix, title) -> None:
+        assert exporter_cls.STAT_COLUMN_KEYS == ["avg"]
 
     @pytest.mark.asyncio
-    async def test_omits_section_when_no_efficiency_metrics(self, capsys) -> None:
-        """Without efficiency metrics (e.g. --gpu-telemetry off), nothing prints."""
-        exporter = ConsolePowerEfficiencyExporter(_config(NON_EFFICIENCY_RECORDS))
+    @pytest.mark.parametrize("exporter_cls, prefix, title", VENDOR_CASES)
+    async def test_omits_section_when_no_efficiency_metrics(
+        self, exporter_cls, prefix, title, capsys
+    ) -> None:
+        """Without that vendor's metrics, nothing prints."""
+        exporter = exporter_cls(_config(NON_EFFICIENCY_RECORDS))
         await exporter.export(Console(width=120))
         assert capsys.readouterr().out.strip() == ""
 
-    def test_efficiency_metrics_use_gpu_power_efficiency_group(self) -> None:
-        """The four efficiency metrics are tagged into the GPU_POWER_EFFICIENCY group."""
-        for metric_cls in (
-            TotalGpuPowerMetric,
-            TotalGpuEnergyMetric,
-            OutputTokensPerJouleMetric,
-            EnergyPerUserMetric,
-        ):
-            assert metric_cls.console_group == MetricConsoleGroup.GPU_POWER_EFFICIENCY
+    @pytest.mark.asyncio
+    async def test_nvidia_exporter_ignores_amd_metrics(self, capsys) -> None:
+        """The NVIDIA exporter renders nothing for an AMD-only result set."""
+        exporter = ConsoleNvidiaPowerEfficiencyExporter(_config(_records("amd")))
+        await exporter.export(Console(width=120))
+        assert "GPU Power Efficiency (NVIDIA)" not in capsys.readouterr().out
+
+    def test_metrics_use_their_vendor_console_group(self) -> None:
+        nvidia = (
+            NvidiaTotalGpuPowerMetric,
+            NvidiaTotalGpuEnergyMetric,
+            NvidiaOutputTokensPerJouleMetric,
+            NvidiaEnergyPerUserMetric,
+        )
+        amd = (
+            AmdTotalGpuPowerMetric,
+            AmdTotalGpuEnergyMetric,
+            AmdOutputTokensPerJouleMetric,
+            AmdEnergyPerUserMetric,
+        )
+        for cls in nvidia:
+            assert cls.console_group == MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA
+        for cls in amd:
+            assert cls.console_group == MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD
 
     @pytest.mark.asyncio
     async def test_efficiency_metrics_absent_from_main_metrics_table(
         self, capsys
     ) -> None:
-        """The main metrics exporter must no longer render the efficiency totals."""
-        exporter = ConsoleMetricsExporter(_config(EFFICIENCY_RECORDS))
+        """The main metrics exporter must not render either vendor's efficiency totals."""
+        exporter = ConsoleMetricsExporter(_config(_records("nvidia") + _records("amd")))
         await exporter.export(Console(width=120))
         output = capsys.readouterr().out
         assert "Total GPU Power" not in output

@@ -32,6 +32,12 @@ UNKNOWN_GPU_TELEMETRY_PLATFORM = "unknown"
 NVIDIA_POWER_USAGE_FIELD = "nvidia_power_usage"
 NVIDIA_ENERGY_CONSUMPTION_FIELD = "nvidia_energy_consumption"
 
+# Canonical AMD telemetry field names, the AMD-side counterparts to the NVIDIA
+# constants above. amdsmi populates these (power already in W, energy in MJ), and
+# the power-efficiency accumulator resolves AMD power/energy through them.
+AMD_POWER_FIELD = "amd_power"
+AMD_ENERGY_CONSUMPTION_FIELD = "amd_energy_consumption"
+
 NVIDIA_TELEMETRY_FIELD_ALIASES = {
     "gpu_power_usage": NVIDIA_POWER_USAGE_FIELD,
     "energy_consumption": NVIDIA_ENERGY_CONSUMPTION_FIELD,
@@ -112,8 +118,12 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     # the amdsmi field names rather than NVML semantics, since the underlying
     # signals do not always measure the same physical quantity. Registered here
     # so accumulator/exporter/dashboard surface them end-to-end.
-    ("AMD GPU Power", "amd_power", PowerMetricUnit.WATT),
-    ("AMD Energy Consumption", "amd_energy_consumption", EnergyMetricUnit.MEGAJOULE),
+    ("AMD GPU Power", AMD_POWER_FIELD, PowerMetricUnit.WATT),
+    (
+        "AMD Energy Consumption",
+        AMD_ENERGY_CONSUMPTION_FIELD,
+        EnergyMetricUnit.MEGAJOULE,
+    ),
     ("AMD GFX Activity", "amd_gfx_activity", GenericMetricUnit.PERCENT),
     ("AMD UMC Activity", "amd_umc_activity", GenericMetricUnit.PERCENT),
     ("AMD MM Activity", "amd_mm_activity", GenericMetricUnit.PERCENT),
@@ -130,7 +140,7 @@ GPU_TELEMETRY_COUNTER_METRICS: set[str] = {
     NVIDIA_ENERGY_CONSUMPTION_FIELD,
     "nvidia_xid_errors",
     "nvidia_power_violation",
-    "amd_energy_consumption",
+    AMD_ENERGY_CONSUMPTION_FIELD,
     "amd_ecc_uncorrectable",
 }
 
