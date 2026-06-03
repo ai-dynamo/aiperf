@@ -433,7 +433,7 @@ class TestPyNVMLCallbacks:
         )
 
         await collector.initialize()
-        await collector._collect_and_process_metrics()
+        await collector.collect_and_process_metrics()
         await collector.stop()
 
         mock_callback.assert_called_once()
@@ -479,7 +479,7 @@ class TestPyNVMLCallbacks:
             side_effect=Exception("Collection failed")
         )
 
-        await collector._collect_and_process_metrics()
+        await collector.collect_and_process_metrics()
         await collector.stop()
 
         mock_error_callback.assert_called_once()

@@ -638,3 +638,45 @@ class TestCollectorCallbackFunctionality:
         await collector._send_records_via_callback([])
 
         record_callback.assert_not_called()
+
+
+class TestServerMetricsDataCollectorCredentialRedaction:
+    """Regression tests for #935: credentials embedded in --url must not leak
+    into logs, record keys, or exported artifacts, while the raw URL is still
+    used for the actual HTTP fetch (so authentication keeps working)."""
+
+    CREDENTIALED_URL = "http://alice:s3cret@127.0.0.1:34883/metrics"
+
+    def test_display_url_is_redacted_but_fetch_url_is_raw(self):
+        """The raw URL (with userinfo) is retained for fetching; the display
+        URL used for logs/records has the credentials stripped."""
+        collector = ServerMetricsDataCollector(endpoint_url=self.CREDENTIALED_URL)
+        # Raw form is kept for the actual HTTP fetch (auth must still work).
+        assert collector._endpoint_url == self.CREDENTIALED_URL
+        assert "s3cret" in collector._endpoint_url
+        # Display form is redacted: no credentials anywhere.
+        assert "s3cret" not in collector._display_url
+        assert "alice" not in collector._display_url
+        assert collector._display_url == "http://<redacted>@127.0.0.1:34883/metrics"
+
+    def test_url_without_credentials_is_unchanged(self):
+        """redact_url is a no-op on credential-free URLs, so display and fetch
+        forms are identical."""
+        plain_url = "http://localhost:8081/metrics"
+        collector = ServerMetricsDataCollector(endpoint_url=plain_url)
+        assert collector._endpoint_url == plain_url
+        assert collector._display_url == plain_url
+
+    def test_record_endpoint_url_is_redacted(self):
+        """The endpoint_url stored on each ServerMetricsRecord feeds every
+        export (csv/json/parquet); it must carry the redacted form."""
+        collector = ServerMetricsDataCollector(endpoint_url=self.CREDENTIALED_URL)
+        metrics_text = (
+            "# HELP test_metric A test metric\n"
+            "# TYPE test_metric counter\n"
+            "test_metric 1.0\n"
+        )
+        record = collector._parse_metrics_to_records(make_fetch_result(metrics_text))
+        assert record is not None
+        assert "s3cret" not in record.endpoint_url
+        assert record.endpoint_url == "http://<redacted>@127.0.0.1:34883/metrics"

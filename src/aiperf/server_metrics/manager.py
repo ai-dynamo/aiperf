@@ -21,6 +21,7 @@ from aiperf.common.messages import (
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.redact import redact_url
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 if TYPE_CHECKING:
@@ -72,7 +73,8 @@ class ServerMetricsManager(BaseComponentService):
             if normalized_url not in self._server_metrics_endpoints:
                 self._server_metrics_endpoints.append(normalized_url)
         self.info(
-            f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} endpoints: {self._server_metrics_endpoints}"
+            f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} "
+            f"endpoints: {[redact_url(u) for u in self._server_metrics_endpoints]}"
         )
 
         # Add user-specified URLs if provided
@@ -123,7 +125,7 @@ class ServerMetricsManager(BaseComponentService):
                 collection_interval=self._collection_interval,
                 record_callback=self._on_server_metrics_records,
                 error_callback=self._on_server_metrics_error,
-                collector_id=endpoint_url,
+                collector_id=redact_url(endpoint_url),
             )
 
             try:
@@ -140,14 +142,16 @@ class ServerMetricsManager(BaseComponentService):
             except Exception as e:
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
 
-        reachable_endpoints = list(self._collectors.keys())
+        reachable_endpoints = [redact_url(u) for u in self._collectors]
 
         if not self._collectors:
             # Server metrics manager shutdown occurs in _on_start_profiling to prevent hang
             await self._send_server_metrics_status(
                 enabled=False,
                 reason="no Prometheus endpoints reachable",
-                endpoints_configured=self._server_metrics_endpoints,
+                endpoints_configured=[
+                    redact_url(u) for u in self._server_metrics_endpoints
+                ],
                 endpoints_reachable=[],
             )
             return
@@ -169,7 +173,9 @@ class ServerMetricsManager(BaseComponentService):
         await self._send_server_metrics_status(
             enabled=True,
             reason=None,
-            endpoints_configured=self._server_metrics_endpoints,
+            endpoints_configured=[
+                redact_url(u) for u in self._server_metrics_endpoints
+            ],
             endpoints_reachable=reachable_endpoints,
         )
 
@@ -207,7 +213,9 @@ class ServerMetricsManager(BaseComponentService):
             await self._send_server_metrics_status(
                 enabled=False,
                 reason="all collectors failed to start",
-                endpoints_configured=self._server_metrics_endpoints,
+                endpoints_configured=[
+                    redact_url(u) for u in self._server_metrics_endpoints
+                ],
                 endpoints_reachable=[],
             )
             self._shutdown_task = self.execute_async(self._delayed_shutdown())

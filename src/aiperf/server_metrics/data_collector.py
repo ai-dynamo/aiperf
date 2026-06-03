@@ -20,6 +20,7 @@ from aiperf.common.models.server_metrics_models import (
     MetricSample,
     ServerMetricsRecord,
 )
+from aiperf.common.redact import redact_url
 
 __all__ = ["ServerMetricsDataCollector"]
 
@@ -195,12 +196,15 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         """
         self._prometheus_fallback_attempted = True
         original_url = self._endpoint_url
+        original_display = self._display_url
         candidate_url = original_url.removesuffix("/metrics") + "/prometheus/metrics"
+        candidate_display = redact_url(candidate_url)
         self.info(
-            f"Endpoint {original_url!r} returned non-Prometheus content; "
-            f"probing fallback {candidate_url!r} (TRT-LLM compatibility path)."
+            f"Endpoint {original_display!r} returned non-Prometheus content; "
+            f"probing fallback {candidate_display!r} (TRT-LLM compatibility path)."
         )
         self._endpoint_url = candidate_url
+        self._display_url = candidate_display
         # Reset response-hash dedup so the alt endpoint's first response is
         # not mistaken for a duplicate of the previous /metrics body.
         self._last_response_hash = None
@@ -208,18 +212,20 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             await self._fetch_parse_send()
         except IncompatibleMetricsEndpointError:
             self._endpoint_url = original_url
+            self._display_url = original_display
             raise
         except Exception as e:
             self._endpoint_url = original_url
+            self._display_url = original_display
             raise IncompatibleMetricsEndpointError(
-                f"Prometheus fallback {candidate_url!r} also failed ({e!r}); "
-                f"original endpoint {original_url!r} returned non-Prometheus "
+                f"Prometheus fallback {candidate_display!r} also failed ({e!r}); "
+                f"original endpoint {original_display!r} returned non-Prometheus "
                 f"content. For TRT-LLM, set 'return_perf_metrics: true' in "
                 f"extra_llm_api_options.yaml to enable Prometheus exposition "
                 f"at /prometheus/metrics."
             ) from e
         self.info(
-            f"Prometheus fallback succeeded; collector swapped to {candidate_url!r}."
+            f"Prometheus fallback succeeded; collector swapped to {candidate_display!r}."
         )
 
     def _parse_metrics_to_records(
@@ -318,7 +324,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         return ServerMetricsRecord(
             timestamp_ns=timestamp_ns,
             endpoint_latency_ns=trace_timing.latency_ns if trace_timing else None,
-            endpoint_url=self._endpoint_url,
+            endpoint_url=self._display_url,
             metrics=metrics_dict,
             request_sent_ns=trace_timing.start_ns if trace_timing else None,
             first_byte_ns=trace_timing.first_byte_ns if trace_timing else None,

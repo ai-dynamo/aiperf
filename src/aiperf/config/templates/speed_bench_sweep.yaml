@@ -48,8 +48,8 @@ sweep:
   type: grid
   parameters:
     # Body-rooted dot-path. Second segment matches the dataset's `name` in the
-    # `datasets:` list below; the leaf `dataset` is the public-dataset enum.
-    datasets.main.dataset:
+    # `datasets:` list below; the leaf `format` is the dataset name.
+    datasets.main.format:
       - speed_bench_coding
       - speed_bench_humanities
       - speed_bench_math
@@ -79,8 +79,9 @@ benchmark:
 
   datasets:
     - name: main
-      type: public
-      dataset: speed_bench_coding  # overridden by sweep
+      type: file
+      path: datasets/speed-bench/qualitative.jsonl
+      format: speed_bench_coding  # overridden by sweep
 
   phases:
     - name: warmup
