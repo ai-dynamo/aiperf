@@ -80,6 +80,11 @@ on:
         description: 'Version tag to release (e.g., v0.9.0). Leave empty to sync dev docs.'
         required: false
         type: string
+      force_rebuild:
+        description: 'Overwrite an already-released version snapshot (manual dispatch only). Use with care: it replaces pages-$TAG and versions/$TAG.yml, reverting any out-of-band manual corrections.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -562,20 +567,22 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check if version already exists
+        env:
+          # Empty on tag-push events; "true"/"false" only on workflow_dispatch.
+          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          if [ -d "docs-checkout/fern/pages-$TAG" ]; then
-            echo "::error::Version $TAG already exists (fern/pages-$TAG directory found)"
-            exit 1
+          if [ -d "docs-checkout/fern/pages-$TAG" ] || [ -f "docs-checkout/fern/versions/$TAG.yml" ]; then
+            if [ "$FORCE_REBUILD" = "true" ]; then
+              echo "::warning::Version $TAG already exists; force_rebuild=true, overwriting its snapshot (any out-of-band manual corrections will be replaced)."
+            else
+              echo "::error::Version $TAG already exists. Re-run via workflow_dispatch with force_rebuild=true to overwrite it intentionally."
+              exit 1
+            fi
+          else
+            echo "Version $TAG does not exist yet, proceeding with release"
           fi
-
-          if [ -f "docs-checkout/fern/versions/$TAG.yml" ]; then
-            echo "::error::Version $TAG already exists (fern/versions/$TAG.yml found)"
-            exit 1
-          fi
-
-          echo "Version $TAG does not exist yet, proceeding with release"
 
       - name: Setup Git
         working-directory: docs-checkout

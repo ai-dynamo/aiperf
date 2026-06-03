@@ -138,6 +138,20 @@ validates the whole site (all versions); pre-existing broken snapshots must be
 clean (handled manually per decision 2) or the release is blocked — accepted as
 a "never publish broken links" property.
 
+### Existing-version guard
+
+The job refuses to release a version whose `pages-$TAG/` or `versions/$TAG.yml`
+already exists on `docs-website` (append-only by default). Because the rebuild is
+now deterministic from the tag, a re-run would otherwise silently overwrite an
+existing snapshot — including the out-of-band manual corrections to the legacy
+`v0.7.0`/`v0.8.0`/`v0.9.0` snapshots (decision 2). The guard prevents that.
+
+A `force_rebuild` boolean `workflow_dispatch` input provides a deliberate,
+logged escape hatch: when `true`, the guard emits a `::warning::` and proceeds,
+overwriting the existing snapshot. The input is empty on tag-push events, so the
+guard is never bypassable on an automated tag release — only on a manual dispatch
+where someone explicitly opts in.
+
 ### Commit, push, publish
 
 Unchanged from today (commit `pages-$TAG/` + `versions/$TAG.yml` + `docs.yml`
@@ -148,7 +162,9 @@ to `docs-website`, then `fern generate --docs`).
 1. Determine version tag *(unchanged)*
 2. Checkout source @ tag → `source-checkout/` *(NEW)*
 3. Checkout `docs-website` → `docs-checkout/` *(now pathed)*
-4. Check if version already exists *(unchanged, operates on `docs-checkout`)*
+4. Check if version already exists *(operates on `docs-checkout`; bypassable via
+   the `force_rebuild` workflow_dispatch input to intentionally overwrite an
+   existing snapshot — see "Existing-version guard" below)*
 5. Setup Git *(unchanged)*
 6. Build content: rsync tag `docs/` → `pages-$TAG/` *(REPLACES `cp pages-dev`)*
 7. Link pinning: `sed` blob/tree main→$TAG *(unchanged logic)*

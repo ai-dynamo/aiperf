@@ -93,7 +93,8 @@ git worktree add --detach "$DOCS_CHECKOUT" "$DOCS_WEBSITE_REF" >/dev/null
 
 if [ -d "$DOCS_CHECKOUT/fern/pages-$TAG" ] || [ -f "$DOCS_CHECKOUT/fern/versions/$TAG.yml" ]; then
   echo "note: $TAG already exists on docs-website; the real job's existing-version"
-  echo "      guard would stop here. Rebuilding it anyway for dry-run validation."
+  echo "      guard would stop here unless dispatched with force_rebuild=true."
+  echo "      Rebuilding it anyway for dry-run validation."
 fi
 
 # --- build versioned pages from the tagged commit ---------------------------
